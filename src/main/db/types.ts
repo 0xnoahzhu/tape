@@ -10,12 +10,15 @@
 // Retention, so tape.db cannot grow without bound (applied by the SQLite worker about two minutes
 // after startup and then every six hours, in small steps that yield to requests; the constants
 // are in sqlite.ts):
-// - intraday bars older than INTRADAY_RETENTION_DAYS (30) are deleted (a series left empty goes too);
+// - bars of a series with a retention class (by bar size, BarRetention) are deleted once older than
+//   its days: seconds SECONDS_RETENTION_DAYS (6), minutes INTRADAY_RETENTION_DAYS (30), hours
+//   HOURS_RETENTION_DAYS (400); daily and longer bars are kept (a series left empty goes too);
 // - a series (bars, coverage, head timestamp) not read or written for SERIES_UNUSED_DAYS (90) is
 //   evicted; reads touch a series at most once an hour (series.last_access);
 // - above CACHE_CAP_BYTES (512 MB, tape.db plus its WAL) series are evicted until the data is
 //   below CACHE_CAP_TARGET_PERCENT (80%) of the cap: first those not used for CAP_RECENT_DAYS (7),
-//   intraday before daily and longer, then the recently used ones; least recently used first;
+//   seconds first, then minutes and hours, then daily and longer, then the recently used ones;
+//   least recently used first;
 // - kv entries not rewritten for 180 days are deleted (contract details, option chains,
 //   coverage documents, head timestamps);
 // - executions are never deleted (the trade journal is the user's record); the NAV history is
@@ -27,10 +30,23 @@
 import type { Bar, CacheStats, Execution, NavPoint } from '@shared/types';
 
 /**
- * Intraday bars older than this many days are dropped by maintenance; daily and longer bars are kept.
- * (Used by both bundles: a small integer the bundler inlines, so no chunk is shared, see worker.ts.)
+ * How long maintenance keeps the bars of a series, by bar size: seconds (1 to 30 secs) are large
+ * (57,600 one-second bars per extended session) and kept for SECONDS_RETENTION_DAYS, minutes (1 to
+ * 20 mins) for INTRADAY_RETENTION_DAYS, hours (30 mins to 8 hours) for HOURS_RETENTION_DAYS so a
+ * year of them stays cached (and a one-month range of 30-minute bars); daily and longer bars are
+ * kept.
  */
+export type BarRetention = 'seconds' | 'minutes' | 'hours' | 'daily';
+
+/**
+ * Days of bars kept per retention class. (Used by both bundles: small integers the bundler
+ * inlines, so no chunk is shared, see worker.ts.) Seconds: the cache serves a day less (5 days),
+ * so the newest session stays served over a weekend plus a Monday holiday until Tuesday's open
+ * (about four sessions per series).
+ */
+export const SECONDS_RETENTION_DAYS = 6;
 export const INTRADAY_RETENTION_DAYS = 30;
+export const HOURS_RETENTION_DAYS = 400;
 
 /** Series evicted by maintenance (their keys), or 'all' when the market data cache is cleared. */
 export type EvictedSeries = readonly string[] | 'all';
@@ -43,10 +59,11 @@ export interface BarCache {
    */
   get(series: string, fromTime?: number, toTime?: number): Promise<Bar[]>;
   /**
-   * Inserts or replaces bars (matched by time). `intraday` selects the 30-day retention; when
-   * omitted it is inferred from the key ("…|5m|…", "1 min") and the bar spacing.
+   * Inserts or replaces bars (matched by time). `retention` sets the series' retention class;
+   * when omitted a new series' class is inferred from the key ("1 secs", "5 mins", "1 hour") and
+   * the bar spacing.
    */
-  put(series: string, bars: Bar[], opts?: { intraday?: boolean }): Promise<void>;
+  put(series: string, bars: Bar[], opts?: { retention?: BarRetention }): Promise<void>;
   /** Time of the newest stored bar, or undefined. */
   last(series: string): Promise<number | undefined>;
 }

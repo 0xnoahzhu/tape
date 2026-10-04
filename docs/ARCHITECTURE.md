@@ -49,7 +49,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (journaled in `ctx.db.executions`) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` |
-| `market/history.ts` | Historical bars per timeframe |
+| `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
 | `market/alerts.ts` | Price alert evaluation |
@@ -148,10 +148,12 @@ executions journal, the NAV history). It is `userData/tape.db`, opened with `nod
 worker thread (`worker.ts` → `server.ts` → `sqlite.ts`), so database work never blocks the socket
 or IPC; the main side (`client.ts`) is an async RPC.
 
-* Schema (`schema.ts`): `series` (`key`, `intraday`, `last_access`, `bar_count`) + `bars`
+* Schema (`schema.ts`): `series` (`key`, `retention`, `last_access`, `bar_count`) + `bars`
   (WITHOUT ROWID, clustered by series and time), `kv` (`ns`, `key`, JSON, `updated_at`),
   `executions` (by `exec_id`, indexed by time), `nav` (`t`, `net_liq`). WAL; versioned migrations
-  (v2 added `last_access`, set to the migration time, and `bar_count`, counted once).
+  (v2 added `last_access`, set to the migration time, and `bar_count`, counted once; v3 replaced
+  the `intraday` flag by the retention class `seconds` / `minutes` / `hours` / `daily`, taken from
+  the bar size in the series key; every bar is kept).
 * Writes never reject (best-effort, logged); writes that arrive together commit in one transaction.
   Reads reject on database errors.
 * Series access: every `bars.get` / `bars.put` notes the series in the worker's memory; its
@@ -161,9 +163,11 @@ or IPC; the main side (`client.ts`) is an async RPC.
 
   | Data | Kept |
   | --- | --- |
-  | Intraday bars | 30 days; a series left empty is removed |
+  | Seconds bars (1–30 secs) | 6 days (the cache serves 5: the newest session stays shown over a weekend plus a Monday holiday; about four sessions, 57,600 one-second bars each) |
+  | Minute bars (1–20 mins) | 30 days |
+  | 30-minute and hour bars (30 mins–8 hours) | 400 days, so a year of them (and a 1M range of 30-minute bars) stays cached; a series left empty (any of these) is removed |
   | Any series (in practice daily and longer) | Evicted with its coverage and head timestamp when not read or written for 90 days |
-  | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (intraday before daily, least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
+  | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (seconds, then minutes and hours, then daily; least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
   | `kv` (contract details, option chains, coverage, head timestamps) | Entries not rewritten for 180 days are deleted |
   | Executions | Never deleted automatically (the trade journal is the user's record) |
   | NAV | All of it; compacted to one point per day after 10 days by `navHistory.ts` |
@@ -195,6 +199,65 @@ or IPC; the main side (`client.ts`) is an async RPC.
 * A corrupt or unreadable file is moved aside as `tape.db.corrupt-<ts>` and recreated; a file from a
   newer Tape version, or a worker that cannot start, falls back to the in-memory implementation
   (`memory.ts`, also used by tests). `close()` runs on quit.
+
+### Historical bars
+
+`market/history.ts` answers `getHistory` (the newest bars, a chart's window) and `getOlderBars`
+(pages while scrolling back) from the bar cache, asking IB only for what the cache lacks (the
+header of `history.ts` describes coverage, tails, paging and scheduling; `historyPages.ts` lists
+what IB was seen to do). Intervals (`shared/timeframes.ts`, `historyParams.ts → TIMEFRAMES`):
+
+| Interval | IB bar size | First window | Page (at most) | Retention |
+| --- | --- | --- | --- | --- |
+| 1s | 1 secs | 1800 S | 1800 S | seconds |
+| 5s | 5 secs | 3600 S | 7200 S | seconds |
+| 10s / 15s | 10 / 15 secs | 14400 S | 28800 S | seconds |
+| 30s | 30 secs | 28800 S | 57600 S | seconds |
+| 45s | 15 secs, merged | 14400 S | 28800 S | seconds |
+| 1m 3m 5m 10m 15m | 1 / 3 / 5 / 10 / 15 mins | 2 / 5 / 10 / 10 / 20 D | 5 to 60 sessions | minutes |
+| 30m | 30 mins | 20 D | 60 sessions | hours |
+| 1h | 1 hour | 20 D | 6 M | hours |
+| 2h 3h 4h | 2 / 3 / 4 hours | 3 M | 1 Y / 1 Y / 2 Y | hours |
+| D, W | 1 day, 1 week | 2 Y, 10 Y | 2 Y, 10 Y | daily |
+| M, Q, Y | 1 month (Q and Y merged) | 20 Y | 20 Y | daily |
+
+* Every request stays at a few thousand bars and within IB's step limits (checked live: 1 secs
+  refuses more than 2000 S with "invalid step"; 5 secs x 1 D took 15 s). Bars below a minute
+  page in session seconds (`'N S'`, which IB counts in session time: a window asked for on a
+  weekend, or before the 04:00 open, ends with the last session's bars, so the newest window ends
+  at the newest stored bar; a `'1 D'` window would start at today's midnight and stay empty until
+  the open); hour bars
+  page in months and years. IB fills every bucket of a session (a bucket without trades is a flat
+  bar at the previous close without volume) and nothing outside it.
+* 45 s is the 15-second series merged into 45-second buckets on the epoch grid (New York midnight,
+  04:00, 09:30 and 20:00 are on it); Q and Y are the monthly series merged into calendar quarters
+  and years, stamped with their first day. The merged intervals share the cached series.
+* 2, 3 and 4-hour bars lie on the UTC grid with a partial first bar at the session open; seconds,
+  minutes and 1 hour on New York's (the same epoch grid).
+* Pages of bars of 30 seconds or less stop six months back (`HistoryPage.limited`, IB's documented
+  limit; this paper account served older ones, but paging that far is not worth IB's 60 requests
+  per 10 minutes) and the chart says so. IB's small-bar pacing is kept by the send queue
+  (`pacing.ts`); the chart reloads every intraday interval every 60 s (10 of IB's 60 requests per
+  10 minutes, beside the 40 pages may use).
+* The v3 schema migration moves series to retention classes by bar size and drops the coverage of
+  those that now stay longer (hours): the old coverage may claim bars the old 30-day maintenance
+  had deleted. Their bars stay and are claimed again on the next load.
+
+In the renderer (`features/chart`), `chartPrefs.ts` keeps the interval (one for all instruments),
+the active range and the favorites (toolbar chips) in `localStorage`; preferences saved before
+the picker keep their interval (the daily and longer keys stay `1D` … `1Y`). `TimeframeBar.tsx` is
+the picker; the toolbar shows the favorites that fit its width (the rest stay in the picker, and
+an active interval or range without a chip shows on the "▾" button). A range (`ranges.ts`: 1M →
+30m, 3M → 1h, YTD and 1Y → D, 5Y → W, Max → M; 1M and 3M take 1h / 2h and 2h / 4h when the plot
+is too narrow for 1.25 px a bar; YTD takes a finer interval in the first weeks of January) loads
+its span with pages sized to what is missing (Max until IB's head timestamp; a refused page is
+asked again after its wait) and fits the view to it (up to 1,200 bars per screen) until the user
+pans or zooms. Between reloads a real-time last price extends the forming bar and starts the next
+ones on the interval's grid (`chartMath.ts → advanceLiveBars`); the live bars are kept between
+quotes until a reload reaches them, nothing is filled across the overnight break (the first bar
+starts at the 04:00 open), and delayed quotes (the account's market data type 3 / 4) never touch
+intraday bars, and seconds charts show a note. A reload of a seconds window, which slides with
+every reload, replaces the chart's bars unless older pages were loaded in front of it.
 
 ### Quote subscriptions
 

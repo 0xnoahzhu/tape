@@ -132,7 +132,33 @@ export interface Quote {
   updatedAt: number;
 }
 
-export type Timeframe = '1m' | '5m' | '1h' | '1D' | '1W' | '1M' | '1Y';
+/**
+ * Chart intervals (bar sizes). Daily and longer keys keep their original names ('1D' … '1Y'),
+ * which persisted preferences and cached series use; the UI labels them D, W, M, Q, Y.
+ * See shared/timeframes.ts for their bar lengths and the picker groups.
+ */
+export type Timeframe =
+  | '1s'
+  | '5s'
+  | '10s'
+  | '15s'
+  | '30s'
+  | '45s'
+  | '1m'
+  | '3m'
+  | '5m'
+  | '10m'
+  | '15m'
+  | '30m'
+  | '1h'
+  | '2h'
+  | '3h'
+  | '4h'
+  | '1D'
+  | '1W'
+  | '1M'
+  | '1Q'
+  | '1Y';
 
 export interface HistoryRequest {
   contract: ContractRef;
@@ -164,8 +190,13 @@ export interface Bar {
 export interface HistoryPage {
   /** Ascending, all strictly older than the requested `before` time. */
   bars: Bar[];
-  /** True when nothing older exists (the earliest data IB has was reached). */
+  /** True when nothing older exists (the earliest data IB has was reached), or `limited`. */
   done: boolean;
+  /**
+   * Paging stopped at IB's limit for the bar size, not at the start of the data: bars of 30
+   * seconds or less go back six months (shared/timeframes.ts → SECONDS_HISTORY_DAYS).
+   */
+  limited?: boolean;
 }
 
 export interface DepthLevel {

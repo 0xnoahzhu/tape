@@ -1,33 +1,57 @@
 // Chart view of the Trade page (design 3a, top-left cell): instrument header with the
-// session-aware price, price-alert bell, timeframes, OHLC row with indicator chips (moving
-// averages and volume), and the candlestick chart fed by IB historical bars plus the live
-// last price.
+// session-aware price, price-alert bell, intervals and ranges (TimeframeBar), OHLC row with
+// indicator chips (moving averages and volume), and the candlestick chart fed by IB historical
+// bars plus the live last price.
+//
+// Live bars: intraday bars reload every REFRESH_MS (seconds bars too: during a session each reload
+// is one of IB's 60 historical requests per 10 minutes, and the history service keeps 20 of them
+// for the newest bars); in between, a real-time last price extends the forming bar and starts the
+// next ones on the interval's grid (advanceLiveBars). The live bars are kept between quotes until
+// a reload reaches them, so a bar keeps what the quotes drew. Delayed quotes (market data type
+// 3 / 4, minutes old) never touch intraday bars: they move with the reloads only, and seconds
+// charts say so.
+//
+// Ranges: picking one sets its interval (chartPrefs), pages in the bars back to its start
+// (loadOlder sized to what is missing; MAX until IB's head timestamp) and fits the view to them
+// until the user pans or zooms (PriceChart's fit). A refused, empty or superseded page is asked
+// again once its wait is over.
+//
+// Header width: the bell and the interval chips (TimeframeBar) get what is left beside a title of
+// MIN_TITLE_W; favorites beyond it stay in the picker.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
 import { change, compact, f2, signColor } from '@shared/format';
-import { usEquitySession } from '@shared/session';
+import { nyClock, usEquitySession } from '@shared/session';
+import { barSeconds, isSecondsTimeframe } from '@shared/timeframes';
 import type { Bar } from '@shared/types';
 import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
-import { barsKey, CHART_SLOT, loadBars, loadOlder, useBarsStore } from './barsStore';
+import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { chartTimeZone, isIntraday, MA_PERIODS, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
+import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, withLiveBars } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
-import { PriceChart } from './PriceChart';
+import { PRICE_AXIS_W, PriceChart } from './PriceChart';
+import { missingBars, rangeLoaded, rangeStartSec } from './ranges';
 import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from './sessionQuote';
+import { TimeframeBar } from './TimeframeBar';
 import { useNow } from './useNow';
 import { useSize } from './useSize';
 
 const REFRESH_MS = 60_000;
+/** Extended hours open at 04:00 New York (the partial first bar of 2 to 4-hour bars). */
+const EXT_OPEN_MIN = 240;
 /** Header spacing from the design (px): view side padding, gap between price, bell and timeframes. */
 const PAD_X = 28;
 const HEADER_GAP = 24;
 const PRICE_GAP = 14;
+/** The bell button's width; the title keeps at least MIN_TITLE_W beside the tools. */
+const BELL_W = 30;
+const MIN_TITLE_W = 120;
 
 function BellButton({ title, active, onClick }: { title: string; active: boolean; onClick: () => void }) {
   return (
@@ -38,7 +62,7 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
       style={{
         position: 'relative',
         height: 30,
-        width: 30,
+        width: BELL_W,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
@@ -99,7 +123,7 @@ export function ChartView() {
   const connected = useMarketDataAvailable();
   const openAlertForm = useStore((s) => s.openAlertForm);
   const alertsAll = useStore((s) => s.priceAlerts);
-  const { timeframe, mas, showVol, setTimeframe, toggleMa, toggleVol } = useChartPrefs();
+  const { timeframe, range, mas, showVol, clearRange, toggleMa, toggleVol } = useChartPrefs();
 
   const contracts = useMemo(() => [symbol], [symbol]);
   useQuoteSubscriptions('chart', contracts, 'basic');
@@ -143,15 +167,56 @@ export function ChartView() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, connected]);
+  // A range pages in the bars back to its start (MAX: until IB has nothing older), a page sized
+  // to what is missing each time; the store keeps one page in flight and waits after a refusal.
+  // Meanwhile the chart's own paging (a screen ahead of the view) waits, so its smaller page does
+  // not go first.
+  const rangeStart = range ? rangeStartSec(range, now.getTime(), timeframe) : undefined;
+  const oldest = entry?.status === 'ready' ? entry.bars[0]?.time : undefined;
+  const older = entry?.older;
+  const rangeDone = older?.status === 'done';
+  const rangeReady = range != null && rangeLoaded(rangeStart ?? null, entry?.bars ?? [], rangeDone);
+  const rangeLoading = range != null && !rangeReady;
   const needOlder = useCallback(() => {
-    if (connected) void loadOlder(symbol, timeframe);
+    if (connected && !rangeLoading) void loadOlder(symbol, timeframe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, connected]);
+  }, [key, connected, rangeLoading]);
+  const fit = useMemo(() => (range ? { key: `${range}|${key}`, from: rangeStart ?? null } : null), [range, key, rangeStart]);
+  /** Bumped when a refused page's wait is over, so the range asks again. */
+  const [rangeRetry, setRangeRetry] = useState(0);
+  useEffect(() => {
+    if (!connected || !range || rangeReady || oldest === undefined || older?.status === 'loading' || older?.status === 'done') return;
+    const wait = scheduleOlderRetry(older?.retryAt, () => setRangeRetry((n) => n + 1));
+    if (wait) return wait;
+    const lacking = rangeStart == null ? MAX_OLDER_PAGE : missingBars(timeframe, rangeStart, oldest);
+    void loadOlder(symbol, timeframe, Math.min(MAX_OLDER_PAGE, Math.max(olderPageSize(timeframe), lacking)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, connected, range, rangeReady, rangeStart, oldest, older?.status, older?.retryAt, rangeRetry]);
 
-  // The live price extends the forming bar wherever the chart is scrolled; the chart's view is
-  // anchored to bar times, so it only moves along when it shows the latest bars.
+  // The live price extends the forming bar wherever the chart is scrolled, and starts the next
+  // bars on the interval's grid; the chart's view is anchored to bar times, so it only moves
+  // along when it shows the latest bars. Delayed quotes leave intraday bars to the reloads.
   const liveLast = quote?.last;
-  const bars = useMemo(() => mergeLivePrice(entry?.bars ?? [], liveLast, timeframe, new Date(), session), [entry?.bars, liveLast, timeframe, session]);
+  const liveData = quote?.marketDataType == null || quote.marketDataType === 1;
+  const barSec = barSeconds(timeframe);
+  // Live intraday bars roll over on their own grid: a clock at the bar length (at least a second).
+  const tick = useNow(barSec != null && liveData && connected ? Math.min(30_000, Math.max(1000, barSec * 1000)) : 3_600_000);
+  const sessionOpen = usSession ? sessionOpenSec(tick) : undefined;
+  /** The live bars beyond the stored ones (advanceLiveBars), kept between quotes for this series. */
+  const liveRef = useRef<{ key: string; bars: Bar[] }>({ key: '', bars: [] });
+  const bars = useMemo(
+    () => {
+      const stored = entry?.bars ?? [];
+      const prev = liveRef.current.key === key ? liveRef.current.bars : [];
+      // Advancing again with the same price and time changes nothing, so a repeated render is harmless.
+      const live = advanceLiveBars(stored, prev, liveLast, timeframe, new Date(), session, { live: liveData, sessionOpen });
+      liveRef.current = { key, bars: live };
+      return withLiveBars(stored, live);
+    },
+    // `tick` re-runs the merge when a new bar is due without a new price.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, entry?.bars, liveLast, timeframe, session, liveData, sessionOpen, tick],
+  );
   const [hoverBar, setHoverBar] = useState<Bar | null>(null);
   useEffect(() => setHoverBar(null), [key]);
 
@@ -188,6 +253,8 @@ export function ChartView() {
             ? undefined
             : m.noQuote;
   const dataType = quote?.marketDataType && quote.marketDataType !== 1 ? m.dataType[quote.marketDataType] : undefined;
+  // Seconds bars do not move with delayed quotes: only the reloads bring them.
+  const delayedSeconds = isSecondsTimeframe(timeframe) && (quote?.marketDataType === 3 || quote?.marketDataType === 4);
   const live = session === 'regular';
   const alertLevels = useMemo(() => alertsAll.filter((a) => a.active && sameContract(a.contract, symbol)).map((a) => a.price), [alertsAll, symbol]);
 
@@ -223,28 +290,14 @@ export function ChartView() {
       )}
     </div>
   );
+  // What the interval chips may take: the view less its padding, a title of MIN_TITLE_W and the bell.
+  const barWidth = viewWidth > 0 ? Math.max(0, viewWidth - 2 * PAD_X - MIN_TITLE_W - 2 * HEADER_GAP - BELL_W) : 0;
+  // The plot: the view less its left padding and the price axis (the chart runs to the right edge).
+  const plotWidth = viewWidth > 0 ? Math.max(0, viewWidth - PAD_X - PRICE_AXIS_W) : undefined;
   const tools = (
-    <div ref={toolsRef} style={{ display: 'flex', alignItems: 'flex-start', gap: HEADER_GAP, flexShrink: 0 }}>
+    <div ref={toolsRef} style={{ display: 'flex', alignItems: 'flex-start', gap: HEADER_GAP, flexShrink: 1, minWidth: 0 }}>
       <BellButton title={m.addAlert} active={alertLevels.length > 0} onClick={() => openAlertForm(symbol)} />
-      <div style={{ display: 'flex', gap: 2 }}>
-        {TIMEFRAMES.map((tf) => (
-          <div
-            key={tf}
-            onClick={() => setTimeframe(tf)}
-            className={tf === timeframe ? undefined : 'hover-tx'}
-            style={{
-              padding: '7px 10px',
-              fontSize: 13,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              background: tf === timeframe ? 'var(--p2)' : 'transparent',
-              color: tf === timeframe ? 'var(--tx)' : 'var(--dm)',
-            }}
-          >
-            {m.timeframes[tf]}
-          </div>
-        ))}
-      </div>
+      <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>
   );
 
@@ -298,6 +351,11 @@ export function ChartView() {
         )}
         {dataType && (
           <div style={{ padding: '3px 6px', font: '600 11px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}>{dataType}</div>
+        )}
+        {delayedSeconds && (
+          <div data-chart="delayed-note" style={{ whiteSpace: 'nowrap' }}>
+            {m.delayedSeconds}
+          </div>
         )}
         {sq.refs.map((r) => (
           <div key={r.kind} style={{ display: 'flex', gap: 6, alignItems: 'baseline', whiteSpace: 'nowrap' }}>
@@ -359,7 +417,15 @@ export function ChartView() {
         older={entry?.older}
         onNeedOlder={needOlder}
         onHover={setHoverBar}
+        fit={fit}
+        onLeaveFit={clearRange}
       />
     </div>
   );
+}
+
+/** Unix seconds of today's 04:00 New York (extended hours open) at `now`. */
+function sessionOpenSec(now: Date): number {
+  const sec = Math.floor(now.getTime() / 1000);
+  return sec - (sec % 60) - (nyClock(now).minutes - EXT_OPEN_MIN) * 60;
 }

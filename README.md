@@ -17,8 +17,13 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
 
 - **Watchlists** with groups, built-in US index and macro lists, symbol search (IBKR contract search) and
   per-row actions.
-- **Chart** with 1m / 5m / 1h / 1D / 1W / 1M / 1Y bars from IBKR historical data, MA20 and volume, session
-  status, and the position and open orders for the selected symbol.
+- **Chart** from IBKR historical data in every interval IBKR offers: seconds (1s 5s 10s 15s 30s, and 45s
+  merged from 15-second bars), minutes (1m 3m 5m 10m 15m 30m), hours (1h 2h 3h 4h) and D / W / M / Q / Y,
+  plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
+  lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
+  through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
+  delayed data keeps seconds bars from being live), session status, and the position and open orders for
+  the selected symbol.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent); time in force DAY /
   GTC / IOC / FOK / OPG / GTD (with an expiry in New York time); **trading session** regular hours, extended
   hours (pre-market and after-hours), overnight, or overnight + day (US stocks and ETFs, DAY limit orders);
@@ -145,7 +150,7 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 | `notifications.json` | The last 200 notifications |
 | `window.json` | Window position and size |
 | `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
-| `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve and a journal of executions with commissions; its cache tables expire (intraday bars after 30 days, other entries after 180 days) |
+| `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve and a journal of executions with commissions; its cache tables expire (seconds bars after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days) |
 | `nav.json` | Older versions' equity curve data; imported into `tape.db` once, then emptied |
 
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`

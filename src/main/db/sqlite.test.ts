@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Bar } from '@shared/types';
 import { packBars, unpackBars, unpackNav } from './client';
 import { configure, migrate, NewerSchemaError, SCHEMA_VERSION, schemaVersion } from './schema';
-import { looksIntraday, openStore, SQL, type SqliteStore } from './sqlite';
+import { inferRetention, openStore, SQL, type SqliteStore } from './sqlite';
 
 const DAY = 86_400;
 const NOW = Date.UTC(2026, 9, 4, 16); // unix ms
@@ -76,20 +76,29 @@ describe('SQLite store', () => {
     expect(unpackBars(store.barsGet('P|1D', null))).toEqual([bar(DAY, 7), bar(2 * DAY, 8)]);
   });
 
-  it('infers intraday series from the key or the bar spacing', () => {
-    expect(looksIntraday('AAPL@SMART|5m|1|TRADES', [])).toBe(true);
-    expect(looksIntraday('AAPL@SMART|1h|1|TRADES', [])).toBe(true);
-    expect(looksIntraday('AAPL 1 min TRADES', [])).toBe(true);
-    expect(looksIntraday('AAPL@SMART|1M|1|TRADES', [])).toBe(false);
-    expect(looksIntraday('AAPL@SMART|1D|1|TRADES', [DAY, 2 * DAY, 3 * DAY + 3600])).toBe(false);
-    expect(looksIntraday('custom', [DAY, DAY, DAY + 300])).toBe(true);
+  it('infers the retention class of a new series from the key or the bar spacing', () => {
+    expect(inferRetention('AAPL@SMART|5m|1|TRADES', [])).toBe('minutes');
+    expect(inferRetention('AAPL@SMART|1h|1|TRADES', [])).toBe('hours');
+    expect(inferRetention('AAPL@SMART|15s|1|TRADES', [])).toBe('seconds');
+    expect(inferRetention('STK:AAPL|1 secs|TRADES|0', [])).toBe('seconds');
+    expect(inferRetention('STK:AAPL|4 hours|TRADES|0', [])).toBe('hours');
+    expect(inferRetention('AAPL 1 min TRADES', [])).toBe('minutes');
+    expect(inferRetention('STK:AAPL|20 mins|TRADES|0', [])).toBe('minutes');
+    expect(inferRetention('STK:AAPL|30 mins|TRADES|0', [])).toBe('hours');
+    expect(inferRetention('AAPL@SMART|30m|1|TRADES', [])).toBe('hours');
+    expect(inferRetention('AAPL@SMART|1M|1|TRADES', [])).toBe('daily');
+    expect(inferRetention('AAPL@SMART|1D|1|TRADES', [DAY, 2 * DAY, 3 * DAY + 3600])).toBe('daily');
+    expect(inferRetention('custom', [DAY, DAY, DAY + 300])).toBe('minutes');
     store.barsPut('a', [bar(DAY), bar(DAY + 60)], null);
     store.barsPut('b', [bar(DAY)], null);
-    store.barsPut('b', [bar(2 * DAY)], true); // explicit flag upgrades
-    const flags = store.db.prepare('SELECT key, intraday FROM series ORDER BY key').all();
-    expect(flags.map((r) => ({ ...r }))).toEqual([
-      { key: 'a', intraday: 1 },
-      { key: 'b', intraday: 1 },
+    store.barsPut('b', [bar(2 * DAY)], 'hours'); // an explicit class is set
+    store.barsPut('b', [bar(3 * DAY)], null); // and kept by puts without one
+    store.barsPut('c', [bar(DAY)], 'seconds');
+    const rows = store.db.prepare('SELECT key, retention FROM series ORDER BY key').all();
+    expect(rows.map((r) => ({ ...r }))).toEqual([
+      { key: 'a', retention: 'minutes' },
+      { key: 'b', retention: 'hours' },
+      { key: 'c', retention: 'seconds' },
     ]);
   });
 
@@ -166,7 +175,9 @@ describe('SQLite store', () => {
     };
     const nowSec = Math.floor(NOW / 1000);
 
-    it('drops intraday bars past 30 days in chunks, keeps daily bars, vacuums', () => {
+    it('drops bars past their class retention (seconds 6, minutes 30, hours 400 days) in chunks, keeps daily bars, vacuums', () => {
+      store.barsPut('AAPL|1 secs|TRADES|0', [bar(nowSec - 7 * DAY), bar(nowSec - 5 * DAY)], null);
+      store.barsPut('AAPL|1 hour|TRADES|0', [bar(nowSec - 401 * DAY), bar(nowSec - 399 * DAY), bar(nowSec - 31 * DAY)], null);
       // 40 days of 1-minute bars (8 hours a day) and 400 days of daily bars.
       const minutes: Bar[] = [];
       for (let d = 40; d >= 1; d--) for (let m = 0; m < 480; m++) minutes.push(bar(nowSec - d * DAY + m * 60));
@@ -184,6 +195,8 @@ describe('SQLite store', () => {
       expect(kept.length).toBe(30 * 480);
       expect(kept[0].time).toBeGreaterThanOrEqual(nowSec - 30 * DAY);
       expect(store.barsGet('AAPL|1D|1|TRADES', null).length / 6).toBe(400);
+      expect(unpackBars(store.barsGet('AAPL|1 secs|TRADES|0', null)).map((b) => b.time)).toEqual([nowSec - 5 * DAY]);
+      expect(unpackBars(store.barsGet('AAPL|1 hour|TRADES|0', null)).map((b) => b.time)).toEqual([nowSec - 399 * DAY, nowSec - 31 * DAY]);
       // A series without bars left is removed (and can be written again).
       expect(store.db.prepare("SELECT count(*) AS n FROM series WHERE key = 'OLD|5m|1|TRADES'").get()).toEqual({ n: 0 });
       store.barsPut('OLD|5m|1|TRADES', [bar(nowSec)], null);

@@ -53,6 +53,24 @@ const MIGRATIONS: readonly string[] = [
     last_access = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
     bar_count = (SELECT count(*) FROM bars WHERE bars.series_id = series.id);
   `,
+  // v3: retention by bar size instead of an intraday flag (db/types.ts → BarRetention). Series
+  // keys are "<contract>|<bar size>|<whatToShow>|<useRTH>": intraday series of seconds and of
+  // hours (30 mins and longer) get their own class, the other intraday ones (minutes) keep the 30
+  // days they had. The coverage documents of series that now stay longer are dropped (their bars
+  // stay and are claimed again on the next load): they were clipped to 29 days when written, but
+  // maintenance deleted bars past 30 days whenever it ran later, so they may claim deleted bars,
+  // which the longer class would trust.
+  `
+  ALTER TABLE series ADD COLUMN retention TEXT NOT NULL DEFAULT 'daily';
+  UPDATE series SET retention = CASE
+    WHEN intraday = 0 THEN 'daily'
+    WHEN key GLOB '*|[0-9]* sec|*' OR key GLOB '*|[0-9]* secs|*' THEN 'seconds'
+    WHEN key GLOB '*|[0-9]* hour|*' OR key GLOB '*|[0-9]* hours|*' OR key GLOB '*|30 mins|*' THEN 'hours'
+    ELSE 'minutes'
+  END;
+  ALTER TABLE series DROP COLUMN intraday;
+  DELETE FROM kv WHERE ns = 'coverage' AND key IN (SELECT key FROM series WHERE retention = 'hours');
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

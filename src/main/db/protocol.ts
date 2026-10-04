@@ -2,6 +2,7 @@
 // Types only: the two sides are separate bundles and must not share runtime code.
 
 import type { CacheStats, NavPoint } from '@shared/types';
+import type { BarRetention } from './types';
 
 /** A journaled execution: the JSON text is what ExecutionJournal.since returns. */
 export interface ExecutionRow {
@@ -17,7 +18,7 @@ export interface ExecutionRow {
  */
 export interface DbOps {
   'bars.get': [args: [series: string, fromTime: number | null, toTime: number | null], result: Float64Array];
-  'bars.put': [args: [series: string, bars: Float64Array, intraday: boolean | null], result: void];
+  'bars.put': [args: [series: string, bars: Float64Array, retention: BarRetention | null], result: void];
   'bars.last': [args: [series: string], result: number | null];
   'kv.get': [args: [ns: string, key: string], result: { json: string; updatedAt: number } | null];
   'kv.set': [args: [ns: string, key: string, json: string, updatedAt: number], result: void];

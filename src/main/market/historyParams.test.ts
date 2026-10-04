@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { index, option, stock } from '@shared/contract';
 import type { Bar, ContractRef, Timeframe } from '@shared/types';
+import { TIMEFRAMES } from '@shared/timeframes';
+import { rangeStartSec, rangeTimeframe } from '../../renderer/src/features/chart/ranges';
+import { HOURS_RETENTION_DAYS, INTRADAY_RETENTION_DAYS, SECONDS_RETENTION_DAYS } from '../db/types';
+import { intradayCoverageStart } from './historyPages';
 import {
   aggregateBars,
+  aggregateQuarters,
   aggregateYears,
+  BAR_SIZE_SEC,
+  barRetention,
   barsToDays,
   dedupePeriods,
   durationSpanSec,
@@ -12,6 +19,8 @@ import {
   historySpec,
   historyTtlMs,
   lastSettledMs,
+  MAX_STEP_SEC,
+  mergeIntraday,
   mergeTail,
   normalizeBars,
   overlapAdjusted,
@@ -40,6 +49,65 @@ describe('historySpec', () => {
       expect([s.barSize, s.duration, s.whatToShow, s.useRTH]).toEqual([barSize, duration, 'TRADES', 1]);
       expect(s.aggregateYears).toBe(tf === '1Y');
     }
+  });
+
+  it('maps every interval to an IB bar size, a window within its step limits and a retention class', () => {
+    const table: Array<[Timeframe, string, string, string, number | undefined, string | undefined]> = [
+      ['1s', '1 secs', '1800 S', 'seconds', undefined, undefined],
+      ['5s', '5 secs', '3600 S', 'seconds', undefined, undefined],
+      ['10s', '10 secs', '14400 S', 'seconds', undefined, undefined],
+      ['15s', '15 secs', '14400 S', 'seconds', undefined, undefined],
+      ['30s', '30 secs', '28800 S', 'seconds', undefined, undefined],
+      ['45s', '15 secs', '14400 S', 'seconds', 45, undefined],
+      ['1m', '1 min', '2 D', 'minutes', undefined, undefined],
+      ['3m', '3 mins', '5 D', 'minutes', undefined, undefined],
+      ['5m', '5 mins', '10 D', 'minutes', undefined, undefined],
+      ['10m', '10 mins', '10 D', 'minutes', undefined, undefined],
+      ['15m', '15 mins', '20 D', 'minutes', undefined, undefined],
+      ['30m', '30 mins', '20 D', 'hours', undefined, undefined],
+      ['1h', '1 hour', '20 D', 'hours', undefined, undefined],
+      ['2h', '2 hours', '3 M', 'hours', undefined, undefined],
+      ['3h', '3 hours', '3 M', 'hours', undefined, undefined],
+      ['4h', '4 hours', '3 M', 'hours', undefined, undefined],
+      ['1D', '1 day', '2 Y', 'daily', undefined, undefined],
+      ['1W', '1 week', '10 Y', 'daily', undefined, undefined],
+      ['1M', '1 month', '20 Y', 'daily', undefined, undefined],
+      ['1Q', '1 month', '20 Y', 'daily', undefined, 'quarter'],
+      ['1Y', '1 month', '20 Y', 'daily', undefined, 'year'],
+    ];
+    expect(table.map((r) => r[0])).toEqual(TIMEFRAMES);
+    for (const [tf, barSize, duration, retention, mergeSec, aggregate] of table) {
+      const s = historySpec({ contract: aapl, timeframe: tf, outsideRth: true });
+      expect([tf, s.barSize, s.duration, s.retention, s.mergeSec, s.aggregate]).toEqual([tf, barSize, duration, retention, mergeSec, aggregate]);
+      expect(s.seriesBarSize).toBe(barSize);
+      expect(s.intraday).toBe(retention !== 'daily');
+      // Windows of small bars stay within one request's step (1 secs: IB refuses more than 2000 S).
+      const m = /^(\d+) S$/.exec(duration);
+      if (m) expect(Number(m[1])).toBeLessThanOrEqual(MAX_STEP_SEC[barSize]);
+    }
+    // 45 s shares the 15-second series; Q and Y the monthly one.
+    const key = (tf: Timeframe) => seriesKey(historySpec({ contract: aapl, timeframe: tf, outsideRth: true }), 'STK:AAPL');
+    expect(key('45s')).toBe(key('15s'));
+    expect(key('1Q')).toBe(key('1M'));
+    // Existing series keep their keys (cached bars stay valid).
+    expect(['1m', '5m', '1h', '1D', '1W', '1M'].map((tf) => key(tf as Timeframe))).toEqual([
+      'STK:AAPL|1 min|TRADES|0',
+      'STK:AAPL|5 mins|TRADES|0',
+      'STK:AAPL|1 hour|TRADES|0',
+      'STK:AAPL|1 day|TRADES|1',
+      'STK:AAPL|1 week|TRADES|1',
+      'STK:AAPL|1 month|TRADES|1',
+    ]);
+    expect([barRetention('8 hours'), barRetention('30 secs'), barRetention('20 mins'), barRetention('30 mins'), barRetention('nonsense')]).toEqual([
+      'hours',
+      'seconds',
+      'minutes',
+      'hours',
+      'daily',
+    ]);
+    // Options: quarters from days built of 8-hour bars.
+    const q = historySpec({ contract: option('AAPL', '20261120', 260, 'C'), timeframe: '1Q' });
+    expect([q.barSize, q.seriesBarSize, q.aggregate, q.retention]).toEqual(['8 hours', '1 day', 'quarter', 'daily']);
   });
 
   it('builds daily and longer option bars from 8-hour bars (IB has no EOD bars for options)', () => {
@@ -75,6 +143,11 @@ describe('historySpec', () => {
 
   it('caches intraday bars briefly and longer bars for minutes', () => {
     expect(historyTtlMs('1m')).toBe(30_000);
+    expect(historyTtlMs('4h')).toBe(30_000);
+    // Seconds within the chart's 60-second reload.
+    expect(historyTtlMs('1s')).toBe(10_000);
+    expect(historyTtlMs('45s')).toBe(10_000);
+    expect(historyTtlMs('1Q')).toBe(300_000);
     expect(historyTtlMs('1D')).toBe(300_000);
   });
 
@@ -90,10 +163,31 @@ describe('historySpec', () => {
     expect(days('1m')).toBeGreaterThanOrEqual(5);
     expect(days('1m')).toBeLessThan(8);
     expect(days('5m')).toBeGreaterThanOrEqual(17);
-    // Every intraday window fits the database's 30-day retention of intraday bars.
     expect(days('1h')).toBeGreaterThanOrEqual(28);
     expect(days('1h')).toBeLessThanOrEqual(33);
     expect(days('1D')).toBeGreaterThanOrEqual(2 * 366);
+    // Every intraday window fits the retention of its class: seconds 6 days, minutes 30, hours 400.
+    const keep = { seconds: SECONDS_RETENTION_DAYS, minutes: INTRADAY_RETENTION_DAYS, hours: HOURS_RETENTION_DAYS } as const;
+    for (const tf of TIMEFRAMES) {
+      const s = historySpec({ contract: aapl, timeframe: tf, outsideRth: true });
+      if (s.retention !== 'daily') expect(durationSpanSec(s.duration) / DAY, tf).toBeLessThanOrEqual(keep[s.retention]);
+    }
+  });
+
+  it('keeps the bars of every range cached back to its start (1M of 30-minute bars: up to 31 days plus a day)', () => {
+    const coverageDays = { seconds: SECONDS_RETENTION_DAYS - 1, minutes: INTRADAY_RETENTION_DAYS - 1, hours: HOURS_RETENTION_DAYS - 1 } as const;
+    for (const range of ['1M', '3M'] as const) {
+      // Every day of a year, at 23:59 New York (the farthest from the range's start).
+      for (let d = 0; d < 366; d++) {
+        const now = Date.UTC(2026, 0, 1, 3, 59) + d * 86_400_000;
+        for (const tf of new Set([undefined, 460, 800, 50].map((w) => rangeTimeframe(range, now, w)))) {
+        const spec = historySpec({ contract: aapl, timeframe: tf, outsideRth: true });
+        expect(spec.retention).not.toBe('daily');
+        const served = intradayCoverageStart(now, coverageDays[spec.retention as keyof typeof coverageDays], BAR_SIZE_SEC[spec.seriesBarSize]);
+        expect(rangeStartSec(range, now, tf)!, `${range} ${tf} ${new Date(now).toISOString()}`).toBeGreaterThanOrEqual(served);
+        }
+      }
+    }
   });
 
   it('keys requests by what changes the result', () => {
@@ -152,6 +246,35 @@ describe('bar post-processing', () => {
       bar(Date.UTC(2026, 0, 1) / 1000, 14, 20, 8, 19, 20),
     ]);
   });
+
+  it('aggregates monthly bars into calendar quarters stamped with their first day', () => {
+    const m = (y: number, mo: number, o: number, h: number, l: number, c: number) => bar(Date.UTC(y, mo - 1, 1) / 1000, o, h, l, c, 10);
+    // IB stamps monthly bars with their last trading day; a quarter is still the months it holds.
+    const last = (y: number, mo: number, o: number, c: number) => bar(Date.UTC(y, mo, 0) / 1000, o, c + 1, o - 1, c, 5);
+    const q = aggregateQuarters([m(2025, 11, 10, 12, 9, 11), m(2025, 12, 11, 15, 10, 14), m(2026, 1, 14, 14.5, 8, 9), last(2026, 3, 9, 19), m(2026, 4, 19, 21, 18, 20)]);
+    expect(q).toEqual([
+      bar(Date.UTC(2025, 9, 1) / 1000, 10, 15, 9, 14, 20),
+      bar(Date.UTC(2026, 0, 1) / 1000, 14, 20, 8, 19, 15),
+      bar(Date.UTC(2026, 3, 1) / 1000, 19, 21, 18, 20, 10),
+    ]);
+    expect(aggregateBars([m(2026, 7, 1, 2, 1, 2), m(2026, 9, 2, 3, 1, 3)], 'quarter')).toEqual([bar(Date.UTC(2026, 6, 1) / 1000, 1, 3, 1, 3, 20)]);
+  });
+
+  it('merges 15-second bars into 45-second buckets aligned to the session open', () => {
+    // 09:30:00 New York (EDT) is 13:30:00 UTC: a multiple of 45 s, like 04:00 and 20:00.
+    const open = Date.parse('2026-10-02T09:30:00-04:00') / 1000;
+    expect(open % 45).toBe(0);
+    expect((Date.parse('2026-10-02T04:00:00-04:00') / 1000) % 45).toBe(0);
+    expect((Date.parse('2026-01-16T04:00:00-05:00') / 1000) % 45).toBe(0);
+    const bars = [0, 15, 30, 45, 60, 75, 90].map((t, i) => bar(open + t, 10 + i, 11 + i, 9 + i, 10.5 + i, 1));
+    expect(mergeIntraday(bars, 45)).toEqual([
+      bar(open, 10, 13, 9, 12.5, 3),
+      bar(open + 45, 13, 16, 12, 15.5, 3),
+      bar(open + 90, 16, 17, 15, 16.5, 1),
+    ]);
+    // A bucket missing a bar (no trades) still starts on its grid line.
+    expect(mergeIntraday([bar(open + 15, 1, 2, 1, 2), bar(open + 30, 2, 3, 2, 3)], 45).map((x) => x.time)).toEqual([open]);
+  });
 });
 
 /** New York wall time (EDT in these dates) as unix ms. */
@@ -167,6 +290,10 @@ describe('windows and tails', () => {
     expect(windowStartSec('2 Y', ny('2026-10-04'))).toBe(d('20241004'));
     expect(windowStartSec('2 M', ny('2026-10-04'))).toBe(d('20260804'));
     expect(windowStartSec('7200 S', 1_000_000_000)).toBe(1_000_000 - 7200);
+    // 'S' counts session time: on a weekend the window ends at the newest bar (Friday 19:59:59).
+    const friday = ny('2026-10-02', '19:59') / 1000 + 59;
+    expect(windowStartSec('1800 S', ny('2026-10-04'), friday)).toBe(friday - 1800);
+    expect(windowStartSec('1800 S', 1_000_000_000, 2_000_000)).toBe(1_000_000 - 1800);
   });
 
   it('asks for the shortest duration that reaches the second-newest bar', () => {
@@ -183,6 +310,31 @@ describe('windows and tails', () => {
     expect(tailDuration('8 hours', d('20261001'), now, true)).toBe('2 D');
     expect(tailDuration('1 week', d('20260925'), ny('2026-10-04'))).toBe('3 W');
     expect(tailDuration('1 month', d('20260831'), ny('2026-10-04'))).toBe('3 M');
+    // Bars below a minute always ask for seconds (IB refuses days of 1-second bars).
+    expect(tailDuration('1 secs', now / 1000 - 100, now)).toBe('120 S');
+    const from = ny('2026-09-30', '15:58') / 1000;
+    expect(tailDuration('15 secs', from, now)).toBe(`${Math.ceil((now / 1000 - from + 15) / 60) * 60} S`);
+    expect(tailDuration('3 mins', now / 1000 - 600, now)).toBe('780 S');
+    expect(tailDuration('4 hours', ny('2026-09-29', '12:00') / 1000, now)).toBe('4 D');
+  });
+
+  it('plans a full load where a tail of small bars would exceed one request', () => {
+    const spec = historySpec({ contract: stock('AAPL'), timeframe: '1s', outsideRth: true });
+    const now = ny('2026-10-02', '14:00');
+    const t = now / 1000;
+    const stored = [b(t - 1800), b(t - 3), b(t - 2)];
+    const coverage = { ranges: [[t - 1800, t - 1]] as Array<[number, number]>, fetchedAt: now - 60_000 };
+    const base = { spec, contract: stock('AAPL'), coverage, nowMs: now, ttlMs: 10_000 };
+    expect(planFetch({ ...base, stored })).toEqual({ kind: 'tail', duration: '60 S', from: t - 3 });
+    // The window ends at the newest bar (weekend); a tail since Friday evening is a full load.
+    const monday = ny('2026-10-05', '04:10');
+    const friday = ny('2026-10-02', '19:59') / 1000;
+    const fridayCov = { ranges: [[friday - 1800, friday + 60]] as Array<[number, number]>, fetchedAt: ny('2026-10-02', '20:01') };
+    expect(planFetch({ ...base, nowMs: monday, coverage: fridayCov, stored: [b(friday - 1800), b(friday), b(friday + 59)], windowStart: friday + 59 - 1800 }).kind).toBe('full');
+    // A 1-second tail longer than 1800 S is never asked for.
+    const longer = [b(t - 3000), b(t - 1900), b(t - 1899)];
+    const cov2 = { ranges: [[t - 3000, t - 1800]] as Array<[number, number]>, fetchedAt: now - 1_900_000 };
+    expect(planFetch({ ...base, coverage: cov2, stored: longer, windowStart: t - 5000 }).kind).toBe('full');
   });
 
   it('knows when US bars are settled', () => {

@@ -3,6 +3,8 @@
 // An entry holds the chart's window of bars (loadBars) plus the older pages fetched while the
 // user scrolls back (loadOlder → getOlderBars). A reload of the window keeps those pages in
 // front of it (keepOlderBars), so a refresh does not throw the scrolled-back history away.
+// Seconds windows slide with every reload (IB counts 'N S' back from the newest bar): without
+// older pages the reload replaces the entry, so an open chart does not pile up a bar a second.
 //
 // For scripted screenshots the store is reachable as `window.__tape.bars` (see debug.ts),
 // so capture steps can seed bars without IB:
@@ -11,6 +13,7 @@
 
 import { create } from 'zustand';
 import { contractKey } from '@shared/contract';
+import { isSecondsTimeframe } from '@shared/timeframes';
 import type { Bar, ContractRef, HistoryRequest, Timeframe } from '@shared/types';
 import { cleanBars, isIntraday, keepOlderBars, prependBars } from './chartMath';
 import { historyErrorMessage } from './errors';
@@ -18,10 +21,12 @@ import { historyErrorMessage } from './errors';
 /**
  * Paging of older bars for an entry: idle (more can be asked for), loading, empty (the last page
  * had no bars although older data exists), error (the last page was refused) or done (IB has
- * nothing older).
+ * nothing older, or `limited`: IB's limit for the bar size was reached).
  */
 export interface OlderState {
   status: 'idle' | 'loading' | 'empty' | 'error' | 'done';
+  /** done at IB's six-month limit of bars of 30 seconds or less, not at the start of the data. */
+  limited?: boolean;
   /** IB's message when the last page was refused. */
   error?: string;
   /** Unix ms before which no page is requested again (after a refused, empty or superseded page). */
@@ -54,6 +59,19 @@ export const CHART_SLOT = 'chart';
 /** Bars per older page. */
 export const OLDER_PAGE = 300;
 /**
+ * Bars per older page of second intervals: about one request at IB's step limit (1 secs x
+ * 1800 S, 5 secs x 7200 S, 15 secs x 28800 S, 30 secs x 57600 S), so scrolling back through
+ * seconds bars does not spend a request of IB's 60 per 10 minutes on every 300 bars.
+ */
+const SECONDS_PAGE: Partial<Record<Timeframe, number>> = { '1s': 1800, '5s': 1440, '10s': 1440, '15s': 1920, '30s': 1920, '45s': 640 };
+/** Most bars one older page asks for (the history service's limit). */
+export const MAX_OLDER_PAGE = 5000;
+
+/** Bars per older page of an interval while scrolling. */
+export function olderPageSize(tf: Timeframe): number {
+  return SECONDS_PAGE[tf] ?? OLDER_PAGE;
+}
+/**
  * A refused or empty page is not requested again for this long (IB rejects identical requests
  * within 15 s). The wait doubles with each refused or empty page in a row, up to OLDER_RETRY_MAX_MS,
  * so a page that keeps failing does not use up IB's historical data budget (60 per 10 minutes).
@@ -81,6 +99,7 @@ export function barsKey(c: ContractRef, tf: Timeframe): string {
 
 /** How long loaded bars are considered fresh. */
 export function barsTtl(tf: Timeframe): number {
+  if (isSecondsTimeframe(tf)) return 30_000;
   return isIntraday(tf) ? 60_000 : 15 * 60_000;
 }
 
@@ -139,7 +158,7 @@ export function loadBars(contract: ContractRef, timeframe: Timeframe, force = fa
         const prev = useBarsStore.getState().entries[key];
         if (prev?.seeded) return;
         const fresh = cleanBars(loaded ?? []);
-        const bars = prev ? keepOlderBars(prev.bars, fresh) : fresh;
+        const bars = prev && (prev.older || !isSecondsTimeframe(timeframe)) ? keepOlderBars(prev.bars, fresh) : fresh;
         // Older pages stay (with their paging state) only when they were kept in front of the window.
         patch(key, { status: 'ready', bars, loadedAt: Date.now(), older: bars !== fresh ? prev?.older : undefined });
       },
@@ -167,8 +186,9 @@ export function loadBars(contract: ContractRef, timeframe: Timeframe, force = fa
  * Loads one page of bars older than the oldest loaded bar and puts it in front. At most one page
  * per series is in flight; nothing is requested once IB has no older data (done), while a refused
  * or empty page waits out its retry delay (olderRetryDelay), or before the window itself has loaded.
+ * `limit`: bars to ask for (olderPageSize by default; a range asks for what it lacks).
  */
-export function loadOlder(contract: ContractRef, timeframe: Timeframe): Promise<void> {
+export function loadOlder(contract: ContractRef, timeframe: Timeframe, limit = olderPageSize(timeframe)): Promise<void> {
   const key = barsKey(contract, timeframe);
   const cur = useBarsStore.getState().entries[key];
   if (!cur || cur.seeded || cur.status !== 'ready' || !cur.bars.length) return Promise.resolve();
@@ -187,14 +207,14 @@ export function loadOlder(contract: ContractRef, timeframe: Timeframe): Promise<
     if (e && !e.seeded) patch(key, next(e));
   };
   const p = window.tape
-    .getOlderBars(historyRequest(contract, timeframe, CHART_SLOT), before, OLDER_PAGE)
+    .getOlderBars(historyRequest(contract, timeframe, CHART_SLOT), before, Math.min(MAX_OLDER_PAGE, Math.max(1, Math.round(limit))))
     .then(
       (page) =>
         settle((e) => {
           // The window was reloaded without the bars this page continues: drop the page.
           if (e.bars[0]?.time !== before) return { ...e, older: undefined };
           const bars = prependBars(cleanBars(page?.bars ?? []), e.bars);
-          if (page?.done) return { ...e, bars, older: { status: 'done' } };
+          if (page?.done) return { ...e, bars, older: page.limited ? { status: 'done', limited: true } : { status: 'done' } };
           // An empty page that is not the end would only repeat itself at once: wait before asking again.
           return { ...e, bars, older: bars !== e.bars ? { status: 'idle' } : failed({ status: 'empty' }) };
         }),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { index, option, stock } from '@shared/contract';
+import { TIMEFRAMES } from '@shared/timeframes';
 import type { Timeframe } from '@shared/types';
 import { DemoMarket, demoContractInfo, demoExpirations, demoSearch, demoStrikes, hashString } from './demo';
 import { parseYyyymmdd, weekday } from './nyTime';
@@ -97,8 +98,8 @@ describe('demo bars', () => {
   });
 
   it('produces consistent, ordered OHLC for every timeframe', () => {
-    const counts: Partial<Record<Timeframe, number>> = { '1m': 390 + 91, '5m': 9 * 78 + 19, '1h': 41 * 7 + 3, '1W': 522, '1M': 240, '1Y': 21 };
-    for (const tf of ['1m', '5m', '1h', '1D', '1W', '1M', '1Y'] as Timeframe[]) {
+    const counts: Partial<Record<Timeframe, number>> = { '1m': 390 + 91, '5m': 9 * 78 + 19, '1h': 69 * 7 + 3, '1W': 522, '1M': 240, '1Y': 21 };
+    for (const tf of TIMEFRAMES) {
       const bars = m.bars(stock('NVDA'), tf);
       if (counts[tf]) expect(bars.length, tf).toBe(counts[tf]);
       for (let i = 0; i < bars.length; i++) {
@@ -119,6 +120,33 @@ describe('demo bars', () => {
     expect([first.getUTCHours(), first.getUTCMinutes()]).toEqual([13, 30]);
     const ext = m.bars(stock('AAPL'), '5m', { outsideRth: true });
     expect(ext.length).toBeGreaterThan(bars.length);
+  });
+
+  it('generates every interval on IB\'s grid, seconds with flat bars where nothing traded', () => {
+    const ny = (hhmm: string, date = '2026-10-06', offset = '-04:00') => Date.parse(`${date}T${hhmm}:00${offset}`) / 1000;
+    // 1 s: today's session from 04:00 (extended hours) to now, one bar per second.
+    const s1 = m.bars(stock('AAPL'), '1s', { outsideRth: true });
+    expect(s1[0].time).toBe(ny('04:00'));
+    expect(s1.at(-1)!.time).toBe(ny('11:00'));
+    expect(s1).toHaveLength(7 * 3600 + 1);
+    const flat = s1.filter((b) => b.volume === 0);
+    expect(flat.length).toBeGreaterThan(s1.length / 3); // sparse pre-market trading
+    expect(flat.every((b) => b.open === b.close && b.high === b.low)).toBe(true);
+    // 45 s: 15-second bars merged on the grid, the open on a bucket line.
+    const s45 = m.bars(stock('AAPL'), '45s', { outsideRth: true });
+    expect(s45.every((b) => b.time % 45 === 0)).toBe(true);
+    expect(s45.some((b) => b.time === ny('09:30'))).toBe(true);
+    // 2 h on the UTC grid: 04:00 and every even UTC hour in summer.
+    const h2 = m.bars(stock('AAPL'), '2h', { outsideRth: true }).filter((b) => b.time >= ny('00:00', '2026-10-05') && b.time < ny('00:00'));
+    expect(h2.map((b) => (b.time - ny('00:00', '2026-10-05')) / 3600)).toEqual([4, 6, 8, 10, 12, 14, 16, 18]);
+    // In winter the open is a partial bar before the grid (04:00, 05:00, 07:00 … New York).
+    const winter = new DemoMarket(() => Date.UTC(2026, 0, 17, 15, 0)).bars(stock('AAPL'), '2h', { outsideRth: true });
+    const jan16 = ny('00:00', '2026-01-16', '-05:00');
+    expect(winter.filter((b) => b.time >= jan16).map((b) => (b.time - jan16) / 3600)).toEqual([4, 5, 7, 9, 11, 13, 15, 17, 19]);
+    // Quarters stamped with their first day.
+    const q = m.bars(stock('AAPL'), '1Q');
+    expect(q.at(-1)!.time).toBe(Date.UTC(2026, 9, 1) / 1000);
+    expect(q.at(-2)!.time).toBe(Date.UTC(2026, 6, 1) / 1000);
   });
 
   it('is deterministic across instances', () => {

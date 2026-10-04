@@ -254,7 +254,7 @@ describe('database client <-> worker protocol', () => {
 
   it('a clear answers requests sent meanwhile while it returns the space, then truncates the WAL', async () => {
     const seed = openStore(file);
-    for (let s = 0; s < 30; s++) seed.barsPut(`S${s}|1 day|TRADES|1`, Array.from({ length: 10_000 }, (_, i) => bar(i * 86_400)), false);
+    for (let s = 0; s < 30; s++) seed.barsPut(`S${s}|1 day|TRADES|1`, Array.from({ length: 10_000 }, (_, i) => bar(i * 86_400)), 'daily');
     seed.close();
     const before = statSync(file).size;
     // A slow disk: every vacuum step takes 15 ms of the slices' clock, so a slice runs one.

@@ -14,6 +14,12 @@
 // - Options trade sparsely: a window without trades answers 162 "HMDS query returned no data"
 //   although older bars exist. Only the head timestamp (reqHeadTimestamp) tells where a series
 //   begins.
+// - 'N S' (bars below a minute) counts session time: 1800 S of 1-second bars ending Friday
+//   20:30 returned 19:30–20:00, 30 secs x 28800 S of regular hours went back into Thursday.
+//   IB fills every bucket of a session (a bucket without trades is a flat bar at the previous
+//   close with no volume), also in extended hours, and nothing outside it.
+// - 2, 3, 4 and 8-hour bars lie on the UTC grid (epoch multiples) with a partial first bar at
+//   the session open; seconds, minutes and 1 hour on New York's (the same epoch grid).
 // - endDateTime "yyyymmdd-hh:mm:ss" is UTC; a time without a zone is refused (warning 2174).
 //   An end inside a bar returns that bar cut at the end ("5 mins" ending 17:03:27 UTC: the 17:00
 //   bar with 3.5 minutes of volume); an end on a bar boundary returns whole bars only (the
@@ -26,16 +32,17 @@
 // weekdays back for 'N D' on instruments with New York sessions, the calendar start plus a few
 // days for 'Y' windows of daily bars.
 
+import { barSeconds } from '@shared/timeframes';
 import type { Bar, ContractRef, Timeframe } from '@shared/types';
 import { addDays, type CalendarDay, isWeekday, latestSession, nyDay, nyWallToEpochMs, RTH_CLOSE, RTH_OPEN } from './nyTime';
-import { periodKey, seriesPeriod, SETTLE_MIN, usSessions, type HistorySpec, type Period } from './historyParams';
+import { BAR_SIZE_SEC, MAX_STEP_SEC, periodKey, seriesPeriod, SETTLE_MIN, usSessions, type HistorySpec, type Period } from './historyParams';
 
 const DAY_SEC = 86_400;
 
 /** How the stored series is stamped: instants, or daily / weekly / monthly date stamps. */
 export type SeriesKind = 'intraday' | 'day' | 'week' | 'month';
 /** The period of the bars a request is answered with (aggregates included). */
-export type PresentedPeriod = SeriesKind | 'year';
+export type PresentedPeriod = SeriesKind | 'quarter' | 'year';
 
 export function seriesKind(spec: HistorySpec): SeriesKind {
   if (spec.intraday) return 'intraday';
@@ -51,7 +58,7 @@ const utc = (t: number) => {
   return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), w: d.getUTCDay() };
 };
 
-/** Start (00:00 UTC) of the day, week (Monday), month or year containing date stamp `t`. */
+/** Start (00:00 UTC) of the day, week (Monday), month, quarter or year containing date stamp `t`. */
 export function periodStart(t: number, period: Exclude<Period, never>): number {
   const { y, m, d, w } = utc(t);
   switch (period) {
@@ -61,6 +68,8 @@ export function periodStart(t: number, period: Exclude<Period, never>): number {
       return Date.UTC(y, m, d - ((w + 6) % 7)) / 1000;
     case 'month':
       return Date.UTC(y, m, 1) / 1000;
+    case 'quarter':
+      return Date.UTC(y, m - (m % 3), 1) / 1000;
     case 'year':
       return Date.UTC(y, 0, 1) / 1000;
   }
@@ -77,6 +86,8 @@ export function nextPeriodStart(t: number, period: Period): number {
       return start + 7 * DAY_SEC;
     case 'month':
       return Date.UTC(y, m + 1, 1) / 1000;
+    case 'quarter':
+      return Date.UTC(y, m + 3, 1) / 1000;
     case 'year':
       return Date.UTC(y + 1, 0, 1) / 1000;
   }
@@ -107,29 +118,33 @@ export function ibEndDateTime(t: number): string {
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
-/** Seconds of the intraday bar sizes. */
-const INTRADAY_BAR_SIZE_SEC: Record<string, number> = { '1 min': 60, '5 mins': 300, '1 hour': 3600 };
+/** Seconds of an intraday series' bars (an hour for unknown sizes). */
+const intradayBarSec = (spec: HistorySpec) => BAR_SIZE_SEC[spec.barSize] ?? 3600;
 
 /**
  * End (unix seconds) of a page request for the bars before `start` (series time). Intraday ends
  * are moved up to a multiple of the bar size, which never lies inside a bar (the regular-hours
- * 09:30 bar of "1 hour" ends at 10:00), so IB never answers with a bar cut at the end: the bar
- * holding a `start` inside it comes whole, and the caller drops the bars at or after `start`.
+ * 09:30 bar of "1 hour" ends at 10:00; 2 to 8-hour bars are on the UTC grid), so IB never
+ * answers with a bar cut at the end: the bar holding a `start` inside it comes whole, and the
+ * caller drops the bars at or after `start`.
  */
 export function pageEnd(start: number, spec: HistorySpec): number {
-  const bar = spec.intraday ? INTRADAY_BAR_SIZE_SEC[spec.barSize] : undefined;
-  return bar ? Math.ceil(start / bar) * bar : start;
+  if (!spec.intraday) return start;
+  const bar = intradayBarSec(spec);
+  return Math.ceil(start / bar) * bar;
 }
 
 /**
  * Start (unix seconds) of the intraday coverage the bar cache can serve at `nowMs`, given that
- * bars `days` old may be gone: 00:00 New York of the next day. Midnight New York is on every
- * intraday bar grid, so pages that continue below the served coverage end between bars, and
+ * bars `days` old may be gone: 00:00 New York of the next day, moved down to the grid of bars of
+ * `barSec` (midnight New York is on the grid of every bar size up to an hour, not on the UTC grid
+ * of 2 to 8-hour bars), so pages that continue below the served coverage end between bars, and
  * the boundary stays put for a day.
  */
-export function intradayCoverageStart(nowMs: number, days: number): number {
+export function intradayCoverageStart(nowMs: number, days: number, barSec = 60): number {
   const d = nyDay(nowMs - days * DAY_SEC * 1000);
-  return nyWallToEpochMs(addDays({ y: d.y, m: d.m, d: d.d }, 1), 0) / 1000;
+  const midnight = nyWallToEpochMs(addDays({ y: d.y, m: d.m, d: d.d }, 1), 0) / 1000;
+  return Math.floor(midnight / barSec) * barSec;
 }
 
 /** Series time of IB's head timestamp (unix seconds): daily and longer series use its date. */
@@ -142,14 +157,32 @@ export function headStamp(head: number, spec: HistorySpec): number {
 // ---------------------------------------------------------------------------
 // Page requests
 
-/** Intraday bars per session (regular / extended hours) and the most sessions one page request asks for. */
-const INTRADAY_PAGES: Record<string, { rth: number; ext: number; max: number }> = {
-  '1 min': { rth: 390, ext: 960, max: 5 },
-  '5 mins': { rth: 78, ext: 192, max: 10 },
-  '1 hour': { rth: 7, ext: 16, max: 20 },
+/** Seconds of a regular (09:30–16:00) and an extended (04:00–20:00) New York session. */
+const RTH_SESSION_SEC = 23_400;
+const EXT_SESSION_SEC = 57_600;
+/**
+ * The most sessions one page request of an intraday bar size (a minute or longer) asks for:
+ * about 2,000 bars of extended hours at most (checked live: 3 mins x 1 W, 30 mins x 3 M,
+ * 1 hour x 6 M, 2 hours x 1 Y and 4 hours x 2 Y all answered). Smaller bars page in session
+ * seconds, at most MAX_STEP_SEC per request.
+ */
+const MAX_PAGE_SESSIONS: Record<string, number> = {
+  '1 min': 5,
+  '2 mins': 10,
+  '3 mins': 10,
+  '5 mins': 10,
+  '10 mins': 20,
+  '15 mins': 20,
+  '20 mins': 30,
+  '30 mins': 60,
+  '1 hour': 120,
+  '2 hours': 250,
+  '3 hours': 250,
+  '4 hours': 500,
+  '8 hours': 500,
 };
 /** Stored bars per presented bar of an aggregated timeframe. */
-const PER_PRESENTED: Record<string, number> = { 'day>week': 5, 'day>month': 21, 'day>year': 252, 'month>year': 12 };
+const PER_PRESENTED: Record<string, number> = { 'day>week': 5, 'day>month': 21, 'day>quarter': 63, 'day>year': 252, 'month>quarter': 3, 'month>year': 12 };
 /** Years one page request of daily / weekly / monthly bars asks for (checked live: 1 W x 5 Y, 1 M x 20 Y). */
 const YEARS: Record<Exclude<SeriesKind, 'intraday'>, { perYear: number; min: number; max: number }> = {
   day: { perYear: 252, min: 1, max: 2 },
@@ -163,8 +196,9 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 export function barsPerUnit(spec: HistorySpec): number {
   const kind = seriesKind(spec);
   if (kind === 'intraday') {
-    const p = INTRADAY_PAGES[spec.barSize] ?? INTRADAY_PAGES['1 hour'];
-    return spec.useRTH ? p.rth : p.ext;
+    const bar = intradayBarSec(spec);
+    // The regular-hours 1-hour bars start with a 09:30 stub: 7 per session.
+    return Math.ceil((spec.useRTH ? RTH_SESSION_SEC : EXT_SESSION_SEC) / bar);
   }
   return YEARS[kind].perYear;
 }
@@ -175,20 +209,46 @@ export function durationUnits(duration: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
+/** Sessions per duration unit of intraday windows ('W', 'M' and 'Y' are cut to whole sessions at IB). */
+const SESSIONS_PER_UNIT: Record<string, number> = { D: 1, W: 5, M: 21, Y: 252 };
+
+/** Stored bars a request of `duration` is expected to return for a series (before density). */
+export function expectedBars(spec: HistorySpec, duration: string): number {
+  const unit = /^\d+ ([SDWMY])$/.exec(duration.trim())?.[1] ?? 'D';
+  const n = durationUnits(duration);
+  if (seriesKind(spec) !== 'intraday') return n * barsPerUnit(spec);
+  if (unit === 'S') return n / intradayBarSec(spec);
+  return n * (SESSIONS_PER_UNIT[unit] ?? 1) * barsPerUnit(spec);
+}
+
+/** An intraday window of `sessions` sessions: 'N D' up to 30, then months (up to 11), then years. */
+function sessionsDuration(sessions: number): string {
+  if (sessions <= 30) return `${sessions} D`;
+  const months = Math.ceil(sessions / SESSIONS_PER_UNIT.M);
+  return months <= 11 ? `${months} M` : `${Math.ceil(sessions / SESSIONS_PER_UNIT.Y)} Y`;
+}
+
 /**
- * IB duration of one page request that should return about `wanted` presented bars: sessions
- * ('N D') for intraday bars, years for the rest (a 1Y chart asks for as many years of months).
- * `density` is the share of the expected bars the series really has (sparse options trade in a
- * fraction of the 5-minute bars of a session), learned from earlier answers.
+ * IB duration of one page request that should return about `wanted` presented bars: session
+ * seconds ('N S') for bars below a minute, sessions ('N D', or months and years for long pages
+ * of hour bars) for other intraday bars, years for the rest (a 1Y chart asks for as many years
+ * of months). `density` is the share of the expected bars the series really has (sparse options
+ * trade in a fraction of the 5-minute bars of a session), learned from earlier answers.
  */
 export function pageDuration(spec: HistorySpec, wanted: number, density = 1): string {
   const kind = seriesKind(spec);
-  const n = Math.max(1, Math.ceil(wanted));
-  const per = barsPerUnit(spec) * Math.min(1, Math.max(MIN_DENSITY, density));
+  const d = Math.min(1, Math.max(MIN_DENSITY, density));
   if (kind === 'intraday') {
-    const p = INTRADAY_PAGES[spec.barSize] ?? INTRADAY_PAGES['1 hour'];
-    return `${clamp(Math.ceil(n / per), 1, p.max)} D`;
+    const bar = intradayBarSec(spec);
+    // Merged buckets (45 s) take several stored bars each.
+    const n = Math.max(1, Math.ceil(wanted)) * (spec.mergeSec ? Math.ceil(spec.mergeSec / bar) : 1);
+    const step = MAX_STEP_SEC[spec.barSize];
+    if (step !== undefined) return `${clamp(Math.ceil((n * bar) / d / 60) * 60, 60, step)} S`;
+    const per = barsPerUnit(spec) * d;
+    return sessionsDuration(clamp(Math.ceil(n / per), 1, MAX_PAGE_SESSIONS[spec.barSize] ?? 20));
   }
+  const n = Math.max(1, Math.ceil(wanted));
+  const per = barsPerUnit(spec) * d;
   const bars = spec.aggregate ? n * (PER_PRESENTED[`${kind}>${spec.aggregate}`] ?? 1) : n;
   const y = YEARS[kind];
   return `${clamp(Math.ceil(bars / per), y.min, y.max)} Y`;
@@ -282,8 +342,7 @@ export function claimStart(o: { spec: HistorySpec; contract: ContractRef; end: n
 // ---------------------------------------------------------------------------
 // Staleness of the newest bars
 
-const INTRADAY_BAR_SEC: Partial<Record<Timeframe, number>> = { '1m': 60, '5m': 300, '1h': 3600 };
-const TIMEFRAME_PERIOD: Partial<Record<Timeframe, Period>> = { '1D': 'day', '1W': 'week', '1M': 'month', '1Y': 'year' };
+const TIMEFRAME_PERIOD: Partial<Record<Timeframe, Period>> = { '1D': 'day', '1W': 'week', '1M': 'month', '1Q': 'quarter', '1Y': 'year' };
 
 /**
  * True when the newest bars loaded at `fetchedAtMs` may lack what only IB can tell, so a load
@@ -297,7 +356,7 @@ const TIMEFRAME_PERIOD: Partial<Record<Timeframe, Period>> = { '1D': 'day', '1W'
  */
 export function newestBarsStale(timeframe: Timeframe, fetchedAtMs: number, nowMs: number): boolean {
   const fetched = fetchedAtMs / 1000;
-  const bar = INTRADAY_BAR_SEC[timeframe];
+  const bar = barSeconds(timeframe);
   if (bar) return Math.floor(nowMs / 1000 / bar) * bar > fetched;
   const latest = latestSession(nowMs).day;
   const open = nyWallToEpochMs(latest, RTH_OPEN);

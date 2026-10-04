@@ -5,7 +5,10 @@
 // No React or store imports so it can be unit tested in node.
 
 import { nyClock, type MarketSession } from '@shared/session';
+import { barEndSec, barSeconds, barStartSec, isIntraday, isSecondsTimeframe, TIMEFRAMES } from '@shared/timeframes';
 import type { Bar, Timeframe } from '@shared/types';
+
+export { isIntraday, TIMEFRAMES };
 
 /** Price chart viewBox (preserveAspectRatio="none"). */
 export const VB_W = 800;
@@ -24,14 +27,6 @@ export const MA_PERIODS = [5, 10, 20, 50, 200] as const;
 export type MaPeriod = (typeof MA_PERIODS)[number];
 /** Moving averages shown until the user picks others. */
 export const DEFAULT_MAS: readonly MaPeriod[] = [20, 50, 200];
-
-export const TIMEFRAMES: readonly Timeframe[] = ['1m', '5m', '1h', '1D', '1W', '1M', '1Y'];
-
-const INTRADAY_SECONDS: Partial<Record<Timeframe, number>> = { '1m': 60, '5m': 300, '1h': 3600 };
-
-export function isIntraday(tf: Timeframe): boolean {
-  return INTRADAY_SECONDS[tf] != null;
-}
 
 /** Bars per screen at the automatic zoom for a chart area `widthPx` wide. */
 export function visibleBarCount(widthPx: number): number {
@@ -84,9 +79,13 @@ export function cleanBars(bars: Bar[]): Bar[] {
 // ---------------------------------------------------------------------------
 // View window (pan / zoom)
 
-/** Zoom limits in bars per screen. */
+/**
+ * Zoom limits in bars per screen. The widest zoom holds a range's bars (ranges.ts: about 1,000
+ * one-hour bars of extended hours for 3M, all of a stock's months since 1980); the candles are
+ * then a pixel wide, drawn as one path per kind as always.
+ */
 export const MIN_SPAN = 20;
-export const MAX_SPAN = 400;
+export const MAX_SPAN = 1200;
 
 /**
  * The view's right edge, anchored to a bar time: `f` bars after the start of the first bar at or
@@ -154,6 +153,15 @@ export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: num
   const span = clamp(view.span ?? autoSpan, min, max);
   const end = clampEnd(view.end && n ? anchorIndex(bars, view.end) : n, span, n);
   return { start: end - span, span, latest: end >= n };
+}
+
+/**
+ * The view fitted to the bars from time `from` (null: all of them) to the newest: a range
+ * (ranges.ts). resolveView keeps it within the zoom limits (at least MIN_SPAN bars).
+ */
+export function fitView(bars: readonly Bar[], from: number | null): ChartView {
+  const i = from == null ? 0 : firstAtOrAfter(bars, from);
+  return { span: Math.max(1, bars.length - i), end: null };
 }
 
 /** `span` with the right edge at bar position `end` (clamped); at the newest bar the view follows new bars. */
@@ -455,8 +463,9 @@ function nyToday(now: Date): string {
 /** Whether the last bar of a series is the one that is still forming now. */
 export function isCurrentBar(bar: Bar, tf: Timeframe, now: Date, session: MarketSession): boolean {
   const nowSec = now.getTime() / 1000;
-  const dur = INTRADAY_SECONDS[tf];
-  if (dur != null) return session !== 'closed' && nowSec >= bar.time && nowSec < bar.time + dur;
+  const dur = barSeconds(tf);
+  // Intraday bars end on their grid (a partial first bar of 2 to 4 hours ends at the next grid line).
+  if (dur != null) return session !== 'closed' && nowSec >= bar.time && nowSec < barEndSec(bar.time, dur);
   // Daily and longer bars are regular-hours bars: only the regular session moves them.
   if (session !== 'regular') return false;
   const day = barDay(bar.time);
@@ -469,6 +478,8 @@ export function isCurrentBar(bar: Bar, tf: Timeframe, now: Date, session: Market
       return weekStart(day) === weekStart(today);
     case '1M':
       return day.slice(0, 7) === today.slice(0, 7);
+    case '1Q':
+      return day.slice(0, 4) === today.slice(0, 4) && quarterOf(day) === quarterOf(today);
     case '1Y':
       return day.slice(0, 4) === today.slice(0, 4);
     default:
@@ -476,14 +487,110 @@ export function isCurrentBar(bar: Bar, tf: Timeframe, now: Date, session: Market
   }
 }
 
-/** Extends the forming bar with the live last price (close, plus high/low extension). */
-export function mergeLivePrice(bars: Bar[], last: number | undefined, tf: Timeframe, now: Date, session: MarketSession): Bar[] {
-  if (!bars.length || !finite(last) || last <= 0) return bars;
-  const lastBar = bars[bars.length - 1];
-  if (!isCurrentBar(lastBar, tf, now, session)) return bars;
-  if (lastBar.close === last && lastBar.high >= last && lastBar.low <= last) return bars;
-  const merged: Bar = { ...lastBar, close: last, high: Math.max(lastBar.high, last), low: Math.min(lastBar.low, last) };
-  return [...bars.slice(0, -1), merged];
+/** Quarter (0–3) of a "YYYY-MM-DD" day. */
+const quarterOf = (day: string) => Math.floor((Number(day.slice(5, 7)) - 1) / 3);
+
+/**
+ * Longest gap (s) after the newest bar's end that the live price bridges with new bars: about two
+ * of the chart's reloads (ChartView reloads intraday bars every 60 s), or three bars. A longer gap
+ * (a stalled feed) waits for IB's bars.
+ */
+const ROLL_MAX_GAP_SEC = 120;
+const rollMaxGap = (dur: number) => Math.max(ROLL_MAX_GAP_SEC, 3 * dur);
+
+/**
+ * The live bars still ahead of the stored ones (a reload replaces those it reaches). A live copy
+ * of the stored newest bar keeps the extremes the quotes saw and the last price as its close (a
+ * real-time last price is never older than a reload); open and volume are the stored bar's.
+ */
+function reconcileLive(stored: readonly Bar[], live: readonly Bar[]): Bar[] {
+  const newest = stored[stored.length - 1];
+  if (!newest || !live.length) return [];
+  let i = 0;
+  while (i < live.length && live[i].time < newest.time) i++;
+  if (i === live.length) return [];
+  const rest = live.slice(i);
+  if (rest[0].time === newest.time) {
+    const b = rest[0];
+    if (b.high <= newest.high && b.low >= newest.low && b.close === newest.close) rest.shift();
+    else rest[0] = { ...newest, high: Math.max(newest.high, b.high), low: Math.min(newest.low, b.low), close: b.close };
+  }
+  return rest;
+}
+
+/**
+ * Advances the live bars (the chart's tail beyond the stored bars, kept between quotes) with the
+ * live last price at `now` (`live`: real-time quotes; delayed or frozen quotes are minutes old, so
+ * they never touch intraday bars and only extend daily and longer ones):
+ * - it extends the forming bar (close, plus high / low extension), which stays extended between
+ *   quotes (a live copy of a stored bar);
+ * - intraday, while a session runs, once the newest bar's time is over it starts the bar of the
+ *   bucket holding `now` on the interval's grid, like IB's next bar: the buckets in between as
+ *   flat bars at the previous close without volume (IB fills every bucket of a session that way),
+ *   the new one opening at the previous close;
+ * - across a session break (the newest bar is older than `sessionOpen`, unix s) nothing is filled:
+ *   the first bar starts at the open (a partial first bar of 2 to 4 hours) at the live price.
+ * A reload of the stored bars replaces the live bars it reaches (reconcileLive). Applying the
+ * same price at the same time again changes nothing.
+ */
+export function advanceLiveBars(
+  stored: readonly Bar[],
+  live: readonly Bar[],
+  last: number | undefined,
+  tf: Timeframe,
+  now: Date,
+  session: MarketSession,
+  opts: { live?: boolean; sessionOpen?: number } = {},
+): Bar[] {
+  const dur = barSeconds(tf);
+  if (!stored.length || (dur != null && opts.live === false)) return [];
+  const tail = reconcileLive(stored, live);
+  if (!finite(last) || last <= 0) return tail;
+  const base = tail.length ? tail[tail.length - 1] : stored[stored.length - 1];
+  if (isCurrentBar(base, tf, now, session)) {
+    if (base.close === last && base.high >= last && base.low <= last) return tail;
+    const merged: Bar = { ...base, close: last, high: Math.max(base.high, last), low: Math.min(base.low, last) };
+    return tail.length ? [...tail.slice(0, -1), merged] : [merged];
+  }
+  if (dur == null || session === 'closed') return tail;
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const end = barEndSec(base.time, dur);
+  if (nowSec < end) return tail;
+  const open = opts.sessionOpen;
+  if (open !== undefined && base.time < open && open <= nowSec) {
+    // A new session: no bars across the break; the first one starts at the open.
+    if (nowSec - open > rollMaxGap(dur)) return tail;
+    return [...tail, { time: barStartSec(nowSec, dur, open), open: last, high: last, low: last, close: last, volume: 0 }];
+  }
+  if (nowSec - end > rollMaxGap(dur)) return tail;
+  const current = barStartSec(nowSec, dur, open);
+  if (current <= base.time) return tail;
+  const prev = base.close;
+  const added: Bar[] = [];
+  for (let t = end; t < current; t += dur) added.push({ time: t, open: prev, high: prev, low: prev, close: prev, volume: 0 });
+  added.push({ time: current, open: prev, high: Math.max(prev, last), low: Math.min(prev, last), close: last, volume: 0 });
+  return tail.concat(added);
+}
+
+/** The stored bars with the live bars (advanceLiveBars) in place of those they replace. */
+export function withLiveBars(stored: Bar[], live: readonly Bar[]): Bar[] {
+  if (!live.length) return stored;
+  const first = live[0].time;
+  let n = stored.length;
+  while (n > 0 && stored[n - 1].time >= first) n--;
+  return stored.slice(0, n).concat(live);
+}
+
+/** The live last price on the bars, from no live bars: advanceLiveBars once (tests, one-off merges). */
+export function mergeLivePrice(
+  bars: Bar[],
+  last: number | undefined,
+  tf: Timeframe,
+  now: Date,
+  session: MarketSession,
+  opts: { live?: boolean; sessionOpen?: number } = {},
+): Bar[] {
+  return withLiveBars(bars, advanceLiveBars(bars, [], last, tf, now, session, opts));
 }
 
 // ---------------------------------------------------------------------------
@@ -890,6 +997,7 @@ const BAR_LABELS = {
     day: (day: string, wd: string) => `${wd} ${day}`,
     week: (day: string) => `Week of ${day}`,
     month: (y: string, m: number) => `${MONTH_EN[m - 1]} ${y}`,
+    quarter: (y: string, q: number) => `Q${q} ${y}`,
     year: (y: string) => y,
   },
   zh: {
@@ -898,19 +1006,25 @@ const BAR_LABELS = {
     day: (day: string, wd: string) => `${day} ${wd}`,
     week: (day: string) => `${day} 当周`,
     month: (y: string, m: number) => `${y}年${m}月`,
+    quarter: (y: string, q: number) => `${y}年Q${q}`,
     year: (y: string) => `${y}年`,
   },
 };
 
+/** "HH:MM", or "HH:MM:SS" with `seconds`, of a bar's exchange clock. */
+const clockText = (f: BarFields, seconds: boolean) =>
+  `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}${seconds ? `:${pad2(f.sec % 60)}` : ''}`;
+
 /**
  * Hover label for a bar. Intraday bars are shown in exchange time (`zone`, see chartTimeZone), as
- * on the time axis; daily and longer bars by their trading date.
+ * on the time axis, with seconds for second intervals; daily and longer bars by their trading
+ * date (quarters as "Q3 2026").
  */
 export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh', zone: string = NY_ZONE): string {
   const L = BAR_LABELS[lang];
   if (isIntraday(tf)) {
     const f = barFields(time, true, zone);
-    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}`);
+    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, clockText(f, isSecondsTimeframe(tf)));
   }
   const day = barDay(time);
   const [y, m] = [day.slice(0, 4), Number(day.slice(5, 7))];
@@ -920,6 +1034,8 @@ export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh', zo
       return L.week(day);
     case '1M':
       return L.month(y, m);
+    case '1Q':
+      return L.quarter(y, quarterOf(day) + 1);
     case '1Y':
       return L.year(y);
     default:
@@ -964,6 +1080,8 @@ interface BarFields {
   wd: number;
   /** Minutes since midnight (exchange time); 0 for daily and longer bars. */
   min: number;
+  /** Seconds since midnight (exchange time); 0 for daily and longer bars. */
+  sec: number;
 }
 
 function barFields(time: number, intraday: boolean, zone: string): BarFields {
@@ -977,6 +1095,7 @@ function barFields(time: number, intraday: boolean, zone: string): BarFields {
     day: Math.floor(s / 86_400),
     wd: dt.getUTCDay(),
     min: intraday ? dt.getUTCHours() * 60 + dt.getUTCMinutes() : 0,
+    sec: intraday ? dt.getUTCHours() * 3600 + dt.getUTCMinutes() * 60 + dt.getUTCSeconds() : 0,
   };
 }
 
@@ -984,6 +1103,11 @@ function barFields(time: number, intraday: boolean, zone: string): BarFields {
 type TimeStep = (f: BarFields) => number;
 
 const monthIndex = (f: BarFields) => f.y * 12 + f.mo - 1;
+/** Every `n` seconds of the exchange clock; every new day too. */
+const everySeconds =
+  (n: number): TimeStep =>
+  (f) =>
+    f.day * 86_400 + Math.floor(f.sec / n);
 /** Every `n` minutes of the exchange clock; every new day too. */
 const everyMinutes =
   (n: number): TimeStep =>
@@ -1001,14 +1125,35 @@ const everyYears =
   (f) =>
     Math.floor(f.y / n);
 
+/** Clock steps (s) of second intervals and (min) of minute intervals; an interval uses those that are whole multiples of its bar and longer than it. */
+const SECOND_STEPS = [5, 10, 15, 30, 60, 90, 120, 180, 300, 360, 600, 900, 1800, 3600, 7200, 14_400, 21_600];
+const MINUTE_STEPS = [5, 15, 30, 60, 120, 240, 360];
+const CALENDAR_STEPS: TimeStep[] = [everyDay, everyWeek, everyMonths(1), everyMonths(3), everyYears(1)];
+
+/**
+ * Candidate steps of an intraday interval, finest first: clock steps that are whole multiples of
+ * the bar (so ticks fall on bars: "09:31:30" for 45 s bars, never a bar inside a step), up to six
+ * hours, then days, weeks, months, quarters and years. 2 to 4-hour bars on the UTC grid go by
+ * days and longer only.
+ */
+function intradaySteps(barSec: number): TimeStep[] {
+  const fits = (s: number) => s >= barSec && s % barSec === 0 && (s > barSec || barSec === 3600);
+  const clock =
+    barSec < 60
+      ? SECOND_STEPS.filter(fits).map((s) => (s % 60 === 0 ? everyMinutes(s / 60) : everySeconds(s)))
+      : barSec <= 3600
+        ? MINUTE_STEPS.filter((m) => fits(m * 60)).map(everyMinutes)
+        : [];
+  return clock.concat(CALENDAR_STEPS);
+}
+
 /** Candidate steps per timeframe, finest first; the finest one whose labels stay TIME_TICK_GAP apart is used. */
 const TIME_STEPS: Record<Timeframe, TimeStep[]> = {
-  '1m': [5, 15, 30, 60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1)),
-  '5m': [15, 30, 60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1)),
-  '1h': [60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1), everyMonths(3), everyYears(1)),
+  ...(Object.fromEntries(TIMEFRAMES.filter(isIntraday).map((tf) => [tf, intradaySteps(barSeconds(tf)!)])) as Record<Timeframe, TimeStep[]>),
   '1D': [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
   '1W': [everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
   '1M': [everyMonths(3), everyMonths(6), ...[1, 2, 5, 10, 20].map(everyYears)],
+  '1Q': [1, 2, 5, 10, 20, 50].map(everyYears),
   '1Y': [1, 2, 5, 10, 20, 50].map(everyYears),
 };
 
@@ -1068,7 +1213,13 @@ export function pickTimeStep(spacing: readonly number[], pxPerBar: number, minGa
 function tickRank(kind: TimeTickKind, f: BarFields): number {
   const divides = (v: number, ds: number[]) => ds.filter((d) => v % d === 0).length;
   const round =
-    kind === 'time' ? divides(f.min, [15, 30, 60, 120, 240]) : kind === 'month' ? divides(f.mo - 1, [3, 6]) : kind === 'year' ? divides(f.y, [2, 5, 10]) : 0;
+    kind === 'time'
+      ? divides(f.sec, [15, 30, 60, 300, 900, 1800, 3600, 7200, 14_400])
+      : kind === 'month'
+        ? divides(f.mo - 1, [3, 6])
+        : kind === 'year'
+          ? divides(f.y, [2, 5, 10])
+          : 0;
   return KIND_RANK[kind] * 10 + round;
 }
 
@@ -1087,7 +1238,8 @@ function tickLabel(kind: TimeTickKind, f: BarFields, lang: 'en' | 'zh'): string 
     case 'day':
       return `${pad2(f.mo)}/${pad2(f.d)}`;
     default:
-      return `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}`;
+      // Seconds only where the tick is not on a whole minute (second intervals).
+      return clockText(f, f.sec % 60 !== 0);
   }
 }
 

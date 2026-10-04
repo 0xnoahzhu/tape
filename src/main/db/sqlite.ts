@@ -14,9 +14,17 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { Bar, CacheStats, NavPoint } from '@shared/types';
 import type { ExecutionRow } from './protocol';
 import { configure, migrate, NewerSchemaError } from './schema';
-import { INTRADAY_RETENTION_DAYS } from './types';
+import { HOURS_RETENTION_DAYS, INTRADAY_RETENTION_DAYS, SECONDS_RETENTION_DAYS, type BarRetention } from './types';
 
-export { INTRADAY_RETENTION_DAYS };
+export { HOURS_RETENTION_DAYS, INTRADAY_RETENTION_DAYS, SECONDS_RETENTION_DAYS };
+
+/** Days of bars each retention class keeps (daily and longer: all of them). */
+export const RETENTION_DAYS: Readonly<Record<Exclude<BarRetention, 'daily'>, number>> = {
+  seconds: SECONDS_RETENTION_DAYS,
+  minutes: INTRADAY_RETENTION_DAYS,
+  hours: HOURS_RETENTION_DAYS,
+};
+const RETENTIONS: ReadonlySet<string> = new Set<BarRetention>(['seconds', 'minutes', 'hours', 'daily']);
 /** A series nobody read or wrote for this many days is evicted. */
 export const SERIES_UNUSED_DAYS = 90;
 /** Size cap of tape.db plus its WAL (512 MB). */
@@ -25,7 +33,8 @@ export const CACHE_CAP_BYTES = 512 * 1024 * 1024;
 export const CACHE_CAP_TARGET_PERCENT = 80;
 /**
  * Above the cap, series read or written within this many days (a chart on screen, the charts of
- * the last trading days) go last; older ones go first, intraday before daily and longer.
+ * the last trading days) go last; older ones go first: seconds, then minutes and hours, then
+ * daily and longer.
  */
 export const CAP_RECENT_DAYS = 7;
 /** kv holds caches: entries not rewritten for this many days are dropped ('*' = any namespace). */
@@ -83,7 +92,8 @@ export const SQL = {
   /** Series keys starting with a contract key (the series sharing a head timestamp). */
   seriesByPrefix: 'SELECT id, key FROM series WHERE key >= ? AND key < ?',
   /** Eviction order above the size cap (the parameter: last_access from which a series counts as recently used). */
-  capOrder: 'SELECT id, key FROM series ORDER BY CASE WHEN last_access >= ? THEN 2 WHEN intraday = 1 THEN 0 ELSE 1 END, last_access, id',
+  capOrder:
+    "SELECT id, key FROM series ORDER BY CASE WHEN last_access >= ? THEN 3 WHEN retention = 'seconds' THEN 0 WHEN retention = 'daily' THEN 2 ELSE 1 END, last_access, id",
 } as const;
 
 /** What a maintenance step reports: the keys of series it evicted (their coverage is gone). */
@@ -105,9 +115,10 @@ export interface SqliteStore {
   barsGet(series: string, fromTime: number | null, toTime?: number | null): Float64Array;
   /**
    * Bars as objects, or packed [time, o, h, l, c, v] * n (what the worker receives).
-   * `intraday` null: inferred from the series key and bar spacing.
+   * `retention` sets the series' class; null: a new series' class is inferred from its key and
+   * bar spacing (inferRetention), an existing series keeps its class.
    */
-  barsPut(series: string, bars: readonly Bar[] | Float64Array, intraday: boolean | null): void;
+  barsPut(series: string, bars: readonly Bar[] | Float64Array, retention: BarRetention | null): void;
   barsLast(series: string): number | null;
   kvGet(ns: string, key: string): { json: string; updatedAt: number } | null;
   kvSet(ns: string, key: string, json: string, updatedAt: number): void;
@@ -248,14 +259,21 @@ function fileSize(path: string): number {
   }
 }
 
-/** A bar size below one day, from the series key ("…|5m|…", "1 min") or the bar spacing. */
-export function looksIntraday(key: string, times: ArrayLike<number>): boolean {
-  if (/(^|\|)\d+[smh](\||$)|\b\d+ (secs?|mins?|hours?)\b/.test(key)) return true;
+/**
+ * Retention class of a series from the bar size in its key ("1 secs", "5 mins", "1 hour"; also
+ * timeframe keys like "…|5m|…") or, failing that, the bar spacing (below 12 hours: minutes).
+ */
+export function inferRetention(key: string, times: ArrayLike<number>): BarRetention {
+  if (/(^|\|)\d+s(\||$)|\b\d+ secs?\b/.test(key)) return 'seconds';
+  if (/(^|\|)\d+h(\||$)|\b\d+ hours?\b/.test(key)) return 'hours';
+  // 30-minute bars are kept like hours (db/types.ts).
+  const mins = /(?:^|\|)(\d+)m(?:\||$)|\b(\d+) mins?\b/.exec(key);
+  if (mins) return Number(mins[1] ?? mins[2]) >= 30 ? 'hours' : 'minutes';
   for (let i = 1; i < times.length; i++) {
     const gap = Math.abs(times[i] - times[i - 1]);
-    if (gap > 0 && gap < 12 * 3600) return true;
+    if (gap > 0 && gap < 12 * 3600) return 'minutes';
   }
-  return false;
+  return 'daily';
 }
 
 /** Packs bar objects like the client does, so both inputs share one insert loop. */
@@ -278,7 +296,7 @@ const real = (x: unknown): number | null => (typeof x === 'number' && Number.isF
 
 interface SeriesRow {
   id: number;
-  intraday: boolean;
+  retention: BarRetention;
   /** last_access as stored, or as it will be by the next flushAccess. */
   access: number;
 }
@@ -340,20 +358,20 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
   function seriesOf(key: string): SeriesRow | undefined {
     let s = seriesCache.get(key);
     if (s) return s;
-    const row = sql('SELECT id, intraday, last_access FROM series WHERE key = ?').get(key) as { id: number; intraday: number; last_access: number } | undefined;
+    const row = sql('SELECT id, retention, last_access FROM series WHERE key = ?').get(key) as { id: number; retention: BarRetention; last_access: number } | undefined;
     if (!row) return undefined;
-    seriesCache.set(key, (s = { id: row.id, intraday: row.intraday === 1, access: row.last_access }));
+    seriesCache.set(key, (s = { id: row.id, retention: row.retention, access: row.last_access }));
     return s;
   }
 
-  function ensureSeries(key: string, intraday: boolean): SeriesRow {
+  /** The series row, inserted with `retention` (or `infer()`), or updated to `retention` when given and different. */
+  function ensureSeries(key: string, retention: BarRetention | null, infer: () => BarRetention): SeriesRow {
     const known = seriesOf(key);
-    if (known && (known.intraday || !intraday)) return known;
-    // Insert, or upgrade to intraday (a series never goes back to daily retention).
+    if (known && (retention === null || known.retention === retention)) return known;
     const row = sql(
-      'INSERT INTO series (key, intraday, last_access) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET intraday = max(intraday, excluded.intraday) RETURNING id, intraday, last_access',
-    ).get(key, intraday ? 1 : 0, Math.round(now())) as { id: number; intraday: number; last_access: number };
-    const s = { id: row.id, intraday: row.intraday === 1, access: row.last_access };
+      'INSERT INTO series (key, retention, last_access) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET retention = excluded.retention RETURNING id, retention, last_access',
+    ).get(key, retention ?? infer(), Math.round(now())) as { id: number; retention: BarRetention; last_access: number };
+    const s = { id: row.id, retention: row.retention, access: row.last_access };
     seriesCache.set(key, s);
     return s;
   }
@@ -451,14 +469,17 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
     // Accesses noted in memory decide what is unused or least recently used.
     flushAccess();
 
-    // 1. Intraday bars past the retention window, in chunks per series; series left empty go.
-    const cutoff = Math.floor(nowMs / 1000) - INTRADAY_RETENTION_DAYS * 86_400;
-    const intraday = sql('SELECT id FROM series WHERE intraday = 1').all() as Array<{ id: number }>;
-    for (const { id } of intraday) {
+    // 1. Bars past their class's retention (seconds, minutes, hours), in chunks per series;
+    //    series left empty go.
+    const nowSec = Math.floor(nowMs / 1000);
+    const intraday = sql("SELECT id, retention FROM series WHERE retention != 'daily'").all() as Array<{ id: number; retention: BarRetention }>;
+    for (const { id, retention } of intraday) {
+      const days = RETENTION_DAYS[retention as Exclude<BarRetention, 'daily'>] ?? INTRADAY_RETENTION_DAYS;
+      const cutoff = nowSec - days * 86_400;
       while (transaction(() => deleteChunk(id, cutoff))) yield;
       yield;
     }
-    const emptied = sql('SELECT id, key FROM series WHERE intraday = 1 AND NOT EXISTS (SELECT 1 FROM bars WHERE series_id = series.id)').all() as Array<{
+    const emptied = sql("SELECT id, key FROM series WHERE retention != 'daily' AND NOT EXISTS (SELECT 1 FROM bars WHERE series_id = series.id)").all() as Array<{
       id: number;
       key: string;
     }>;
@@ -482,8 +503,9 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
     }
 
     // 4. Size cap, until the data is below the target share of the cap (the WAL is truncated
-    //    below): first series not used for CAP_RECENT_DAYS, intraday before daily and longer,
-    //    then the recently used ones; least recently used first within each group.
+    //    below): first series not used for CAP_RECENT_DAYS (seconds, then minutes and hours,
+    //    then daily and longer), then the recently used ones; least recently used first within
+    //    each group.
     const cap = opts.capBytes ?? CACHE_CAP_BYTES;
     if (dataBytes() + walBytes() > cap) {
       const target = (cap * CACHE_CAP_TARGET_PERCENT) / 100;
@@ -542,18 +564,17 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
       return out;
     },
 
-    barsPut(series, bars, intraday) {
+    barsPut(series, bars, retention) {
       const p = bars instanceof Float64Array ? bars : packBars(bars);
       const n = Math.floor(p.length / BAR_FIELDS);
       if (!n) return;
       transaction(() => {
-        let isIntraday = intraday;
-        if (isIntraday == null) {
+        const infer = () => {
           const times = new Float64Array(n);
           for (let i = 0; i < n; i++) times[i] = p[i * BAR_FIELDS];
-          isIntraday = looksIntraday(series, times);
-        }
-        const s = ensureSeries(series, isIntraday);
+          return inferRetention(series, times);
+        };
+        const s = ensureSeries(series, retention != null && RETENTIONS.has(retention) ? retention : null, infer);
         touch(s);
         let lo = Infinity;
         let hi = -Infinity;

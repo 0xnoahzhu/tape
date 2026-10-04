@@ -4,15 +4,17 @@
 // Cache. Every series (contract + bar size + whatToShow + useRTH) is stored in ctx.db.bars, and
 // its coverage, the time ranges whose bars are known to be complete because IB was asked for
 // them, in ctx.db.kv (namespace 'coverage'; coverage.ts, and historyPages.ts for what an answer
-// proves). Intraday coverage is limited to the database's retention of intraday bars (from
-// 00:00 New York after the retention minus a day). The database also evicts whole series (not
+// proves). Intraday coverage is limited to the database's retention of the series' bars (by bar
+// size: seconds, minutes, hours; from 00:00 New York after the retention minus a day). 45-second
+// bars are the 15-second series merged, quarters (like years) the monthly series merged. The
+// database also evicts whole series (not
 // used for months, or over its size cap) with their coverage, and can be cleared; the service
 // then drops its in-memory copy of their coverage (watchEvictions), so they are fetched again,
 // and a load that read bars and coverage across the eviction does not trust that coverage.
 //
 // Newest bars, get(req):
 // - cold (the newest covered range does not reach the window start): the window is fetched;
-// - loaded within the TTL (30 s intraday, 5 min otherwise, but not across a session's open,
+// - loaded within the TTL (10 s for seconds bars, 30 s for other intraday bars, 5 min otherwise, but not across a session's open,
 //   close or settling) or settled (US bars loaded after the last close, until the next
 //   session): answered from the cache without asking IB;
 // - otherwise the tail since the second-newest stored bar is fetched and merged. When a whole
@@ -29,7 +31,11 @@
 // chunk back (endDateTime = the start of the covered range, on the bar grid; a duration sized to
 // about the missing bars), the answer is stored and claimed, and the page is read from the cache
 // again; at most MAX_PAGE_REQUESTS requests per call. done: the head timestamp (reqHeadTimestamp,
-// cached for a month) is reached, or IB has nothing and no head timestamp. Only IB's explicit
+// cached for a month) is reached, or IB has nothing and no head timestamp, or (limited) a page of
+// bars of 30 seconds or less would reach back beyond six months (IB's documented limit for them:
+// not enforced on every account, but paging that far is not worth IB's request budget). Seconds
+// windows ('N S') count session time at IB, so the newest window ends at the newest stored bar
+// rather than now (a weekend shows Friday's last half hour of 1-second bars). Only IB's explicit
 // "no data" answer counts as no head timestamp (remembered for a day); other errors (pacing,
 // permissions, a timeout) leave it unknown for HEAD_ERROR_MS, and paging goes on without it.
 //
@@ -48,15 +54,17 @@
 
 import { EventName, OUT_MSG_ID, type BarSizeSetting, type WhatToShow as IbWhatToShow } from '../ib/tws';
 import { contractKey, contractLabel } from '@shared/contract';
+import { isSmallBarSize, SECONDS_HISTORY_DAYS } from '@shared/timeframes';
 import type { Bar, ContractRef, HistoryPage, HistoryRequest } from '@shared/types';
 import type { HistoryService, MainContext } from '../context';
-import { INTRADAY_RETENTION_DAYS } from '../db/types';
+import { HOURS_RETENTION_DAYS, INTRADAY_RETENTION_DAYS, SECONDS_RETENTION_DAYS } from '../db/types';
 import { addRange, clipRanges, normalizeRanges, parseCoverage, rangeBefore, type Range, type SeriesCoverage } from './coverage';
 import { demoMarket } from './demo';
 import { toIbContract } from './ibContract';
 import { ibRequest, IbRequestError, isIbConnected, NOT_CONNECTED, TtlCache } from './ibRequest';
 import {
   aggregateBars,
+  BAR_SIZE_SEC,
   barsToDays,
   dedupePeriods,
   historyAdjusted,
@@ -64,6 +72,7 @@ import {
   historySpec,
   historyTtlMs,
   isTimeframe,
+  mergeIntraday,
   mergeTail,
   normalizeBars,
   overlapAdjusted,
@@ -76,9 +85,9 @@ import {
 } from './historyParams';
 import {
   alignUp,
-  barsPerUnit,
   claimStart,
   durationUnits,
+  expectedBars,
   headStamp,
   ibEndDateTime,
   intradayCoverageStart,
@@ -122,8 +131,14 @@ const HEAD_RETRY_MS = 86_400_000;
 /** A head timestamp request that failed otherwise (pacing, permissions, timeout) is not repeated for this long. */
 export const HEAD_ERROR_MS = 60_000;
 const MAX_MEMORY_DOCS = 500;
-/** Days of intraday bars the cache serves: the retention minus a day (the next maintenance may run at any time). */
-const INTRADAY_COVERAGE_DAYS = INTRADAY_RETENTION_DAYS - 1;
+/**
+ * Days of intraday bars the cache serves: the retention of the series' class minus a day (the
+ * next maintenance may run at any time).
+ */
+const COVERAGE_DAYS = { seconds: SECONDS_RETENTION_DAYS - 1, minutes: INTRADAY_RETENTION_DAYS - 1, hours: HOURS_RETENTION_DAYS - 1 } as const;
+const DAY_MS = 86_400_000;
+/** An 'N S' window (bars below a minute). */
+const isSecondsWindow = (duration: string) => /^\d+ S$/.test(duration.trim());
 
 const Priority = { Newest: 0, Refresh: 1, Page: 2 } as const;
 type Priority = (typeof Priority)[keyof typeof Priority];
@@ -507,9 +522,9 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     }
   };
 
-  /** Coverage the cache can answer from: intraday bars older than the retention may be gone. */
+  /** Coverage the cache can answer from: intraday bars older than their retention may be gone. */
   const usable = (spec: HistorySpec, ranges: Range[], nowMs: number): Range[] =>
-    spec.intraday ? clipRanges(ranges, intradayCoverageStart(nowMs, INTRADAY_COVERAGE_DAYS)) : ranges;
+    spec.retention === 'daily' ? ranges : clipRanges(ranges, intradayCoverageStart(nowMs, COVERAGE_DAYS[spec.retention], BAR_SIZE_SEC[spec.seriesBarSize]));
 
   /** Applies a change to a series' coverage (atomically against the in-memory copy) and persists it. */
   const updateCoverage = async (spec: HistorySpec, series: string, change: (c: SeriesCoverage) => SeriesCoverage): Promise<SeriesCoverage> => {
@@ -524,7 +539,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   const claim = (c: SeriesCoverage, range: [number, number] | undefined): Range[] => (range && range[0] < range[1] ? addRange(c.ranges, range) : c.ranges);
 
   const storeBars = (spec: HistorySpec, series: string, bars: Bar[]) => {
-    if (bars.length) void ctx.db?.bars.put(series, bars, { intraday: spec.intraday });
+    if (bars.length) void ctx.db?.bars.put(series, bars, { retention: spec.retention });
   };
 
   /** Stored bars of the series in [from, to), with stale stamps of re-stamped periods dropped. */
@@ -540,15 +555,35 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   };
 
   /** The timeframe's bars from the series' bars. */
-  const present = (spec: HistorySpec, bars: Bar[]): Bar[] => (spec.aggregate ? aggregateBars(bars, spec.aggregate) : bars);
+  const present = (spec: HistorySpec, bars: Bar[]): Bar[] =>
+    spec.aggregate ? aggregateBars(bars, spec.aggregate) : spec.mergeSec ? mergeIntraday(bars, spec.mergeSec) : bars;
 
   /**
    * First series time from which the presented bars of a covered range starting at `start` are
-   * complete: aggregated periods (weeks, months, years of a finer series) only from a period
-   * boundary, unless nothing older exists (`seriesStart`).
+   * complete: aggregated periods (weeks, months, quarters, years of a finer series) only from a
+   * period boundary, unless nothing older exists (`seriesStart`); merged buckets (45 s) always
+   * from a bucket boundary.
    */
-  const completeFrom = (spec: HistorySpec, start: number, seriesStart?: number): number =>
-    !spec.aggregate || (seriesStart !== undefined && start <= seriesStart) ? start : alignUp(start, spec.aggregate);
+  const completeFrom = (spec: HistorySpec, start: number, seriesStart?: number): number => {
+    // A window of small bars starts anywhere (IB counts session seconds), so the bucket holding
+    // its first bar is partial even where the series begins.
+    if (spec.mergeSec) return Math.ceil(start / spec.mergeSec) * spec.mergeSec;
+    if (seriesStart !== undefined && start <= seriesStart) return start;
+    if (spec.aggregate) return alignUp(start, spec.aggregate);
+    return start;
+  };
+
+  /** Start of the newest-bars window; 'N S' windows end at the newest stored bar (IB counts session time). */
+  const windowStartOf = async (spec: HistorySpec, series: string, nowMs: number): Promise<number> => {
+    if (!isSecondsWindow(spec.duration)) return windowStartSec(spec.duration, nowMs);
+    let last: number | undefined;
+    try {
+      last = await ctx.db?.bars.last(series);
+    } catch {
+      // read as a window ending now
+    }
+    return windowStartSec(spec.duration, nowMs, last);
+  };
 
   // ---------------------------------------------------------------------------
   // Newest bars
@@ -563,7 +598,9 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   /** The answer for the newest bars: the covered part of the window. */
   const newestAnswer = (spec: HistorySpec, bars: Bar[], c: SeriesCoverage, windowStart: number, nowMs: number): Bar[] => {
     const newest = usable(spec, c.ranges, nowMs).at(-1);
-    const windowFrom = spec.aggregate ? periodStart(windowStart, spec.aggregate) : windowStart;
+    // An 'N S' window counted from the newest bar (a full load may have brought newer ones).
+    if (isSecondsWindow(spec.duration) && bars.length) windowStart = Math.min(windowStart, windowStartSec(spec.duration, nowMs, bars[bars.length - 1].time));
+    const windowFrom = spec.aggregate ? periodStart(windowStart, spec.aggregate) : spec.mergeSec ? completeFrom(spec, windowStart) : windowStart;
     const from = newest ? Math.max(completeFrom(spec, newest[0], c.first), windowFrom) : windowFrom;
     return present(
       spec,
@@ -573,7 +610,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
 
   const loadNewest = async (job: Job<Bar[]>, req: HistoryRequest, spec: HistorySpec, fresh: boolean): Promise<Bar[]> => {
     const now = Date.now();
-    const windowStart = windowStartSec(spec.duration, now);
+    const windowStart = await windowStartOf(spec, job.series, now);
     const readFrom = spec.aggregate ? periodStart(windowStart, spec.aggregate) : windowStart;
     const read = await pairedRead(job.series, () => Promise.all([readBars(spec, job.series, readFrom), coverageOf(job.series)]));
     job.abort.signal.throwIfAborted();
@@ -582,7 +619,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     const cov: SeriesCoverage = read.evicted ? { ranges: [] } : read.value[1];
     const ranges = usable(spec, cov.ranges, now);
     const ttlMs = cov.fetchedAt !== undefined && !stillCurrent(req, spec, cov.fetchedAt, now) ? 0 : historyTtlMs(req.timeframe);
-    const plan = planFetch({ spec, contract: req.contract, coverage: { ...cov, ranges }, stored, nowMs: now, ttlMs, fresh });
+    const plan = planFetch({ spec, contract: req.contract, coverage: { ...cov, ranges }, stored, nowMs: now, ttlMs, fresh, windowStart });
     if (plan.kind === 'none') return newestAnswer(spec, stored, cov, windowStart, now);
     if (!isIbConnected(ctx)) {
       // Offline: what is stored is better than nothing.
@@ -684,6 +721,8 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     let fetched: Bar[] = [];
     let claimed: Range[] = [];
     const period = seriesPeriod(spec.seriesBarSize);
+    // IB's small bars (30 s or less) are paged back six months at most.
+    const sixMonths = isSmallBarSize(BAR_SIZE_SEC[spec.seriesBarSize] ?? Infinity) ? Math.floor((Date.now() - SECONDS_HISTORY_DAYS * DAY_MS) / 1000) : undefined;
     for (let requests = 0; ; ) {
       const read = await pairedRead(job.series, async () => {
         const cov = await coverageOf(job.series);
@@ -708,6 +747,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
       const bars = present(spec, series).filter((b) => b.time < before);
       if (bars.length >= limit) return { bars: bars.slice(bars.length - limit), done: false };
       if (complete) return { bars, done: true };
+      if (sixMonths !== undefined && start <= sixMonths) return { bars, done: true, limited: true };
       if (requests >= MAX_PAGE_REQUESTS) return { bars, done: false };
       if (!isIbConnected(ctx)) {
         if (bars.length) return { bars, done: false };
@@ -724,7 +764,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
       const older = (await fetchBars(job, spec, req.contract, duration, ibEndDateTime(pageEnd(start, spec)), Priority.Page)).filter((b) => b.time < start);
       requests++;
       // An empty answer doubles the next request; a thin one scales it to what the series has.
-      const seen = older.length / (durationUnits(duration) * barsPerUnit(spec));
+      const seen = older.length / Math.max(1, expectedBars(spec, duration));
       remember(densities, job.series, Math.max(MIN_DENSITY, Math.min(1, older.length ? seen : density / 2)));
       storeBars(spec, job.series, older);
       fetched = normalizeBars([...older, ...fetched]);
@@ -863,7 +903,11 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     async get(req: HistoryRequest): Promise<Bar[]> {
       if (!validRequest(req)) throw new Error('Invalid history request');
       if (ctx.demo) {
-        return demoMarket().bars(req.contract, req.timeframe, { outsideRth: req.outsideRth, whatToShow: req.whatToShow });
+        const bars = demoMarket().bars(req.contract, req.timeframe, { outsideRth: req.outsideRth, whatToShow: req.whatToShow });
+        // Seconds charts open with their window, as from IB; older bars come as pages.
+        const spec = historySpec(req);
+        if (!isSecondsWindow(spec.duration)) return bars;
+        return bars.slice(-Math.ceil(durationUnits(spec.duration) / (spec.mergeSec ?? BAR_SIZE_SEC[spec.barSize] ?? 1)));
       }
       const ckey = contractKey(req.contract);
       const key = historyKey(req, ckey);

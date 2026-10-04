@@ -150,7 +150,7 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
       get: (series, fromTime, toTime) => call('bars.get', [series, fromTime ?? null, toTime ?? null], (m) => m.bars.get(series, fromTime, toTime), unpackBars),
       put: (series, bars, opts) => {
         const packed = packBars(bars);
-        return call('bars.put', [series, packed, opts?.intraday ?? null], (m) => m.bars.put(series, bars, opts), undefined, [packed.buffer as ArrayBuffer]);
+        return call('bars.put', [series, packed, opts?.retention ?? null], (m) => m.bars.put(series, bars, opts), undefined, [packed.buffer as ArrayBuffer]);
       },
       last: (series) => call('bars.last', [series], (m) => m.bars.last(series), (t) => t ?? undefined),
     },

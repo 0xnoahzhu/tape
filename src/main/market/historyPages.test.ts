@@ -7,6 +7,7 @@ import {
   barsPerUnit,
   claimStart,
   durationUnits,
+  expectedBars,
   headStamp,
   ibEndDateTime,
   intradayCoverageStart,
@@ -41,6 +42,12 @@ describe('periods', () => {
     expect(alignUp(d('20240101'), 'week')).toBe(d('20240101'));
     expect(alignUp(d('20240102'), 'week')).toBe(d('20240108'));
     expect(alignUp(1234, 'intraday')).toBe(1234);
+    // Quarters start in January, April, July and October.
+    expect(periodStart(d('20260815'), 'quarter')).toBe(d('20260701'));
+    expect(periodStart(d('20261231'), 'quarter')).toBe(d('20261001'));
+    expect(nextPeriodStart(d('20261115'), 'quarter')).toBe(d('20270101'));
+    expect(alignUp(d('20260402'), 'quarter')).toBe(d('20260701'));
+    expect(alignUp(d('20260401'), 'quarter')).toBe(d('20260401'));
   });
 
   it('ends a page where the period of the oldest bar begins', () => {
@@ -51,6 +58,10 @@ describe('periods', () => {
     expect(pageBound(d('20240105'), spec({ timeframe: '1W' }))).toBe(d('20240101'));
     expect(pageBound(d('20230131'), spec({ timeframe: '1M' }))).toBe(d('20230101'));
     expect(pageBound(d('20230101'), spec({ timeframe: '1Y' }))).toBe(d('20230101'));
+    expect(presentedPeriod(spec({ timeframe: '1Q' }))).toBe('quarter');
+    expect(pageBound(d('20260701'), spec({ timeframe: '1Q' }))).toBe(d('20260701'));
+    // 45-second bars are buckets of the 15-second series: a page ends at the oldest bucket.
+    expect(pageBound(ny('2026-09-30', '10:00'), spec({ timeframe: '45s', outsideRth: true }))).toBe(ny('2026-09-30', '10:00'));
     // Option weeks are built from days and stamped with their last day.
     const optWeek = historySpec({ contract: call, timeframe: '1W' });
     expect(presentedPeriod(optWeek)).toBe('week');
@@ -65,6 +76,9 @@ describe('periods', () => {
     expect(pageEnd(ny('2026-09-30', '13:00') + 1, spec({ timeframe: '1m' }))).toBe(ny('2026-09-30', '13:01'));
     // The regular-hours 09:30 bar of "1 hour" ends at 10:00, on the hour.
     expect(pageEnd(ny('2026-09-30', '09:45'), spec({ timeframe: '1h' }))).toBe(ny('2026-09-30', '10:00'));
+    // Seconds on their grid; 2-hour bars on the UTC grid (in winter 03:00, 05:00 … New York).
+    expect(pageEnd(ny('2026-09-30', '10:00') + 7, spec({ timeframe: '45s', outsideRth: true }))).toBe(ny('2026-09-30', '10:00') + 15);
+    expect(pageEnd(ny('2026-01-16', '04:00', '-05:00'), spec({ timeframe: '2h', outsideRth: true }))).toBe(ny('2026-01-16', '05:00', '-05:00'));
     // Daily and longer series are date stamps; their pages end where the coverage starts.
     expect(pageEnd(d('20240105'), spec({ timeframe: '1D' }))).toBe(d('20240105'));
   });
@@ -75,6 +89,11 @@ describe('periods', () => {
     expect(intradayCoverageStart(Date.parse('2026-10-02T00:00:00-04:00'), 29)).toBe(ny('2026-09-04'));
     // Across the change to standard time.
     expect(intradayCoverageStart(Date.parse('2026-11-20T12:00:00-05:00'), 29)).toBe(ny('2026-10-23'));
+    // Seconds keep 3 days; hours 399.
+    expect(intradayCoverageStart(Date.parse('2026-10-05T10:00:00-04:00'), 3, 1)).toBe(ny('2026-10-03'));
+    expect(intradayCoverageStart(Date.parse('2026-10-05T10:00:00-04:00'), 399, 3600)).toBe(ny('2025-09-02'));
+    // Midnight New York in winter (05:00 UTC) is not on the UTC grid of 2-hour bars: moved down to 04:00 UTC.
+    expect(intradayCoverageStart(Date.parse('2026-01-20T12:00:00-05:00'), 3, 7200)).toBe(ny('2026-01-18', '00:00', '-05:00') - 3600);
   });
 
   it('formats endDateTime in UTC and dates head timestamps', () => {
@@ -94,7 +113,9 @@ describe('page durations', () => {
     expect(pageDuration(spec({ timeframe: '1m' }), 5000)).toBe('5 D');
     expect(pageDuration(ext('5m'), 300)).toBe('2 D');
     expect(pageDuration(ext('1h'), 300)).toBe('19 D');
-    expect(pageDuration(ext('1h'), 1000)).toBe('20 D');
+    // Longer pages of hour bars ask for months, then years (about 2,000 bars at most).
+    expect(pageDuration(ext('1h'), 1000)).toBe('3 M');
+    expect(pageDuration(ext('1h'), 5000)).toBe('6 M');
     expect(pageDuration(spec({ timeframe: '1D' }), 100)).toBe('1 Y');
     expect(pageDuration(spec({ timeframe: '1D' }), 300)).toBe('2 Y');
     expect(pageDuration(spec({ timeframe: '1W' }), 300)).toBe('6 Y');
@@ -106,6 +127,45 @@ describe('page durations', () => {
     // Options: days from 8-hour bars; a week of days per presented week.
     expect(pageDuration(historySpec({ contract: call, timeframe: '1D' }), 300)).toBe('2 Y');
     expect(pageDuration(historySpec({ contract: call, timeframe: '1W' }), 40)).toBe('1 Y');
+  });
+
+  it('pages the new intervals within IB step limits (seconds in session seconds)', () => {
+    const ext = (timeframe: HistoryRequest['timeframe']) => spec({ timeframe, outsideRth: true });
+    // 1 secs: IB refuses more than 2000 S ("invalid step: 1", checked live).
+    expect(pageDuration(ext('1s'), 300)).toBe('300 S');
+    expect(pageDuration(ext('1s'), 5000)).toBe('1800 S');
+    expect(pageDuration(ext('5s'), 300)).toBe('1500 S');
+    expect(pageDuration(ext('5s'), 5000)).toBe('7200 S');
+    expect(pageDuration(ext('10s'), 5000)).toBe('28800 S');
+    expect(pageDuration(ext('15s'), 1920)).toBe('28800 S');
+    expect(pageDuration(ext('30s'), 1920)).toBe('57600 S');
+    // 45 s: three 15-second bars per presented bar.
+    expect(pageDuration(ext('45s'), 300)).toBe('13500 S');
+    expect(pageDuration(ext('45s'), 1000)).toBe('28800 S');
+    // Sparse series ask for longer spans, within the step limit.
+    expect(pageDuration(ext('5s'), 300, 0.5)).toBe('3000 S');
+    expect(pageDuration(ext('3m'), 300)).toBe('1 D');
+    expect(pageDuration(ext('3m'), 5000)).toBe('10 D');
+    expect(pageDuration(ext('10m'), 5000)).toBe('20 D');
+    expect(pageDuration(ext('15m'), 300)).toBe('5 D');
+    expect(pageDuration(ext('30m'), 300)).toBe('10 D');
+    expect(pageDuration(ext('30m'), 5000)).toBe('3 M');
+    expect(pageDuration(ext('2h'), 5000)).toBe('1 Y');
+    expect(pageDuration(ext('3h'), 300)).toBe('3 M');
+    expect(pageDuration(ext('4h'), 5000)).toBe('2 Y');
+    // Quarters ask for three months each.
+    expect(pageDuration(spec({ timeframe: '1Q' }), 20)).toBe('5 Y');
+  });
+
+  it('expects bars per duration (densities of sparse series compare against it)', () => {
+    const ext = (timeframe: HistoryRequest['timeframe']) => spec({ timeframe, outsideRth: true });
+    expect(expectedBars(ext('1s'), '1800 S')).toBe(1800);
+    expect(expectedBars(ext('5s'), '3600 S')).toBe(720);
+    expect(expectedBars(ext('1m'), '2 D')).toBe(1920);
+    expect(expectedBars(spec({ timeframe: '1m' }), '2 D')).toBe(780);
+    expect(expectedBars(ext('1h'), '6 M')).toBe(6 * 21 * 16);
+    expect(expectedBars(ext('4h'), '2 Y')).toBe(2 * 252 * 4);
+    expect(expectedBars(spec({ timeframe: '1D' }), '2 Y')).toBe(504);
   });
 
   it('asks for longer spans of sparse series', () => {
@@ -226,6 +286,14 @@ describe('staleness of the newest bars', () => {
     expect(newestBarsStale('1m', ms(ny('2026-09-30', '10:00') + 30), ms(ny('2026-09-30', '10:01') + 5))).toBe(true);
     expect(newestBarsStale('5m', ms(ny('2026-09-30', '10:01')), ms(ny('2026-09-30', '10:04')))).toBe(false);
     expect(newestBarsStale('5m', ms(ny('2026-09-30', '10:01')), ms(ny('2026-09-30', '10:05')))).toBe(true);
+    // Seconds and merged 45-second buckets.
+    expect(newestBarsStale('1s', ms(ny('2026-09-30', '10:00') + 1.2), ms(ny('2026-09-30', '10:00') + 1.9))).toBe(false);
+    expect(newestBarsStale('1s', ms(ny('2026-09-30', '10:00') + 1.2), ms(ny('2026-09-30', '10:00') + 2))).toBe(true);
+    expect(newestBarsStale('45s', ms(ny('2026-09-30', '10:00') + 1), ms(ny('2026-09-30', '10:00') + 44))).toBe(false);
+    expect(newestBarsStale('45s', ms(ny('2026-09-30', '10:00') + 1), ms(ny('2026-09-30', '10:00') + 45))).toBe(true);
+    // 2-hour bars on the UTC grid: 10:00 New York in summer is 14:00 UTC.
+    expect(newestBarsStale('2h', ms(ny('2026-09-30', '08:30')), ms(ny('2026-09-30', '09:59')))).toBe(false);
+    expect(newestBarsStale('2h', ms(ny('2026-09-30', '08:30')), ms(ny('2026-09-30', '10:00')))).toBe(true);
   });
 
   it('daily: a new session has opened; weekly / monthly: in a new period', () => {
@@ -238,6 +306,9 @@ describe('staleness of the newest bars', () => {
     expect(newestBarsStale('1W', at('2026-09-28', '14:00'), at('2026-10-05', '10:00'))).toBe(true);
     expect(newestBarsStale('1M', at('2026-09-30', '14:00'), at('2026-10-01', '10:00'))).toBe(true);
     expect(newestBarsStale('1Y', at('2026-09-30', '14:00'), at('2026-10-01', '10:00'))).toBe(false);
+    // A new quarter began on October 1st.
+    expect(newestBarsStale('1Q', at('2026-09-30', '14:00'), at('2026-10-01', '10:00'))).toBe(true);
+    expect(newestBarsStale('1Q', at('2026-10-01', '14:00'), at('2026-10-02', '10:00'))).toBe(false);
   });
 
   it('daily and longer: the session has closed or settled since the load', () => {

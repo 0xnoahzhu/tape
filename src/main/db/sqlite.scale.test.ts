@@ -42,7 +42,7 @@ describe('SQLite at scale', () => {
     const insertStart = performance.now();
     for (let s = 0; s < SERIES; s += SERIES_PER_TRANSACTION) {
       store.transaction(() => {
-        for (let k = s; k < s + SERIES_PER_TRANSACTION; k++) store.barsPut(series(k), bars, true);
+        for (let k = s; k < s + SERIES_PER_TRANSACTION; k++) store.barsPut(series(k), bars, 'minutes');
       });
     }
     const insertMs = performance.now() - insertStart;

@@ -6,6 +6,7 @@
 // Nothing here talks to IB.
 
 import { contractKey } from '@shared/contract';
+import { isIntraday } from '@shared/timeframes';
 import type {
   Bar,
   ContractInfo,
@@ -19,7 +20,7 @@ import type {
   Timeframe,
 } from '@shared/types';
 import { blackScholes, smileVol } from './blackScholes';
-import { aggregateYears } from './historyParams';
+import { aggregateQuarters, aggregateYears, mergeIntraday } from './historyParams';
 import {
   addDays,
   type CalendarDay,
@@ -35,6 +36,30 @@ import {
   weekday,
   yyyymmdd,
 } from './nyTime';
+
+/**
+ * Demo intraday series: the bar size each interval is built from (45 s from 15-second bars) and
+ * the sessions generated (seconds bars only the latest one: 57,600 one-second bars of extended
+ * hours).
+ */
+const DEMO_INTRADAY: Partial<Record<Timeframe, { barSec: number; sessions: number }>> = {
+  '1s': { barSec: 1, sessions: 1 },
+  '5s': { barSec: 5, sessions: 1 },
+  '10s': { barSec: 10, sessions: 2 },
+  '15s': { barSec: 15, sessions: 2 },
+  '30s': { barSec: 30, sessions: 3 },
+  '45s': { barSec: 15, sessions: 2 },
+  '1m': { barSec: 60, sessions: 2 },
+  '3m': { barSec: 180, sessions: 5 },
+  '5m': { barSec: 300, sessions: 10 },
+  '10m': { barSec: 600, sessions: 15 },
+  '15m': { barSec: 900, sessions: 20 },
+  '30m': { barSec: 1800, sessions: 30 },
+  '1h': { barSec: 3600, sessions: 70 },
+  '2h': { barSec: 7200, sessions: 80 },
+  '3h': { barSec: 10_800, sessions: 80 },
+  '4h': { barSec: 14_400, sessions: 120 },
+};
 
 /** Interval between simulated ticks. */
 export const DEMO_TICK_MS = 900;
@@ -453,24 +478,25 @@ export class DemoMarket {
     if (opts.whatToShow === 'OPTION_IMPLIED_VOLATILITY' || opts.whatToShow === 'HISTORICAL_VOLATILITY') {
       const inst = this.instrument(c.symbol);
       const target = opts.whatToShow === 'HISTORICAL_VOLATILITY' ? inst.histVol : smileVol(inst.vol, 1, 1, 30);
-      const days = timeframe === '1m' || timeframe === '5m' || timeframe === '1h' ? 252 : 504;
+      const days = isIntraday(timeframe) ? 252 : 504;
       return volatilityBars(c.symbol + opts.whatToShow, target, days, now);
     }
+    const intraday = DEMO_INTRADAY[timeframe];
+    if (intraday) {
+      const bars = intradayBars(series, intraday.barSec, intraday.sessions, now, !!opts.outsideRth);
+      return timeframe === '45s' ? mergeIntraday(bars, 45) : bars;
+    }
     switch (timeframe) {
-      case '1m':
-        return intradayBars(series, 1, 2, now, !!opts.outsideRth);
-      case '5m':
-        return intradayBars(series, 5, 10, now, !!opts.outsideRth);
-      case '1h':
-        return intradayBars(series, 60, 42, now, !!opts.outsideRth);
-      case '1D':
-        return dailyBars(series, 504, now);
       case '1W':
         return periodBars(series, 'week', 522, now);
       case '1M':
         return periodBars(series, 'month', 240, now);
+      case '1Q':
+        return aggregateQuarters(periodBars(series, 'month', 240, now));
       case '1Y':
         return aggregateYears(periodBars(series, 'month', 240, now));
+      default:
+        return dailyBars(series, 504, now);
     }
   }
 
@@ -576,19 +602,21 @@ function makeBar(time: number, open: number, close: number, wick: number, volume
   return { time, open: round(open, decimals), high: round(high, decimals), low: round(low, decimals), close: round(close, decimals), volume: Math.max(0, Math.round(volume)) };
 }
 
-/** Session minutes at which bars start, for the given bar size. */
-function barStarts(minutes: number, outsideRth: boolean): number[] {
-  const from = outsideRth ? 240 : RTH_OPEN;
-  const to = outsideRth ? 1200 : RTH_CLOSE;
-  const out: number[] = [];
-  if (minutes === 60 && !outsideRth) {
-    out.push(RTH_OPEN);
-    for (let m = 600; m < to; m += 60) out.push(m);
-    return out;
-  }
-  for (let m = from; m < to; m += minutes) out.push(m);
+/**
+ * Starts (unix s) of the bars of `barSec` in one session: the open, then the epoch grid up to the
+ * close, as IB stamps them (the regular-hours 1-hour bars start with a 09:30 stub, 2 to 4-hour
+ * bars on the UTC grid with a partial bar at the open).
+ */
+export function sessionBarStarts(day: CalendarDay, barSec: number, outsideRth: boolean): number[] {
+  const open = nyWallToEpochMs(day, outsideRth ? EXT_OPEN : RTH_OPEN) / 1000;
+  const close = nyWallToEpochMs(day, outsideRth ? EXT_CLOSE : RTH_CLOSE) / 1000;
+  const out = [open];
+  for (let t = Math.floor(open / barSec) * barSec + barSec; t < close; t += barSec) out.push(t);
   return out;
 }
+
+const EXT_OPEN = 240;
+const EXT_CLOSE = 1200;
 
 /** Relative intraday volume: higher at the open and the close. */
 const volumeShape = (m: number) => {
@@ -597,57 +625,86 @@ const volumeShape = (m: number) => {
   return 0.6 + 2.2 * (x - 0.5) ** 2 * 4;
 };
 
-function intradayBars(s: Series, minutes: number, sessions: number, now: number, outsideRth: boolean): Bar[] {
+/**
+ * Trades per second (regular / extended hours) for bars below a minute: like IB's, a bucket
+ * without trades is a flat bar at the previous close with no volume.
+ */
+const TRADES_PER_SEC = { rth: 0.9, ext: 0.03 };
+
+/** Intraday bars of `barSec` over the last `sessions` sessions, ending at the current price. */
+function intradayBars(s: Series, barSec: number, sessions: number, now: number, outsideRth: boolean): Bar[] {
   const latest = latestSession(now);
+  const nowSec = now / 1000;
   const days: CalendarDay[] = [latest.day];
   while (days.length < sessions) days.push(previousWeekday(days[days.length - 1]));
   days.reverse();
-  const starts = barStarts(minutes, outsideRth);
+  const minutes = barSec / 60;
   const sigma = s.vol * Math.sqrt(minutes / (252 * 390));
   const wick = sigma * 0.6;
   const volPerMinute = s.avgVolume / 390;
-  const rng = new Rng(hashString(`${s.seed}:${minutes}:${outsideRth ? 1 : 0}:${yyyymmdd(latest.day)}`));
+  const rng = new Rng(hashString(`${s.seed}:${barSec}:${outsideRth ? 1 : 0}:${yyyymmdd(latest.day)}`));
+  // New York midnight once per day (a 1-second series has 57,600 bars a session; the time zone
+  // lookup per bar took about half a second).
+  const midnights = new Map<CalendarDay, number>();
+  const midnightOf = (day: CalendarDay) => {
+    let t = midnights.get(day);
+    if (t === undefined) midnights.set(day, (t = nyWallToEpochMs(day, 0) / 1000));
+    return t;
+  };
+  const minuteOf = (day: CalendarDay, t: number) => (t - midnightOf(day)) / 60;
+  const regular = (m: number) => m >= RTH_OPEN && m < RTH_CLOSE;
+  /** Whether a bucket below a minute had trades (always for minute and longer bars). */
+  const traded = (m: number) => barSec >= 60 || rng.next() < 1 - Math.exp(-barSec * (regular(m) ? TRADES_PER_SEC.rth : TRADES_PER_SEC.ext));
+  const volume = (m: number) => (s.hasVolume ? volPerMinute * minutes * volumeShape(m) * Math.exp(0.35 * rng.normal()) : 0);
 
-  // Today's bars bridge from the session open to the current price.
-  const nowMinutes = latest.live ? RTH_OPEN + latest.elapsed : Number.POSITIVE_INFINITY;
-  const todayStarts = starts.filter((m) => m < nowMinutes);
-  const todayRegular = todayStarts.filter((m) => m >= RTH_OPEN && m < RTH_CLOSE);
+  // Today's bars (up to now) bridge from the session open to the current price.
+  const todayStarts = sessionBarStarts(latest.day, barSec, outsideRth).filter((t) => t <= nowSec);
+  const todayRegular = todayStarts.filter((t) => regular(minuteOf(latest.day, t)));
   const steps = todayRegular.map(() => rng.normal() * sigma);
   const walk: number[] = [];
   steps.reduce((acc, z, i) => (walk[i] = acc + z), 0);
   const target = Math.log(s.price / s.open);
   const n = walk.length;
   const todayCloses = new Map<number, number>();
-  todayRegular.forEach((m, i) => todayCloses.set(m, s.open * Math.exp(walk[i] + ((i + 1) / n) * (target - walk[n - 1]))));
+  todayRegular.forEach((t, i) => todayCloses.set(t, s.open * Math.exp(walk[i] + ((i + 1) / n) * (target - walk[n - 1]))));
 
   // Earlier sessions walk backwards from the previous close.
-  const earlier: Array<{ day: CalendarDay; m: number }> = [];
-  for (const day of days.slice(0, -1)) for (const m of starts) earlier.push({ day, m });
+  const earlier: Array<{ day: CalendarDay; t: number; m: number; first: boolean; trades: boolean }> = [];
+  for (const day of days.slice(0, -1)) {
+    sessionBarStarts(day, barSec, outsideRth).forEach((t, i) => {
+      const m = minuteOf(day, t);
+      earlier.push({ day, t, m, first: i === 0, trades: traded(m) });
+    });
+  }
   const closes: number[] = new Array(earlier.length);
   let c = s.prevClose;
   for (let i = earlier.length - 1; i >= 0; i--) {
     closes[i] = c;
-    c = c / Math.exp(rng.normal() * sigma * (earlier[i].m < RTH_OPEN || earlier[i].m >= RTH_CLOSE ? 0.5 : 1));
+    if (earlier[i].trades) c = c / Math.exp(rng.normal() * sigma * (regular(earlier[i].m) ? 1 : 0.5));
   }
 
   const bars: Bar[] = [];
+  const flat = (time: number, price: number): Bar => ({ time, open: round(price, s.decimals), high: round(price, s.decimals), low: round(price, s.decimals), close: round(price, s.decimals), volume: 0 });
   let prev = c;
-  earlier.forEach(({ day, m }, i) => {
-    const open = m === starts[0] ? prev * Math.exp(rng.normal() * sigma * 2) : prev;
-    const vol = s.hasVolume ? volPerMinute * minutes * volumeShape(m) * Math.exp(0.35 * rng.normal()) : 0;
-    bars.push(makeBar(nyWallToEpochMs(day, m) / 1000, open, closes[i], wick, vol, s.decimals, rng));
+  earlier.forEach(({ t, m, first, trades }, i) => {
+    if (!trades) bars.push(flat(t, prev));
+    else bars.push(makeBar(t, first ? prev * Math.exp(rng.normal() * sigma * 2) : prev, closes[i], wick, volume(m), s.decimals, rng));
     prev = closes[i];
   });
   // Extended-hours bars of the current day before the open drift from the previous close to the open.
   let last = s.prevClose;
-  for (const m of todayStarts) {
+  for (const t of todayStarts) {
+    const m = minuteOf(latest.day, t);
+    if (!traded(m)) {
+      bars.push(flat(t, last));
+      continue;
+    }
     let close: number;
-    if (m < RTH_OPEN) close = s.prevClose + ((s.open - s.prevClose) * (m - 240 + minutes)) / (RTH_OPEN - 240);
+    if (m < RTH_OPEN) close = s.prevClose + ((s.open - s.prevClose) * (m - EXT_OPEN + minutes)) / (RTH_OPEN - EXT_OPEN);
     else if (m >= RTH_CLOSE) close = s.price * Math.exp(rng.normal() * sigma * 0.3);
-    else close = todayCloses.get(m) ?? s.price;
+    else close = todayCloses.get(t) ?? s.price;
     const open = m === RTH_OPEN ? s.open : last;
-    const vol = s.hasVolume ? volPerMinute * minutes * volumeShape(m) * Math.exp(0.35 * rng.normal()) : 0;
-    bars.push(makeBar(nyWallToEpochMs(latest.day, m) / 1000, open, close, wick, vol, s.decimals, rng));
+    bars.push(makeBar(t, open, close, wick, volume(m), s.decimals, rng));
     last = close;
   }
   // The live bar closes at the current price.

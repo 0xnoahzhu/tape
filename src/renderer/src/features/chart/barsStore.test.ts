@@ -4,8 +4,11 @@ import {
   barsKey,
   CHART_SLOT,
   loadBars,
+  barsTtl,
   loadOlder,
+  MAX_OLDER_PAGE,
   OLDER_PAGE,
+  olderPageSize,
   OLDER_RETRY_MAX_MS,
   OLDER_RETRY_MS,
   olderRetryDelay,
@@ -77,6 +80,26 @@ describe('loadOlder', () => {
     expect(entry().bars).toHaveLength(400);
     expect(entry().bars[0].time).toBe(day(200).time);
     expect(entry().older).toEqual({ status: 'idle' });
+  });
+
+  it("stops at IB's six-month limit of seconds bars, remembering why", async () => {
+    await loadWindow(days(500, 100));
+    getOlderBars.mockResolvedValueOnce({ bars: days(450, 50), done: true, limited: true });
+    await loadOlder(AAPL, '1D');
+    expect(entry().older).toEqual({ status: 'done', limited: true });
+    await loadOlder(AAPL, '1D');
+    expect(getOlderBars).toHaveBeenCalledTimes(1);
+  });
+
+  it('sizes pages per interval (seconds at about one IB request) and as asked by a range, within the service limit', async () => {
+    expect([olderPageSize('1s'), olderPageSize('5s'), olderPageSize('30s'), olderPageSize('45s'), olderPageSize('1m'), olderPageSize('1D')]).toEqual([1800, 1440, 1920, 640, OLDER_PAGE, OLDER_PAGE]);
+    expect([barsTtl('1s'), barsTtl('1m'), barsTtl('1Q')]).toEqual([30_000, 60_000, 900_000]);
+    await loadWindow(days(500, 100));
+    getOlderBars.mockResolvedValueOnce({ bars: days(400, 100), done: false });
+    await loadOlder(AAPL, '1D', 777.4);
+    getOlderBars.mockResolvedValueOnce({ bars: days(300, 100), done: false });
+    await loadOlder(AAPL, '1D', 1e9);
+    expect(getOlderBars.mock.calls.map((c) => c[2])).toEqual([777, MAX_OLDER_PAGE]);
   });
 
   it('stops once IB has no older bars', async () => {
@@ -206,6 +229,28 @@ describe('loadBars', () => {
     expect(entry().bars).toHaveLength(401);
     expect(entry().bars[0].time).toBe(day(200).time);
     expect(entry().older).toEqual({ status: 'done' });
+  });
+
+  it('replaces a sliding seconds window on reload unless older pages were loaded in front of it', async () => {
+    const S0 = Date.UTC(2026, 9, 5, 14) / 1000;
+    const secs = (from: number, n: number): Bar[] => Array.from({ length: n }, (_, k) => ({ time: S0 + from + k, open: 1, high: 1, low: 1, close: 1, volume: 1 }));
+    const key = barsKey(AAPL, '1s');
+    // 120 reloads of a 1800-bar window sliding a minute each: the entry stays at the window.
+    for (let i = 0; i < 120; i++) {
+      getHistory.mockResolvedValueOnce(secs(i * 60, 1800));
+      await loadBars(AAPL, '1s', true, CHART_SLOT);
+    }
+    expect(useBarsStore.getState().entries[key].bars).toHaveLength(1800);
+    expect(useBarsStore.getState().entries[key].bars[0].time).toBe(S0 + 119 * 60);
+    // After a page was loaded the reload keeps it (and what lies between) in front of the window.
+    const start = S0 + 119 * 60;
+    getOlderBars.mockResolvedValueOnce({ bars: secs(119 * 60 - 1800, 1800), done: false });
+    await loadOlder(AAPL, '1s');
+    getHistory.mockResolvedValueOnce(secs(120 * 60, 1800));
+    await loadBars(AAPL, '1s', true, CHART_SLOT);
+    const bars = useBarsStore.getState().entries[key].bars;
+    expect(bars[0].time).toBe(start - 1800);
+    expect(bars).toHaveLength(1800 + 60 + 1800);
   });
 
   it('treats a superseded request as no result, not as an error', async () => {

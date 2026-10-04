@@ -12,7 +12,8 @@
 // they never widen the price range. Coming within a screen of the oldest loaded bar asks for
 // older bars (onNeedOlder), and asks again when a refused or empty page's wait is over, also
 // while the view stays put at the oldest bar; the view is anchored to bar times, so bars added
-// in front do not move it.
+// in front do not move it. A range (`fit`) shows the bars from its start to the newest until the
+// user pans, zooms or returns to the latest bars (onLeaveFit), which start from the fitted view.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Bar, Timeframe } from '@shared/types';
@@ -23,6 +24,7 @@ import {
   axisPrice,
   buildChart,
   clearOfTag,
+  fitView,
   formatBarTime,
   labelWidth,
   LAST_TAG_H,
@@ -85,6 +87,13 @@ interface Props {
   onNeedOlder?(): void;
   /** Hovered bar, or null when the pointer leaves. */
   onHover(bar: Bar | null): void;
+  /**
+   * A range: the view shows the bars from `from` (unix s; null: all) to the newest, whatever
+   * the pan / zoom state, until onLeaveFit. `key` identifies the range and series.
+   */
+  fit?: { key: string; from: number | null } | null;
+  /** The user panned, zoomed or reset the view while a range was fitted. */
+  onLeaveFit?(): void;
 }
 
 interface Point {
@@ -155,6 +164,8 @@ const extremeTag: CSSProperties = {
 const VOL_H = 52;
 const VOL_GAP = 6;
 const TIME_AXIS_H = 20;
+/** Width of the price axis right of the plot (px). */
+export const PRICE_AXIS_W = 76;
 /** Horizontal padding of the crosshair chips (crossTag). */
 const CHIP_PAD = 6;
 /** Space kept between the crosshair's time chip and the time labels beside it. */
@@ -179,6 +190,8 @@ export const PriceChart = memo(function PriceChart({
   older,
   onNeedOlder,
   onHover,
+  fit,
+  onLeaveFit,
 }: Props) {
   const lang = useLang();
   const m = useChartMessages();
@@ -196,11 +209,17 @@ export const PriceChart = memo(function PriceChart({
   const ptRef = useRef(pt);
   const frameRef = useRef(0);
   const live = useRef({ bars, count, w: size.w });
+  // The fitted view of a range, while one is shown (the view state is not used meanwhile).
+  const fitKey = fit?.key;
+  const fitFrom = fit?.from;
+  const fitted = useMemo(() => (fitKey !== undefined ? fitView(bars, fitFrom ?? null) : null), [fitKey, fitFrom, bars]);
+  const fitRef = useRef<{ view: ChartView | null; leave?: () => void }>({ view: null });
   const rectRef = useRef<DOMRect | null>(null);
   const dragRef = useRef<{ id: number; x: number } | null>(null);
   const hoverRef = useRef(false);
   useLayoutEffect(() => {
     live.current = { bars, count, w: size.w };
+    fitRef.current = { view: fitted, leave: onLeaveFit };
   });
   useLayoutEffect(() => {
     viewRef.current = view;
@@ -229,6 +248,16 @@ export const PriceChart = memo(function PriceChart({
   const update = (fn: (v: ChartView, bars: Bar[], count: number) => ChartView) => {
     const { bars: b, count: c } = live.current;
     if (!b.length) return;
+    const fit = fitRef.current;
+    if (fit.view) {
+      // Leaving a range: the gesture starts from the fitted view, which becomes the view now
+      // (in the same render as the range ends, so nothing jumps).
+      viewRef.current = fn(fit.view, b, c);
+      fitRef.current = { view: null };
+      setView(viewRef.current);
+      fit.leave?.();
+      return;
+    }
     viewRef.current = fn(viewRef.current, b, c);
     commit();
   };
@@ -366,9 +395,10 @@ export const PriceChart = memo(function PriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [timeframe, timeZone, bars.length, firstTime, lastTime],
   );
+  const shownView = fitted ?? view;
   const geo = useMemo(
-    () => buildChart(bars, { count, view, mas: maSeries, include: [lastPrice], topClear }),
-    [bars, count, view, maSeries, lastPrice, topClear],
+    () => buildChart(bars, { count, view: shownView, mas: maSeries, include: [lastPrice], topClear }),
+    [bars, count, shownView, maSeries, lastPrice, topClear],
   );
   const win = geo?.window;
 
@@ -447,6 +477,7 @@ export const PriceChart = memo(function PriceChart({
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
   const olderEmpty = older?.status === 'empty' && near;
+  const olderLimited = older?.status === 'done' && older.limited === true && near;
   // The notes sit at the top-left too: below the legend while it shows.
   const note: CSSProperties = legend ? { ...plotNote, top: legend.bottom + 4 } : plotNote;
 
@@ -579,6 +610,11 @@ export const PriceChart = memo(function PriceChart({
             </div>
           )}
           {geo && olderEmpty && <div style={note}>{m.olderEmpty}</div>}
+          {geo && olderLimited && (
+            <div data-chart="older-limited" style={{ ...note, color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)' }}>
+              {m.olderLimited}
+            </div>
+          )}
           {showLatest && (
             <div
               ref={latestRef}
@@ -646,7 +682,7 @@ export const PriceChart = memo(function PriceChart({
       </div>
       <div
         style={{
-          width: 76,
+          width: PRICE_AXIS_W,
           position: 'relative',
           font: '12px/1 var(--num)',
           color: 'var(--dm)',

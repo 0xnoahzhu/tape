@@ -12,6 +12,7 @@ import {
   extremeBox,
   extremeLayout,
   firstAtOrAfter,
+  fitView,
   formatBarTime,
   isCurrentBar,
   keepOlderBars,
@@ -34,6 +35,8 @@ import {
   maReadings,
   MAX_SPAN,
   mergeLivePrice,
+  advanceLiveBars,
+  withLiveBars,
   MIN_SPAN,
   movingAverages,
   nearOldest,
@@ -159,12 +162,14 @@ describe('view window', () => {
     expect(resolveView(LATEST_VIEW, bars, 60)).toEqual({ start: 940, span: 60, latest: true });
   });
 
-  it('limits the zoom to 20..400 bars and to the loaded bars (at least 30 slots)', () => {
-    expect(spanLimits(1000)).toEqual({ min: MIN_SPAN, max: MAX_SPAN });
+  it('limits the zoom to 20..1200 bars and to the loaded bars (at least 30 slots)', () => {
+    expect(spanLimits(5000)).toEqual({ min: MIN_SPAN, max: MAX_SPAN });
+    expect(MAX_SPAN).toBe(1200);
     expect(spanLimits(100)).toEqual({ min: 20, max: 100 });
     expect(spanLimits(10)).toEqual({ min: 20, max: 30 });
     expect(resolveView({ span: 5, end: null }, bars, 60).span).toBe(20);
-    expect(resolveView({ span: 5000, end: null }, bars, 60).span).toBe(400);
+    expect(resolveView({ span: 5000, end: null }, bars, 60).span).toBe(1000);
+    expect(resolveView({ span: 5000, end: null }, series(3000), 60).span).toBe(1200);
     expect(resolveView(LATEST_VIEW, series(45), 60)).toEqual({ start: 0, span: 45, latest: true });
     // A short series is right-aligned: the empty slots are on the left.
     expect(resolveView(LATEST_VIEW, series(10), 60)).toEqual({ start: -20, span: 30, latest: true });
@@ -462,7 +467,7 @@ describe('live price merge', () => {
   const nowSec = now.getTime() / 1000;
 
   it('extends the forming intraday bar', () => {
-    const bars = [bar(nowSec - 120, 10, 10.5, 9.5, 10), bar(nowSec - 30, 10, 10.2, 9.9, 10.1)];
+    const bars = [bar(nowSec - 60, 10, 10.5, 9.5, 10), bar(nowSec, 10, 10.2, 9.9, 10.1)];
     const out = mergeLivePrice(bars, 10.6, '1m', now, 'regular');
     expect(out[1]).toMatchObject({ close: 10.6, high: 10.6, low: 9.9 });
     expect(out[0]).toBe(bars[0]);
@@ -471,9 +476,84 @@ describe('live price merge', () => {
 
   it('leaves finished bars alone', () => {
     const bars = [bar(nowSec - 120, 10, 10.5, 9.5, 10)];
-    expect(mergeLivePrice(bars, 11, '1m', now, 'regular')).toBe(bars);
+    // Closed, no price, delayed quotes, or a gap longer than the reloads bridge.
     expect(mergeLivePrice(bars, 11, '5m', now, 'closed')).toBe(bars);
     expect(mergeLivePrice(bars, undefined, '5m', now, 'regular')).toBe(bars);
+    expect(mergeLivePrice(bars, 11, '1m', now, 'regular', { live: false })).toBe(bars);
+    expect(mergeLivePrice([bar(nowSec - 600, 10, 10.5, 9.5, 10)], 11, '1m', now, 'regular')).toHaveLength(1);
+  });
+
+  it('starts new bars on the interval grid, flat where nothing traded (as IB fills a session)', () => {
+    // 1 s bars: the newest is 14:59:57; at 15:00:00 the 58 and 59 buckets are flat, 15:00:00 opens at the previous close.
+    const bars = [bar(nowSec - 4, 10, 10, 10, 10), bar(nowSec - 3, 10, 10.1, 10, 10.05)];
+    const out = mergeLivePrice(bars, 10.2, '1s', now, 'regular');
+    expect(out.slice(2)).toEqual([
+      { time: nowSec - 2, open: 10.05, high: 10.05, low: 10.05, close: 10.05, volume: 0 },
+      { time: nowSec - 1, open: 10.05, high: 10.05, low: 10.05, close: 10.05, volume: 0 },
+      { time: nowSec, open: 10.05, high: 10.2, low: 10.05, close: 10.2, volume: 0 },
+    ]);
+    // 45 s buckets on the epoch grid (15:00:00 UTC is one).
+    const b45 = mergeLivePrice([bar(nowSec - 45, 10, 10, 10, 10)], 9.9, '45s', new Date((nowSec + 10) * 1000), 'regular');
+    expect(b45.map((b) => b.time)).toEqual([nowSec - 45, nowSec]);
+    // In pre-market, delayed quotes never touch intraday bars; daily bars still follow them.
+    const pre = new Date(Date.UTC(2026, 9, 7, 12, 0, 1));
+    expect(mergeLivePrice([bar(pre.getTime() / 1000 - 61, 1, 1, 1, 1)], 2, '1m', pre, 'pre', { live: false })).toHaveLength(1);
+    expect(mergeLivePrice([bar(pre.getTime() / 1000 - 61, 1, 1, 1, 1)], 2, '1m', pre, 'pre')).toHaveLength(2);
+    // 2-hour bars: in winter 09:00 UTC (04:00 New York) opens a partial bar before the 10:00 UTC grid line.
+    const winter = new Date(Date.UTC(2026, 0, 16, 9, 30));
+    const open = Date.UTC(2026, 0, 16, 9, 0) / 1000;
+    const prev = bar(Date.UTC(2026, 0, 16, 0, 0) / 1000 - 3600, 1, 1, 1, 1); // Thursday's 19:00 New York bar
+    // A session break: nothing is filled across it; the first bar starts at the open at the live price.
+    expect(mergeLivePrice([prev], 2, '2h', winter, 'pre', { sessionOpen: open }).slice(1)).toEqual([{ time: open, open: 2, high: 2, low: 2, close: 2, volume: 0 }]);
+    const atOpen = bar(open, 1, 1, 1, 1);
+    const later = new Date(Date.UTC(2026, 0, 16, 10, 0, 30));
+    expect(isCurrentBar(atOpen, '2h', winter, 'pre')).toBe(true);
+    expect(mergeLivePrice([atOpen], 2, '2h', later, 'pre', { sessionOpen: open }).map((b) => b.time)).toEqual([open, Date.UTC(2026, 0, 16, 10, 0) / 1000]);
+  });
+
+  it('keeps live bars between quotes: earlier bars keep what the quotes drew, a new bar opens at the previous live close', () => {
+    const t0 = nowSec - 10;
+    const stored = [bar(t0 - 1, 100, 100, 100, 100), bar(t0, 100, 100, 100, 100)];
+    const at = (s: number) => new Date((t0 + s) * 1000);
+    let live = advanceLiveBars(stored, [], 101, '1s', at(3), 'regular');
+    expect(live).toEqual([
+      { time: t0 + 1, open: 100, high: 100, low: 100, close: 100, volume: 0 },
+      { time: t0 + 2, open: 100, high: 100, low: 100, close: 100, volume: 0 },
+      { time: t0 + 3, open: 100, high: 101, low: 100, close: 101, volume: 0 },
+    ]);
+    live = advanceLiveBars(stored, live, 102, '1s', at(4), 'regular');
+    expect(live.slice(2)).toEqual([
+      { time: t0 + 3, open: 100, high: 101, low: 100, close: 101, volume: 0 },
+      { time: t0 + 4, open: 101, high: 102, low: 101, close: 102, volume: 0 },
+    ]);
+    // The forming bar keeps its extremes when the price comes back; the same quote again changes nothing.
+    live = advanceLiveBars(stored, live, 101.5, '1s', at(4.5), 'regular');
+    expect(live.at(-1)).toEqual({ time: t0 + 4, open: 101, high: 102, low: 101, close: 101.5, volume: 0 });
+    expect(advanceLiveBars(stored, live, 101.5, '1s', at(4.5), 'regular')).toEqual(live);
+    expect(withLiveBars(stored, live).map((b) => b.time)).toEqual([t0 - 1, t0, t0 + 1, t0 + 2, t0 + 3, t0 + 4]);
+    // A reload with IB's bars up to t0 + 4 replaces the live bars it reaches; the live copy of its
+    // newest bar keeps the extremes the quotes saw and the last price.
+    const reloaded = [...stored, bar(t0 + 1, 100, 100.2, 100, 100.1), bar(t0 + 2, 100.1, 100.5, 100, 100.5), bar(t0 + 3, 100.5, 101, 100.4, 101), bar(t0 + 4, 101, 101.8, 101, 101.6, 30)];
+    live = advanceLiveBars(reloaded, live, 101.5, '1s', at(4.6), 'regular');
+    expect(live).toEqual([{ time: t0 + 4, open: 101, high: 102, low: 101, close: 101.5, volume: 30 }]);
+    const merged = withLiveBars(reloaded, live);
+    expect(merged.slice(0, -1)).toEqual(reloaded.slice(0, -1));
+    expect(merged.at(-1)).toBe(live[0]);
+    // Delayed quotes: no live intraday bars at all.
+    expect(advanceLiveBars(stored, live, 103, '1s', at(5), 'regular', { live: false })).toEqual([]);
+  });
+
+  it('fills nothing across the overnight break: 3 and 4-hour bars start at the 04:00 open', () => {
+    // Tuesday 2026-10-06 04:00:20 New York (EDT); Monday's last 4-hour bar is 16:00–20:00 (20:00 UTC).
+    const open = Date.UTC(2026, 9, 6, 8, 0) / 1000;
+    const now4 = new Date((open + 20) * 1000);
+    const monday4 = bar(Date.UTC(2026, 9, 5, 20, 0) / 1000, 1, 1, 1, 1);
+    expect(advanceLiveBars([monday4], [], 2, '4h', now4, 'pre', { sessionOpen: open })).toEqual([{ time: open, open: 2, high: 2, low: 2, close: 2, volume: 0 }]);
+    // 3-hour bars on the UTC grid: Monday's last one is 17:00–20:00 New York (21:00 UTC).
+    const monday3 = bar(Date.UTC(2026, 9, 5, 21, 0) / 1000, 1, 1, 1, 1);
+    expect(advanceLiveBars([monday3], [], 2, '3h', now4, 'pre', { sessionOpen: open }).map((b) => b.time)).toEqual([open]);
+    // Too long after the open (the reload has the session's bars): wait for them.
+    expect(advanceLiveBars([monday4], [], 2, '1m', new Date((open + 600) * 1000), 'pre', { sessionOpen: open })).toEqual([]);
   });
 
   it('only moves daily bars during the regular session and on the same day', () => {
@@ -492,6 +572,8 @@ describe('live price merge', () => {
     expect(isCurrentBar(bar(Date.UTC(2026, 9, 1) / 1000, 1, 1, 1, 1), '1M', now, 'regular')).toBe(true);
     expect(isCurrentBar(bar(Date.UTC(2026, 8, 1) / 1000, 1, 1, 1, 1), '1M', now, 'regular')).toBe(false);
     expect(isCurrentBar(bar(Date.UTC(2026, 0, 2) / 1000, 1, 1, 1, 1), '1Y', now, 'regular')).toBe(true);
+    expect(isCurrentBar(bar(Date.UTC(2026, 9, 1) / 1000, 1, 1, 1, 1), '1Q', now, 'regular')).toBe(true);
+    expect(isCurrentBar(bar(Date.UTC(2026, 6, 1) / 1000, 1, 1, 1, 1), '1Q', now, 'regular')).toBe(false);
   });
 });
 
@@ -519,6 +601,15 @@ describe('labels', () => {
     expect(formatBarTime(hk, '5m', 'en')).toBe('Wed 09/30 21:30');
     expect(formatBarTime(hk, '5m', 'en', 'Asia/Hong_Kong')).toBe('Thu 10/01 09:30');
     expect(formatBarTime(hk, '5m', 'zh', 'Asia/Hong_Kong')).toBe('10/01 周四 09:30');
+    // Second intervals show seconds; minute and hour intervals do not.
+    const sec = Date.UTC(2026, 9, 2, 14, 31, 7) / 1000;
+    expect(formatBarTime(sec, '1s', 'en')).toBe('Fri 10/02 10:31:07');
+    expect(formatBarTime(sec - 7, '45s', 'zh')).toBe('10/02 周五 10:31:00');
+    expect(formatBarTime(sec - 7, '3m', 'en')).toBe('Fri 10/02 10:31');
+    // Quarters by their first month.
+    expect(formatBarTime(Date.UTC(2026, 6, 1) / 1000, '1Q', 'en')).toBe('Q3 2026');
+    expect(formatBarTime(Date.UTC(2026, 9, 1) / 1000, '1Q', 'zh')).toBe('2026年Q4');
+    expect(formatBarTime(Date.UTC(2026, 0, 1) / 1000, '1Q', 'en')).toBe('Q1 2026');
   });
 
   it('chooses price decimals from the tick size and price level', () => {
@@ -1118,5 +1209,59 @@ describe('exchange time', () => {
       expect(formatBarTime(bars[2 * perDay].time, '5m', 'en', 'MET')).toBe('Mon 10/26 09:00');
       expect(formatBarTime(bars[2 * perDay - 1].time, '5m', 'en', 'MET')).toBe('Fri 10/23 17:25');
     }
+  });
+});
+
+describe('time axis of the new intervals', () => {
+  const secondBars = (from: number, n: number, step: number) => Array.from({ length: n }, (_, i) => bar(from + i * step, 100, 101, 99, 100));
+  // Fri 2026-10-02 19:30:00 ET.
+  const t0 = Date.UTC(2026, 9, 2, 23, 30) / 1000;
+
+  it('labels seconds bars with seconds where a tick is not on a whole minute', () => {
+    const bars = secondBars(t0, 1800, 1);
+    const ls = timeAxisLabels(bars, '1s', view(1680, 120), 800, 'en');
+    expectReadable(ls, 800);
+    expect(ls.length).toBeGreaterThan(4);
+    expect(ls.every((l) => /^\d\d:\d\d(:\d\d)?$/.test(l.label))).toBe(true);
+    expect(ls.some((l) => /^\d\d:\d\d:\d\d$/.test(l.label))).toBe(true);
+    // Whole minutes without seconds.
+    expect(ls.filter((l) => bars[l.index].time % 60 === 0).every((l) => l.label.length === 5)).toBe(true);
+    // Zoomed out the ticks become minutes.
+    const wide = timeAxisLabels(bars, '1s', view(0, 1200), 800, 'en');
+    expectReadable(wide, 800);
+    expect(wide.every((l) => l.label.length === 5)).toBe(true);
+  });
+
+  it('puts the ticks of 45-second bars on bars whose start is a whole step', () => {
+    const bars = secondBars(Date.UTC(2026, 9, 2, 13, 30) / 1000, 400, 45);
+    for (const span of [60, 150, 400]) {
+      const ls = timeAxisLabels(bars, '45s', view(400 - span, span), 800, 'en');
+      expectReadable(ls, 800);
+      expect(ls.length).toBeGreaterThan(2);
+      // Ticks only where the clock reaches a multiple of the bar (90 s, 3 min, …): never mid-bar.
+      for (const l of ls) expect(bars[l.index].time % 90).toBe(0);
+    }
+  });
+
+  it('labels 2-hour, 4-hour, quarter and year bars by dates', () => {
+    const h2 = secondBars(Date.UTC(2026, 8, 1, 8) / 1000, 300, 7200);
+    const ls = timeAxisLabels(h2, '2h', view(200, 100), 800, 'en');
+    expectReadable(ls, 800);
+    expect(ls.every((l) => /^(\d\d\/\d\d|[A-Z][a-z]{2}|\d{4})$/.test(l.label))).toBe(true);
+    const quarters = Array.from({ length: 80 }, (_, i) => bar(Date.UTC(2006, 3 * i, 1) / 1000, 1, 1, 1, 1));
+    const q = timeAxisLabels(quarters, '1Q', view(0, 80), 800, 'zh');
+    expectReadable(q, 800);
+    expect(q.length).toBeGreaterThan(3);
+    expect(q.every((l) => /^\d{4}$/.test(l.label))).toBe(true);
+  });
+
+  it('fits a range: the bars from its start to the newest, at least MIN_SPAN', () => {
+    const bars = series(1000);
+    expect(fitView(bars, null)).toEqual({ span: 1000, end: null });
+    expect(fitView(bars, bars[700].time)).toEqual({ span: 300, end: null });
+    expect(resolveView(fitView(bars, bars[995].time), bars, 60)).toEqual({ start: 980, span: MIN_SPAN, latest: true });
+    // All of a long series up to the widest zoom.
+    const months = series(2000);
+    expect(resolveView(fitView(months, null), months, 60).span).toBe(MAX_SPAN);
   });
 });

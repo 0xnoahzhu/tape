@@ -842,3 +842,132 @@ describe('evictions from the bar cache', () => {
     expect(t.hist().map((c) => c[3])).toEqual(['2 Y', '2 Y']);
   });
 });
+
+describe('intervals of seconds, merged buckets and quarters', () => {
+  const epochRows = (from: number, n: number, step: number, close = (i: number) => 100 + i / 100): Row[] =>
+    Array.from({ length: n }, (_, i) => row(String(from + i * step), close(i)));
+
+  it('opens a seconds chart on a weekend with the last half hour of Friday (IB counts session time)', async () => {
+    const t = setup(ny('2026-10-04', '12:00'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '1s', outsideRth: true };
+    const put = vi.spyOn(t.ctx.db.bars, 'put');
+    // IB's 1800 S ending now (Sunday) is Friday 19:30:00–19:59:59.
+    t.answers.set('1800 S', epochRows(nySec('2026-10-02', '19:30'), 1800, 1));
+    const bars = await t.get(req);
+    expect(t.hist().map((c) => [c[3], c[4], c[6]])).toEqual([['1800 S', '1 secs', 0]]);
+    expect(bars).toHaveLength(1800);
+    expect(bars[0].time).toBe(nySec('2026-10-02', '19:30'));
+    // Stored with the seconds retention class.
+    expect(put).toHaveBeenCalledWith('STK:AAPL|1 secs|TRADES|0', expect.any(Array), { retention: 'seconds' });
+    // A restart later on Sunday: answered from the bar cache (settled), the window ending at the newest bar.
+    const svc2 = createHistoryService(t.ctx);
+    vi.setSystemTime(ny('2026-10-04', '18:00'));
+    expect(await svc2.get(req)).toHaveLength(1800);
+    expect(t.hist()).toHaveLength(1);
+  });
+
+  it("shows Friday's last session of seconds bars on Monday before the open, with one request", async () => {
+    const t = setup(ny('2026-10-05', '02:00'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '1s', outsideRth: true };
+    t.answers.set('1800 S', epochRows(nySec('2026-10-02', '19:30'), 1800, 1));
+    const bars = await t.get(req);
+    expect(bars).toHaveLength(1800);
+    expect(bars[0].time).toBe(nySec('2026-10-02', '19:30'));
+    // The coverage keeps Friday (the seconds cache serves five days).
+    expect((await t.coverage(req))?.ranges[0][0]).toBe(nySec('2026-10-02', '19:30'));
+    // A reload half a minute later is settled until the 04:00 open: no request, same bars.
+    vi.setSystemTime(ny('2026-10-05', '02:00') + 30_000);
+    expect(await createHistoryService(t.ctx).get(req)).toHaveLength(1800);
+    expect(t.hist()).toHaveLength(1);
+  });
+
+  it("shows the last session of seconds bars on a Monday holiday and before Tuesday's open", async () => {
+    // Labor Day 2026-09-07: IB's newest 5-second bars are Friday's last hour.
+    const t = setup(ny('2026-09-07', '10:00'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '5s', outsideRth: true };
+    t.answers.set('3600 S', epochRows(nySec('2026-09-04', '19:00'), 720, 5));
+    expect(await t.get(req)).toHaveLength(720);
+    expect(t.hist()).toHaveLength(1);
+    // Holidays are not modelled: a reload a minute later asks again (one request, like a
+    // session's reload), and still shows Friday.
+    vi.setSystemTime(ny('2026-09-07', '10:01'));
+    expect(await t.get(req)).toHaveLength(720);
+    expect(t.hist()).toHaveLength(2);
+    vi.setSystemTime(ny('2026-09-08', '03:59'));
+    const tuesday = await createHistoryService(t.ctx).get(req);
+    expect(tuesday).toHaveLength(720);
+    expect(tuesday[0].time).toBe(nySec('2026-09-04', '19:00'));
+  });
+
+  it('opens 30-second bars before the open with the last session (a session-time window)', async () => {
+    const t = setup(ny('2026-10-06', '02:00'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '30s', outsideRth: true };
+    // IB's 28800 S ending now (before Tuesday's open) is Monday 12:00–20:00.
+    t.answers.set('28800 S', epochRows(nySec('2026-10-05', '12:00'), 960, 30));
+    const bars = await t.get(req);
+    expect(t.asked()).toEqual([['28800 S', '']]);
+    expect(bars).toHaveLength(960);
+    expect(bars[0].time).toBe(nySec('2026-10-05', '12:00'));
+  });
+
+  it('merges 15-second bars into 45-second buckets from the session open, sharing the 15-second series', async () => {
+    const t = setup(ny('2026-10-02', '10:00'));
+    const open = nySec('2026-10-02', '09:30');
+    // 14400 S of 15-second bars, from 09:29:45 (a bucket's last third before the open) to 09:59:45.
+    t.answers.set('14400 S', epochRows(open - 15, 121, 15));
+    const bars = await t.get({ contract: stock('AAPL'), timeframe: '45s', outsideRth: true });
+    expect(t.hist().map((c) => c[4])).toEqual(['15 secs']);
+    // The bucket holding the first stored bar is not whole: it starts where the coverage proves bars.
+    expect(bars[0].time).toBe(open);
+    expect(bars.every((b) => b.time % 45 === 0)).toBe(true);
+    expect(bars).toHaveLength(40);
+    expect(bars[0]).toMatchObject({ open: 100.01, close: 100.03, volume: 300 });
+    // The 15-second chart reads the same series without asking IB again.
+    const fifteen = await t.get({ contract: stock('AAPL'), timeframe: '15s', outsideRth: true });
+    expect(fifteen).toHaveLength(121);
+    expect(t.hist()).toHaveLength(1);
+  });
+
+  it('stops paging seconds bars six months back, saying so (limited), without asking IB', async () => {
+    const t = setup(ny('2026-10-02', '14:00'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '30s', outsideRth: true };
+    t.answers.set('28800 S', epochRows(nySec('2026-10-02', '06:00'), 960, 30));
+    await t.get(req);
+    // Pages within the six months ask IB, in session seconds.
+    t.answers.set('9000 S', epochRows(nySec('2026-10-02', '03:30'), 300, 30));
+    const page = await t.older(req, nySec('2026-10-02', '06:00'), 300);
+    expect(page).toMatchObject({ done: false });
+    expect(page.limited).toBeUndefined();
+    // The window was claimed from its first bar, where the page ends.
+    expect(t.asked().at(-1)).toEqual(['9000 S', ibEndDateTime(nySec('2026-10-02', '06:00'))]);
+    // Older than six months: done and limited, nothing asked.
+    const n = t.hist().length;
+    const old = await t.older(req, nySec('2026-03-30', '12:00'), 300);
+    expect(old).toEqual({ bars: [], done: true, limited: true });
+    expect(t.hist()).toHaveLength(n);
+  });
+
+  it('builds quarters from the monthly series, stamped with their first day', async () => {
+    const t = setup(ny('2026-10-02'));
+    t.answers.set('20 Y', [row('20260130', 10), row('20260227', 11), row('20260331', 12), row('20260430', 13), row('20260529', 14), row('20260630', 15), row('20260930', 16), row('20261002', 17)]);
+    const q = await t.get({ contract: stock('AAPL'), timeframe: '1Q' });
+    expect(t.hist().map((c) => [c[3], c[4]])).toEqual([['20 Y', '1 month']]);
+    expect(q.map((b) => b.time)).toEqual([day('20260101'), day('20260401'), day('20260701'), day('20261001')]);
+    expect(closes(q)).toEqual([12, 15, 16, 17]);
+    // The monthly chart shares the series.
+    expect(closes(await t.get({ contract: stock('AAPL'), timeframe: '1M' }))).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(t.hist()).toHaveLength(1);
+  });
+
+  it('pages 4-hour bars in years and keeps them with the hours retention', async () => {
+    const t = setup(ny('2026-10-02'));
+    const req: HistoryRequest = { contract: stock('AAPL'), timeframe: '4h', outsideRth: true };
+    const put = vi.spyOn(t.ctx.db.bars, 'put');
+    t.answers.set('3 M', epochRows(nySec('2026-07-06', '04:00'), 250, 14_400));
+    await t.get(req);
+    expect(put).toHaveBeenLastCalledWith('STK:AAPL|4 hours|TRADES|0', expect.any(Array), { retention: 'hours' });
+    t.answers.set('2 Y', epochRows(nySec('2024-07-08', '04:00'), 2000, 14_400));
+    await t.older(req, nySec('2026-07-06', '04:00'), 2000);
+    expect(t.asked().at(-1)?.[0]).toBe('2 Y');
+  });
+});

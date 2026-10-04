@@ -1,13 +1,15 @@
 // Historical data request parameters, the incremental (cached) fetch plan and bar
 // post-processing (pure, unit-tested).
 
+import { isTimeframe as isTimeframeKey } from '@shared/timeframes';
 import type { Bar, ContractRef, HistoryRequest, Timeframe } from '@shared/types';
+import type { BarRetention } from '../db/types';
 import type { SeriesCoverage } from './coverage';
 import { addDays, type CalendarDay, isWeekday, nyDay, nyWallToEpochMs, previousWeekday, RTH_CLOSE, RTH_OPEN } from './nyTime';
 
 export type WhatToShow = NonNullable<HistoryRequest['whatToShow']>;
 /** Periods that bars are regrouped into after loading. */
-export type Period = 'day' | 'week' | 'month' | 'year';
+export type Period = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
 export interface HistorySpec {
   /** Bar size requested from IB. */
@@ -28,12 +30,19 @@ export interface HistorySpec {
   aggregate?: Exclude<Period, 'day'>;
   /** Monthly bars are aggregated into calendar years after loading (aggregate === 'year'). */
   aggregateYears: boolean;
-  /** Bars of the stored series are intraday (the database keeps them for 30 days). */
+  /**
+   * The stored intraday bars are merged into buckets of this many seconds when a request is
+   * answered (45 s from 15-second bars, on the epoch grid, which is also New York's).
+   */
+  mergeSec?: number;
+  /** Bars of the stored series are intraday. */
   intraday: boolean;
+  /** How long the database keeps the stored bars (by bar size, see db/types.ts). */
+  retention: BarRetention;
   /**
    * Calendar span of the fetch window plus slack: how long stored bars of this series have to
-   * stay to cover a full chart. Every intraday window fits the database's 30-day retention of
-   * intraday bars (older bars are paged in from IB again).
+   * stay to cover a full chart. Every intraday window fits its retention class (older bars are
+   * paged in from IB again).
    */
   retentionSec: number;
 }
@@ -65,22 +74,83 @@ interface TimeframeSpec {
   barSize: string;
   duration: string;
   intraday: boolean;
+  /** Stored bars merged into buckets of this many seconds (45 s). */
+  mergeSec?: number;
+  /** Stored monthly bars merged into these periods (quarters, years). */
+  aggregate?: 'quarter' | 'year';
 }
 
 /**
- * The window a chart opens with; older bars are paged in (HistoryService.getOlder). Intraday
- * windows are trading sessions ('N D', which IB counts as sessions) and stay within the 30 days
- * the database keeps intraday bars, so a cached window stays complete.
+ * The window a chart opens with; older bars are paged in (HistoryService.getOlder). Each request
+ * stays at a few thousand bars at most and within IB's step limits (checked live, extended hours:
+ * 1 secs refuses more than 2000 S with "invalid step"; 5 secs x 1 D took 15 s for 11,520 bars).
+ * Seconds windows (30 s included) are 'N S', which IB counts in session time (1800 S ending at
+ * 20:30 returned 19:30–20:00), so they end at the newest stored bar and show the last session
+ * before the next one opens (a '1 D' window would start at 00:00 New York of today and stay empty
+ * until 04:00); minute and hour windows are sessions ('N D') or months; every window fits its
+ * retention class, so a cached window stays complete.
  */
 const TIMEFRAMES: Record<Timeframe, TimeframeSpec> = {
+  '1s': { barSize: '1 secs', duration: '1800 S', intraday: true },
+  '5s': { barSize: '5 secs', duration: '3600 S', intraday: true },
+  '10s': { barSize: '10 secs', duration: '14400 S', intraday: true },
+  '15s': { barSize: '15 secs', duration: '14400 S', intraday: true },
+  '30s': { barSize: '30 secs', duration: '28800 S', intraday: true },
+  '45s': { barSize: '15 secs', duration: '14400 S', intraday: true, mergeSec: 45 },
   '1m': { barSize: '1 min', duration: '2 D', intraday: true },
+  '3m': { barSize: '3 mins', duration: '5 D', intraday: true },
   '5m': { barSize: '5 mins', duration: '10 D', intraday: true },
+  '10m': { barSize: '10 mins', duration: '10 D', intraday: true },
+  '15m': { barSize: '15 mins', duration: '20 D', intraday: true },
+  '30m': { barSize: '30 mins', duration: '20 D', intraday: true },
   '1h': { barSize: '1 hour', duration: '20 D', intraday: true },
+  '2h': { barSize: '2 hours', duration: '3 M', intraday: true },
+  '3h': { barSize: '3 hours', duration: '3 M', intraday: true },
+  '4h': { barSize: '4 hours', duration: '3 M', intraday: true },
   '1D': { barSize: '1 day', duration: '2 Y', intraday: false },
   '1W': { barSize: '1 week', duration: '10 Y', intraday: false },
   '1M': { barSize: '1 month', duration: '20 Y', intraday: false },
-  '1Y': { barSize: '1 month', duration: '20 Y', intraday: false },
+  '1Q': { barSize: '1 month', duration: '20 Y', intraday: false, aggregate: 'quarter' },
+  '1Y': { barSize: '1 month', duration: '20 Y', intraday: false, aggregate: 'year' },
 };
+
+/** Seconds of IB's bar sizes. */
+export const BAR_SIZE_SEC: Readonly<Record<string, number>> = {
+  '1 secs': 1,
+  '5 secs': 5,
+  '10 secs': 10,
+  '15 secs': 15,
+  '30 secs': 30,
+  '1 min': 60,
+  '2 mins': 120,
+  '3 mins': 180,
+  '5 mins': 300,
+  '10 mins': 600,
+  '15 mins': 900,
+  '20 mins': 1200,
+  '30 mins': 1800,
+  '1 hour': 3600,
+  '2 hours': 7200,
+  '3 hours': 10_800,
+  '4 hours': 14_400,
+  '8 hours': 28_800,
+  '1 day': DAY_SEC,
+  '1 week': 7 * DAY_SEC,
+  '1 month': 31 * DAY_SEC,
+};
+
+/**
+ * Retention class of a stored bar size (db/types.ts). 30-minute bars are kept like hours: the 1M
+ * range shows them back to the same date a month ago (up to 31 days plus a day), beyond the
+ * minutes' 30 days.
+ */
+export function barRetention(seriesBarSize: string): BarRetention {
+  const sec = BAR_SIZE_SEC[seriesBarSize] ?? DAY_SEC;
+  if (sec < 60) return 'seconds';
+  if (sec < 1800) return 'minutes';
+  if (sec < DAY_SEC) return 'hours';
+  return 'daily';
+}
 
 /**
  * Daily and longer timeframes of options and futures options: IB answers every daily, weekly
@@ -92,10 +162,10 @@ const TIMEFRAMES: Record<Timeframe, TimeframeSpec> = {
  * without trades answers 162 "HMDS query returned no data", which is an empty answer.
  */
 const OPTION_DAILY = { barSize: '8 hours', duration: '2 Y' } as const;
-const OPTION_PERIODS: Partial<Record<Timeframe, Exclude<Period, 'day'>>> = { '1W': 'week', '1M': 'month', '1Y': 'year' };
+const OPTION_PERIODS: Partial<Record<Timeframe, Exclude<Period, 'day'>>> = { '1W': 'week', '1M': 'month', '1Q': 'quarter', '1Y': 'year' };
 
 export function isTimeframe(tf: unknown): tf is Timeframe {
-  return typeof tf === 'string' && tf in TIMEFRAMES;
+  return isTimeframeKey(tf) && tf in TIMEFRAMES;
 }
 
 export function isIntraday(tf: Timeframe): boolean {
@@ -117,7 +187,7 @@ export function historySpec(req: HistoryRequest): HistorySpec {
   if (!tf.intraday && isOptionType(req.contract)) {
     return daily({ ...OPTION_DAILY, whatToShow, toDays: true, aggregate: OPTION_PERIODS[req.timeframe] });
   }
-  const aggregate = req.timeframe === '1Y' ? 'year' : undefined;
+  const aggregate = tf.aggregate;
   return {
     barSize: tf.barSize,
     duration: tf.duration,
@@ -127,7 +197,9 @@ export function historySpec(req: HistoryRequest): HistorySpec {
     toDays: false,
     aggregate,
     aggregateYears: aggregate === 'year',
+    ...(tf.mergeSec ? { mergeSec: tf.mergeSec } : {}),
     intraday: tf.intraday,
+    retention: barRetention(tf.barSize),
     retentionSec: retentionSec(tf.duration),
   };
 }
@@ -143,13 +215,15 @@ function daily(p: { barSize: string; duration: string; whatToShow: WhatToShow; t
     aggregate: p.aggregate,
     aggregateYears: p.aggregate === 'year',
     intraday: false,
+    retention: 'daily',
     retentionSec: retentionSec(p.duration),
   };
 }
 
-/** Cache lifetime: intraday bars change quickly, daily and longer bars rarely. */
+/** Cache lifetime: intraday bars change quickly (seconds bars within the chart's 60 s reload), daily and longer bars rarely. */
 export function historyTtlMs(tf: Timeframe): number {
-  return isIntraday(tf) ? 30_000 : 5 * 60_000;
+  if (!isIntraday(tf)) return 5 * 60_000;
+  return BAR_SIZE_SEC[TIMEFRAMES[tf].barSize] < 60 ? 10_000 : 30_000;
 }
 
 /**
@@ -193,6 +267,8 @@ export function periodKey(time: number, period: Exclude<Period, 'day'>): number 
       return Date.UTC(y, m, d - ((w + 6) % 7)) / 1000;
     case 'month':
       return y * 12 + m;
+    case 'quarter':
+      return y * 4 + Math.floor(m / 3);
     case 'year':
       return y;
   }
@@ -200,7 +276,7 @@ export function periodKey(time: number, period: Exclude<Period, 'day'>): number 
 
 /** The period of a stored bar series whose stamps move within the period (IB stamps weekly and
  *  monthly bars with the last trading day so far, so the forming bar is re-stamped every day). */
-export function seriesPeriod(seriesBarSize: string): Exclude<Period, 'day' | 'year'> | undefined {
+export function seriesPeriod(seriesBarSize: string): 'week' | 'month' | undefined {
   if (seriesBarSize === '1 week') return 'week';
   if (seriesBarSize === '1 month') return 'month';
   return undefined;
@@ -254,12 +330,36 @@ export function aggregateYears(bars: Bar[]): Bar[] {
   );
 }
 
+/** Aggregates (monthly) bars into calendar quarters stamped with their first day (Jan, Apr, Jul, Oct 1st, 00:00 UTC). */
+export function aggregateQuarters(bars: Bar[]): Bar[] {
+  return groupBars(
+    normalizeBars(bars),
+    (b) => periodKey(b.time, 'quarter'),
+    (g) => {
+      const { y, m } = ymd(g[0].time);
+      return Date.UTC(y, m - (m % 3), 1) / 1000;
+    },
+  );
+}
+
 /**
- * Daily (or monthly) bars merged into weeks, months or years. Weeks and months are stamped with
- * their last bar's date like IB's own weekly and monthly bars; years with January 1st.
+ * Intraday bars merged into buckets of `sec` seconds on the epoch grid (45 s from 15-second
+ * bars). New York midnight, 04:00, 09:30 and 20:00 are all on the 45-second grid, so buckets
+ * start at the session open; each is stamped with its grid line.
+ */
+export function mergeIntraday(bars: Bar[], sec: number): Bar[] {
+  const bucket = (b: Bar) => Math.floor(b.time / sec) * sec;
+  return groupBars(normalizeBars(bars), bucket, (g) => bucket(g[0]));
+}
+
+/**
+ * Daily (or monthly) bars merged into weeks, months, quarters or years. Weeks and months are
+ * stamped with their last bar's date like IB's own weekly and monthly bars; quarters and years
+ * with their first day.
  */
 export function aggregateBars(bars: Bar[], period: Exclude<Period, 'day'>): Bar[] {
   if (period === 'year') return aggregateYears(bars);
+  if (period === 'quarter') return aggregateQuarters(bars);
   return groupBars(
     normalizeBars(bars),
     (b) => periodKey(b.time, period),
@@ -295,7 +395,7 @@ export function seriesKey(spec: HistorySpec, contractKey: string): string {
 
 export type FetchPlan = { kind: 'none' } | { kind: 'full' } | { kind: 'tail'; duration: string; from: number };
 
-const BAR_SEC: Record<string, number> = { '1 min': 60, '5 mins': 300, '1 hour': 3600, '8 hours': 28_800, '1 day': DAY_SEC, '1 week': 7 * DAY_SEC, '1 month': 31 * DAY_SEC };
+const BAR_SEC = BAR_SIZE_SEC;
 
 /** How far after the window start the first stored bar may be and still cover the window. */
 function coverageGapSec(seriesBarSize: string): number {
@@ -327,14 +427,16 @@ function weekdaysBetween(from: CalendarDay, to: CalendarDay): number {
 
 /**
  * Unix seconds where a full load of `duration` starts, the way IB counts it: 'D' are trading
- * days back from today (from 00:00 New York of the first), 'W' / 'M' / 'Y' calendar spans.
+ * days back from today (from 00:00 New York of the first), 'W' / 'M' / 'Y' calendar spans. 'S'
+ * counts session time at IB (a window asked for on a weekend ends with Friday's bars), so an 'S'
+ * window ends at the newest stored bar (`lastBar`, when it is older than now) instead.
  */
-export function windowStartSec(duration: string, nowMs: number): number {
+export function windowStartSec(duration: string, nowMs: number, lastBar?: number): number {
   const { n, unit } = parseDuration(duration);
   const nowSec = Math.floor(nowMs / 1000);
   switch (unit) {
     case 'S':
-      return nowSec - n;
+      return Math.min(nowSec, lastBar ?? nowSec) - n;
     case 'D': {
       let d = calendarDay(nowMs);
       for (let count = 0; ; d = addDays(d, -1)) {
@@ -392,15 +494,29 @@ export function isSettled(spec: HistorySpec, contract: ContractRef, fetchedAt: n
 }
 
 /**
+ * Longest 'N S' one request of IB's small bars may ask for: IB refuses 1 secs beyond 2000 S
+ * ("invalid step", checked live), and the others are kept at about 2,000 bars per request.
+ */
+export const MAX_STEP_SEC: Readonly<Record<string, number>> = {
+  '1 secs': 1800,
+  '5 secs': 7200,
+  '10 secs': 28_800,
+  '15 secs': 28_800,
+  '30 secs': 57_600,
+};
+
+/**
  * IB duration that reaches back to `fromSec` (a stored bar's time) for bars of `barSize`.
- * Seconds for small bars within a day; trading days for larger intraday and daily bars; weeks
- * and months for weekly and monthly bars. Every unit errs on the long side. `dailyStamps`:
+ * Seconds for bars below a minute (always) and for small bars within a day; trading days for
+ * larger intraday and daily bars; weeks and months for weekly and monthly bars. Every unit errs
+ * on the long side (calendar seconds include closed hours, which IB does not count). `dailyStamps`:
  * `fromSec` is a daily bar's stamp (its date at 00:00 UTC), not an instant.
  */
 export function tailDuration(barSize: string, fromSec: number, nowMs: number, dailyStamps = (BAR_SEC[barSize] ?? DAY_SEC) >= DAY_SEC): string {
   const nowSec = Math.floor(nowMs / 1000);
   const span = Math.max(0, nowSec - fromSec);
   const bar = BAR_SEC[barSize] ?? DAY_SEC;
+  if (bar < 60 && !dailyStamps) return `${Math.max(60, Math.ceil((span + bar) / 60) * 60)} S`;
   if (bar <= 300 && !dailyStamps && span + bar <= DAY_SEC) return `${Math.max(60, Math.ceil((span + bar) / 60) * 60)} S`;
   if (barSize === '1 week') return `${Math.ceil(span / (7 * DAY_SEC)) + 1} W`;
   if (barSize === '1 month') {
@@ -418,8 +534,10 @@ export function tailDuration(barSize: string, fromSec: number, nowMs: number, da
  * window start on:
  * - none: the newest bars were loaded within `ttlMs` or are settled (and not `fresh`);
  * - tail: from the second-newest stored bar of the newest covered range (the newest may have
- *   been forming), when that range covers the window and the tail is less than half of it;
+ *   been forming), when that range covers the window and the tail is less than half of it (and,
+ *   for IB's small bars, within one request's step limit, MAX_STEP_SEC);
  * - full: otherwise.
+ * `windowStart`: where the window starts (default windowStartSec of the spec's duration).
  */
 export function planFetch(o: {
   spec: HistorySpec;
@@ -429,11 +547,12 @@ export function planFetch(o: {
   nowMs: number;
   ttlMs: number;
   fresh?: boolean;
+  windowStart?: number;
 }): FetchPlan {
   const { spec, coverage, nowMs } = o;
   const newest = coverage?.ranges[coverage.ranges.length - 1];
   if (!newest || coverage?.fetchedAt === undefined) return { kind: 'full' };
-  const start = windowStartSec(spec.duration, nowMs);
+  const start = o.windowStart ?? windowStartSec(spec.duration, nowMs);
   const covered = newest[0] <= start + coverageGapSec(spec.seriesBarSize) || (coverage.first !== undefined && newest[0] <= coverage.first);
   if (!covered) return { kind: 'full' };
   if (!o.fresh && (nowMs - coverage.fetchedAt < o.ttlMs || isSettled(spec, o.contract, coverage.fetchedAt, nowMs))) return { kind: 'none' };
@@ -443,7 +562,10 @@ export function planFetch(o: {
   const nowSec = Math.floor(nowMs / 1000);
   if (nowSec - from > (nowSec - start) / 2) return { kind: 'full' };
   const dailyStamps = (BAR_SEC[spec.seriesBarSize] ?? DAY_SEC) >= DAY_SEC;
-  return { kind: 'tail', duration: tailDuration(spec.barSize, from, nowMs, dailyStamps), from };
+  const duration = tailDuration(spec.barSize, from, nowMs, dailyStamps);
+  const step = MAX_STEP_SEC[spec.barSize];
+  if (step !== undefined && /^\d+ S$/.test(duration) && parseDuration(duration).n > step) return { kind: 'full' };
+  return { kind: 'tail', duration, from };
 }
 
 /** Relative close difference beyond which an overlapping bar means IB adjusted the history (a split). */

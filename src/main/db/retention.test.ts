@@ -15,6 +15,7 @@ import { SECDEF_NS } from '../market/options';
 import { unpackBars, unpackNav } from './client';
 import { configure, migrate, SCHEMA_VERSION, schemaVersion } from './schema';
 import { MEMORY_MARKET_DATA_NS } from './memory';
+import type { BarRetention } from './types';
 import {
   ACCESS_WRITE_MS,
   CACHE_CAP_TARGET_PERCENT,
@@ -119,13 +120,71 @@ describe('tape.db retention', () => {
     expect(store.kvGet('coverage', AAPL_D)?.json).toBe('{"ranges":[[86400,172801]]}');
     expect(store.stats()).toMatchObject({ series: 3, bars: 3, executions: 1 });
     expect(unpackNav(store.navAll())).toEqual([{ t: 1000, netLiq: 5 }]);
+    expect(store.db.prepare('SELECT key, retention FROM series ORDER BY id').all().map((r) => ({ ...r }))).toEqual([
+      { key: AAPL_D, retention: 'daily' },
+      { key: 'STK:AAPL|1 min|TRADES|1', retention: 'minutes' },
+      { key: 'EMPTY|1 day', retention: 'daily' },
+    ]);
+  });
+
+  it('migrates the intraday flag (v2) to retention classes by the bar size in the key (v3), keeping every bar and dropping coverage the longer classes cannot trust', () => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), 'tape-ret-'));
+    file = join(dir, 'tape.db');
+    const v2 = new DatabaseSync(file);
+    configure(v2);
+    migrate(v2, 2);
+    const keys: Array<[string, number]> = [
+      ['STK:AAPL|1 secs|TRADES|0', 1],
+      ['STK:AAPL|30 secs|TRADES|0', 1],
+      ['STK:AAPL|1 min|TRADES|0', 1],
+      ['STK:AAPL|30 mins|TRADES|0', 1],
+      ['STK:AAPL|1 hour|TRADES|0', 1],
+      ['STK:AAPL|4 hours|TRADES|0', 1],
+      ['STK:AAPL|1 day|TRADES|1', 0],
+      ['OPT:AAPL:20261120:260:C|1 day|TRADES|1', 0],
+    ];
+    keys.forEach(([key, intraday], i) => v2.prepare('INSERT INTO series (id, key, intraday, bar_count) VALUES (?, ?, ?, 1)').run(i + 1, key, intraday));
+    keys.forEach((_, i) => v2.prepare('INSERT INTO bars (series_id, time, o, h, l, c, v) VALUES (?, 60, 1, 1, 1, 1, 1)').run(i + 1));
+    // Coverage written by the old service (clipped to 29 days when written, while its maintenance
+    // went on deleting bars past 30 days): the series that now stay longer have theirs dropped.
+    const kv = v2.prepare("INSERT INTO kv (ns, key, value, updated_at) VALUES ('coverage', ?, '{\"ranges\":[[1,2]]}', 1)");
+    for (const [key] of keys) kv.run(key);
+    kv.run('head|STK:AAPL|TRADES|0');
+    v2.close();
+    store = open();
+    expect(schemaVersion(store.db)).toBe(SCHEMA_VERSION);
+    expect(store.db.prepare("SELECT key FROM kv WHERE ns = 'coverage' ORDER BY key").all().map((r) => (r as { key: string }).key)).toEqual(
+      [
+        'OPT:AAPL:20261120:260:C|1 day|TRADES|1',
+        'STK:AAPL|1 day|TRADES|1',
+        'STK:AAPL|1 min|TRADES|0',
+        'STK:AAPL|1 secs|TRADES|0',
+        'STK:AAPL|30 secs|TRADES|0',
+        'head|STK:AAPL|TRADES|0',
+      ].sort(),
+    );
+    expect(store.db.prepare('SELECT retention FROM series ORDER BY id').all().map((r) => (r as { retention: string }).retention)).toEqual([
+      'seconds',
+      'seconds',
+      'minutes',
+      'hours',
+      'hours',
+      'hours',
+      'daily',
+      'daily',
+    ]);
+    expect(store.stats()).toMatchObject({ series: keys.length, bars: keys.length });
+    // The old column is gone.
+    expect(store.db.prepare("SELECT count(*) AS n FROM pragma_table_info('series') WHERE name = 'intraday'").get()).toEqual({ n: 0 });
   });
 
   it('keeps the bar count exact through overlapping puts, retention and eviction', () => {
     store.barsPut(AAPL_D, barsBefore(t0, 10, DAY), null);
     store.barsPut(AAPL_D, [...barsBefore(t0, 3, DAY), bar(t0), bar(t0), bar(NaN)], null); // 1 new, 3 replaced, a duplicate, an invalid time
-    store.barsPut('X|1 min|TRADES|1', barsBefore(t0, 100, 60), true);
-    store.barsPut('X|1 min|TRADES|1', barsBefore(t0 - 40 * DAY, 50, 60), true); // past the intraday retention
+    store.barsPut('X|1 min|TRADES|1', barsBefore(t0, 100, 60), 'minutes');
+    store.barsPut('X|1 min|TRADES|1', barsBefore(t0 - 40 * DAY, 50, 60), 'minutes'); // past the intraday retention
     expect(store.stats().bars).toBe(countBars(store));
     expect(store.stats().bars).toBe(161);
     expect(seriesRow(store, AAPL_D)?.bar_count).toBe(11);
@@ -174,9 +233,9 @@ describe('tape.db retention', () => {
 
   it('evicts series unused for 90 days with their coverage, and a head timestamp with its last series', () => {
     clock = T0 - 100 * DAY_MS;
-    store.barsPut(AAPL_D, barsBefore(t0 - 100 * DAY, 300, DAY), false);
-    store.barsPut(AAPL_W, barsBefore(t0 - 100 * DAY, 100, 7 * DAY), false);
-    store.barsPut(MSFT_D, barsBefore(t0 - 100 * DAY, 300, DAY), false);
+    store.barsPut(AAPL_D, barsBefore(t0 - 100 * DAY, 300, DAY), 'daily');
+    store.barsPut(AAPL_W, barsBefore(t0 - 100 * DAY, 100, 7 * DAY), 'daily');
+    store.barsPut(MSFT_D, barsBefore(t0 - 100 * DAY, 300, DAY), 'daily');
     for (const k of [AAPL_D, AAPL_W, MSFT_D, AAPL_HEAD, MSFT_HEAD]) store.kvSet('coverage', k, '{}', T0);
     store.kvSet('contract', 'AAPL', '{}', T0);
     // AAPL weekly was opened 10 days ago.
@@ -199,24 +258,25 @@ describe('tape.db retention', () => {
     expect(store.kvGet('contract', 'AAPL')).not.toBeNull();
     expect(store.stats()).toMatchObject({ series: 1, bars: 100, oldestAccess: T0 }); // read just now
     // An evicted series is stored again from scratch.
-    store.barsPut(AAPL_D, [bar(t0 - DAY)], false);
+    store.barsPut(AAPL_D, [bar(t0 - DAY)], 'daily');
     expect(seriesRow(store, AAPL_D)).toEqual({ last_access: T0, bar_count: 1 });
   });
 
-  it('over the size cap: evicts series unused for a week first, intraday before daily, then the least recently used, until under 80% of the cap', () => {
+  it('over the size cap: evicts series unused for a week first (seconds, then minutes and hours, then daily), then the least recently used, until under 80% of the cap', () => {
     const n = 20_000;
-    // Five series of the same size, opened at different times.
-    const put = (key: string, hoursAgo: number, intraday: boolean) => {
+    // Six series of the same size, opened at different times.
+    const put = (key: string, hoursAgo: number, retention: BarRetention) => {
       clock = T0 - hoursAgo * 3_600_000;
-      store.barsPut(key, barsBefore(t0 - DAY, n, intraday ? 60 : DAY), intraday);
+      store.barsPut(key, barsBefore(t0 - DAY, n, retention === 'daily' ? DAY : retention === 'seconds' ? 1 : 60), retention);
       store.kvSet('coverage', key, '{}', clock);
     };
     expect(CAP_RECENT_DAYS).toBe(7);
-    put('I1|1 min|TRADES|1', 8 * 24, true);
-    put('D1|1 day|TRADES|1', 30 * 24, false);
-    put('D2|1 day|TRADES|1', 10 * 24, false);
-    put('I2|1 min|TRADES|1', 3, true);
-    put('D3|1 day|TRADES|1', 2, false);
+    put('I1|1 min|TRADES|1', 8 * 24, 'minutes');
+    put('D1|1 day|TRADES|1', 30 * 24, 'daily');
+    put('S1|1 secs|TRADES|0', 7.5 * 24, 'seconds');
+    put('D2|1 day|TRADES|1', 10 * 24, 'daily');
+    put('I2|1 min|TRADES|1', 3, 'minutes');
+    put('D3|1 day|TRADES|1', 2, 'daily');
     // The intraday chart on screen was read a minute ago.
     clock = T0 - 60_000;
     store.barsGet('I2|1 min|TRADES|1', null);
@@ -225,10 +285,10 @@ describe('tape.db retention', () => {
     const total = dataBytes(store.db);
     const fileBefore = statSync(file).size;
 
-    // Data must fall below 80% of 70% of the total: three of the five series go, the ones not
-    // used for a week (intraday first, then daily least recently used first).
-    const cap = Math.round(total * 0.7);
-    expect(maintain(store, T0, cap)).toEqual(['I1|1 min|TRADES|1', 'D1|1 day|TRADES|1', 'D2|1 day|TRADES|1']);
+    // Data must fall below 80% of 55% of the total: four of the six series go, the ones not
+    // used for a week (seconds, then minutes, then daily least recently used first).
+    const cap = Math.round(total * 0.55);
+    expect(maintain(store, T0, cap)).toEqual(['S1|1 secs|TRADES|0', 'I1|1 min|TRADES|1', 'D1|1 day|TRADES|1', 'D2|1 day|TRADES|1']);
     expect(seriesKeys(store)).toEqual(['D3|1 day|TRADES|1', 'I2|1 min|TRADES|1']);
     expect(dataBytes(store.db)).toBeLessThanOrEqual((cap * CACHE_CAP_TARGET_PERCENT) / 100);
     expect(store.kvGet('coverage', 'D1|1 day|TRADES|1')).toBeNull();
@@ -249,10 +309,10 @@ describe('tape.db retention', () => {
 
   it('maintenance deletes at most DELETE_CHUNK rows per step, in transactions the queue can get between', () => {
     // 12,000 intraday bars past retention, an unused daily series of 12,000 bars, 6,000 expired kv entries.
-    store.barsPut('OLD|1 min|TRADES|1', barsBefore(t0 - 40 * DAY, 12_000, 60), true);
-    store.barsPut('NEW|1 min|TRADES|1', barsBefore(t0, 100, 60), true);
+    store.barsPut('OLD|1 min|TRADES|1', barsBefore(t0 - 40 * DAY, 12_000, 60), 'minutes');
+    store.barsPut('NEW|1 min|TRADES|1', barsBefore(t0, 100, 60), 'minutes');
     clock = T0 - 120 * DAY_MS;
-    store.barsPut(AAPL_D, barsBefore(t0, 12_000, DAY), false);
+    store.barsPut(AAPL_D, barsBefore(t0, 12_000, DAY), 'daily');
     store.transaction(() => {
       for (let i = 0; i < 6_000; i++) store.kvSet('contract', `c${i}`, '{}', T0 - 200 * DAY_MS);
     });
@@ -287,7 +347,7 @@ describe('tape.db retention', () => {
 
   it('leaves a series that is used again while it is being evicted', () => {
     clock = T0 - 100 * DAY_MS;
-    store.barsPut(AAPL_D, barsBefore(t0, 3 * DELETE_CHUNK, DAY), false);
+    store.barsPut(AAPL_D, barsBefore(t0, 3 * DELETE_CHUNK, DAY), 'daily');
     store.kvSet('coverage', AAPL_D, '{}', T0);
     clock = T0;
     const steps = store.maintenance(T0);
@@ -308,7 +368,7 @@ describe('tape.db retention', () => {
   });
 
   it('clearing the market data keeps executions, the NAV history and other kv, and shrinks the file', () => {
-    for (let s = 0; s < 20; s++) store.barsPut(`S${s}|1 day|TRADES|1`, barsBefore(t0, 2_000, DAY), false);
+    for (let s = 0; s < 20; s++) store.barsPut(`S${s}|1 day|TRADES|1`, barsBefore(t0, 2_000, DAY), 'daily');
     for (const ns of MARKET_DATA_NS) store.kvSet(ns, 'k', '{}', T0);
     store.kvSet('other', 'k', '{}', T0);
     store.executionsPut([{ execId: 'e.1', time: 1, json: '{"execId":"e.1"}' }]);
@@ -335,13 +395,13 @@ describe('tape.db retention', () => {
     // The recreated table is the same (clustered, no scans); series are stored again.
     expect((store.db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'bars'").get() as { sql: string }).sql).toMatch(/WITHOUT ROWID/);
     expect(plan(store.db, SQL.barsRange)).toMatch(/SEARCH bars USING PRIMARY KEY/);
-    store.barsPut('S0|1 day|TRADES|1', [bar(DAY)], false);
+    store.barsPut('S0|1 day|TRADES|1', [bar(DAY)], 'daily');
     expect(unpackBars(store.barsGet('S0|1 day|TRADES|1', null))).toEqual([bar(DAY)]);
     expect(store.stats()).toMatchObject({ series: 1, bars: 1 });
   });
 
   it('vacuum steps size themselves to take about VACUUM_STEP_MS', () => {
-    for (let s = 0; s < 50; s++) store.barsPut(`S${s}|1 day|TRADES|1`, barsBefore(t0, 10_000, DAY), false);
+    for (let s = 0; s < 50; s++) store.barsPut(`S${s}|1 day|TRADES|1`, barsBefore(t0, 10_000, DAY), 'daily');
     store.clearMarketData();
     const free = pragma(store.db, 'freelist_count');
     // A disk where 64 pages take a millisecond.
