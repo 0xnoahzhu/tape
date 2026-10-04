@@ -284,18 +284,35 @@ export function formatBytes(n: number | null | undefined): string {
 
 export type ShortcutId = 'command' | 'buy' | 'sell' | 'qty' | 'submit' | 'cancelLast' | 'pages' | 'settings' | 'theme';
 
-/** Shortcut rows in the design's order; Ctrl-based labels outside macOS. */
-export function shortcutKeys(platform: string): Array<{ id: ShortcutId; keys: string }> {
+/** The keys of one combination, modifiers first: ['⌘', '⇧', 'L'] / ['Ctrl', 'Shift', 'L']. */
+export type KeyCombo = string[];
+
+export interface ShortcutRow {
+  id: ShortcutId;
+  /** One key cap each; two for a pair (↑ / ↓) or a range (⌘1 – ⌘3). */
+  combos: KeyCombo[];
+  /** Shown between two combinations. */
+  sep?: '/' | '–';
+}
+
+/** Shortcut rows in the design's order: ⌘ ⇧ ⏎ ⌫ glyphs on macOS, Ctrl / Shift / Enter / Backspace elsewhere. */
+export function shortcutKeys(platform: string): ShortcutRow[] {
   const mac = platform === 'darwin';
+  const mod = (...keys: string[]): KeyCombo => [mac ? '⌘' : 'Ctrl', ...keys];
   return [
-    { id: 'command', keys: mac ? '⌘K' : 'Ctrl+K' },
-    { id: 'buy', keys: 'B' },
-    { id: 'sell', keys: 'S' },
-    { id: 'qty', keys: '↑ / ↓' },
-    { id: 'submit', keys: mac ? '⏎' : 'Enter' },
-    { id: 'cancelLast', keys: mac ? '⌘⌫' : 'Ctrl+Backspace' },
-    { id: 'pages', keys: mac ? '⌘1 – ⌘3' : 'Ctrl+1 – Ctrl+3' },
-    { id: 'settings', keys: mac ? '⌘ ,' : 'Ctrl+,' },
-    { id: 'theme', keys: mac ? '⌘⇧L' : 'Ctrl+Shift+L' },
+    { id: 'command', combos: [mod('K')] },
+    { id: 'buy', combos: [['B']] },
+    { id: 'sell', combos: [['S']] },
+    { id: 'qty', combos: [['↑'], ['↓']], sep: '/' },
+    { id: 'submit', combos: [[mac ? '⏎' : 'Enter']] },
+    { id: 'cancelLast', combos: [mod(mac ? '⌫' : 'Backspace')] },
+    { id: 'pages', combos: [mod('1'), mod('3')], sep: '–' },
+    { id: 'settings', combos: [mod(',')] },
+    { id: 'theme', combos: [mod(mac ? '⇧' : 'Shift', 'L')] },
   ];
+}
+
+/** "⌘⇧L" on macOS (glyphs side by side), "Ctrl+Shift+L" elsewhere. */
+export function comboLabel(combo: KeyCombo, mac: boolean): string {
+  return combo.join(mac ? '' : '+');
 }

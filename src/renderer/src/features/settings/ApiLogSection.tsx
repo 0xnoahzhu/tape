@@ -8,6 +8,7 @@ import type { ApiLogEntry } from '@shared/types';
 import { maskAccounts } from '../../lib/account';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
+import { SearchIcon } from '../../ui/icons';
 import { Segmented, Toggle } from '../../ui/primitives';
 import { countNewSince, filterLog, isInfo, logBody, logCounts, logDetail, newestFirst, tildify, type LogFilter } from './logic';
 import { useSettingsMessages } from './messages';
@@ -106,12 +107,12 @@ export function ApiLogSection() {
             height: 34,
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            padding: '0 10px',
+            gap: 10,
+            padding: '0 12px',
             boxShadow: 'inset 0 0 0 1px var(--ln)',
           }}
         >
-          <div style={{ color: 'var(--dm)' }}>⌕</div>
+          <SearchIcon />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}

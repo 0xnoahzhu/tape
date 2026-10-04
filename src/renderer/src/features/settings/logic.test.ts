@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiLogEntry, DepthBook, Quote } from '@shared/types';
 import {
+  comboLabel,
   countNewSince,
   farmList,
   filterLog,
@@ -270,13 +271,17 @@ describe('api log', () => {
 });
 
 describe('shortcuts', () => {
-  it('uses ⌘ on macOS and Ctrl elsewhere', () => {
-    const mac = shortcutKeys('darwin');
-    const win = shortcutKeys('win32');
-    expect(mac.map((k) => k.keys)).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 – ⌘3', '⌘ ,', '⌘⇧L']);
-    expect(win.find((k) => k.id === 'command')?.keys).toBe('Ctrl+K');
-    expect(win.find((k) => k.id === 'theme')?.keys).toBe('Ctrl+Shift+L');
-    expect(win.every((k) => !k.keys.includes('⌘'))).toBe(true);
+  const labels = (platform: string) =>
+    shortcutKeys(platform).map((k) => k.combos.map((c) => comboLabel(c, platform === 'darwin')).join(` ${k.sep} `));
+
+  it('uses ⌘ glyphs on macOS', () => {
+    expect(labels('darwin')).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 – ⌘3', '⌘,', '⌘⇧L']);
+    expect(shortcutKeys('darwin').find((k) => k.id === 'theme')?.combos).toEqual([['⌘', '⇧', 'L']]);
+  });
+
+  it('spells out Ctrl, Shift, Enter and Backspace elsewhere', () => {
+    expect(labels('win32')).toEqual(['Ctrl+K', 'B', 'S', '↑ / ↓', 'Enter', 'Ctrl+Backspace', 'Ctrl+1 – Ctrl+3', 'Ctrl+,', 'Ctrl+Shift+L']);
+    expect(labels('linux')).toEqual(labels('win32'));
   });
 });
 
