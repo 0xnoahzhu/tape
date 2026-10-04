@@ -10,6 +10,7 @@ import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { AddSymbol } from './AddSymbol';
 import { GroupList } from './GroupList';
+import { GroupMenu, type GroupMenuTarget } from './GroupMenu';
 import { ListMenu } from './ListMenu';
 import { useWatchlistMessages } from './messages';
 import { itemKey, listContracts } from './model';
@@ -91,18 +92,23 @@ function ExpandedPanel({
   const [menuOpen, setMenuOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [rowMenu, setRowMenu] = useState<RowMenuTarget | null>(null);
+  const [groupMenu, setGroupMenu] = useState<GroupMenuTarget | null>(null);
   // Target group for "Add symbol", remembered per list until the list changes.
   const [target, setTarget] = useState<{ listId: string; groupId: string } | null>(null);
   const targetGroupId = target && list && target.listId === list.id ? target.groupId : undefined;
+  // Group whose name is being edited in its header.
+  const [renaming, setRenaming] = useState<{ listId: string; groupId: string } | null>(null);
+  const renamingId = renaming && list && renaming.listId === list.id ? renaming.groupId : undefined;
 
   const closeMenus = useCallback(() => {
     setMenuOpen(false);
     setRowMenu(null);
+    setGroupMenu(null);
   }, []);
 
   // Escape and clicks outside the panel close the menus (unless a confirmation is showing).
   useEffect(() => {
-    if (!menuOpen && !rowMenu) return;
+    if (!menuOpen && !rowMenu && !groupMenu) return;
     const blocked = () => useStore.getState().confirm != null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !blocked()) closeMenus();
@@ -116,7 +122,7 @@ function ExpandedPanel({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mousedown', onDown, true);
     };
-  }, [menuOpen, rowMenu, closeMenus]);
+  }, [menuOpen, rowMenu, groupMenu, closeMenus]);
 
   const panelSize = useCallback(() => ({ width: panelRef.current?.offsetWidth ?? 272, height: panelRef.current?.offsetHeight ?? 0 }), []);
 
@@ -128,11 +134,25 @@ function ExpandedPanel({
     // As in the design: at the pointer, kept 8px from the panel's right edge.
     const x = Math.min(e.clientX - r.left, panel.offsetWidth - ROW_MENU_WIDTH - 8);
     setMenuOpen(false);
+    setGroupMenu(null);
     setRowMenu({ groupId, item, x, y: e.clientY - r.top });
   }, []);
 
+  const openGroupMenu = useCallback((e: MouseEvent, groupId: string) => {
+    e.preventDefault();
+    const panel = panelRef.current;
+    if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    setMenuOpen(false);
+    setRowMenu(null);
+    setGroupMenu({ groupId, x: e.clientX - r.left, y: e.clientY - r.top });
+  }, []);
+
+  const startRename = useCallback((groupId: string | null) => setRenaming(groupId && list ? { listId: list.id, groupId } : null), [list]);
+
   // A row that disappeared (removed elsewhere, list switched) closes its menu.
   const rowMenuValid = rowMenu && list?.groups.some((g) => g.id === rowMenu.groupId && g.items.some((i) => itemKey(i) === itemKey(rowMenu.item)));
+  const groupMenuId = groupMenu && list?.groups.some((g) => g.id === groupMenu.groupId) ? groupMenu.groupId : undefined;
 
   return (
     <div ref={panelRef} style={{ gridRow: '1 / 3', background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
@@ -140,6 +160,7 @@ function ExpandedPanel({
         <div
           onClick={() => {
             setRowMenu(null);
+            setGroupMenu(null);
             setMenuOpen((o) => !o);
           }}
           className="hover-p2"
@@ -181,8 +202,19 @@ function ExpandedPanel({
       {adding && list && (
         <AddSymbol list={list} targetGroupId={targetGroupId} onTarget={(groupId) => setTarget({ listId: list.id, groupId })} onClose={() => setAdding(false)} />
       )}
-      {list && <GroupList list={list} onRowMenu={openRowMenu} onGroupCreated={(groupId) => setTarget({ listId: list.id, groupId })} />}
+      {list && (
+        <GroupList
+          list={list}
+          renamingId={renamingId}
+          menuGroupId={groupMenuId}
+          onRename={startRename}
+          onGroupMenu={openGroupMenu}
+          onRowMenu={openRowMenu}
+          onGroupCreated={(groupId) => setTarget({ listId: list.id, groupId })}
+        />
+      )}
       {rowMenu && rowMenuValid && list && <RowMenu target={rowMenu} list={list} lists={lists} panelSize={panelSize} onClose={() => setRowMenu(null)} />}
+      {groupMenu && groupMenuId && list && <GroupMenu target={groupMenu} list={list} panelSize={panelSize} onRename={startRename} onClose={() => setGroupMenu(null)} />}
       {menuOpen && (
         <ListMenu
           lists={lists}

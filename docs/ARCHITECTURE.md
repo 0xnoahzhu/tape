@@ -236,6 +236,27 @@ Live `apiLog` events are sent only while a view streams them (`STREAM_BY_DEFAULT
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
 
+### Watchlists
+
+Lists of groups of instruments, persisted by the main process in `watchlists.json`
+(`storeSchema.ts → sanitizeWatchlists`). The built-in lists (Watchlist, Indices) cannot be deleted
+or renamed: a missing one is restored and their name comes from the defaults, but their groups are
+the user's and saved as edited. The renderer edits them with the pure functions of
+`features/watchlist/model.ts` and commits the result (`actions.ts`).
+
+* Groups are renamed and deleted from their header (✎ / × on hover or keyboard focus, or the
+  right-click menu). Names are trimmed and unique within a list, ignoring case and counting both
+  languages of a localized built-in name; a renamed built-in group gets a plain string name.
+* Deleting a group removes its symbols (confirmed when it has any); a list keeps at least one
+  group. The panel's `watchlist` quote owner is the current list's instruments, so the removed
+  symbols' quotes are released with the next subscription set.
+* The current list and the collapsed groups are per-device preferences in `localStorage`
+  (`prefs.ts`); collapsed entries of groups the list no longer has are dropped.
+* Name editors closed with Enter / Escape and a group deleted from its header give focus back to
+  a ✎ (the group's own, or the group now in its place) or to "+ New group" / "New list"
+  (`ui/focus.ts → useRefocus`). Focus left on `<body>` would let the next Enter submit the
+  order ticket (`useTicketKeys`).
+
 ## Conventions
 
 * Code, comments and docs are English. Chinese appears only in `zh` message tables.

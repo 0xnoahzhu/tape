@@ -285,6 +285,58 @@ export function IconButton({
   );
 }
 
+/**
+ * 24px glyph button inside a row (✎ / × of watchlist group headers and the list menu). Clicks do
+ * not reach the row. A disabled one stays focusable so its title can say why.
+ */
+export function GlyphButton({
+  title,
+  fontSize,
+  danger,
+  disabled,
+  onClick,
+  children,
+}: {
+  title: string;
+  fontSize: number;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      aria-disabled={disabled || undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onClick();
+      }}
+      className={disabled ? undefined : danger ? 'hover-r' : 'hover-tx'}
+      style={{
+        width: 24,
+        height: 24,
+        flexShrink: 0,
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize,
+        lineHeight: 1,
+        color: 'var(--dm)',
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? 'default' : 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 /** Primary / secondary buttons used in dialogs and forms. */
 export function Button({
   children,
@@ -407,10 +459,26 @@ export function Popover({ children, style }: { children: ReactNode; style?: CSSP
   );
 }
 
-export function MenuItem({ children, onClick, danger, disabled, style }: { children: ReactNode; onClick?: () => void; danger?: boolean; disabled?: boolean; style?: CSSProperties }) {
+export function MenuItem({
+  children,
+  onClick,
+  danger,
+  disabled,
+  title,
+  style,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  /** Tooltip, e.g. why the item is disabled. */
+  title?: string;
+  style?: CSSProperties;
+}) {
   return (
     <div
       onClick={disabled ? undefined : onClick}
+      title={title}
       className={disabled ? undefined : 'hover-p2'}
       style={{
         height: 32,

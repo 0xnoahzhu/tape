@@ -188,6 +188,18 @@ describe('sanitizeWatchlists', () => {
     expect(out[0].builtin).toBe(true);
   });
 
+  it('keeps the groups of built-in lists as saved (renamed, deleted)', () => {
+    const [main, idx] = defaults;
+    const edited = { ...main, groups: [{ ...main.groups[0], name: 'Chips' }, main.groups[2]] };
+    const out = sanitizeWatchlists([edited, idx], defaults)!;
+    expect(out[0].name).toEqual(main.name);
+    expect(out[0].groups.map((g) => g.id)).toEqual(['g-tech', 'g-etf']);
+    expect(out[0].groups[0].name).toBe('Chips');
+    expect(out[0].groups[0].items).toEqual(main.groups[0].items);
+    // A saved file read again (relaunch) is unchanged.
+    expect(sanitizeWatchlists(JSON.parse(JSON.stringify(out)), defaults)).toEqual(out);
+  });
+
   it('drops invalid items, groups and duplicate ids', () => {
     const out = sanitizeWatchlists(
       [

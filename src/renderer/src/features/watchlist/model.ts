@@ -2,8 +2,9 @@
 // so results can be written to the store and sent to the main process as they are.
 
 import { contractKey } from '@shared/contract';
-import type { ContractRef, LocalizedName, SymbolMatch, WatchItem, WatchGroup, Watchlist } from '@shared/types';
+import type { ContractRef, Lang, LocalizedName, SymbolMatch, WatchItem, WatchGroup, Watchlist } from '@shared/types';
 import { rankMatches } from '../search/listing';
+import { groupPrefKey } from './prefs';
 
 /** The built-in Indices list only accepts indices. */
 export const INDEX_LIST_ID = 'idx';
@@ -83,12 +84,78 @@ export function setItemName(list: Watchlist, key: string, name: LocalizedName): 
   return { ...list, groups: list.groups.map((g) => ({ ...g, items: g.items.map((i) => (itemKey(i) === key ? { ...i, name } : i)) })) };
 }
 
+// ---------------------------------------------------------------------------
+// Groups
+
+/** Every spelling of a name: a localized built-in name is taken in both languages. */
+const spellings = (name: LocalizedName): string[] => (typeof name === 'string' ? [name] : [name.en, name.zh]);
+
+/**
+ * Whether another group of the list already has `name` (trimmed, ignoring case, in either
+ * language of a localized name). `exceptId` is the group being renamed.
+ */
+export function groupNameTaken(list: Watchlist, name: string, exceptId?: string): boolean {
+  const wanted = name.trim().toLocaleLowerCase();
+  if (!wanted) return false;
+  return list.groups.some((g) => g.id !== exceptId && spellings(g.name).some((s) => s.trim().toLocaleLowerCase() === wanted));
+}
+
+/** Adds an empty group. Empty names and names another group has are ignored. */
 export function createGroup(list: Watchlist, name: string, id: string = newId('g')): Watchlist {
   const trimmed = name.trim();
-  if (!trimmed) return list;
+  if (!trimmed || groupNameTaken(list, trimmed)) return list;
   const group: WatchGroup = { id, name: trimmed, items: [] };
   return { ...list, groups: [...list.groups, group] };
 }
+
+/**
+ * Renames a group. The name is trimmed; an empty name, a name another group has, or the name the
+ * group already shows in `lang` leaves the list unchanged. A localized built-in name becomes a
+ * plain string, shown as typed in both languages.
+ */
+export function renameGroup(list: Watchlist, groupId: string, name: string, lang: Lang): Watchlist {
+  const trimmed = name.trim();
+  const group = list.groups.find((g) => g.id === groupId);
+  if (!group || !trimmed || groupNameTaken(list, trimmed, groupId)) return list;
+  const shown = typeof group.name === 'string' ? group.name : group.name[lang];
+  if (shown === trimmed) return list;
+  return { ...list, groups: list.groups.map((g) => (g === group ? { ...g, name: trimmed } : g)) };
+}
+
+/** A list keeps at least one group (new symbols go into one), so its last group stays. */
+export function canDeleteGroup(list: Watchlist): boolean {
+  return list.groups.length > 1;
+}
+
+/** Deletes a group with its symbols, unless it is the last group of the list. */
+export function deleteGroup(list: Watchlist, groupId: string): Watchlist {
+  if (!canDeleteGroup(list) || !list.groups.some((g) => g.id === groupId)) return list;
+  return { ...list, groups: list.groups.filter((g) => g.id !== groupId) };
+}
+
+/** The group that takes a deleted group's place on screen: the next one, else the previous one. */
+export function neighborGroupId(list: Watchlist, groupId: string): string | undefined {
+  const i = list.groups.findIndex((g) => g.id === groupId);
+  if (i < 0) return undefined;
+  return (list.groups[i + 1] ?? list.groups[i - 1])?.id;
+}
+
+/**
+ * Collapsed-group preferences (prefs.ts) without the entries of groups `list` no longer has.
+ * Returns `closed` itself when there is nothing to drop.
+ */
+export function pruneClosedGroups(closed: Record<string, boolean>, list: Watchlist): Record<string, boolean> {
+  const prefix = groupPrefKey(list.id, '');
+  const live = new Set(list.groups.map((g) => groupPrefKey(list.id, g.id)));
+  const stale = Object.keys(closed).filter((k) => k.startsWith(prefix) && !live.has(k));
+  if (!stale.length) return closed;
+  const next = { ...closed };
+  for (const k of stale) delete next[k];
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// Lists
 
 export function createList(lists: Watchlist[], name: string, defaultGroupName: LocalizedName, id: string = newId('w'), groupId: string = newId('g')): Watchlist[] {
   const trimmed = name.trim();

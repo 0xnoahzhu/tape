@@ -4,10 +4,13 @@ import { defaultWatchlists } from '@shared/defaults';
 import type { ContractRef, SymbolMatch, Watchlist } from '@shared/types';
 import {
   addItem,
+  canDeleteGroup,
   clampMenu,
   createGroup,
   createList,
+  deleteGroup,
   deleteList,
+  groupNameTaken,
   listAccepts,
   listContracts,
   listHas,
@@ -15,9 +18,12 @@ import {
   listKeys,
   looksLikeTicker,
   moveItem,
+  neighborGroupId,
   normalizeMatch,
   normalizeTicker,
+  pruneClosedGroups,
   removeItem,
+  renameGroup,
   renameList,
   setItemName,
   suggestionsFrom,
@@ -105,6 +111,79 @@ describe('list and group operations', () => {
     const next = createList(lists, ' Swing ', DEFAULT, 'w9', 'g9');
     expect(next.at(-1)).toEqual({ id: 'w9', name: 'Swing', groups: [{ id: 'g9', name: DEFAULT, items: [] }] });
     expect(createList(lists, '', DEFAULT)).toBe(lists);
+  });
+
+  it('does not create a group with a name the list already has', () => {
+    expect(createGroup(main, 'etf')).toBe(main);
+    expect(createGroup(main, ' 科技 ')).toBe(main); // the zh name of the built-in Tech group
+  });
+
+  it('detects group names taken by another group', () => {
+    expect(groupNameTaken(main, ' tech ')).toBe(true);
+    expect(groupNameTaken(main, '汽车')).toBe(true);
+    expect(groupNameTaken(main, 'Chips')).toBe(false);
+    expect(groupNameTaken(main, '   ')).toBe(false);
+    // A group does not collide with its own name.
+    expect(groupNameTaken(main, 'Tech', 'g-tech')).toBe(false);
+    expect(groupNameTaken(main, 'ETF', 'g-tech')).toBe(true);
+  });
+
+  it('renames groups with trimmed, unique names', () => {
+    const next = renameGroup(main, 'g-etf', '  Funds ', 'en');
+    expect(next.groups.find((g) => g.id === 'g-etf')!.name).toBe('Funds');
+    expect(next.groups.map((g) => g.id)).toEqual(['g-tech', 'g-auto', 'g-etf']);
+    expect(next.groups[0]).toBe(main.groups[0]);
+    expect(main.groups[2].name).toBe('ETF'); // input untouched
+    expect(renameGroup(main, 'g-etf', '   ', 'en')).toBe(main);
+    expect(renameGroup(main, 'g-etf', 'ETF', 'en')).toBe(main);
+    expect(renameGroup(main, 'g-etf', 'tech', 'en')).toBe(main);
+    expect(renameGroup(main, 'g-etf', '汽车', 'en')).toBe(main);
+    expect(renameGroup(main, 'nope', 'Funds', 'en')).toBe(main);
+    // Changing only the case of its own name is a rename.
+    expect(renameGroup(main, 'g-etf', 'Etf', 'en').groups[2].name).toBe('Etf');
+  });
+
+  it('turns a localized group name into a plain string once renamed', () => {
+    expect(renameGroup(main, 'g-tech', 'Chips', 'zh').groups[0].name).toBe('Chips');
+    expect(renameGroup(main, 'g-tech', '芯片', 'zh').groups[0].name).toBe('芯片');
+    // Confirming the name it already shows keeps it localized.
+    expect(renameGroup(main, 'g-tech', 'Tech', 'en')).toBe(main);
+    expect(renameGroup(main, 'g-tech', '科技', 'zh')).toBe(main);
+    // The other language's name, typed in this language, becomes the name in both.
+    expect(renameGroup(main, 'g-tech', 'Tech', 'zh').groups[0].name).toBe('Tech');
+  });
+
+  it('deletes groups with their symbols but keeps the last group', () => {
+    const next = deleteGroup(main, 'g-tech');
+    expect(next.groups.map((g) => g.id)).toEqual(['g-auto', 'g-etf']);
+    expect(listHas(next, 'STK:AAPL')).toBe(false);
+    expect(listItemCount(next)).toBe(3);
+    expect(main.groups).toHaveLength(3); // input untouched
+    expect(deleteGroup(main, 'nope')).toBe(main);
+    const last = deleteGroup(deleteGroup(main, 'g-tech'), 'g-auto');
+    expect(canDeleteGroup(last)).toBe(false);
+    expect(deleteGroup(last, 'g-etf')).toBe(last);
+    expect(canDeleteGroup(custom)).toBe(false);
+    expect(canDeleteGroup(main)).toBe(true);
+    const empty: Watchlist = { id: 'e', name: 'E', groups: [] };
+    expect(deleteGroup(empty, 'g')).toBe(empty);
+  });
+
+  it("finds the group that takes a deleted group's place", () => {
+    expect(neighborGroupId(main, 'g-tech')).toBe('g-auto');
+    expect(neighborGroupId(main, 'g-auto')).toBe('g-etf');
+    expect(neighborGroupId(main, 'g-etf')).toBe('g-auto'); // the last group: the previous one
+    expect(neighborGroupId(main, 'nope')).toBeUndefined();
+    expect(neighborGroupId(custom, custom.groups[0].id)).toBeUndefined();
+  });
+
+  it('prunes the collapsed state of deleted groups of one list', () => {
+    const closed = { 'main:g-tech': true, 'main:g-etf': true, 'idx:g-us': true, 'mainx:g-tech': true };
+    const next = pruneClosedGroups(closed, deleteGroup(main, 'g-tech'));
+    expect(next).toEqual({ 'main:g-etf': true, 'idx:g-us': true, 'mainx:g-tech': true });
+    expect(closed['main:g-tech']).toBe(true); // input untouched
+    expect(pruneClosedGroups(closed, idx)).toBe(closed);
+    expect(pruneClosedGroups(next, deleteGroup(main, 'g-tech'))).toBe(next);
   });
 
   it('renames and deletes user lists only', () => {

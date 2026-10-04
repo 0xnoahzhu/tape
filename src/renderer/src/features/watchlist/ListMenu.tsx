@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
-import { TextInput } from '../../ui/primitives';
+import { useRefocus } from '../../ui/focus';
+import { GlyphButton, TextInput } from '../../ui/primitives';
 import { updateWatchlists } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
 import { createList, deleteList, listItemCount, newId, renameList } from './model';
@@ -31,6 +32,13 @@ export function ListMenu({
   const [newName, setNewName] = useState('');
   // Enter / Escape unmount the rename input, which can fire a trailing blur; ignore it.
   const renameDone = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const newListRef = useRef<HTMLButtonElement>(null);
+  const refocus = useRefocus();
+  // Enter / Escape in an editor remove the focused input: focus goes to the list's ✎, or to
+  // "New list" (no id).
+  const focusRow = (listId?: string) =>
+    refocus(() => (listId ? menuRef.current?.querySelector<HTMLElement>(`[data-list="${CSS.escape(listId)}"] button`) : newListRef.current));
 
   const builtIn = lists.filter((l) => l.builtin);
   const custom = lists.filter((l) => !l.builtin);
@@ -77,6 +85,7 @@ export function ListMenu({
     const name = newName.trim();
     if (!name) {
       setNaming(false);
+      focusRow();
       return;
     }
     const id = newId('w');
@@ -97,6 +106,7 @@ export function ListMenu({
     <>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 4 }} />
       <div
+        ref={menuRef}
         style={{
           position: 'absolute',
           top: 48,
@@ -136,11 +146,17 @@ export function ListMenu({
                   onChange={(name) => setRenaming({ id: l.id, name })}
                   onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing) return;
-                    if (e.key === 'Enter') commitRename();
+                    if (e.key === 'Enter') {
+                      // No keypress follows: it would activate the ✎ focus moves to.
+                      e.preventDefault();
+                      commitRename();
+                      focusRow(l.id);
+                    }
                     if (e.key === 'Escape') {
                       e.stopPropagation();
                       renameDone.current = true;
                       setRenaming(null);
+                      focusRow(l.id);
                     }
                   }}
                   onBlur={commitRename}
@@ -150,34 +166,24 @@ export function ListMenu({
           }
           const r = listRow(l);
           return (
-            <div key={l.id} onClick={() => onPick(l.id)} className="hover-p2" style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px', cursor: 'pointer' }}>
+            <div
+              key={l.id}
+              data-list={l.id}
+              onClick={() => onPick(l.id)}
+              className="hover-p2"
+              style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px', cursor: 'pointer' }}
+            >
               {r.check}
               <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: r.weight }}>
                 {nameOf(l.name, lang)}
               </div>
               {r.count}
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  startRename(l);
-                }}
-                title={m.rename}
-                className="hover-tx"
-                style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--dm)' }}
-              >
+              <GlyphButton title={m.rename} fontSize={12} onClick={() => startRename(l)}>
                 ✎
-              </div>
-              <div
-                onClick={(e) => {
-                  e.stopPropagation();
-                  confirmDelete(l);
-                }}
-                title={m.deleteList}
-                className="hover-r"
-                style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--dm)' }}
-              >
+              </GlyphButton>
+              <GlyphButton title={m.deleteList} fontSize={13} danger onClick={() => confirmDelete(l)}>
                 ×
-              </div>
+              </GlyphButton>
             </div>
           );
         })}
@@ -192,23 +198,41 @@ export function ListMenu({
               onChange={setNewName}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return;
-                if (e.key === 'Enter') createNamedList();
+                if (e.key === 'Enter') {
+                  // No keypress follows: it would activate "New list" when focus moves there.
+                  e.preventDefault();
+                  createNamedList();
+                }
                 if (e.key === 'Escape') {
                   e.stopPropagation();
                   setNaming(false);
+                  focusRow();
                 }
               }}
             />
           </div>
         ) : (
-          <div
+          <button
+            ref={newListRef}
+            type="button"
             onClick={() => setNaming(true)}
             className="hover-p2"
-            style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', color: 'var(--ac)' }}
+            style={{
+              height: 36,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '0 12px',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              color: 'var(--ac)',
+            }}
           >
             <div style={{ width: 14 }}>+</div>
             <div>{m.newList}</div>
-          </div>
+          </button>
         )}
       </div>
     </>
