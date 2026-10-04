@@ -1,0 +1,61 @@
+// Messages between the main process (client.ts) and the database worker (server.ts).
+// Types only: the two sides are separate bundles and must not share runtime code.
+
+import type { NavPoint } from '@shared/types';
+
+/** A journaled execution: the JSON text is what ExecutionJournal.since returns. */
+export interface ExecutionRow {
+  execId: string;
+  time: number;
+  json: string;
+}
+
+/**
+ * Operations by name: arguments and result. Bars travel both ways and NAV points back as packed
+ * Float64Arrays (transferred, not copied): bars as [time, o, h, l, c, v] * n, NAV as [t, netLiq] * n.
+ * Packing is done separately on each side (the bundles share no runtime code).
+ */
+export interface DbOps {
+  'bars.get': [args: [series: string, fromTime: number | null], result: Float64Array];
+  'bars.put': [args: [series: string, bars: Float64Array, intraday: boolean | null], result: void];
+  'bars.last': [args: [series: string], result: number | null];
+  'kv.get': [args: [ns: string, key: string], result: { json: string; updatedAt: number } | null];
+  'kv.set': [args: [ns: string, key: string, json: string, updatedAt: number], result: void];
+  'kv.delete': [args: [ns: string, key: string], result: void];
+  'executions.put': [args: [rows: ExecutionRow[]], result: void];
+  /** JSON array text, newest first. */
+  'executions.since': [args: [since: number], result: string];
+  'nav.append': [args: [points: NavPoint[]], result: void];
+  'nav.all': [args: [], result: Float64Array];
+  'nav.replace': [args: [points: NavPoint[]], result: void];
+  /** Runs retention and vacuum now (tests, diagnostics). */
+  maintain: [args: [], result: void];
+  /** Commits pending writes, checkpoints the WAL and closes the database. */
+  close: [args: [], result: void];
+}
+
+export type DbOp = keyof DbOps;
+export type DbArgs<K extends DbOp> = DbOps[K][0];
+export type DbResult<K extends DbOp> = DbOps[K][1];
+
+export interface DbRequest<K extends DbOp = DbOp> {
+  id: number;
+  op: K;
+  args: DbArgs<K>;
+}
+
+export type DbResponse = { id: number; ok: true; value: unknown } | { id: number; ok: false; message: string };
+
+/** Sent once by the server after opening (or failing to open) the database. */
+export type DbStatus =
+  | { type: 'ready'; file: string; schemaVersion: number; recovered?: string }
+  | { type: 'unavailable'; message: string };
+
+export type DbMessage = DbResponse | DbStatus;
+
+/** Worker options (workerData). */
+export interface DbWorkerData {
+  file: string;
+  /** Set to 1 (and notified) once the database is closed, so the main thread can wait on quit. */
+  closed?: Int32Array;
+}
