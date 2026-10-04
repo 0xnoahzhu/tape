@@ -11,6 +11,7 @@ const L: StatusLabels = {
   working: 'Working',
   iceberg: 'ice',
   filled: (n) => `${n} filled`,
+  sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
 };
 
 function order(over: Partial<WorkingOrder> = {}): WorkingOrder {
@@ -38,6 +39,9 @@ function order(over: Partial<WorkingOrder> = {}): WorkingOrder {
 describe('orderStatusText', () => {
   it('shows working orders with their TIF', () => {
     expect(orderStatusText(order({ tif: 'GTC' }), L)).toEqual({ text: 'Working · GTC', accent: false });
+    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), L).text).toBe('Working · GTC · Extended hours');
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), L).text).toBe('Working · DAY · Overnight + Day');
+    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), L).text).toBe('Working · GTD 10/09 16:00 ET');
   });
 
   it('shows pending states', () => {
@@ -82,7 +86,7 @@ describe('ticketPatchFromOrder', () => {
       limitPrice: 226.5,
       stopPrice: null,
       tif: 'GTC',
-      outsideRth: true,
+      session: 'extended',
       condition: false,
       iceberg: false,
       goodAfter: false,
@@ -123,7 +127,13 @@ describe('ticketPatchFromOrder', () => {
   it('maps trailing orders and unknown types / TIFs', () => {
     expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', trailingPercent: 2.5 }))).toMatchObject({ orderType: 'TRAIL', trailMode: 'pct', trailAmt: '2.5', limitPrice: null });
     expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', auxPrice: 1.5 }))).toMatchObject({ trailMode: 'amt', trailAmt: '1.5' });
-    expect(ticketPatchFromOrder(order({ orderType: 'REL', tif: 'GTD' }))).toMatchObject({ orderType: 'LMT', tif: 'DAY' });
+    expect(ticketPatchFromOrder(order({ orderType: 'REL', tif: 'XYZ' }))).toMatchObject({ orderType: 'LMT', tif: 'DAY' });
+  });
+
+  it('keeps the TIF, GTD expiry and session of the working order', () => {
+    expect(ticketPatchFromOrder(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }))).toMatchObject({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'regular' });
+    expect(ticketPatchFromOrder(order({ tif: 'FOK' }))).toMatchObject({ tif: 'FOK' });
+    expect(ticketPatchFromOrder(order({ session: 'overnightDay', outsideRth: true }))).toMatchObject({ tif: 'DAY', session: 'overnightDay', advancedOpen: true });
   });
 });
 

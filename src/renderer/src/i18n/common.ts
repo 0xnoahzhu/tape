@@ -1,4 +1,5 @@
 // Strings shared by several features.
+import type { TradingSession } from '@shared/types';
 import { createMessages } from './index';
 
 export const useCommon = createMessages({
@@ -38,11 +39,17 @@ export const useCommon = createMessages({
     orderSubmitted: (desc: string) => `Submitted: ${desc}`,
     orderModified: (id: number) => `Order #${id} modified`,
     orderFailed: (msg: string) => `Order failed: ${msg}`,
+    /** A late rejection without IB's reason (see orderActions.ts › watchLateRejection). */
+    orderInactive: 'IBKR set the order inactive',
     cancelOrderTitle: 'Cancel order',
     cancelOrderLabel: 'Cancel order',
     noWorkingOrders: 'No open orders',
     notConnected: 'Not connected to TWS / IB Gateway',
     readOnlyApiHint: (path: string) => `Turn off “Read-Only API” in ${path} to trade.`,
+    /** IB's 10329: the API precautions block directly routed orders (the overnight-only session). */
+    directRouteHint: (path: string) => `Overnight-only orders go directly to IBKR's OVERNIGHT venue: turn on “Bypass Redirect Order warning for Stock API orders” in ${path} to send them.`,
+    /** Trading sessions (order ticket, review, orders list). */
+    sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' } as Record<TradingSession, string>,
     renderFailed: 'This area failed to display',
     retry: 'Retry',
   },
@@ -82,11 +89,14 @@ export const useCommon = createMessages({
     orderSubmitted: (desc: string) => `已提交：${desc}`,
     orderModified: (id: number) => `订单 #${id} 已修改`,
     orderFailed: (msg: string) => `下单失败：${msg}`,
+    orderInactive: 'IBKR 已将订单设为无效',
     cancelOrderTitle: '确认撤单',
     cancelOrderLabel: '撤单',
     noWorkingOrders: '没有未成交订单',
     notConnected: '未连接 TWS / IB Gateway',
     readOnlyApiHint: (path: string) => `如需交易，请在 ${path} 中关闭 “Read-Only API”。`,
+    directRouteHint: (path: string) => `仅夜盘订单会直接发往 IBKR 的 OVERNIGHT 场所：如需发送，请在 ${path} 中勾选 “Bypass Redirect Order warning for Stock API orders”。`,
+    sessions: { regular: '常规时段', extended: '盘前盘后', overnight: '夜盘', overnightDay: '夜盘 + 日盘' } as Record<TradingSession, string>,
     renderFailed: '此区域显示出错',
     retry: '重试',
   },

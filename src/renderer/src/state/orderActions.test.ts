@@ -58,6 +58,17 @@ describe('orderErrorText', () => {
     expect(orderErrorText(new Error('Read-Only mode. (321)'))).toBe(`Read-Only mode. (321) ${GATEWAY_HINT}`);
   });
 
+  it('says where to allow directly routed (overnight-only) orders', () => {
+    const ib10329 = 'This order will be directly routed to OVERNIGHT. Restriction is specified in Precautionary Settings of Global Configuration/API. (10329)';
+    const hint = (path: string) =>
+      `Overnight-only orders go directly to IBKR's OVERNIGHT venue: turn on “Bypass Redirect Order warning for Stock API orders” in ${path} to send them.`;
+    expect(orderErrorText(ipcError('placeOrder', ib10329))).toBe(`${ib10329} ${hint('IB\u00a0Gateway › Configure › Settings › API › Precautions')}`);
+    setUp(7497);
+    expect(orderErrorText(ipcError('placeOrder', ib10329))).toBe(`${ib10329} ${hint('TWS › Global\u00a0Configuration › API › Precautions')}`);
+    setUp(4002, 'gateway', 'zh');
+    expect(orderErrorText(ipcError('placeOrder', ib10329))).toContain('IB\u00a0Gateway › Configure › Settings › API › Precautions 中勾选');
+  });
+
   it('leaves other errors as they are, without the IPC wrapper', () => {
     // 321 is also IB's code for other invalid requests.
     const missingExchange = 'Error validating request: missing order exchange. (321)';
@@ -84,6 +95,49 @@ describe('order toasts', () => {
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `Order failed: ${IB_321} ${GATEWAY_HINT}` });
   });
 
+  it('a rejection right after IB acknowledged the order replaces "Submitted"', async () => {
+    vi.useFakeTimers();
+    try {
+      placeOrder.mockResolvedValue({ orderId: 9, childOrderIds: [] });
+      await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL' })).resolves.toBe(true);
+      expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 200 AAPL' });
+      const order = (status: WorkingOrder['status'], message?: string): WorkingOrder => ({
+        orderId: 9,
+        clientId: 7,
+        key: '7:9',
+        contract: stock('AAPL'),
+        action: 'BUY',
+        orderType: 'LMT',
+        totalQuantity: 200,
+        limitPrice: 1,
+        tif: 'DAY',
+        outsideRth: false,
+        status,
+        filled: 0,
+        remaining: 200,
+        avgFillPrice: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        message,
+      });
+      useStore.setState({ orders: [order('PreSubmitted')] });
+      expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 200 AAPL' });
+      // As IB answered an iceberg order on the paper account, 0.55 s after PreSubmitted.
+      useStore.setState({ orders: [order('Inactive', 'Order rejected - reason:Display size should be a multiple of lot size.')] });
+      expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'Order failed: Order rejected - reason:Display size should be a multiple of lot size.' });
+
+      // Later rejections are left to the notification.
+      await sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL' });
+      useStore.setState({ orders: [] });
+      vi.advanceTimersByTime(5_000);
+      useStore.setState({ orders: [order('Inactive')] });
+      expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 200 AAPL' });
+    } finally {
+      vi.useRealTimers();
+      useStore.setState({ orders: [] });
+    }
+  });
+
   it('a rejected cancel does too', async () => {
     cancelOrder.mockRejectedValue(ipcError('cancelOrder', IB_321));
     const order: WorkingOrder = {
@@ -105,8 +159,15 @@ describe('order toasts', () => {
       updatedAt: 0,
     };
     confirmCancel(order);
+    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Type', value: 'LMT · DAY' });
     await useStore.getState().confirm!.run();
     expect(cancelOrder).toHaveBeenCalledWith(12);
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `${IB_321} ${GATEWAY_HINT}` });
+
+    confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', session: 'extended', outsideRth: true });
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 16:00 ET · Extended hours');
+    setUp(4002, 'gateway', 'zh');
+    confirmCancel({ ...order, session: 'overnightDay', outsideRth: true });
+    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: '类型', value: 'LMT · DAY · 夜盘 + 日盘' });
   });
 });

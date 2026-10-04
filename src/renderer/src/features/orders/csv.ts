@@ -3,7 +3,8 @@
 
 import { contractLabel } from '@shared/contract';
 import { hms, ymd } from '@shared/format';
-import type { Execution, WorkingOrder } from '@shared/types';
+import { sessionOf } from '@shared/orderTiming';
+import type { Execution, TradingSession, WorkingOrder } from '@shared/types';
 import { priceOrUndefined, tradeAmount } from './model';
 
 type Cell = string | number | null | undefined;
@@ -25,6 +26,8 @@ const HEADER = [
   'Filled',
   'Status',
   'TIF',
+  'Session',
+  'Good till',
   'Amount',
   'Commission',
   'Realized P&L',
@@ -52,9 +55,18 @@ export function toCsv(rows: Cell[][]): string {
 
 const localTime = (t: number) => `${ymd(t)} ${hms(t)}`;
 
+/** Trading sessions in IBKR's own words. */
+const SESSION_NAMES: Record<TradingSession, string> = {
+  regular: 'Regular',
+  extended: 'Outside RTH',
+  overnight: 'Overnight',
+  overnightDay: 'Overnight + Day',
+};
+
 export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): string {
   const rows: Cell[][] = [HEADER];
   for (const o of orders) {
+    const session = sessionOf(o);
     rows.push([
       'Open order',
       localTime(o.createdAt),
@@ -72,10 +84,13 @@ export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): stri
       num(o.filled),
       o.status,
       o.tif,
+      SESSION_NAMES[session],
+      o.goodTillDate,
       '',
       '',
       '',
-      o.contract.exchange,
+      // Overnight-only orders are routed to IB's OVERNIGHT venue.
+      session === 'overnight' ? 'OVERNIGHT' : o.contract.exchange,
       '',
     ]);
   }
@@ -96,6 +111,8 @@ export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): stri
       '',
       num(e.shares),
       'Filled',
+      '',
+      '',
       '',
       num(tradeAmount(e)),
       num(e.commission),

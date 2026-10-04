@@ -1,5 +1,6 @@
 // Orders page strings (design TPL k62–k72, ordTabs, ordStL, the trades header trH and the status texts of stOf()).
 import { createMessages } from '../../i18n';
+import { useCommon } from '../../i18n/common';
 
 export const useOrdersMessages = createMessages({
   en: {
@@ -33,6 +34,7 @@ export const useOrdersMessages = createMessages({
     held: 'Held',
     ice: 'ice',
     stopLimitTitle: 'Stop / Limit',
+    sessions: useCommon.for('en').sessions,
     // Ownership
     tws: 'TWS',
     clientN: (id: number) => `Client ${id}`,
@@ -71,6 +73,7 @@ export const useOrdersMessages = createMessages({
     held: '暂挂',
     ice: '冰山',
     stopLimitTitle: '触发价 / 限价',
+    sessions: useCommon.for('zh').sessions,
     tws: 'TWS',
     clientN: (id: number) => `客户端 ${id}`,
     ownOrder: (id: number, client: number) => `订单 #${id} · 由本应用提交（客户端 ${client}）`,

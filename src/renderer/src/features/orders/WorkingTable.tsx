@@ -12,10 +12,11 @@ import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
 // The design gives the status column 70px, which truncates every status ("Working…");
-// it gets a flexible share here so "Waiting · AAPL ≥ 235.00" stays readable. Price takes
-// some of Qty's and Filled's share so a stop-limit "240.00 / 239.50" fits at the minimum
-// window width.
-export const WORKING_COLUMNS = '90px minmax(0,2fr) 60px 80px minmax(0,0.75fr) minmax(0,1.5fr) minmax(0,0.75fr) minmax(70px,1.5fr) 120px';
+// it gets the largest flexible share here so "Waiting · AAPL ≥ 235.00" and the TIF with its
+// session or GTD expiry ("Pre-submitted · DAY · Overnight + Day", "Pre-submitted · GTD 10/09
+// 16:00 ET") stay readable at the minimum window width before IB's messages. Contract keeps room
+// for an option ("AAPL Oct16 230 Call") and Price for a stop-limit "240.00 / 239.50".
+export const WORKING_COLUMNS = '90px minmax(0,1.3fr) 60px 80px minmax(0,0.75fr) minmax(0,1.25fr) minmax(0,0.75fr) minmax(70px,2.45fr) 120px';
 
 function modify(o: WorkingOrder): void {
   const s = useStore.getState();

@@ -4,6 +4,18 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { contractLabel, isTradable, multiplierOf } from '@shared/contract';
 import { f0, roundToTick } from '@shared/format';
+import {
+  isTimingProblem,
+  NEW_YORK,
+  sessionOf,
+  TIME_IN_FORCES,
+  tifChangeAllowed,
+  timingProblem,
+  unavailableReason,
+  zonedParts,
+  type TimingField,
+  type TimingInput,
+} from '@shared/orderTiming';
 import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useCommon } from '../../i18n/common';
@@ -12,14 +24,14 @@ import { useStore } from '../../state/store';
 import { Chip } from '../../ui/primitives';
 import { AdvancedPanel } from './AdvancedPanel';
 import { buildOrderRequest, pendingOrder, type ReviewLabels } from './buildOrder';
-import { FieldBox, NumberField, TextField } from './fields';
+import { DateTimeField, FieldBox, NumberField, TextField } from './fields';
 import { useTicketM, type TicketMessages } from './messages';
 import { buyingPowerAfter, conditionContract, money, positive, priceInput, priceText, resolveTicket, stepQty, type TicketMarket } from './ticketModel';
+import { goodTillTime, ticketTiming, toLocalInput } from './timing';
 import { useContractInfo } from './useContractInfo';
 import { useTicketKeys } from './useTicketKeys';
 
 const ORDER_TYPES: OrderType[] = ['LMT', 'MKT', 'STP', 'STP LMT', 'TRAIL'];
-const TIFS: TimeInForce[] = ['DAY', 'GTC', 'IOC', 'OPG'];
 
 const label12: CSSProperties = { fontSize: 12, color: 'var(--dm)' };
 const column6: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 };
@@ -43,6 +55,9 @@ function kindLabel(c: ContractRef, common: ReturnType<typeof useCommon>, m: Tick
 
 const sizeText = (n: number | undefined) => (n != null && n >= 0 ? f0(n) : '—');
 
+/** Choices that cannot be combined with the rest of the order stay visible but inert. */
+const unavailableStyle: CSSProperties = { opacity: 0.4, cursor: 'not-allowed' };
+
 /**
  * The qty input between the ± buttons is 72px wide when the ticket shows its scrollbar, and mono
  * digits are 0.6em wide: 15px fits "100,000", longer quantities shrink so no digit is clipped.
@@ -59,6 +74,11 @@ export function OrderTicket() {
   const accountCurrency = useStore((s) => s.account?.currency);
   const connected = useStore((s) => s.connection.status === 'connected');
   const feedIssue = useStore((s) => s.connection.marketDataIssue);
+  // The order being modified keeps its session (IB refuses to move it); the ticket shows that one.
+  // Its TIF can only change between DAY and GTC, or to IOC (tifChangeAllowed).
+  const modifiedOrder = useStore((s) =>
+    s.ticket.modifyingOrderId == null ? undefined : s.orders.find((o) => o.orderId === s.ticket.modifyingOrderId && o.clientId === s.connection.clientId),
+  );
 
   const refContract = useMemo(() => conditionContract(symbol), [symbol]);
   const subs = useMemo(() => [symbol, refContract], [symbol, refContract]);
@@ -83,6 +103,19 @@ export function OrderTicket() {
   const [qtyFocus, setQtyFocus] = useState(false);
   const [pxFocus, setPxFocus] = useState(false);
   const [lmtFocus, setLmtFocus] = useState(false);
+  const [gtdFocus, setGtdFocus] = useState(false);
+
+  const now = Date.now();
+  const session = modifiedOrder ? sessionOf(modifiedOrder) : t.session;
+  const goodTill = goodTillTime(t.goodTill, now, info);
+  const timing: TimingInput = ticketTiming(t, symbol, session, goodTill);
+  /** Why a choice cannot be made with the rest of the ticket as it is (null: it can). */
+  const unavailable = <F extends TimingField>(field: F, value: TimingInput[F]): string | null => {
+    const why = unavailableReason(timing, field, value);
+    return why ? m.problems[why] : null;
+  };
+  /** Why IB would refuse to change the modified order to this TIF (null: it would not). */
+  const tifLock = (k: TimeInForce): string | null => (modifiedOrder && !tifChangeAllowed(modifiedOrder.tif, k) ? m.tifLocked(modifiedOrder.tif) : null);
 
   const tradable = isTradable(symbol);
   const buy = t.side === 'BUY';
@@ -102,15 +135,22 @@ export function OrderTicket() {
     buy: c.buy,
     sell: c.sell,
     orderTypes: m.orderTypes,
+    sessions: c.sessions,
     units: m.units,
     extras: m.extras,
   };
 
   const submit = () => {
     const s = useStore.getState();
-    const res = buildOrderRequest({ contract: s.symbol, ticket: s.ticket, market });
+    const locked = tifLock(s.ticket.tif);
+    if (locked) {
+      s.showToast(locked, 'error');
+      return;
+    }
+    const res = buildOrderRequest({ contract: s.symbol, ticket: { ...s.ticket, session }, market, hours: info });
     if (!res.ok) {
-      s.showToast(res.error === 'index' ? c.indexNotTradable(s.symbol.symbol) : m.errors[res.error], 'error');
+      const e = res.error;
+      s.showToast(e === 'index' ? c.indexNotTradable(s.symbol.symbol) : isTimingProblem(e) ? m.problems[e] : m.errors[e], 'error');
       return;
     }
     submitOrder(pendingOrder(res.request, res.model, labels, market, s.ticket.modifyingOrderId));
@@ -131,6 +171,8 @@ export function OrderTicket() {
   const mainKey: 'limitPrice' | 'stopPrice' = t.orderType === 'LMT' ? 'limitPrice' : 'stopPrice';
   const issue = q?.error ?? (connected ? feedIssue : undefined);
   const showIssue = issue != null && market.bid == null && market.ask == null;
+  const problem = tradable ? timingProblem(timing, now) : null;
+  const timingIssue = tradable ? (tifLock(t.tif) ?? (problem ? m.problems[problem] : null)) : null;
   const est = tradable ? model.est : undefined;
   const bpAfter = tradable ? buyingPowerAfter({ buyingPower, currency: accountCurrency }, est, symbol.currency, buy) : undefined;
   const qtyText = f0(t.qty);
@@ -232,26 +274,31 @@ export function OrderTicket() {
         </div>
 
         <div style={{ display: 'flex', gap: 4, ...lock }}>
-          {ORDER_TYPES.map((k) => (
-            <div
-              key={k}
-              onClick={() => setType(k)}
-              style={{
-                flex: 1,
-                height: 32,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 12,
-                whiteSpace: 'nowrap',
-                cursor: 'pointer',
-                boxShadow: `inset 0 0 0 1px ${t.orderType === k ? 'var(--ac)' : 'var(--ln)'}`,
-                color: t.orderType === k ? 'var(--tx)' : 'var(--mu)',
-              }}
-            >
-              {m.orderTypes[k]}
-            </div>
-          ))}
+          {ORDER_TYPES.map((k) => {
+            const why = unavailable('orderType', k);
+            return (
+              <div
+                key={k}
+                onClick={why ? undefined : () => setType(k)}
+                title={why ? m.unavailable(why) : undefined}
+                style={{
+                  flex: 1,
+                  height: 32,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 12,
+                  whiteSpace: 'nowrap',
+                  cursor: 'pointer',
+                  boxShadow: `inset 0 0 0 1px ${t.orderType === k ? 'var(--ac)' : 'var(--ln)'}`,
+                  color: t.orderType === k ? 'var(--tx)' : 'var(--mu)',
+                  ...(why ? unavailableStyle : undefined),
+                }}
+              >
+                {m.orderTypes[k]}
+              </div>
+            );
+          })}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, ...lock }}>
@@ -355,15 +402,49 @@ export function OrderTicket() {
           </FieldBox>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', ...lock }}>
-          <div style={label12}>{c.tif}</div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {TIFS.map((k) => (
-              <Chip key={k} active={t.tif === k} title={m.tifHints[k]} onClick={() => patch({ tif: k })}>
-                {k}
-              </Chip>
-            ))}
+        <div style={{ ...column6, ...lock }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <div style={label12}>{c.tif}</div>
+            {session !== 'regular' && (
+              <div
+                onClick={() => patch({ advancedOpen: true })}
+                title={m.sessionHints[session]}
+                className="ellipsis hover-tx"
+                style={{ fontSize: 12, color: 'var(--mu)', cursor: 'pointer' }}
+              >
+                {c.sessions[session]}
+              </div>
+            )}
           </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {TIME_IN_FORCES.map((k) => {
+              const why = tifLock(k) ?? unavailable('tif', k);
+              return (
+                <Chip
+                  key={k}
+                  active={t.tif === k}
+                  title={why ? `${m.tifHints[k]}\n${m.unavailable(why)}` : m.tifHints[k]}
+                  onClick={why ? undefined : () => patch({ tif: k })}
+                  style={{ flex: 1, padding: '6px 0', textAlign: 'center', ...(why ? unavailableStyle : undefined) }}
+                >
+                  {k}
+                </Chip>
+              );
+            })}
+          </div>
+          {t.tif === 'GTD' && (
+            <FieldBox focused={gtdFocus} style={{ justifyContent: 'space-between', gap: 12, padding: '0 12px' }}>
+              <div style={{ ...label12, flexShrink: 0 }}>{m.goodTill}</div>
+              <DateTimeField
+                value={goodTill ? toLocalInput(goodTill) : ''}
+                min={toLocalInput(zonedParts(now, NEW_YORK))}
+                title={m.tifHints.GTD}
+                onChange={(v) => patch({ goodTill: v })}
+                onFocusChange={setGtdFocus}
+              />
+            </FieldBox>
+          )}
+          {timingIssue && <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--r)' }}>{timingIssue}</div>}
         </div>
 
         <div
@@ -375,7 +456,7 @@ export function OrderTicket() {
         </div>
         {t.advancedOpen && (
           <div style={lock}>
-            <AdvancedPanel t={t} model={model} patch={patch} refSymbol={contractLabel(refContract)} modifying={modifying != null} />
+            <AdvancedPanel t={t} model={model} patch={patch} refSymbol={contractLabel(refContract)} modifying={modifying != null} timing={timing} />
           </div>
         )}
 

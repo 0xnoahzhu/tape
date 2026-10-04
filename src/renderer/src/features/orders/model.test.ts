@@ -4,6 +4,7 @@ import type { Execution, WorkingOrder } from '@shared/types';
 import { useOrdersMessages } from './messages';
 import {
   canModifyInTicket,
+  goodTillInput,
   isChildRow,
   newestExecutions,
   orderPriceText,
@@ -149,6 +150,16 @@ describe('orderStatusText', () => {
     expect(orderStatusText(order({ status: 'PendingCancel' }), en, now).text).toBe('Cancelling');
     expect(orderStatusText(order({ status: 'PendingSubmit' }), en, now).text).toBe('Submitting · DAY');
   });
+
+  it('adds the GTD expiry and a session other than regular hours to the TIF', () => {
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), en, now).text).toBe('Submitted · DAY · Overnight + Day');
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), zh, now).text).toBe('已提交 · DAY · 夜盘 + 日盘');
+    expect(orderStatusText(order({ status: 'PreSubmitted', session: 'overnight' }), zh, now).text).toBe('预提交 · DAY · 夜盘');
+    expect(orderStatusText(order({ tif: 'GTC', session: 'extended', outsideRth: true }), en, now).text).toBe('Submitted · GTC · Extended hours');
+    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), en, now).text).toBe('Submitted · GTD 10/09 16:00 ET');
+    // Orders recorded before sessions existed: outsideRth decides.
+    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), zh, now).text).toBe('已提交 · GTC · 盘前盘后');
+  });
 });
 
 describe('ticketPatchFor', () => {
@@ -173,7 +184,8 @@ describe('ticketPatchFor', () => {
       stopPrice: 245,
       limitPrice: 244.5,
       tif: 'GTC',
-      outsideRth: true,
+      goodTill: null,
+      session: 'extended',
       condition: true,
       condOp: '<=',
       condPx: '220',
@@ -186,6 +198,16 @@ describe('ticketPatchFor', () => {
       bracket: false,
       modifyingOrderId: 4012,
     });
+  });
+
+  it('keeps the TIF, the GTD expiry and the session', () => {
+    expect(ticketPatchFor(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }))).toMatchObject({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'regular', advancedOpen: false });
+    expect(ticketPatchFor(order({ tif: 'GTD', goodTillDate: '20261009-20:00:00' })).goodTill).toBe('2026-10-09T16:00');
+    expect(ticketPatchFor(order({ session: 'overnightDay', outsideRth: true }))).toMatchObject({ tif: 'DAY', session: 'overnightDay', advancedOpen: true });
+    expect(ticketPatchFor(order({ session: 'overnight' }))).toMatchObject({ tif: 'DAY', session: 'overnight', advancedOpen: true });
+    expect(ticketPatchFor(order({ tif: 'FOK' })).tif).toBe('FOK');
+    expect(ticketPatchFor(order({ tif: 'GTT' })).tif).toBe('DAY');
+    expect(goodTillInput('whenever')).toBeNull();
   });
 
   it('maps trailing orders to the ticket trail fields', () => {

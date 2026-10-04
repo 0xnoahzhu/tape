@@ -22,7 +22,8 @@ const labels: ReviewLabels = {
   buy: 'Buy',
   sell: 'Sell',
   orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' },
-  extras: { outsideRth: ' · outside RTH', bracket: ' · with bracket', conditional: ' · conditional', iceberg: ' · iceberg', goodAfter: (t) => ` · GAT ${t}` },
+  sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
+  extras: { bracket: ' · with bracket', conditional: ' · conditional', iceberg: ' · iceberg', goodAfter: (t) => ` · GAT ${t}` },
 };
 
 function ok(r: BuildResult): OrderRequest {
@@ -33,7 +34,7 @@ const build = (patch: Partial<TicketState>, market: TicketMarket = mkt, contract
 
 describe('buildOrderRequest: order types', () => {
   it('LMT buy at the ask', () => {
-    expect(ok(build({}))).toEqual({ contract: AAPL, action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.49, tif: 'DAY', outsideRth: false });
+    expect(ok(build({}))).toEqual({ contract: AAPL, action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.49, tif: 'DAY', outsideRth: false, session: 'regular' });
   });
 
   it('LMT rounds a typed price to the tick', () => {
@@ -43,7 +44,7 @@ describe('buildOrderRequest: order types', () => {
 
   it('MKT sends no prices', () => {
     const r = ok(build({ orderType: 'MKT', side: 'SELL', tif: 'IOC' }));
-    expect(r).toEqual({ contract: AAPL, action: 'SELL', orderType: 'MKT', quantity: 100, tif: 'IOC', outsideRth: false });
+    expect(r).toEqual({ contract: AAPL, action: 'SELL', orderType: 'MKT', quantity: 100, tif: 'IOC', outsideRth: false, session: 'regular' });
   });
 
   it('STP sends the trigger', () => {
@@ -78,8 +79,77 @@ describe('buildOrderRequest: order types', () => {
     expect(r.trailStopPrice).toBeUndefined();
   });
 
-  it('keeps outsideRth', () => {
-    expect(ok(build({ outsideRth: true })).outsideRth).toBe(true);
+  it('sends the session with its outsideRth flag', () => {
+    expect(ok(build({ session: 'extended' }))).toMatchObject({ session: 'extended', outsideRth: true });
+    expect(ok(build({ session: 'overnight' }))).toMatchObject({ session: 'overnight', outsideRth: false });
+    // IB turns outside RTH on by itself for overnight + day; sending it keeps modifications equal.
+    expect(ok(build({ session: 'overnightDay' }))).toMatchObject({ session: 'overnightDay', outsideRth: true });
+  });
+});
+
+describe('buildOrderRequest: time in force and session', () => {
+  // 2026-10-05 is a Monday; 14:00 UTC = 10:00 New York (EDT).
+  const monday10 = Date.UTC(2026, 9, 5, 14, 0);
+  const at = (patch: Partial<TicketState>, now = monday10, contract = AAPL, hours?: { liquidHours?: string; timeZoneId?: string }) =>
+    buildOrderRequest({ contract, ticket: ticket(patch), market: mkt, now, hours });
+  const OPT = option('AAPL', '20261016', 230, 'C');
+
+  it('GTD defaults to the close of the current or next session, in New York time', () => {
+    expect(ok(at({ tif: 'GTD' })).goodTillDate).toBe('20261005 16:00:00 US/Eastern');
+    // After the close: the next weekday; Friday evening: Monday.
+    expect(ok(at({ tif: 'GTD' }, Date.UTC(2026, 9, 5, 21, 0))).goodTillDate).toBe('20261006 16:00:00 US/Eastern');
+    expect(ok(at({ tif: 'GTD' }, Date.UTC(2026, 9, 9, 22, 0))).goodTillDate).toBe('20261012 16:00:00 US/Eastern');
+    // IB's liquid hours know early closes and holidays.
+    const hours = { liquidHours: '20261005:0930-20261005:1300;20261006:CLOSED;20261007:0930-20261007:1600', timeZoneId: 'US/Eastern' };
+    expect(ok(at({ tif: 'GTD' }, monday10, AAPL, hours)).goodTillDate).toBe('20261005 13:00:00 US/Eastern');
+    expect(ok(at({ tif: 'GTD' }, Date.UTC(2026, 9, 5, 18, 0), AAPL, hours)).goodTillDate).toBe('20261007 16:00:00 US/Eastern');
+  });
+
+  it('GTD sends the typed expiry and refuses one in the past', () => {
+    expect(ok(at({ tif: 'GTD', goodTill: '2026-10-09T15:30' })).goodTillDate).toBe('20261009 15:30:00 US/Eastern');
+    expect(at({ tif: 'GTD', goodTill: '2026-10-05T09:59' })).toEqual({ ok: false, error: 'gtdTime' });
+    expect(at({ tif: 'GTD', goodTill: '' })).toEqual({ ok: false, error: 'gtdTime' });
+    // Other TIFs ignore a leftover expiry.
+    expect(ok(at({ tif: 'DAY', goodTill: '2026-10-01T16:00' }))).not.toHaveProperty('goodTillDate');
+  });
+
+  it('takes FOK for options only and OPG as market / limit on open for stocks', () => {
+    expect(at({ tif: 'FOK' })).toEqual({ ok: false, error: 'fokInstrument' });
+    expect(ok(at({ tif: 'FOK', limitPrice: 4.25 }, monday10, OPT)).tif).toBe('FOK');
+    expect(ok(at({ tif: 'OPG' })).tif).toBe('OPG');
+    expect(ok(at({ tif: 'OPG', orderType: 'MKT' })).tif).toBe('OPG');
+    expect(at({ tif: 'OPG', orderType: 'STP' })).toEqual({ ok: false, error: 'opgType' });
+    expect(at({ tif: 'OPG', limitPrice: 4.25 }, monday10, OPT)).toEqual({ ok: false, error: 'opgInstrument' });
+  });
+
+  it('keeps IOC, FOK and OPG in regular hours', () => {
+    expect(at({ tif: 'IOC', session: 'extended' })).toEqual({ ok: false, error: 'regularHoursTif' });
+    expect(at({ tif: 'OPG', session: 'extended' })).toEqual({ ok: false, error: 'regularHoursTif' });
+    expect(ok(at({ tif: 'IOC' })).tif).toBe('IOC');
+  });
+
+  it('keeps IOC, FOK and OPG off brackets, whose children take the same TIF', () => {
+    expect(at({ tif: 'IOC', bracket: true })).toEqual({ ok: false, error: 'bracketTif' });
+    expect(at({ tif: 'OPG', bracket: true })).toEqual({ ok: false, error: 'bracketTif' });
+    expect(ok(at({ tif: 'GTC', bracket: true })).bracket).toBeDefined();
+    expect(ok(at({ tif: 'IOC', bracket: true, modifyingOrderId: 12 })).tif).toBe('IOC');
+  });
+
+  it('takes DAY limit orders on US stocks in the overnight sessions', () => {
+    for (const session of ['overnight', 'overnightDay'] as const) {
+      expect(ok(at({ session })).session).toBe(session);
+      expect(at({ session, orderType: 'MKT' })).toEqual({ ok: false, error: 'overnightType' });
+      expect(at({ session, tif: 'GTC' })).toEqual({ ok: false, error: 'overnightTif' });
+      expect(at({ session, tif: 'IOC' })).toEqual({ ok: false, error: 'overnightTif' });
+      expect(at({ session, bracket: true })).toEqual({ ok: false, error: 'overnightBracket' });
+      expect(at({ session, iceberg: true, iceQty: '50' })).toEqual({ ok: false, error: 'overnightIceberg' });
+      expect(at({ session, condition: true })).toEqual({ ok: false, error: 'overnightCondition' });
+      expect(at({ session, goodAfter: true })).toEqual({ ok: false, error: 'overnightGoodAfter' });
+      expect(at({ session, limitPrice: 4.25 }, monday10, OPT)).toEqual({ ok: false, error: 'overnightInstrument' });
+      expect(at({ session }, monday10, { ...stock('SAP'), exchange: 'IBIS', currency: 'EUR' })).toEqual({ ok: false, error: 'overnightInstrument' });
+    }
+    // Modifying drops the bracket, so it does not count.
+    expect(ok(at({ session: 'overnightDay', bracket: true, modifyingOrderId: 12 })).bracket).toBeUndefined();
   });
 });
 
@@ -180,13 +250,13 @@ describe('review rows', () => {
   });
 
   it('lists extras, bracket and trigger rows', () => {
-    const r = build({ side: 'SELL', limitPrice: 100, outsideRth: true, bracket: true, condition: true, condPx: '235', iceberg: true, iceQty: '10', goodAfter: true, tif: 'GTC', modifyingOrderId: 41 });
+    const r = build({ side: 'SELL', limitPrice: 100, session: 'extended', bracket: true, condition: true, condPx: '235', iceberg: true, iceQty: '10', goodAfter: true, tif: 'GTC', modifyingOrderId: 41 });
     if (!r.ok) throw new Error(r.error);
     const p = pendingOrder(r.request, r.model, labels, mkt, 41);
     expect(p.modifyOrderId).toBe(41);
     const byLabel = Object.fromEntries(p.rows.map((x) => [x.label, x]));
     expect(byLabel['Side']).toEqual({ label: 'Side', value: 'Sell', color: 'var(--dn)' });
-    expect(byLabel['TIF'].value).toBe('GTC · outside RTH · conditional · iceberg · GAT 09:35');
+    expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35');
     expect(byLabel['Trigger'].value).toBe('AAPL ≥ 235.00');
     expect(byLabel['Take profit / Stop loss']).toBeUndefined();
   });
@@ -197,6 +267,18 @@ describe('review rows', () => {
     const rows = pendingOrder(r.request, r.model, labels, mkt).rows;
     expect(rows.find((x) => x.label === 'TIF')?.value).toBe('DAY · with bracket');
     expect(rows.find((x) => x.label === 'Take profit / Stop loss')?.value).toBe('103.00 / 98.00');
+  });
+
+  it('shows the GTD expiry and the overnight sessions', () => {
+    const tif = (patch: Partial<TicketState>) => {
+      const r = buildOrderRequest({ contract: AAPL, ticket: ticket(patch), market: mkt, now: Date.UTC(2026, 9, 5, 14) });
+      if (!r.ok) throw new Error(r.error);
+      return pendingOrder(r.request, r.model, labels, mkt).rows.find((x) => x.label === 'TIF')?.value;
+    };
+    expect(tif({ tif: 'GTD', goodTill: '2026-10-09T16:00' })).toBe('GTD 10/09 16:00 ET');
+    expect(tif({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'extended' })).toBe('GTD 10/09 16:00 ET · Extended hours');
+    expect(tif({ session: 'overnightDay' })).toBe('DAY · Overnight + Day');
+    expect(tif({ session: 'overnight' })).toBe('DAY · Overnight');
   });
 
   it('formats every order type', () => {

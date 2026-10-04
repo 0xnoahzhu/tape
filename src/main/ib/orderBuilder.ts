@@ -1,8 +1,9 @@
-// Builds the IB contract and order(s) for an OrderRequest: order types, time in force,
-// iceberg, good-after time, price condition and bracket children. Pure apart from the
-// TWS client's PriceCondition class (whose strValue getter the encoder needs).
+// Builds the IB contract and order(s) for an OrderRequest: order types, time in force and
+// trading session, iceberg, good-after time, price condition and bracket children. Pure apart
+// from the TWS client's PriceCondition class (whose strValue getter the encoder needs).
 
 import { ConjunctionConnection, PriceCondition, TriggerMethod, type Contract, type Order } from './tws';
+import { parseIbDateTime, sessionOf, sessionOutsideRth, timingProblem, TIMING_PROBLEM_TEXT } from '@shared/orderTiming';
 import { nyClock } from '@shared/session';
 import type { OrderAction, OrderRequest } from '@shared/types';
 import { toIbContract } from './ibContract';
@@ -31,8 +32,12 @@ export const oppositeAction = (a: OrderAction): OrderAction => (a === 'BUY' ? 'S
 const positive = (n: number | undefined): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
 const finite = (n: number | undefined): n is number => typeof n === 'number' && Number.isFinite(n);
 
-/** Returns a readable problem with the request, or null when it can be sent. */
-export function validateOrderRequest(req: OrderRequest): string | null {
+/**
+ * Returns a readable problem with the request, or null when it can be sent. The time in force and
+ * session rules are the ones the order ticket applies (shared/orderTiming.ts), checked again here
+ * so no caller can send what the ticket would not.
+ */
+export function validateOrderRequest(req: OrderRequest, now: number = Date.now()): string | null {
   if (!positive(req.quantity)) return 'Quantity must be greater than 0';
   if (req.contract.secType === 'IND') return `${req.contract.symbol} is an index and cannot be traded`;
   if (req.contract.secType === 'BAG' && !req.contract.comboLegs?.length) return 'A combo order needs at least one leg';
@@ -59,6 +64,21 @@ export function validateOrderRequest(req: OrderRequest): string | null {
   if (req.condition && !positive(req.condition.price)) return 'Condition price must be greater than 0';
   if (req.displaySize != null && !(req.displaySize > 0 && req.displaySize <= req.quantity)) return 'Display size must be between 1 and the order quantity';
   if (req.goodAfterTime != null && !/^\d{1,2}:\d{2}$/.test(req.goodAfterTime.trim())) return 'Good-after time must be HH:MM';
+  const timing = timingProblem(
+    {
+      contract: req.contract,
+      orderType: req.orderType,
+      tif: req.tif,
+      session: sessionOf(req),
+      bracket: req.bracket != null && (req.bracket.takeProfit != null || req.bracket.stopLoss != null),
+      iceberg: !!req.displaySize,
+      condition: !!req.condition,
+      goodAfter: !!req.goodAfterTime,
+      goodTill: req.tif === 'GTD' ? parseIbDateTime(req.goodTillDate) : undefined,
+    },
+    now,
+  );
+  if (timing) return TIMING_PROBLEM_TEXT[timing];
   return null;
 }
 
@@ -91,9 +111,26 @@ export function goodAfterTime(hhmm: string, now: Date = new Date()): string {
   return `${ymd} ${pad(h)}:${pad(min)}:00 US/Eastern`;
 }
 
-/** The IB contract for an order. Combos (BAG) are routed through SMART with the given legs. */
+/**
+ * The IB contract for an order. Combos (BAG) are routed through SMART with the given legs; the
+ * overnight-only session routes to IB's OVERNIGHT venue, which needs the primary exchange.
+ */
 export function orderContract(req: OrderRequest): Contract {
-  return toIbContract(req.contract);
+  const c = toIbContract(req.contract);
+  if (sessionOf(req) === 'overnight') c.exchange = 'OVERNIGHT';
+  return c;
+}
+
+/** Time in force and session fields, shared by an order and its bracket children. */
+function timingFields(req: OrderRequest): Partial<Order> {
+  const session = sessionOf(req);
+  return {
+    tif: req.tif as Order['tif'],
+    outsideRth: sessionOutsideRth(session),
+    // "OVERNIGHT + DAY": SMART with includeOvernight (server version 189+).
+    ...(session === 'overnightDay' ? { includeOvernight: true } : {}),
+    ...(req.tif === 'GTD' ? { goodTillDate: req.goodTillDate } : {}),
+  };
 }
 
 function priceFields(req: OrderRequest): Partial<Order> {
@@ -119,13 +156,12 @@ function priceFields(req: OrderRequest): Partial<Order> {
  * (transmit = false) and the last child transmits the whole group.
  */
 export function buildOrders(req: OrderRequest, opts: BuildOptions): BuiltOrder[] {
-  const problem = validateOrderRequest(req);
+  const problem = validateOrderRequest(req, (opts.now ?? new Date()).getTime());
   if (problem) throw new Error(problem);
   const contract = orderContract(req);
   const common: Partial<Order> = {
     totalQuantity: req.quantity,
-    tif: req.tif as Order['tif'],
-    outsideRth: req.outsideRth,
+    ...timingFields(req),
     ...(opts.account ? { account: opts.account } : {}),
   };
 

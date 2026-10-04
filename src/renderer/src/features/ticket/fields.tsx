@@ -154,6 +154,40 @@ export function TextField({
   );
 }
 
+/**
+ * Date and time input (the browser's datetime-local, "2026-10-09T16:00") in the bare style of the
+ * ticket's boxes. `onChange` receives "" while a part is cleared.
+ */
+export function DateTimeField({
+  value,
+  min,
+  onChange,
+  onFocusChange,
+  title,
+  style,
+}: {
+  value: string;
+  min?: string;
+  onChange: (v: string) => void;
+  onFocusChange?: (focused: boolean) => void;
+  title?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <input
+      type="datetime-local"
+      value={value}
+      min={min}
+      title={title}
+      onChange={(e) => onChange(e.target.value)}
+      onFocus={() => onFocusChange?.(true)}
+      onBlur={() => onFocusChange?.(false)}
+      onKeyDown={blurOnKeys}
+      style={{ ...bareInput, flex: 1, font: '500 12px/1 var(--num)', textAlign: 'right', ...style }}
+    />
+  );
+}
+
 /** A 40px bordered box whose ring turns accent while its input has focus. */
 export function FieldBox({ focused, children, style }: { focused: boolean; children: ReactNode; style?: CSSProperties }) {
   return <div style={{ height: 40, display: 'flex', alignItems: 'center', boxShadow: ring(focused), ...style }}>{children}</div>;

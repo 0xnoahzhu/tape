@@ -4,7 +4,8 @@
 import { OrderConditionType, type Contract, type Execution as IbExecution, type Order, type OrderState } from './tws';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f2, px } from '@shared/format';
-import type { ContractRef, Execution, LocalizedText, OrderStatus, WorkingOrder } from '@shared/types';
+import { timingText, type TimingFields } from '@shared/orderTiming';
+import type { ContractRef, Execution, LocalizedText, OrderStatus, TradingSession, WorkingOrder } from '@shared/types';
 import { createMessages } from '../i18n';
 import { fromIbContract, num, parseIbTime } from './ibContract';
 
@@ -52,8 +53,27 @@ function priceCondition(order: Order, symbolOf: SymbolOf): WorkingOrder['conditi
   return undefined;
 }
 
+/** IB's TIF of SMART orders with includeOvernight. */
+const OVERNIGHT_DAY_TIF = 'OVERNIGHT + DAY';
+
+/**
+ * The trading session of an IB order: the OVERNIGHT venue, includeOvernight ("OVERNIGHT + DAY"),
+ * or outsideRth. IB ignores outsideRth for IOC, FOK and OPG (and reports it set for IOC / FOK).
+ */
+export function ibOrderSession(contract: Contract, order: Order): TradingSession {
+  const tif = String(order.tif ?? '');
+  if (contract.exchange === 'OVERNIGHT') return 'overnight';
+  if (order.includeOvernight || tif === OVERNIGHT_DAY_TIF) return 'overnightDay';
+  if (tif === 'IOC' || tif === 'FOK' || tif === 'OPG') return 'regular';
+  return order.outsideRth ? 'extended' : 'regular';
+}
+
 function orderFields(contract: Contract, order: Order, symbolOf: SymbolOf) {
+  const session = ibOrderSession(contract, order);
   const ref = fromIbContract(contract);
+  // The instrument is the SMART-routed one; the venue is part of the session.
+  if (session === 'overnight') ref.exchange = 'SMART';
+  const tif = String(order.tif || 'DAY');
   const orderType = String(order.orderType ?? '');
   const lmt = num(order.lmtPrice);
   const aux = num(order.auxPrice);
@@ -71,8 +91,10 @@ function orderFields(contract: Contract, order: Order, symbolOf: SymbolOf) {
     // IB fills these in for other order types too; they only mean something for trailing stops.
     trailingPercent: trailing ? num(order.trailingPercent) || undefined : undefined,
     trailStopPrice: trailing ? num(order.trailStopPrice) || undefined : undefined,
-    tif: String(order.tif ?? 'DAY'),
+    tif: tif === OVERNIGHT_DAY_TIF ? 'DAY' : tif,
     outsideRth: !!order.outsideRth,
+    session,
+    goodTillDate: tif === 'GTD' ? order.goodTillDate || undefined : undefined,
     goodAfterTime: order.goodAfterTime || undefined,
     displaySize: display && display > 0 ? display : undefined,
     condition: priceCondition(order, symbolOf),
@@ -213,6 +235,7 @@ const m = createMessages({
     trailPct: (p: string) => `Trail ${p}%`,
     trailAmt: (p: string) => `Trail ${p}`,
     filledOf: (filled: string, total: string) => `${filled} of ${total} filled`,
+    sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' } as Record<TradingSession, string>,
     fillTitle: (label: string, buy: boolean, qty: string, units: boolean, one: boolean) =>
       `${label}: ${buy ? 'bought' : 'sold'} ${qty} ${units ? (one ? 'contract' : 'contracts') : one ? 'share' : 'shares'}`,
     fillBody: (avg: string, commission: string, orderId: number) => `Avg ${avg} · Commission ${commission} · Order #${orderId}`,
@@ -230,6 +253,7 @@ const m = createMessages({
     trailPct: (p: string) => `跟踪止损 ${p}%`,
     trailAmt: (p: string) => `跟踪止损 ${p}`,
     filledOf: (filled: string, total: string) => `已成交 ${filled} / ${total}`,
+    sessions: { regular: '常规时段', extended: '盘前盘后', overnight: '夜盘', overnightDay: '夜盘 + 日盘' } as Record<TradingSession, string>,
     fillTitle: (label: string, buy: boolean, qty: string, units: boolean) => `${label} ${buy ? '买入' : '卖出'} ${qty} ${units ? '张' : '股'}已成交`,
     fillBody: (avg: string, commission: string, orderId: number) => `均价 ${avg} · 佣金 ${commission} · 订单 #${orderId}`,
   },
@@ -244,7 +268,8 @@ export const qtyText = (q: number): string => (Number.isInteger(q) ? q.toLocaleS
 const inContracts = (c: ContractRef) => c.secType === 'OPT' || c.secType === 'FOP' || c.secType === 'FUT' || c.secType === 'BAG';
 
 /** The order fields a notification describes (a WorkingOrder, or a request IB never accepted). */
-export type NoticeOrder = Pick<WorkingOrder, 'contract' | 'action' | 'totalQuantity' | 'orderType' | 'limitPrice' | 'auxPrice' | 'trailingPercent' | 'tif' | 'filled'>;
+export type NoticeOrder = Pick<WorkingOrder, 'contract' | 'action' | 'totalQuantity' | 'orderType' | 'limitPrice' | 'auxPrice' | 'trailingPercent' | 'filled'> &
+  TimingFields;
 
 function priceText(o: NoticeOrder, t: Texts): string {
   switch (o.orderType) {
@@ -268,13 +293,13 @@ export interface NoticeText {
   body: LocalizedText;
 }
 
-/** "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · awaiting fill". */
+/** "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". */
 export function orderNotice(o: NoticeOrder, kind: 'submitted' | 'cancelled' | 'rejected', reason?: string): NoticeText {
   const label = contractLabel(o.contract);
   const qty = qtyText(o.totalQuantity);
   const title = m.both((t) => t[kind](o.action === 'BUY' ? t.buy : t.sell, qty, label));
   const body = m.both((t) => {
-    const parts = [priceText(o, t), o.tif];
+    const parts = [priceText(o, t), timingText(o, t.sessions)];
     if (kind === 'submitted') parts.push(t.working);
     if (kind === 'cancelled' && o.filled > 0) parts.push(t.filledOf(qtyText(o.filled), qty));
     if (kind === 'rejected' && reason) return reason;

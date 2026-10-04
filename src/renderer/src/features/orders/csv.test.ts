@@ -59,8 +59,29 @@ describe('ordersCsv', () => {
     const lines = ordersCsv([o], [e]).trimEnd().split('\r\n');
     expect(lines).toHaveLength(3);
     expect(lines[0].startsWith('Record,Time,Account,Order ID')).toBe(true);
-    expect(lines[1]).toBe('Open order,2026-10-04 09:41:05,DU1,4012,7,AAPL,AAPL,STK,SELL,STP LMT,50,244.5,245,0,PreSubmitted,GTC,,,,SMART,');
-    expect(lines[2]).toBe('Trade,2026-10-04 10:12:09,DU1,4008,,AAPL 10/16 230 Call,AAPL,OPT,BUY,,10,3.1,,10,Filled,,3100,6.5,,CBOE,0001f4e8.1');
+    expect(lines[0]).toContain(',Status,TIF,Session,Good till,Amount,');
+    expect(lines[1]).toBe('Open order,2026-10-04 09:41:05,DU1,4012,7,AAPL,AAPL,STK,SELL,STP LMT,50,244.5,245,0,PreSubmitted,GTC,Regular,,,,,SMART,');
+    expect(lines[2]).toBe('Trade,2026-10-04 10:12:09,DU1,4008,,AAPL 10/16 230 Call,AAPL,OPT,BUY,,10,3.1,,10,Filled,,,,3100,6.5,,CBOE,0001f4e8.1');
+  });
+
+  it('writes the session, the GTD expiry and the OVERNIGHT venue', () => {
+    const rows = ordersCsv(
+      [
+        { ...o, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', outsideRth: true, session: 'extended' },
+        { ...o, orderType: 'LMT', tif: 'DAY', session: 'overnight' },
+        { ...o, orderType: 'LMT', tif: 'DAY', session: 'overnightDay', outsideRth: true },
+      ],
+      [],
+    )
+      .trimEnd()
+      .split('\r\n')
+      .slice(1)
+      .map((l) => l.split(','));
+    expect(rows.map((r) => [r[15], r[16], r[17], r[21]])).toEqual([
+      ['GTD', 'Outside RTH', '20261009 16:00:00 US/Eastern', 'SMART'],
+      ['DAY', 'Overnight', '', 'OVERNIGHT'],
+      ['DAY', 'Overnight + Day', '', 'SMART'],
+    ]);
   });
 
   it('ends rows with CRLF', () => {

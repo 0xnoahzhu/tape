@@ -3,8 +3,10 @@
 
 import { multiplierOf } from '@shared/contract';
 import { DASH, f0, px } from '@shared/format';
-import { isOrderActive, type Execution, type OrderType, type TimeInForce, type WorkingOrder } from '@shared/types';
+import { isTimeInForce, NEW_YORK, parseIbDateTime, sessionOf, timingText, zonedParts } from '@shared/orderTiming';
+import { isOrderActive, type Execution, type OrderType, type WorkingOrder } from '@shared/types';
 import type { TicketState } from '../../state/store';
+import { toLocalInput } from '../ticket/timing';
 import type { OrdersMessages } from './messages';
 
 /** IB sends Double.MAX_VALUE for unset prices; treat it (and non-finite values) as missing. */
@@ -178,10 +180,11 @@ function trailText(o: WorkingOrder): string {
 /**
  * Status text as in the design: a pending price condition reads "Waiting · AAPL ≥ 235.00",
  * a pending good-after time "After 09:35 ET · DAY", anything else "<status> · <TIF>" plus
- * trailing / iceberg details. IB warnings and hold reasons are appended.
+ * trailing / iceberg details. The TIF carries a GTD expiry and a session other than regular
+ * hours ("GTD 10/09 16:00 ET", "DAY · Overnight + Day"). IB warnings and hold reasons are appended.
  */
 export function orderStatusText(o: WorkingOrder, m: OrdersMessages, now: number = Date.now()): OrderStatusText {
-  const tif = o.tif || 'DAY';
+  const tif = timingText(o, m.sessions);
   const extra = (o.whyHeld ? ` · ${m.held}: ${o.whyHeld}` : '') + (o.message ? ` · ${o.message}` : '');
   if (o.status === 'PendingCancel') return { text: m.stCancelling + extra, tone: 'mu' };
   if (o.status === 'ApiPending' || o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
@@ -205,17 +208,35 @@ export function orderStatusText(o: WorkingOrder, m: OrdersMessages, now: number 
 // Modify
 
 const TICKET_TYPES: readonly OrderType[] = ['LMT', 'MKT', 'STP', 'STP LMT', 'TRAIL'];
-const TICKET_TIFS: readonly TimeInForce[] = ['DAY', 'GTC', 'IOC', 'OPG'];
+
+/** IB's GTD expiry as the ticket's input value (New York time); null when unreadable. */
+export function goodTillInput(goodTillDate: string | undefined): string | null {
+  const at = parseIbDateTime(goodTillDate);
+  return at == null ? null : toLocalInput(zonedParts(at, NEW_YORK));
+}
+
+/**
+ * A working order's TIF, GTD expiry and trading session as ticket state: "Modify" starts from
+ * them, since IB keeps the session and changes the TIF only as tifChangeAllowed says.
+ */
+export function ticketTimingFor(o: WorkingOrder): Pick<TicketState, 'tif' | 'goodTill' | 'session'> {
+  const tif = isTimeInForce(o.tif) ? o.tif : 'DAY';
+  // A GTD order whose expiry cannot be read gets the default one, shown in the ticket.
+  return { tif, goodTill: tif === 'GTD' ? goodTillInput(o.goodTillDate) : null, session: sessionOf(o) };
+}
 
 /** Only stock orders can be edited in the order ticket. */
 export function canModifyInTicket(o: WorkingOrder): boolean {
   return o.contract.secType === 'STK' && (TICKET_TYPES as readonly string[]).includes(o.orderType);
 }
 
-/** Order ticket state that reproduces an existing order, so "Modify" resubmits it with edits. */
+/**
+ * Order ticket state that reproduces an existing order, so "Modify" resubmits it with edits:
+ * including its time in force, GTD expiry and trading session.
+ */
 export function ticketPatchFor(o: WorkingOrder): Partial<TicketState> {
   const orderType = (TICKET_TYPES as readonly string[]).includes(o.orderType) ? (o.orderType as OrderType) : 'LMT';
-  const tif = (TICKET_TIFS as readonly string[]).includes(o.tif) ? (o.tif as TimeInForce) : 'DAY';
+  const timing = ticketTimingFor(o);
   const lmt = priceOrUndefined(o.limitPrice);
   const aux = priceOrUndefined(o.auxPrice);
   const trailPct = priceOrUndefined(o.trailingPercent);
@@ -226,8 +247,7 @@ export function ticketPatchFor(o: WorkingOrder): Partial<TicketState> {
     qty: o.totalQuantity,
     limitPrice: (orderType === 'LMT' || orderType === 'STP LMT') && lmt != null ? lmt : null,
     stopPrice: (orderType === 'STP' || orderType === 'STP LMT') && aux != null ? aux : null,
-    tif,
-    outsideRth: o.outsideRth,
+    ...timing,
     bracket: false,
     takeProfit: null,
     stopLoss: null,
@@ -245,6 +265,6 @@ export function ticketPatchFor(o: WorkingOrder): Partial<TicketState> {
     patch.trailMode = trailPct != null ? 'pct' : 'amt';
     patch.trailAmt = String(trailPct ?? aux ?? 3);
   }
-  patch.advancedOpen = !!(o.outsideRth || o.condition || o.displaySize || gat?.etTime);
+  patch.advancedOpen = !!(timing.session !== 'regular' || o.condition || o.displaySize || gat?.etTime);
   return patch;
 }

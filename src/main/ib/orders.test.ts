@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import type { OrderRequest } from '@shared/types';
 import { buildOrders, goodAfterTime, validateOrderRequest } from './orderBuilder';
-import { applyOrderStatus, execBaseId, fillNotice, mapCompletedOrder, mapExecution, mapOpenOrder, orderKey, orderNotice } from './orderMapping';
+import { applyOrderStatus, execBaseId, fillNotice, ibOrderSession, mapCompletedOrder, mapExecution, mapOpenOrder, orderKey, orderNotice } from './orderMapping';
 
 const aapl = { ...stock('AAPL'), conId: 265598 };
 const base: OrderRequest = { contract: aapl, action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 226.5, tif: 'DAY', outsideRth: false };
@@ -11,6 +11,22 @@ const ids = (start: number) => {
   let n = start;
   return () => n++;
 };
+
+/** The tokens of the placeOrder frame the TWS encoder writes (server version 193). */
+function frame(contract: Contract, order: Order): string[] {
+  let tokens: string[] = [];
+  const encoder = new Encoder({
+    serverVersion: 193,
+    sendMsg: (...t: unknown[]) => {
+      tokens = (t.flat(Infinity) as unknown[]).map((v) => (v == null ? '' : String(v)));
+    },
+    emitError: (msg: string) => {
+      throw new Error(msg);
+    },
+  });
+  encoder.placeOrder(1, contract, order);
+  return tokens;
+}
 
 /** Sends the order through the TWS encoder to make sure it can be serialized. */
 function encodes(contract: Contract, order: Order): boolean {
@@ -144,6 +160,87 @@ describe('buildOrders', () => {
   });
 });
 
+describe('buildOrders: time in force and trading session', () => {
+  // Monday 2026-10-05 10:00 New York.
+  const now = new Date(Date.UTC(2026, 9, 5, 14));
+  const build = (r: Partial<OrderRequest>) => buildOrders({ ...base, limitPrice: 1, quantity: 1, ...r }, { orderId: 1, nextOrderId: ids(2), account: 'DU1', now });
+  /** includeOvernight is the field before the manual order indicator at server version 193. */
+  const includeOvernight = (o: { contract: Contract; order: Order }) => frame(o.contract, o.order).at(-2);
+
+  it('sends DAY, GTC, IOC and OPG on SMART during regular hours', () => {
+    for (const tif of ['DAY', 'GTC', 'IOC', 'OPG'] as const) {
+      const [o] = build({ tif });
+      expect(o.contract.exchange).toBe('SMART');
+      expect(o.order).toMatchObject({ tif, outsideRth: false });
+      expect(o.order).not.toHaveProperty('includeOvernight');
+      expect(o.order).not.toHaveProperty('goodTillDate');
+      expect(includeOvernight(o)).toBe('');
+    }
+    expect(build({ tif: 'OPG', orderType: 'MKT', limitPrice: undefined })[0].order).toMatchObject({ tif: 'OPG', orderType: 'MKT' });
+  });
+
+  it('sends FOK for options', () => {
+    const [o] = build({ tif: 'FOK', contract: { ...option('AAPL', '20261016', 230, 'C'), conId: 777 } });
+    expect(o.order.tif).toBe('FOK');
+    expect(encodes(o.contract, o.order)).toBe(true);
+  });
+
+  it('sends GTD with its expiry, also on bracket children', () => {
+    const out = build({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', bracket: { takeProfit: 2, stopLoss: 0.5 } });
+    for (const o of out) expect(o.order).toMatchObject({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(frame(out[0].contract, out[0].order)).toContain('20261009 16:00:00 US/Eastern');
+  });
+
+  it('sends extended hours as outsideRth', () => {
+    const [o] = build({ session: 'extended', tif: 'GTC' });
+    expect(o.order).toMatchObject({ tif: 'GTC', outsideRth: true });
+    // Requests without a session (other callers) still use outsideRth.
+    expect(build({ outsideRth: true })[0].order.outsideRth).toBe(true);
+    expect(build({ outsideRth: true, session: 'regular' })[0].order.outsideRth).toBe(false);
+  });
+
+  it('routes the overnight-only session to OVERNIGHT with the primary exchange', () => {
+    const [o] = build({ session: 'overnight', contract: { ...aapl, primaryExchange: 'NASDAQ' } });
+    expect(o.contract).toMatchObject({ exchange: 'OVERNIGHT', primaryExch: 'NASDAQ', conId: 265598 });
+    expect(o.order).toMatchObject({ tif: 'DAY', outsideRth: false });
+    expect(o.order).not.toHaveProperty('includeOvernight');
+    const tokens = frame(o.contract, o.order);
+    expect(tokens.slice(2, 12)).toEqual(['265598', 'AAPL', 'STK', '', '', '', '', 'OVERNIGHT', 'NASDAQ', 'USD']);
+    expect(includeOvernight(o)).toBe('');
+  });
+
+  it('sends overnight + day as SMART with includeOvernight', () => {
+    const [o] = build({ session: 'overnightDay' });
+    expect(o.contract.exchange).toBe('SMART');
+    expect(o.order).toMatchObject({ tif: 'DAY', outsideRth: true, includeOvernight: true });
+    expect(includeOvernight(o)).toBe('1');
+  });
+
+  it('refuses what the order ticket refuses', () => {
+    const v = (r: Partial<OrderRequest>) => validateOrderRequest({ ...base, ...r }, now.getTime());
+    expect(v({ tif: 'FOK' })).toBe('IBKR accepts FOK only for options');
+    expect(v({ tif: 'OPG', orderType: 'STP', stopPrice: 230 })).toMatch(/market or limit/);
+    expect(v({ tif: 'IOC', session: 'extended' })).toMatch(/regular trading hours/);
+    expect(v({ tif: 'GTD' })).toMatch(/expiry/);
+    expect(v({ tif: 'GTD', goodTillDate: '20261001 16:00:00 US/Eastern' })).toMatch(/expiry/);
+    expect(v({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' })).toBeNull();
+    expect(v({ session: 'overnight', orderType: 'MKT', limitPrice: undefined })).toBe('The overnight sessions take limit orders only');
+    expect(v({ session: 'overnightDay', tif: 'GTC' })).toBe('The overnight sessions take DAY orders only');
+    expect(v({ session: 'overnightDay', bracket: { takeProfit: 230 } })).toMatch(/bracket/);
+    expect(v({ session: 'overnightDay', contract: { ...option('AAPL', '20261016', 230, 'C'), conId: 777 } })).toMatch(/US stocks and ETFs/);
+    // IB accepts these and then rejects them (201), leaving an Inactive order.
+    expect(v({ session: 'overnightDay', quantity: 10, displaySize: 5 })).toBe('The overnight sessions do not take iceberg orders (display size)');
+    expect(v({ session: 'overnight', condition: { contract: aapl, operator: '>=', price: 500, outsideRth: false } })).toBe('The overnight sessions do not take conditional orders');
+    expect(v({ session: 'overnightDay', goodAfterTime: '09:35' })).toBe('The overnight sessions do not take good-after-time orders');
+    expect(v({ session: 'extended', quantity: 10, displaySize: 5, goodAfterTime: '09:35' })).toBeNull();
+    // Bracket children take the parent's TIF; IB rejects their stop with IOC (201).
+    expect(v({ tif: 'IOC', bracket: { takeProfit: 233, stopLoss: 222 } })).toMatch(/bracket cannot use IOC, FOK or OPG/);
+    expect(v({ tif: 'OPG', bracket: { takeProfit: 233 } })).toMatch(/bracket cannot use IOC, FOK or OPG/);
+    expect(v({ tif: 'GTC', bracket: { takeProfit: 233, stopLoss: 222 } })).toBeNull();
+    expect(() => build({ session: 'overnight', tif: 'GTC' })).toThrow(/DAY orders only/);
+  });
+});
+
 describe('order mapping', () => {
   const ibAapl: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as never, exchange: 'SMART', currency: 'USD', localSymbol: 'AAPL', tradingClass: 'NMS' };
   const symbolOf = (conId: number) => (conId === 265598 ? 'AAPL' : undefined);
@@ -186,6 +283,7 @@ describe('order mapping', () => {
       limitPrice: 5.2,
       tif: 'GTC',
       outsideRth: false,
+      session: 'regular',
       condition: { symbol: 'AAPL', operator: '>=', price: 235, outsideRth: false },
       status: 'PreSubmitted',
       filled: 0,
@@ -200,6 +298,32 @@ describe('order mapping', () => {
     expect(filled).toMatchObject({ status: 'Filled', filled: 10, remaining: 0, avgFillPrice: 5.21, createdAt: 1000, updatedAt: 2000 });
     const again = mapOpenOrder(4011, opt, order, { status: 'Filled' } as OrderState, filled, 3000, symbolOf);
     expect(again).toMatchObject({ filled: 10, avgFillPrice: 5.21, createdAt: 1000 });
+  });
+
+  it('maps the trading session, the TIF and the GTD expiry back', () => {
+    const ibOvernight: Contract = { ...ibAapl, exchange: 'OVERNIGHT', primaryExch: 'NASDAQ' };
+    const order = (o: Partial<Order>): Order => ({ action: 'BUY' as never, orderType: 'LMT' as never, totalQuantity: 1, lmtPrice: 1, tif: 'DAY' as never, ...o });
+    const map = (c: Contract, o: Partial<Order>) => mapOpenOrder(1, c, order(o), { status: 'PreSubmitted' } as OrderState, undefined, 0, symbolOf);
+
+    // Overnight only: the instrument stays the SMART one, the venue is the session.
+    const overnight = map(ibOvernight, {});
+    expect(overnight).toMatchObject({ session: 'overnight', tif: 'DAY', key: 'STK:AAPL' });
+    expect(overnight.contract).toMatchObject({ exchange: 'SMART', primaryExchange: 'NASDAQ' });
+    // IB reports includeOvernight orders with TIF "OVERNIGHT + DAY" and outsideRth set.
+    expect(map(ibAapl, { tif: 'OVERNIGHT + DAY' as never, includeOvernight: true, outsideRth: true })).toMatchObject({ session: 'overnightDay', tif: 'DAY', outsideRth: true });
+    expect(map(ibAapl, { tif: 'OVERNIGHT + DAY' as never })).toMatchObject({ session: 'overnightDay', tif: 'DAY' });
+    expect(map(ibAapl, { outsideRth: true, tif: 'GTC' as never })).toMatchObject({ session: 'extended', tif: 'GTC' });
+    // IB reports outsideRth for IOC / FOK, which ignore it.
+    expect(map(ibAapl, { outsideRth: true, tif: 'IOC' as never })).toMatchObject({ session: 'regular', tif: 'IOC', outsideRth: true });
+    const gtd = map(ibAapl, { tif: 'GTD' as never, goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(gtd).toMatchObject({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(map(ibAapl, { tif: 'DAY' as never, goodTillDate: '20261009 16:00:00 US/Eastern' })).not.toHaveProperty('goodTillDate');
+    expect(ibOrderSession(ibOvernight, order({ includeOvernight: true }))).toBe('overnight');
+    // Completed orders keep them too.
+    expect(mapCompletedOrder(ibAapl, order({ tif: 'OVERNIGHT + DAY' as never }), { status: 'Cancelled' } as OrderState, undefined, 0, symbolOf)).toMatchObject({
+      session: 'overnightDay',
+      tif: 'DAY',
+    });
   });
 
   it('maps unknown condition instruments to their conId', () => {
@@ -258,6 +382,13 @@ describe('notification texts', () => {
     const rejected = orderNotice(order, 'rejected', 'The API interface is currently in Read-Only mode. (321)');
     expect(rejected.title.zh).toBe('买入 100 AAPL 被拒绝');
     expect(rejected.body.en).toBe('The API interface is currently in Read-Only mode. (321)');
+    expect(orderNotice({ ...order, session: 'overnightDay' }, 'submitted').body).toEqual({
+      en: 'Limit 226.95 · DAY · Overnight + Day · awaiting fill',
+      zh: '限价 226.95 · DAY · 夜盘 + 日盘 · 等待成交',
+    });
+    expect(orderNotice({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', outsideRth: true }, 'submitted').body.en).toBe(
+      'Limit 226.95 · GTD 10/09 16:00 ET · Extended hours · awaiting fill',
+    );
     const opt = orderNotice({ ...order, contract: option('AAPL', '20261016', 230, 'C'), totalQuantity: 10, limitPrice: 3.1 }, 'submitted');
     expect(opt.title.en).toBe('Buy 10 AAPL 10/16 230 Call submitted');
   });

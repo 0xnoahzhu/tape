@@ -12,12 +12,21 @@
 // Tape has no read-only switch of its own: with "Read-Only API" on in TWS / IB Gateway, IB rejects
 // orders with error 321, which reaches the caller (and the rejection notification) as IB's message.
 //
+// A working order keeps its trading session: IB refuses to move it to the OVERNIGHT venue (105)
+// or to add includeOvernight (462), so modify() refuses a request with another session. Its TIF
+// changes only between DAY and GTC, or to IOC (462 otherwise, see tifChangeAllowed).
+//
+// IB rejects some orders after taking them: an Inactive openOrder, then the reason (201). place()
+// and modify() fail with that reason instead of resolving on the Inactive order, and the rejection
+// notice waits for it.
+//
 // Every execution (with its commission) is written to the database's execution journal; on start
 // today's journaled fills are restored, since IB may not resend them after a Gateway restart.
 // Restored fills of accounts the connected login does not have are dropped on the handshake.
 
 import { EventName, type CommissionReport, type Contract, type ContractDetails, type Execution as IbExecution, type IBApi, type Order, type OrderState } from './tws';
 import { contractLabel } from '@shared/contract';
+import { sessionOf, tifChangeAllowed } from '@shared/orderTiming';
 import { nyClock } from '@shared/session';
 import { isOrderActive, type ContractRef, type Execution, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
 import type { MainContext, OrderService } from '../context';
@@ -41,6 +50,8 @@ import {
 /** How long place / modify wait for IB to accept or reject an order. */
 const ACK_MS = 2_000;
 const CANCEL_ACK_MS = 1_500;
+/** How long a rejection notice waits for IB's reason, which follows the Inactive openOrder. */
+const REJECT_REASON_WAIT_MS = 1_000;
 /** A fill is announced when its commission report arrives, or after this delay without one. */
 const FILL_NOTICE_WAIT_MS = 3_000;
 const EMIT_MS = 100;
@@ -54,6 +65,10 @@ interface Waiter {
   acked: Set<number>;
   /** True when this update settles the wait for its order. */
   accept(o: WorkingOrder): boolean;
+  /** An Inactive order fails the wait (place / modify): with IB's error, or when the wait runs out. */
+  failInactive: boolean;
+  /** Orders IB reported as Inactive while waiting. */
+  inactive: Set<number>;
   resolve(): void;
   reject(err: Error): void;
 }
@@ -91,6 +106,12 @@ export function createOrderService(ctx: MainContext): OrderService {
   const notified = new Map<string, 'submitted' | 'cancelled' | 'rejected' | 'filled' | 'other'>();
   const pendingFills = new Map<string, ReturnType<typeof setTimeout>>();
   const waiters = new Set<Waiter>();
+  /** Rejection notices waiting for IB's reason, by order key (see announce). */
+  const pendingRejections = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Order keys whose rejection has been announced or is about to be, so it is announced once. */
+  const rejectionNoticed = new Set<string>();
+  /** IB's last error (not a warning) per order key since the order was sent: a rejection's reason. */
+  const orderErrors = new Map<string, string>();
 
   /** Executions (by base id) to write to the journal, and the JSON last written per base id. */
   const journalDirty = new Set<string>();
@@ -320,7 +341,26 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (kind === 'submitted' && prev && (prev.status === 'PreSubmitted' || prev.status === 'Submitted')) return;
     // Bracket children follow their parent (submitted / cancelled with it); their fills are announced.
     if (next.parentId && kind !== 'rejected') return;
-    notify(orderNotice(next, kind, next.message), next.contract, 'order');
+    if (kind === 'rejected') {
+      if (rejectionNoticed.has(key)) return;
+      rejectionNoticed.add(key);
+      // IB sends the reason (201) right after the Inactive openOrder: the notice waits for it.
+      if (!orderErrors.has(key)) {
+        pendingRejections.set(key, setTimeout(() => announceRejection(key), REJECT_REASON_WAIT_MS));
+        return;
+      }
+      announceRejection(key);
+      return;
+    }
+    notify(orderNotice(next, kind), next.contract, 'order');
+  }
+
+  /** The rejection notice of an order, with IB's reason when it has arrived. */
+  function announceRejection(key: string): void {
+    clearTimeout(pendingRejections.get(key));
+    pendingRejections.delete(key);
+    const o = orders.get(key);
+    if (o) notify(orderNotice(o, 'rejected', orderErrors.get(key) ?? o.message), o.contract, 'order');
   }
 
   // ---------------------------------------------------------------------------
@@ -384,7 +424,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   // ---------------------------------------------------------------------------
   // Waiting for IB to accept, reject or cancel an order
 
-  function awaitOrders(ids: number[], timeoutMs: number, accept: (o: WorkingOrder) => boolean = () => true): Promise<void> {
+  function awaitOrders(ids: number[], timeoutMs: number, { accept = () => true, failInactive = false }: { accept?: (o: WorkingOrder) => boolean; failInactive?: boolean } = {}): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -394,6 +434,8 @@ export function createOrderService(ctx: MainContext): OrderService {
         ids: new Set(ids),
         acked: new Set(),
         accept,
+        failInactive,
+        inactive: new Set(),
         resolve: () => {
           cleanup();
           resolve();
@@ -403,8 +445,13 @@ export function createOrderService(ctx: MainContext): OrderService {
           reject(err);
         },
       };
-      // No answer in time: the order was sent; its updates will still arrive.
-      const timer = setTimeout(() => w.resolve(), timeoutMs);
+      // No answer in time: the order was sent; its updates will still arrive. An order IB set
+      // Inactive without giving a reason (yet) was not accepted.
+      const timer = setTimeout(() => {
+        const [inactive] = w.inactive;
+        if (inactive == null) w.resolve();
+        else w.reject(new Error(`IB did not accept order #${inactive} (Inactive)`));
+      }, timeoutMs);
       waiters.add(w);
     });
   }
@@ -412,7 +459,14 @@ export function createOrderService(ctx: MainContext): OrderService {
   function settleWaiters(o: WorkingOrder): void {
     if (o.clientId !== myClientId()) return;
     for (const w of [...waiters]) {
-      if (!w.ids.has(o.orderId) || !w.accept(o)) continue;
+      if (!w.ids.has(o.orderId)) continue;
+      // IB's reason (201) follows the Inactive openOrder and fails the wait (onRequestError).
+      if (w.failInactive && o.status === 'Inactive') {
+        w.inactive.add(o.orderId);
+        continue;
+      }
+      if (!w.accept(o)) continue;
+      w.inactive.delete(o.orderId);
       w.acked.add(o.orderId);
       if (w.acked.size === w.ids.size) w.resolve();
     }
@@ -421,16 +475,20 @@ export function createOrderService(ctx: MainContext): OrderService {
   function onRequestError(e: { reqId: number; code: number; message: string }): void {
     const message = cleanIbMessage(e.message);
     const warning = isOrderWarning(e.code, e.message);
+    // Only orders of this client have errors with their id.
+    const key = orderKey(myClientId(), e.reqId, undefined);
     if (!warning) {
       for (const w of [...waiters]) if (w.ids.has(e.reqId)) w.reject(new Error(`${message} (${e.code})`));
+      // The reason of a rejection, which may also arrive before IB reports the order.
+      if (orders.has(key) || sentKeys.has(key)) orderErrors.set(key, `${message} (${e.code})`);
     }
-    // Attach the text to the order (only orders of this client have errors with their id).
-    const key = orderKey(myClientId(), e.reqId, undefined);
+    // Attach the text to the order.
     const o = orders.get(key);
     if (o && e.code !== 202) {
       orders.set(key, { ...o, message, updatedAt: Date.now() });
       markDirty(true, false);
     }
+    if (!warning && pendingRejections.has(key)) announceRejection(key);
   }
 
   // ---------------------------------------------------------------------------
@@ -463,10 +521,18 @@ export function createOrderService(ctx: MainContext): OrderService {
     }
   }
 
+  /** The OVERNIGHT venue needs the primary listing exchange; a resolved conId may come without it. */
+  async function withPrimaryExchange(c: ContractRef): Promise<ContractRef> {
+    if (c.primaryExchange) return c;
+    const primaryExchange = (await ctx.contracts.getInfo(c).catch(() => null))?.contract.primaryExchange;
+    return primaryExchange ? { ...c, primaryExchange } : c;
+  }
+
   async function prepare(req: OrderRequest): Promise<{ req: OrderRequest; conditionConId?: number }> {
     const problem = validateOrderRequest(req);
     if (problem) throw new Error(problem);
-    const contract = await resolve(req.contract);
+    let contract = await resolve(req.contract);
+    if (sessionOf(req) === 'overnight') contract = await withPrimaryExchange(contract);
     rememberSymbol(contract);
     let conditionConId: number | undefined;
     if (req.condition) {
@@ -479,8 +545,17 @@ export function createOrderService(ctx: MainContext): OrderService {
     return { req: { ...req, contract }, conditionConId };
   }
 
-  function rejected(req: OrderRequest, orderId: number, reason: string): void {
-    notified.set(orderKey(myClientId(), orderId, undefined), 'rejected');
+  /**
+   * Announces a request IB refused, unless IB reported one of its orders as rejected (announce
+   * does that one, with the same reason). Its orders IB has not reported are not announced again.
+   */
+  function rejected(req: OrderRequest, orderIds: number[], reason: string): void {
+    const keys = orderIds.map((id) => orderKey(myClientId(), id, undefined));
+    if (keys.some((k) => rejectionNoticed.has(k))) return;
+    for (const k of keys) {
+      rejectionNoticed.add(k);
+      if (!orders.has(k)) notified.set(k, 'rejected');
+    }
     const o: NoticeOrder = {
       contract: req.contract,
       action: req.action,
@@ -490,6 +565,8 @@ export function createOrderService(ctx: MainContext): OrderService {
       auxPrice: req.orderType === 'TRAIL' ? req.trailingAmount : req.stopPrice,
       trailingPercent: req.trailingPercent,
       tif: req.tif,
+      session: sessionOf(req),
+      goodTillDate: req.goodTillDate,
       filled: 0,
     };
     notify(orderNotice(o, 'rejected', reason), req.contract, 'order');
@@ -508,19 +585,19 @@ export function createOrderService(ctx: MainContext): OrderService {
       account: ctx.ib.getState().account,
       conditionConId,
     });
-    const ack = awaitOrders(
-      built.map((b) => b.orderId),
-      ACK_MS,
-    );
+    const ids = built.map((b) => b.orderId);
+    const ack = awaitOrders(ids, ACK_MS, { failInactive: true });
     for (const b of built) {
-      sentKeys.add(orderKey(clientId, b.orderId, undefined));
+      const key = orderKey(clientId, b.orderId, undefined);
+      sentKeys.add(key);
+      orderErrors.delete(key);
       api.placeOrder(b.orderId, b.contract, b.order);
     }
     try {
       await ack;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      rejected(req, orderId, reason);
+      rejected(req, ids, reason);
       throw err;
     }
     return { orderId, childOrderIds: built.slice(1).map((b) => b.orderId) };
@@ -561,10 +638,24 @@ export function createOrderService(ctx: MainContext): OrderService {
     return existing;
   }
 
+  /** IB keeps a working order in its session (see the header); a request for another one fails here. */
+  function checkSession(existing: WorkingOrder, req: OrderRequest): void {
+    if (sessionOf(existing) === sessionOf(req)) return;
+    throw new Error(`Order #${existing.orderId} cannot move to another trading session (IB refuses it); cancel it and place a new order`);
+  }
+
+  /** IB changes a working order's TIF only between DAY and GTC, or to IOC (see the header). */
+  function checkTif(existing: WorkingOrder, req: OrderRequest): void {
+    if (tifChangeAllowed(existing.tif, req.tif)) return;
+    throw new Error(`Order #${existing.orderId} cannot change its time in force from ${existing.tif} to ${req.tif} (IB refuses it); cancel it and place a new order`);
+  }
+
   async function modify(orderId: number, input: OrderRequest): Promise<void> {
     const checked = requireApi();
     const clientId = myClientId();
-    modifiable(orderId);
+    const current = modifiable(orderId);
+    checkSession(current, input);
+    checkTif(current, input);
     const { req, conditionConId } = await prepare({ ...input, bracket: undefined });
     // While the contract was resolved, the connection may have changed (the order id would name
     // another client's order, or a new one) and the order may have been filled or cancelled.
@@ -579,7 +670,8 @@ export function createOrderService(ctx: MainContext): OrderService {
       conditionConId,
       parentId: existing.parentId,
     });
-    const ack = awaitOrders([orderId], ACK_MS);
+    const ack = awaitOrders([orderId], ACK_MS, { failInactive: true });
+    orderErrors.delete(orderKey(clientId, orderId, undefined));
     api.placeOrder(orderId, main.contract, main.order);
     await ack;
   }
@@ -588,7 +680,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     const api = requireApi();
     const existing = ownOrder(orderId, 'cancel');
     if (existing && !isOrderActive(existing.status)) throw new Error(`Order #${orderId} is already ${existing.status}`);
-    const ack = awaitOrders([orderId], CANCEL_ACK_MS, (o) => o.status === 'PendingCancel' || o.status === 'Cancelled' || o.status === 'ApiCancelled');
+    const ack = awaitOrders([orderId], CANCEL_ACK_MS, { accept: (o) => o.status === 'PendingCancel' || o.status === 'Cancelled' || o.status === 'ApiCancelled' });
     api.cancelOrder(orderId);
     await ack;
   }

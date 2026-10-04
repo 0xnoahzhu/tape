@@ -264,7 +264,15 @@ export interface NavPoint {
 
 export type OrderAction = 'BUY' | 'SELL';
 export type OrderType = 'LMT' | 'MKT' | 'STP' | 'STP LMT' | 'TRAIL';
-export type TimeInForce = 'DAY' | 'GTC' | 'IOC' | 'OPG';
+export type TimeInForce = 'DAY' | 'GTC' | 'IOC' | 'FOK' | 'OPG' | 'GTD';
+/**
+ * When an order may work (see shared/orderTiming.ts for what combines with what):
+ * 'regular' regular trading hours; 'extended' also pre-market and after-hours (IB's outsideRth);
+ * 'overnight' only IB's overnight session of US stocks / ETFs (20:00–03:50 ET, exchange
+ * OVERNIGHT); 'overnightDay' the overnight session and then the next trading day, pre-market and
+ * after-hours included (SMART with includeOvernight; IB reports its TIF as "OVERNIGHT + DAY").
+ */
+export type TradingSession = 'regular' | 'extended' | 'overnight' | 'overnightDay';
 
 export interface PriceConditionSpec {
   /** The instrument whose price is monitored (usually the order's underlying). */
@@ -289,7 +297,12 @@ export interface OrderRequest {
   trailingAmount?: number;
   trailStopPrice?: number;
   tif: TimeInForce;
+  /** Pre-market and after-hours (IB's outsideRth); `session`, when set, decides it instead. */
   outsideRth: boolean;
+  /** Trading session; absent: 'extended' with outsideRth, otherwise 'regular'. */
+  session?: TradingSession;
+  /** GTD expiry, "yyyyMMdd HH:mm:ss US/Eastern" (required with tif GTD). */
+  goodTillDate?: string;
   /** Attach take-profit (LMT) and stop-loss (STP) children. */
   bracket?: { takeProfit?: number; stopLoss?: number };
   condition?: PriceConditionSpec;
@@ -332,8 +345,14 @@ export interface WorkingOrder {
   auxPrice?: number;
   trailingPercent?: number;
   trailStopPrice?: number;
+  /** IB's TIF, except "OVERNIGHT + DAY", which is DAY with session 'overnightDay'. */
   tif: string;
+  /** IB's outsideRth flag as reported (IB also sets it for overnight + day, IOC and FOK orders). */
   outsideRth: boolean;
+  /** Trading session (absent in orders recorded before sessions existed: see sessionOf). */
+  session?: TradingSession;
+  /** GTD expiry as IB reports it, e.g. "20261009 16:00:00 US/Eastern". */
+  goodTillDate?: string;
   goodAfterTime?: string;
   displaySize?: number;
   /** Human-readable price condition, e.g. { symbol: 'AAPL', operator: '>=', price: 235 }. */

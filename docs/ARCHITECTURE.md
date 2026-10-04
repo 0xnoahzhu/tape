@@ -79,6 +79,45 @@ Gateway, IB rejects orders with error 321, and the renderer's toast adds where t
 (`state/orderActions.ts → orderErrorText`). Saved settings that still have Tape's former read-only
 switch on get a one-time notice in the notification list saying so (`store.ts`).
 
+Time in force and trading session (`shared/orderTiming.ts`) are checked by the same rules in the
+order ticket, which disables choices that do not combine and says why, and in `orderBuilder.ts`,
+which refuses such requests from any caller. A request carries `tif`, `session` and, for GTD,
+`goodTillDate` ("yyyyMMdd HH:mm:ss US/Eastern"; the ticket defaults it to the next session close
+from the contract's liquid hours, the end of the day's last session on exchanges with a lunch
+break). Sessions are sent as:
+
+| Session | Contract | Order |
+| --- | --- | --- |
+| Regular hours | SMART | `outsideRth` off |
+| Extended hours | SMART | `outsideRth` on |
+| Overnight | exchange `OVERNIGHT`, primary exchange set | TIF DAY |
+| Overnight + Day | SMART | TIF DAY, `includeOvernight` (server version 189+); IB turns `outsideRth` on and reports the TIF as "OVERNIGHT + DAY" |
+
+On the paper account IB accepted DAY, GTC, GTD, IOC and OPG (as limit or market on open) for US
+stocks, FOK only for options (201 for stocks), OPG not for SMART-routed options, and only DAY limit
+orders in the overnight sessions (10052 / 201 for GTC, GTD, IOC, OPG or stop orders), there also
+without iceberg, price condition or good-after time (201); it ignores outside RTH for IOC, FOK and
+OPG (2109). Bracket children take the parent's TIF, and IB rejects a stop-loss with IOC or FOK
+(201), so a bracket cannot use IOC, FOK or OPG. Overnight-only orders are directly routed: with
+the API precaution "Bypass Redirect Order warning for Stock API orders" off, IB refuses them
+(10329) and the toast says where to turn it on. `orderMapping.ts` maps the OVERNIGHT venue,
+`includeOvernight` / "OVERNIGHT + DAY" and `goodTillDate` back into `WorkingOrder.session` /
+`tif` / `goodTillDate` (the contract stays the SMART one), so the orders list, notifications, CSV
+export and "Modify" keep them. A working order cannot change its session (IB answers 105 for another venue, 462 for
+`includeOvernight`), and its TIF only between DAY and GTC or to IOC (462 for any change to or from
+GTD or OPG; a GTD expiry can change): `shared/orderTiming.ts → tifChangeAllowed`. While modifying,
+the ticket locks the session and the TIFs IB refuses, a "Modify" from any list starts from the
+order's TIF, expiry and session (`store.ts → withModifiedTiming`), and `modify()` refuses other
+requests without sending them.
+
+IB rejects some orders only after taking them: an Inactive `openOrder`, then the reason (201).
+`place()` / `modify()` do not count an Inactive order as accepted: they fail with that reason, or
+when the 2 s wait ends with the order still Inactive. IB may also acknowledge an order
+(PreSubmitted) and reject it half a second later: for 5 s the renderer replaces the "Submitted" /
+"Modified" toast with the failure (`state/orderActions.ts → watchLateRejection`). The rejection
+notification waits up to 1 s for the reason, and a request is announced as rejected once (the
+order IB reported, or else the request).
+
 ### TWS API client (`src/main/ib/tws`)
 
 An in-repo replacement for the parts of `@stoqey/ib` Tape uses (same `IBApi` method names, event

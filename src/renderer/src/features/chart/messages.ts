@@ -3,6 +3,7 @@
 import type { Timeframe } from '@shared/types';
 import type { MarketSession } from '@shared/session';
 import { createMessages } from '../../i18n';
+import { useCommon } from '../../i18n/common';
 import type { RefKind } from './sessionQuote';
 import type { StatusLabels } from './orderModel';
 
@@ -14,6 +15,7 @@ const statusEn: StatusLabels = {
   working: 'Submitted',
   iceberg: 'ice',
   filled: (n) => `${n} filled`,
+  sessions: useCommon.for('en').sessions,
 };
 
 const statusZh: StatusLabels = {
@@ -24,6 +26,7 @@ const statusZh: StatusLabels = {
   working: '已提交',
   iceberg: '冰山',
   filled: (n) => `已成交 ${n}`,
+  sessions: useCommon.for('zh').sessions,
 };
 
 export const useChartMessages = createMessages({

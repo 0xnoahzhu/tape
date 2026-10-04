@@ -3,9 +3,11 @@
 
 import { contractLabel, isTradable } from '@shared/contract';
 import { f0, parseNum, roundToTick } from '@shared/format';
-import type { ContractRef, OrderRequest, OrderType, SecType } from '@shared/types';
+import { ibEasternTime, sessionOutsideRth, timingProblem, timingText, type TimingProblem } from '@shared/orderTiming';
+import type { ContractRef, OrderRequest, OrderType, SecType, TradingSession } from '@shared/types';
 import type { ConfirmRow, PendingOrder, TicketState } from '../../state/store';
 import { conditionContract, money, positive, priceText, resolveTicket, type TicketMarket, type TicketModel } from './ticketModel';
+import { goodTillTime, ticketTiming, type SessionHours } from './timing';
 
 export type TicketError =
   | 'index'
@@ -21,12 +23,17 @@ export type TicketError =
   | 'slAbove'
   | 'cond'
   | 'ice'
-  | 'gat';
+  | 'gat'
+  | TimingProblem;
 
 export interface OrderInput {
   contract: ContractRef;
   ticket: TicketState;
   market: TicketMarket;
+  /** Unix ms (GTD expiry checks and default); now by default. */
+  now?: number;
+  /** Trading hours of the instrument, for the default GTD expiry. */
+  hours?: SessionHours;
 }
 
 export type BuildResult = { ok: true; request: OrderRequest; model: TicketModel } | { ok: false; error: TicketError };
@@ -41,9 +48,14 @@ export function normalizeTime(s: string): string | null {
   return `${String(h).padStart(2, '0')}:${m[2]}`;
 }
 
-export function buildOrderRequest({ contract, ticket: t, market }: OrderInput): BuildResult {
+export function buildOrderRequest({ contract, ticket: t, market, now = Date.now(), hours }: OrderInput): BuildResult {
   if (!isTradable(contract)) return { ok: false, error: 'index' };
   if (!Number.isInteger(t.qty) || t.qty <= 0) return { ok: false, error: 'qty' };
+
+  // Combinations IBKR does not take (the ticket shows the same problem inline).
+  const goodTill = t.tif === 'GTD' ? goodTillTime(t.goodTill, now, hours) : null;
+  const timing = timingProblem(ticketTiming(t, contract, t.session, goodTill), now);
+  if (timing) return { ok: false, error: timing };
 
   const model = resolveTicket(t, market);
   const tick = market.minTick;
@@ -54,8 +66,10 @@ export function buildOrderRequest({ contract, ticket: t, market }: OrderInput): 
     orderType: t.orderType,
     quantity: t.qty,
     tif: t.tif,
-    outsideRth: t.outsideRth,
+    outsideRth: sessionOutsideRth(t.session),
+    session: t.session,
   };
+  if (goodTill) req.goodTillDate = ibEasternTime(goodTill.ymd, goodTill.hhmm);
 
   switch (t.orderType) {
     case 'LMT':
@@ -132,9 +146,10 @@ export interface ReviewLabels {
   buy: string;
   sell: string;
   orderTypes: Record<OrderType, string>;
+  sessions: Record<TradingSession, string>;
   /** Quantity with its unit ("100 股" in Chinese); the bare number when absent. */
   units?: (qty: string, secType: SecType) => string;
-  extras: { outsideRth: string; bracket: string; conditional: string; iceberg: string; goodAfter: (t: string) => string };
+  extras: { bracket: string; conditional: string; iceberg: string; goodAfter: (t: string) => string };
 }
 
 const withUnits = (req: OrderRequest, labels: ReviewLabels) => (labels.units ? labels.units(f0(req.quantity), req.contract.secType) : f0(req.quantity));
@@ -159,12 +174,11 @@ export function typePriceText(req: OrderRequest, labels: ReviewLabels, minTick: 
   }
 }
 
-/** TIF plus the order's extra attributes, e.g. "DAY · outside RTH · GAT 09:35". */
+/** TIF, session and the order's extra attributes, e.g. "GTD 10/09 16:00 ET · Extended hours · GAT 09:35". */
 export function tifText(req: OrderRequest, labels: ReviewLabels): string {
   const x = labels.extras;
   return (
-    req.tif +
-    (req.outsideRth ? x.outsideRth : '') +
+    timingText(req, labels.sessions) +
     (req.bracket ? x.bracket : '') +
     (req.condition ? x.conditional : '') +
     (req.displaySize != null ? x.iceberg : '') +

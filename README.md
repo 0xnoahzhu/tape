@@ -19,8 +19,10 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
   per-row actions.
 - **Chart** with 1m / 5m / 1h / 1D / 1W / 1M / 1Y bars from IBKR historical data, MA20 and volume, session
   status, and the position and open orders for the selected symbol.
-- **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent); DAY / GTC / IOC /
-  OPG; outside regular trading hours; **bracket** orders (take-profit and stop-loss children); **conditional**
+- **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent); time in force DAY /
+  GTC / IOC / FOK / OPG / GTD (with an expiry in New York time); **trading session** regular hours, extended
+  hours (pre-market and after-hours), overnight, or overnight + day (US stocks and ETFs, DAY limit orders);
+  choices IBKR does not combine are disabled with the reason; **bracket** orders (take-profit and stop-loss children); **conditional**
   orders (price condition on any instrument); **iceberg** (display size); **good-after** time. Optional
   confirmation before every order; keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
 - **Symbol search** (⌘K / Ctrl+K): find a ticker or company and open it on the Trade page; orders are
@@ -64,6 +66,10 @@ In IB Gateway open *Configure › Settings › API › Settings*; in TWS open *G
 | Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order (error 321, shown with where to turn it off); quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
 | Download open orders on connection | On, so working orders show up as soon as Tape connects. |
 | Allow connections from localhost only | Recommended. To connect from another machine, turn it off and add that machine under *Trusted IPs*. |
+
+**Overnight-only orders** are routed directly to IBKR's OVERNIGHT venue. With the default API precautions IB
+refuses them (error 10329, shown with where to change it): turn on *Bypass Redirect Order warning for Stock API
+orders* under *API › Precautions* to send them. Overnight + day orders are SMART-routed and need no change.
 
 **Client ids.** Every program connected to the same TWS / Gateway needs its own client id (Tape uses 7 by
 default; change it in *Settings › Connection › Advanced*, or set `TAPE_CLIENT_ID` for a development run). Orders

@@ -145,6 +145,63 @@ describe('OrderService', () => {
     expect(t.notices.map((n) => [n.kind, n.title.en, n.body.en])).toEqual([['order', 'Buy 100 AAPL rejected', 'The API interface is currently in Read-Only mode. (321)']]);
   });
 
+  it('fails when IB sets the order Inactive, with the reason that follows', async () => {
+    const t = await loaded();
+    const p = t.svc.place(req);
+    await tick();
+    // As IB answered an overnight + day iceberg order on the paper account.
+    const reason = 'Order rejected - reason:Iceberg orders not supported for this combination of exchange and security type.';
+    t.emit('openOrder', 50, ibAapl, lmt(50), { status: 'Inactive' });
+    t.emit('orderStatus', 50, 'Inactive', 0, 100, 0, 9050, 0, 0, CLIENT_ID, '');
+    t.error(50, 201, reason);
+    t.emit('openOrder', 50, ibAapl, lmt(50), { status: 'Inactive' });
+    await expect(p).rejects.toThrow(`${reason} (201)`);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([['Buy 100 AAPL rejected', `${reason} (201)`]]);
+  });
+
+  it('fails an Inactive order without a reason when the wait runs out', async () => {
+    const t = await loaded();
+    const p = t.svc.place(req);
+    const settled = p.catch((err: Error) => err);
+    await tick();
+    t.emit('openOrder', 50, ibAapl, lmt(50), { status: 'Inactive' });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // The notice waited for a reason, then went out without one.
+    expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([['Buy 100 AAPL rejected', 'Limit 226.95 · DAY']]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await settled).toEqual(new Error('IB did not accept order #50 (Inactive)'));
+    expect(t.notices).toHaveLength(1);
+  });
+
+  it('announces a rejection once when the reason arrives before the order', async () => {
+    const t = await loaded();
+    const p = t.svc.place(req);
+    await tick();
+    t.error(50, 201, 'Order rejected - reason:Conditional orders not supported for this combination of exchange and security type.');
+    t.emit('openOrder', 50, ibAapl, lmt(50), { status: 'Inactive' });
+    await expect(p).rejects.toThrow('(201)');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(t.notices.map((n) => n.body.en)).toEqual(['Order rejected - reason:Conditional orders not supported for this combination of exchange and security type. (201)']);
+  });
+
+  it('announces a rejected bracket child once', async () => {
+    const t = await loaded();
+    const p = t.svc.place({ ...req, bracket: { takeProfit: 233, stopLoss: 222 } });
+    await tick();
+    const child = (id: number) => lmt(id, CLIENT_ID, { parentId: 50, action: 'SELL' as never });
+    t.emit('openOrder', 50, ibAapl, lmt(50), { status: 'PreSubmitted' });
+    t.emit('openOrder', 51, ibAapl, child(51), { status: 'PreSubmitted' });
+    t.emit('openOrder', 52, ibAapl, child(52), { status: 'Inactive' });
+    t.error(52, 201, 'Order rejected - reason:This combination of Stop with IOC or FOK is not allowed.');
+    await expect(p).rejects.toThrow('This combination of Stop with IOC or FOK is not allowed. (201)');
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([
+      ['Buy 100 AAPL submitted', 'Limit 226.95 · DAY · awaiting fill'],
+      ['Sell 100 AAPL rejected', 'Order rejected - reason:This combination of Stop with IOC or FOK is not allowed. (201)'],
+    ]);
+  });
+
   it('ignores order warnings while waiting', async () => {
     const t = await loaded();
     const p = t.svc.place(req);
@@ -203,6 +260,55 @@ describe('OrderService', () => {
     t.emit('orderStatus', 40, 'Cancelled', 0, 100, 0, 9040, 0, 0, CLIENT_ID, '');
     await expect(c).resolves.toBeUndefined();
     expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL submitted', 'Buy 100 AAPL cancelled']);
+  });
+
+  it('keeps a working order in its trading session', async () => {
+    const t = await loaded();
+    // IB reports an includeOvernight order with TIF "OVERNIGHT + DAY".
+    t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'OVERNIGHT + DAY' as never, includeOvernight: true, outsideRth: true }), { status: 'PreSubmitted' });
+    await expect(t.svc.modify(40, { ...req, limitPrice: 225 })).rejects.toThrow('Order #40 cannot move to another trading session (IB refuses it); cancel it and place a new order');
+    expect(t.calls).toEqual([]);
+    const m = t.svc.modify(40, { ...req, limitPrice: 225, session: 'overnightDay' });
+    await tick();
+    expect(t.calls[0][0]).toBe('placeOrder');
+    expect(t.calls[0][3]).toMatchObject({ lmtPrice: 225, tif: 'DAY', includeOvernight: true, outsideRth: true });
+    t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { lmtPrice: 225, tif: 'OVERNIGHT + DAY' as never, includeOvernight: true, outsideRth: true }), { status: 'PreSubmitted' });
+    await expect(m).resolves.toBeUndefined();
+    expect(t.svc.getOrders().find((o) => o.orderId === 40)).toMatchObject({ limitPrice: 225, tif: 'DAY', session: 'overnightDay' });
+  });
+
+  it('changes the TIF of a working order only as IB allows', async () => {
+    const t = await loaded();
+    t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'GTD' as never, goodTillDate: '20261009 16:00:00 US/Eastern' }), { status: 'PreSubmitted' });
+    // IB answers 462 "Cannot change to the new Time in Force".
+    await expect(t.svc.modify(40, { ...req, limitPrice: 225 })).rejects.toThrow('Order #40 cannot change its time in force from GTD to DAY (IB refuses it); cancel it and place a new order');
+    expect(t.calls).toEqual([]);
+    // A new expiry is fine.
+    const m = t.svc.modify(40, { ...req, tif: 'GTD', goodTillDate: '20261012 16:00:00 US/Eastern' });
+    await tick();
+    expect(t.calls[0][3]).toMatchObject({ tif: 'GTD', goodTillDate: '20261012 16:00:00 US/Eastern' });
+    t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'GTD' as never, goodTillDate: '20261012 16:00:00 US/Eastern' }), { status: 'PreSubmitted' });
+    await expect(m).resolves.toBeUndefined();
+
+    t.emit('openOrder', 41, ibAapl, lmt(41), { status: 'PreSubmitted' });
+    const gtc = t.svc.modify(41, { ...req, tif: 'GTC' });
+    await tick();
+    expect(t.calls.at(-1)?.[3]).toMatchObject({ tif: 'GTC' });
+    t.emit('openOrder', 41, ibAapl, lmt(41, CLIENT_ID, { tif: 'GTC' as never }), { status: 'PreSubmitted' });
+    await expect(gtc).resolves.toBeUndefined();
+    await expect(t.svc.modify(41, { ...req, tif: 'OPG' })).rejects.toThrow('from GTC to OPG');
+  });
+
+  it('looks up the primary exchange the OVERNIGHT venue needs', async () => {
+    const t = await loaded();
+    const p = t.svc.place({ ...req, session: 'overnight', limitPrice: 1 });
+    await tick();
+    expect(t.calls[0][0]).toBe('placeOrder');
+    // getInfo knows no primary exchange here: the order goes out with the conId alone.
+    expect(t.calls[0][2]).toMatchObject({ exchange: 'OVERNIGHT', conId: 265598 });
+    t.error(50, 10329, 'This order will be directly routed to OVERNIGHT. Restriction is specified in Precautionary Settings of Global Configuration/API.');
+    await expect(p).rejects.toThrow('This order will be directly routed to OVERNIGHT. Restriction is specified in Precautionary Settings of Global Configuration/API. (10329)');
+    expect(t.notices.at(-1)?.body.en).toBe('This order will be directly routed to OVERNIGHT. Restriction is specified in Precautionary Settings of Global Configuration/API. (10329)');
   });
 
   it('names only its own order by an id that another client also uses', async () => {

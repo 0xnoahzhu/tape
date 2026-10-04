@@ -120,7 +120,7 @@ const en = {
   confirmOrdersD: 'Review contract, quantity and price in a dialog',
   defaultQty: 'Default order size',
   outsideRth: 'Allow outside RTH by default',
-  outsideRthD: 'New orders have Outside RTH checked',
+  outsideRthD: 'New orders start in Extended hours (pre-market and after-hours) instead of Regular hours',
 
   // Notifications
   notifDesc:
@@ -311,7 +311,7 @@ const zh: typeof en = {
   confirmOrdersD: '弹窗核对合约、数量、价格',
   defaultQty: '默认下单数量',
   outsideRth: '默认允许盘前盘后',
-  outsideRthD: '新订单默认勾选 Outside RTH',
+  outsideRthD: '新订单的交易时段默认为盘前盘后，而不是常规时段',
 
   notifDesc: '所有通知都会显示在右上角铃铛里。下面的开关控制是否同时推送到 macOS / Windows 系统通知中心，默认全部开启，应用在后台时也能收到。',
   rules: {

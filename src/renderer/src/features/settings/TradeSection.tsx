@@ -1,6 +1,7 @@
-// Settings › Trade: order confirmation, default order size, outside-RTH default.
+// Settings › Trade: order confirmation, default order size, outside-RTH default (the ticket's
+// default trading session: extended hours when on, regular hours when off).
 
-import { useStore } from '../../state/store';
+import { defaultSession, useStore } from '../../state/store';
 import { Chip } from '../../ui/primitives';
 import { useSettingsMessages } from './messages';
 import { SectionHeader, SettingToggle, saveSettings } from './parts';
@@ -19,9 +20,9 @@ export function TradeSection() {
     if (!modifying) patchTicket({ qty });
   };
   const toggleOutsideRth = () => {
-    const outsideRth = !trading.outsideRthDefault;
-    saveSettings({ trading: { outsideRthDefault: outsideRth } });
-    if (!modifying) patchTicket({ outsideRth });
+    const next = { ...trading, outsideRthDefault: !trading.outsideRthDefault };
+    saveSettings({ trading: { outsideRthDefault: next.outsideRthDefault } });
+    if (!modifying) patchTicket({ session: defaultSession({ trading: next }) });
   };
 
   return (

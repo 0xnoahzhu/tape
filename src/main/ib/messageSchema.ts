@@ -138,6 +138,11 @@ export class FieldReader {
     return this.tokens[this.pos + offset] ?? '';
   }
 
+  /** The token `offset` places before the end of the message ('' when there is none). */
+  fromEnd(offset = 0): string {
+    return this.tokens[this.tokens.length - 1 - offset] ?? '';
+  }
+
   /** Names the next token and returns its raw value. */
   f(name: string, format?: (v: string) => string): string {
     if (this.done) return '';
@@ -518,6 +523,9 @@ function placeOrder(r: FieldReader): void {
     r.add('conditions', conditions.join(' '));
     r.fs('conditionsIgnoreRth', 'conditionsCancelOrder');
   }
+  // The variable middle of the message is not walked: includeOvernight is the last field before
+  // the manual order indicator (192+).
+  if (r.sv >= 189 && r.fromEnd(r.sv >= 192 ? 1 : 0) === '1') r.add('includeOvernight', '1');
 }
 
 const OUT_SCHEMAS: Record<string, Schema> = {

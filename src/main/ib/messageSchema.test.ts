@@ -279,6 +279,19 @@ describe('decodeFrame', () => {
     }
   });
 
+  it('shows includeOvernight and the GTD expiry of placeOrder', () => {
+    const contract: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as Contract['secType'], exchange: 'SMART', currency: 'USD' };
+    const order: Order = { action: 'BUY' as Order['action'], orderType: 'LMT' as Order['orderType'], totalQuantity: 1, lmtPrice: 1, tif: 'DAY' as Order['tif'], transmit: true };
+    for (const sv of [189, 191, 192, 193]) {
+      const on = decodeFrame('out', encode(sv, (enc) => enc.placeOrder(7, contract, { ...order, includeOvernight: true, outsideRth: true })), { serverVersion: sv });
+      expect(Object.fromEntries(on.fields)).toMatchObject({ tif: 'DAY', outsideRth: '1', includeOvernight: '1' });
+      const off = decodeFrame('out', encode(sv, (enc) => enc.placeOrder(7, contract, order)), { serverVersion: sv });
+      expect(Object.fromEntries(off.fields)).not.toHaveProperty('includeOvernight');
+    }
+    const gtd = decodeFrame('out', encode(193, (enc) => enc.placeOrder(7, { ...contract, exchange: 'OVERNIGHT', primaryExch: 'NASDAQ' }, { ...order, tif: 'GTD' as Order['tif'], goodTillDate: '20261009 16:00:00 US/Eastern' })));
+    expect(Object.fromEntries(gtd.fields)).toMatchObject({ exchange: 'OVERNIGHT', primaryExch: 'NASDAQ', tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+  });
+
   it('decodes combo legs of a BAG order', () => {
     const contract: Contract = {
       symbol: 'AAPL',
