@@ -18,6 +18,9 @@ const useM = createMessages({
   zh: { chart: '图表', options: '期权', depth: '盘口' },
 });
 
+/** Width of the collapsed watchlist's handle (WatchlistPanel). */
+const HANDLE_GUTTER = 26;
+
 export function TradePage() {
   const m = useM();
   const collapsed = useStore((s) => s.watchlistCollapsed);
@@ -65,34 +68,37 @@ export function TradePage() {
       >
         <TabItems tabs={tabs} value={view} onChange={setView} />
       </div>
-      {view === 'opt' ? (
-        <div style={{ gridColumn: 2, gridRow: 2, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <ErrorBoundary name="Options" style={{ flex: 1 }}>
-            <OptionsDesk mode="full" />
-          </ErrorBoundary>
-        </div>
-      ) : (
-        <div
-          style={{
-            gridColumn: 2,
-            gridRow: 2,
-            minHeight: 0,
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0,1fr) 340px',
-            gridTemplateRows: 'minmax(0,1fr) 150px',
-            gap: 'var(--gap)',
-            background: 'var(--gbg)',
-          }}
-        >
-          <ErrorBoundary name={view === 'depth' ? 'Depth' : 'Chart'}>{view === 'depth' ? <DepthView /> : <ChartView />}</ErrorBoundary>
-          <ErrorBoundary name="Positions">
-            <SymbolActivityPanel />
-          </ErrorBoundary>
-          <ErrorBoundary name="Order ticket" style={{ gridColumn: 2, gridRow: '1 / 3' }}>
-            <OrderTicket />
-          </ErrorBoundary>
-        </div>
-      )}
+      {/* With the watchlist collapsed, its floating handle (26px, left edge) gets a gutter so it covers no content. */}
+      <div style={{ gridColumn: 2, gridRow: 2, minHeight: 0, display: 'flex', background: 'var(--p)', paddingLeft: collapsed ? HANDLE_GUTTER : 0 }}>
+        {view === 'opt' ? (
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <ErrorBoundary name="Options" style={{ flex: 1 }}>
+              <OptionsDesk mode="full" />
+            </ErrorBoundary>
+          </div>
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0,1fr) 340px',
+              gridTemplateRows: 'minmax(0,1fr) 150px',
+              gap: 'var(--gap)',
+              background: 'var(--gbg)',
+            }}
+          >
+            <ErrorBoundary name={view === 'depth' ? 'Depth' : 'Chart'}>{view === 'depth' ? <DepthView /> : <ChartView />}</ErrorBoundary>
+            <ErrorBoundary name="Positions">
+              <SymbolActivityPanel />
+            </ErrorBoundary>
+            <ErrorBoundary name="Order ticket" style={{ gridColumn: 2, gridRow: '1 / 3' }}>
+              <OrderTicket />
+            </ErrorBoundary>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
