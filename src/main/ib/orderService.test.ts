@@ -1,9 +1,8 @@
 import type { Contract, IBApi, Order } from './tws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
-import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
-import type { OrderRequest, Settings } from '@shared/types';
+import type { OrderRequest } from '@shared/types';
 import type { IbConnection, IbListener, MainContext } from '../context';
 import { CONNECTION_CHANGED_MESSAGE, createOrderService } from './orders';
 
@@ -80,27 +79,24 @@ const req: OrderRequest = { contract: { ...stock('AAPL'), conId: 265598 }, actio
 
 function setup() {
   const f = fakeIb();
-  let settings: Settings = defaultSettings();
   const events: TapeEvent[] = [];
   const notices: NewNotification[] = [];
   let resolveContract = async (c: unknown) => ({ ...(c as object), conId: 265598 });
   const ctx = {
     emit: (e: TapeEvent) => events.push(e),
-    store: { getSettings: () => settings },
     notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
     contracts: { resolve: (c: unknown) => resolveContract(c), getInfo: async () => null },
     account: { getPositions: () => [] },
     ib: f.ib,
   } as unknown as MainContext;
   const svc = createOrderService(ctx);
-  const setReadOnly = (v: boolean) => (settings = { ...settings, connection: { ...settings.connection, readOnly: v } });
   /** Holds contract lookups until the returned function is called (resolves them all). */
   const holdLookups = () => {
     const held: Array<() => void> = [];
     resolveContract = (c: unknown) => new Promise((resolve) => held.push(() => resolve({ ...(c as object), conId: 265598 })));
     return () => held.splice(0).forEach((release) => release());
   };
-  return { ...f, svc, notices, events, setReadOnly, holdLookups };
+  return { ...f, svc, notices, events, holdLookups };
 }
 
 /** Lets the deferred subscriptions and pending promises run. */
@@ -182,11 +178,8 @@ describe('OrderService', () => {
     expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL submitted']);
   });
 
-  it('refuses orders in read-only mode or when disconnected', async () => {
+  it('refuses orders when disconnected', async () => {
     const t = await loaded();
-    t.setReadOnly(true);
-    await expect(t.svc.place(req)).rejects.toThrow('Read-only mode is on');
-    t.setReadOnly(false);
     t.setConnected(false);
     await expect(t.svc.place(req)).rejects.toThrow('Not connected');
     expect(t.calls).toEqual([]);

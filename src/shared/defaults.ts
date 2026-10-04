@@ -16,7 +16,6 @@ export function defaultSettings(language: Lang = 'en'): Settings {
       clientId: 7,
       autoConnect: true,
       autoReconnect: true,
-      readOnly: false,
     },
     trading: { confirmOrders: true, defaultQty: 100, outsideRthDefault: false },
     appearance: { theme: 'system', language, upColor: 'cn', showAccountId: true },

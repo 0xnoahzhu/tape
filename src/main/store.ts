@@ -9,15 +9,19 @@
 //
 // The store never emits IPC events; index.ts broadcasts changes.
 
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, defaultWatchlists } from '@shared/defaults';
 import type { AppNotification, DeepPartial, NavPoint, PriceAlert, Settings, Watchlist } from '@shared/types';
 import type { AppStore } from './context';
+import { createMessages } from './i18n';
 import { openJsonFile, type JsonFile } from './jsonFile';
+import { createNotification, prependNotification } from './notificationModel';
 import {
   applySettingsPatch,
   capNotifications,
+  hadReadOnlyMode,
   isObject,
   languageFromLocale,
   loadSettings,
@@ -32,6 +36,19 @@ import {
 
 type SettingsListener = (next: Settings, prev: Settings) => void;
 
+const m = createMessages({
+  en: {
+    readOnlyRemovedTitle: 'Read-only mode was removed',
+    readOnlyRemovedBody:
+      'Tape no longer has its own read-only mode, which you had on: orders you send now go to IB. To block them, turn on “Read-Only API” in IB Gateway › Configure › Settings › API › Settings (TWS: Global Configuration › API › Settings).',
+  },
+  zh: {
+    readOnlyRemovedTitle: '只读模式已移除',
+    readOnlyRemovedBody:
+      'Tape 已移除自带的只读模式（你之前开启了它），发出的订单会直接交给 IB。如需禁止下单，请在 IB Gateway › Configure › Settings › API › Settings（TWS：Global Configuration › API › Settings）中打开 “Read-Only API”。',
+  },
+});
+
 export function createStore(): AppStore {
   const dir = app.getPath('userData');
   const file = <T>(name: string, parse: (raw: unknown) => T | null, fallback: () => T, pretty = true): JsonFile<T> =>
@@ -41,9 +58,14 @@ export function createStore(): AppStore {
   // language stands in (it only matters on first launch, before any window exists).
   const provisionalLanguage = languageFromLocale(app.getPreferredSystemLanguages()[0]);
 
+  let readOnlyRemoved = false;
   const settings = file<Settings>(
     'settings.json',
-    (raw) => (isObject(raw) ? loadSettings(raw, defaultSettings(provisionalLanguage)) : null),
+    (raw) => {
+      if (!isObject(raw)) return null;
+      readOnlyRemoved = hadReadOnlyMode(raw);
+      return loadSettings(raw, defaultSettings(provisionalLanguage));
+    },
     () => defaultSettings(provisionalLanguage),
   );
   const watchlists = file<Watchlist[]>('watchlists.json', (raw) => sanitizeWatchlists(raw, defaultWatchlists()), defaultWatchlists);
@@ -52,6 +74,18 @@ export function createStore(): AppStore {
   const nav = file<NavPoint[]>('nav.json', sanitizeNav, () => [], false);
   const windowBounds = file<WindowBounds | null>('window.json', sanitizeWindowBounds, () => null);
   const files: JsonFile<unknown>[] = [settings, watchlists, alerts, notifications, nav, windowBounds];
+
+  // The saved settings still had the removed read-only switch on: say so in the notification
+  // list, and save the settings without the key so the notice is posted once.
+  if (readOnlyRemoved) {
+    const notice = createNotification(
+      { kind: 'sys', title: m.both((t) => t.readOnlyRemovedTitle), body: m.both((t) => t.readOnlyRemovedBody) },
+      randomUUID(),
+      Date.now(),
+    );
+    notifications.set(prependNotification(notifications.get(), notice));
+    settings.set(settings.get());
+  }
 
   const listeners = new Set<SettingsListener>();
 

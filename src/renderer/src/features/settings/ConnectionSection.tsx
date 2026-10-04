@@ -1,7 +1,8 @@
-// Settings › Connection: host/port/client id, connect/disconnect, status, farms, recent API traffic.
+// Settings › Connection: host/port, connect/disconnect, status, farms, recent API traffic,
+// auto-reconnect, and the client id under Advanced.
 
 import { useApiLogStream } from '../../hooks/useApiLogStream';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { hmsMs } from '@shared/format';
 import type { ConnectionState, Settings } from '@shared/types';
 import { maskAccounts } from '../../lib/account';
@@ -17,6 +18,8 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 export function ConnectionSection() {
   const m = useSettingsMessages();
   const cfg = useStore((s) => s.settings.connection);
+  // IB refused the client id (326): show the field right away.
+  const cidInUse = useStore((s) => s.connection.status !== 'connected' && s.connection.lastError?.code === 326);
   const apply = (patch: ConnectionPatch) => applyConnection(patch, m);
 
   return (
@@ -34,24 +37,75 @@ export function ConnectionSection() {
         style={{ alignSelf: 'flex-start' }}
         itemStyle={{ padding: '8px 16px', fontSize: 14 }}
       />
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
         <DraftField label={m.host} value={cfg.host} parse={parseHost} invalidText={m.hostInvalid} commit={(host) => apply({ host })} />
         <DraftField label={m.port} value={String(cfg.port)} parse={parsePort} invalidText={m.portInvalid} commit={(port) => apply({ port })} />
-        <DraftField label={m.clientId} value={String(cfg.clientId)} parse={parseClientId} invalidText={m.cidInvalid} commit={(clientId) => apply({ clientId })} />
       </div>
-      <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)', textWrap: 'pretty', marginTop: -14 }}>{m.cidHelp}</div>
       <ConnectionStatus />
       <RecentTraffic />
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <SettingToggle
-          label={m.autoReconnect}
-          desc={m.autoReconnectD}
-          on={cfg.autoReconnect}
-          onToggle={() => saveSettings({ connection: { autoReconnect: !cfg.autoReconnect } })}
-        />
-        <SettingToggle label={m.readOnly} desc={m.readOnlyD} on={cfg.readOnly} onToggle={() => saveSettings({ connection: { readOnly: !cfg.readOnly } })} />
-      </div>
+      <SettingToggle
+        label={m.autoReconnect}
+        desc={m.autoReconnectD}
+        on={cfg.autoReconnect}
+        onToggle={() => saveSettings({ connection: { autoReconnect: !cfg.autoReconnect } })}
+      />
+      <Advanced forceOpen={cidInUse}>
+        <div style={{ width: CLIENT_ID_WIDTH }}>
+          <DraftField label={m.clientId} value={String(cfg.clientId)} parse={parseClientId} invalidText={m.cidInvalid} commit={(clientId) => apply({ clientId })} />
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)', textWrap: 'pretty' }}>{m.cidHelp}</div>
+      </Advanced>
     </>
+  );
+}
+
+/** Width of the Client ID field: the Port field's (1fr of Host / Port in the 720px section). */
+const CLIENT_ID_WIDTH = 236;
+
+/**
+ * Collapsible "Advanced" block (the design's expander: label on the left, Expand ▾ / Collapse ▴
+ * on the right, content on a --p2 panel). Closed at first unless `forceOpen`; turning
+ * `forceOpen` on later (a new 326) opens it too, and the user can still collapse it.
+ */
+function Advanced({ forceOpen = false, children }: { forceOpen?: boolean; children: ReactNode }) {
+  const m = useSettingsMessages();
+  const [open, setOpen] = useState(forceOpen);
+  const panelId = useId();
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* A real button, so Tab reaches it and Enter / Space toggle it. */}
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen(!open)}
+        className="hover-tx"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          width: '100%',
+          padding: '4px 0',
+          border: 'none',
+          background: 'none',
+          textAlign: 'left',
+          fontSize: 13,
+          color: 'var(--mu)',
+        }}
+      >
+        <span>{m.advanced}</span>
+        <span style={{ flexShrink: 0 }}>{open ? m.collapse : m.expand}</span>
+      </button>
+      {open && (
+        <div id={panelId} style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px', background: 'var(--p2)' }}>
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -153,7 +207,7 @@ function DraftField<T extends string | number>({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {/* Fixed line height keeps CJK and Latin labels (Host / Client ID) aligned. */}
+      {/* Fixed line height keeps CJK and Latin labels the same height, so fields side by side align. */}
       <div style={{ fontSize: 12, lineHeight: '14px', color: 'var(--dm)' }}>{label}</div>
       <TextInput
         inputRef={ref}
@@ -173,7 +227,7 @@ function DraftField<T extends string | number>({
         }}
         height={40}
         // width auto (not 100%): the input's intrinsic width then counts as the grid column's
-        // minimum, which gives the design's Host / Port / Client ID proportions.
+        // minimum, which keeps the design's Host / Port proportions.
         style={{ width: 'auto', padding: '0 12px', font: '14px/1 var(--num)', ...(invalid ? { boxShadow: 'inset 0 0 0 1px var(--r)' } : {}) }}
       />
       {invalid && <div style={{ fontSize: 12, color: 'var(--r)' }}>{invalidText}</div>}

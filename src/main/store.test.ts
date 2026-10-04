@@ -106,6 +106,28 @@ describe('createStore', () => {
     expect(readdirSync(env.dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('posts a notice once when the saved settings had the removed read-only mode on', () => {
+    const saved = { connection: { host: '10.0.0.2', port: 7497, readOnly: true }, appearance: { language: 'zh' } };
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify(saved));
+    const store = createStore();
+    expect(store.getNotifications()).toMatchObject([{ kind: 'sys', read: false, title: { en: 'Read-only mode was removed', zh: '只读模式已移除' } }]);
+    expect(store.getNotifications()[0]!.body.en).toContain('“Read-Only API”');
+    store.flush();
+    // Saved without the key (and nothing else lost), so the next launch posts nothing.
+    expect(read('settings.json').connection).toMatchObject({ host: '10.0.0.2', port: 7497 });
+    expect('readOnly' in read('settings.json').connection).toBe(false);
+    expect(read('settings.json').appearance.language).toBe('zh');
+    expect(createStore().getNotifications()).toHaveLength(1);
+  });
+
+  it('posts nothing when the removed read-only mode was off', () => {
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ connection: { readOnly: false } }));
+    const store = createStore();
+    expect(store.getNotifications()).toEqual([]);
+    store.flush();
+    expect(existsSync(join(env.dir, 'notifications.json'))).toBe(false);
+  });
+
   it('falls back to defaults and keeps a backup when a file is corrupt', () => {
     writeFileSync(join(env.dir, 'settings.json'), '{oops');
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);

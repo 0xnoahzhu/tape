@@ -4,6 +4,7 @@ import type { AppNotification } from '@shared/types';
 import {
   MAX_NOTIFICATIONS,
   applySettingsPatch,
+  hadReadOnlyMode,
   languageFromLocale,
   loadSettings,
   sameData,
@@ -41,10 +42,32 @@ describe('loadSettings', () => {
     expect('nope' in (s.notifications.system as Record<string, unknown>)).toBe(false);
   });
 
+  it('loads files saved with the removed read-only setting', () => {
+    const saved = { connection: { mode: 'tws', host: '10.0.0.2', port: 7497, clientId: 21, autoConnect: false, autoReconnect: false, readOnly: true } };
+    const s = loadSettings(saved, defaults);
+    expect(s.connection).toEqual({ mode: 'tws', host: '10.0.0.2', port: 7497, clientId: 21, autoConnect: false, autoReconnect: false });
+    expect('readOnly' in s.connection).toBe(false);
+    // A patch that still carries it changes nothing.
+    expect(applySettingsPatch(s, { connection: { readOnly: false } })).toEqual(s);
+  });
+
+  it('tells whether the removed read-only setting was on', () => {
+    expect(hadReadOnlyMode({ connection: { readOnly: true } })).toBe(true);
+    // Coerced like the setting was.
+    expect(hadReadOnlyMode({ connection: { readOnly: 'true' } })).toBe(true);
+    expect(hadReadOnlyMode({ connection: { readOnly: 1 } })).toBe(true);
+    expect(hadReadOnlyMode({ connection: { readOnly: false } })).toBe(false);
+    expect(hadReadOnlyMode({ connection: { readOnly: 'yes' } })).toBe(false);
+    expect(hadReadOnlyMode({ connection: {} })).toBe(false);
+    expect(hadReadOnlyMode({ connection: true })).toBe(false);
+    expect(hadReadOnlyMode({ readOnly: true })).toBe(false);
+    expect(hadReadOnlyMode(null)).toBe(false);
+  });
+
   it('coerces types and falls back on garbage', () => {
     const s = loadSettings(
       {
-        connection: { port: '4001', clientId: 12.6, autoConnect: 'false', readOnly: 1, host: '  localhost ', mode: 'nope' },
+        connection: { port: '4001', clientId: 12.6, autoConnect: 'false', autoReconnect: 0, host: '  localhost ', mode: 'nope' },
         trading: { confirmOrders: 'yes', defaultQty: 'abc' },
         appearance: { theme: 'blue', language: 'fr', upColor: 'us' },
       },
@@ -53,7 +76,7 @@ describe('loadSettings', () => {
     expect(s.connection.port).toBe(4001);
     expect(s.connection.clientId).toBe(13);
     expect(s.connection.autoConnect).toBe(false);
-    expect(s.connection.readOnly).toBe(true);
+    expect(s.connection.autoReconnect).toBe(false);
     expect(s.connection.host).toBe('localhost');
     expect(s.connection.mode).toBe(defaults.connection.mode);
     expect(s.trading.confirmOrders).toBe(defaults.trading.confirmOrders);

@@ -9,6 +9,9 @@
 // an order id and act only on orders of the connected client id; other clients' orders (TWS is
 // client 0) can only be cancelled with cancelAll (reqGlobalCancel).
 //
+// Tape has no read-only switch of its own: with "Read-Only API" on in TWS / IB Gateway, IB rejects
+// orders with error 321, which reaches the caller (and the rejection notification) as IB's message.
+//
 // Every execution (with its commission) is written to the database's execution journal; on start
 // today's journaled fills are restored, since IB may not resend them after a Gateway restart.
 // Restored fills of accounts the connected login does not have are dropped on the handshake.
@@ -43,7 +46,6 @@ const FILL_NOTICE_WAIT_MS = 3_000;
 const EMIT_MS = 100;
 const CONTRACT_LOOKUP_TIMEOUT_MS = 10_000;
 
-export const READ_ONLY_MESSAGE = 'Read-only mode is on';
 export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
 export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
 
@@ -440,10 +442,6 @@ export function createOrderService(ctx: MainContext): OrderService {
     return api;
   }
 
-  function requireWritable(): void {
-    if (ctx.store.getSettings().connection.readOnly) throw new Error(READ_ONLY_MESSAGE);
-  }
-
   /**
    * The API instance to send an order on, after an `await`: still the session the order was
    * checked against. Another client id or Gateway (a new instance) would take the order id for
@@ -498,7 +496,6 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function place(input: OrderRequest): Promise<PlaceOrderResult> {
-    requireWritable();
     const checked = requireApi();
     const clientId = myClientId();
     const { req, conditionConId } = await prepare(input);
@@ -565,7 +562,6 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function modify(orderId: number, input: OrderRequest): Promise<void> {
-    requireWritable();
     const checked = requireApi();
     const clientId = myClientId();
     modifiable(orderId);

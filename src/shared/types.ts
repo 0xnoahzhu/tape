@@ -480,7 +480,6 @@ export interface Settings {
     clientId: number;
     autoConnect: boolean;
     autoReconnect: boolean;
-    readOnly: boolean;
   };
   trading: {
     confirmOrders: boolean;

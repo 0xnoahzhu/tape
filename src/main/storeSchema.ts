@@ -98,7 +98,6 @@ const SETTINGS_SPEC: Spec<Settings> = {
     clientId: int(0, 999_999_999),
     autoConnect: bool,
     autoReconnect: bool,
-    readOnly: bool,
   },
   trading: { confirmOrders: bool, defaultQty: int(1, 10_000_000), outsideRthDefault: bool },
   appearance: {
@@ -132,6 +131,15 @@ function sanitize<T>(spec: Spec<T>, raw: unknown, fallback: T): T {
 /** Saved settings deep-merged over the defaults. */
 export function loadSettings(raw: unknown, defaults: Settings): Settings {
   return sanitize(SETTINGS_SPEC, raw, defaults);
+}
+
+/**
+ * Whether saved settings have Tape's former read-only switch (`connection.readOnly`) on. The
+ * switch was removed (TWS / IB Gateway's own "Read-Only API" blocks orders); loadSettings drops
+ * the key, and the store tells a user who had it on, once.
+ */
+export function hadReadOnlyMode(raw: unknown): boolean {
+  return isObject(raw) && isObject(raw.connection) && bool(raw.connection.readOnly, false);
 }
 
 /** Applies a (possibly untrusted) partial update; invalid values keep the current value. */

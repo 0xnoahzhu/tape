@@ -285,11 +285,8 @@ describe.skipIf(!live)('live IB Gateway', async () => {
     await sleep(1500);
   });
 
-  it('refuses orders in read-only mode and when disconnected', async () => {
-    settings = { ...settings, connection: { ...settings.connection, readOnly: true } };
+  it('refuses orders when disconnected', async () => {
     const req = { contract: stock('AAPL'), action: 'BUY' as const, orderType: 'LMT' as const, quantity: 1, limitPrice: 1, tif: 'DAY' as const, outsideRth: false };
-    await expect(ctx.orders.place(req)).rejects.toThrow('Read-only mode is on');
-    settings = { ...settings, connection: { ...settings.connection, readOnly: false } };
     await ctx.ib.disconnect();
     expect(ctx.ib.getState().status).toBe('disconnected');
     await expect(ctx.orders.place(req)).rejects.toThrow('Not connected');

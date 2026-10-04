@@ -61,12 +61,12 @@ In IB Gateway open *Configure › Settings › API › Settings*; in TWS open *G
 | --- | --- |
 | Enable ActiveX and Socket Clients | On (TWS only; IB Gateway always listens). |
 | Socket port | IB Gateway: **4002** paper / **4001** live. TWS: **7497** paper / **7496** live. Must match *Settings › Connection* in Tape (default 127.0.0.1:4002). |
-| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order; quotes, account data and positions still work. |
+| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order (error 321, shown with where to turn it off); quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
 | Download open orders on connection | On, so working orders show up as soon as Tape connects. |
 | Allow connections from localhost only | Recommended. To connect from another machine, turn it off and add that machine under *Trusted IPs*. |
 
 **Client ids.** Every program connected to the same TWS / Gateway needs its own client id (Tape uses 7 by
-default; change it in *Settings › Connection*, or set `TAPE_CLIENT_ID` for a development run). Orders
+default; change it in *Settings › Connection › Advanced*, or set `TAPE_CLIENT_ID` for a development run). Orders
 belong to the client id that placed them; client id 0 also sees orders entered manually in TWS.
 
 **Market data sharing and error 10197.** IBKR delivers real-time market data to one session per username.

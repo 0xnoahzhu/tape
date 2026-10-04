@@ -74,7 +74,10 @@ API client. `reqAllOpenOrders` shows the orders of every client (TWS is client 0
 order has, or no order has, is refused without sending anything (IB would apply it to this
 client's order with that id). `cancelAllOrders` (`reqGlobalCancel`) cancels every order of the
 account. With client id 0, orders entered in TWS afterwards are bound to Tape (`reqAutoOpenOrders`)
-and count as its own.
+and count as its own. Tape has no read-only mode of its own: with *Read-Only API* on in TWS / IB
+Gateway, IB rejects orders with error 321, and the renderer's toast adds where to turn it off
+(`state/orderActions.ts → orderErrorText`). Saved settings that still have Tape's former read-only
+switch on get a one-time notice in the notification list saying so (`store.ts`).
 
 ### TWS API client (`src/main/ib/tws`)
 
