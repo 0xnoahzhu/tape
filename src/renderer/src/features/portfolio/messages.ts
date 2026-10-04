@@ -30,6 +30,7 @@ export const usePortfolioMessages = createMessages({
     allocation: 'Sector allocation',
     netLiqShort: 'Net liq',
     noAllocation: 'No account data',
+    noPositionsHint: 'No positions yet. Holdings will show here by sector.',
     /** Display names of IB industries and the special buckets (@etf, @other, @cash). */
     sectorNames: {
       '@etf': 'ETF / Index',
@@ -39,6 +40,12 @@ export const usePortfolioMessages = createMessages({
       'Consumer, Cyclical': 'Consumer Cyclical',
       'Consumer, Non-cyclical': 'Consumer Non-cyclical',
     } as Record<string, string>,
+
+    // Account overview
+    accountOverview: 'Account overview',
+    marginUsage: 'Margin usage',
+    marginUsageHint: 'Initial margin as a share of net liquidation',
+    availableFunds: 'Available funds',
 
     // Positions table: [label, full name]
     headers: [
@@ -108,6 +115,7 @@ export const usePortfolioMessages = createMessages({
     allocation: '板块分布',
     netLiqShort: '净清算值',
     noAllocation: '暂无账户数据',
+    noPositionsHint: '暂无持仓，买入后这里会按行业显示分布。',
     sectorNames: {
       '@etf': 'ETF / 指数',
       '@other': '其他',
@@ -124,6 +132,11 @@ export const usePortfolioMessages = createMessages({
       Diversified: '多元化',
       Government: '政府',
     } as Record<string, string>,
+
+    accountOverview: '账户概况',
+    marginUsage: '保证金占用',
+    marginUsageHint: '初始保证金占净清算值的比例',
+    availableFunds: '可用资金',
 
     headers: [
       ['代码', '代码'],

@@ -14,6 +14,7 @@ import {
   equityChart,
   navSeries,
   rangeReturn,
+  shortHistory,
   sliceRange,
   tickLabels,
   type RangeKey,
@@ -57,7 +58,9 @@ export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: str
   const chgPct = ret && !perf ? `(${pct(ret.pct)})` : '';
   // A single sample has no curve: show its marker and value only.
   const single = !!chart && !chart.line;
-  const note = slice.points.length < 2 ? (series.length ? m.historyNote(ymd(series[0].t)) : m.noHistory) : null;
+  // Too little history for a curve (just connected): no filled area, and a note on how history builds up.
+  const thin = shortHistory(slice.points);
+  const note = thin ? (series.length ? m.historyNote(ymd(series[0].t)) : m.noHistory) : null;
 
   return (
     <div style={{ background: 'var(--p)', padding: '22px 28px 18px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
@@ -84,13 +87,14 @@ export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: str
         <Segmented options={RANGES.map((k) => ({ key: k, label: k }))} value={range} onChange={setRange} itemStyle={{ font: '12px/1 var(--num)' }} />
       </div>
 
-      <div style={{ display: 'flex', height: CHART_H }}>
+      {/* The plot grows with the card (the viewBox stretches); CHART_H is its minimum height. */}
+      <div style={{ display: 'flex', flex: 1, minHeight: CHART_H }}>
         <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
           <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
             {GRID_Y.map((y) => (
               <line key={y} x1={0} x2={CHART_W} y1={y} y2={y} style={{ stroke: 'var(--ln)', vectorEffect: 'non-scaling-stroke', strokeDasharray: '1 3' }} />
             ))}
-            {chart?.area && <polygon points={chart.area} style={{ fill: 'var(--ac)', opacity: 0.1 }} />}
+            {chart?.area && !thin && <polygon points={chart.area} style={{ fill: 'var(--ac)', opacity: 0.1 }} />}
             {chart && !single && (
               <line
                 x1={0}

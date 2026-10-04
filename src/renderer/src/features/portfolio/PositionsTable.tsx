@@ -17,7 +17,7 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
   const openSymbol = useStore((s) => s.openSymbol);
 
   return (
-    <div style={{ background: 'var(--p)', margin: 'var(--gap) var(--pad) var(--pad)', flexShrink: 0 }}>
+    <div style={{ background: 'var(--p)', margin: 'var(--gap) var(--pad) var(--pad)', flex: '1 0 auto' }}>
       <div style={{ height: 8 }} />
       <div
         style={{

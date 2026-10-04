@@ -153,9 +153,21 @@ const AXIS_FRACS = [0.2, 0.5, 0.8];
 /** Fractions of the time span for the four x labels. */
 const TICK_FRACS = [0, 0.33, 0.66, 1];
 
+/**
+ * Samples spanning less than this are not yet a curve (the minutes after the first connect):
+ * the chart draws the line without its area and explains that history is still being recorded.
+ */
+export const MIN_CURVE_SPAN = 60 * 60_000;
+
+/** Fewer than two samples, or samples less than MIN_CURVE_SPAN apart. */
+export function shortHistory(points: readonly NavPoint[]): boolean {
+  return points.length < 2 || points[points.length - 1].t - points[0].t < MIN_CURVE_SPAN;
+}
+
 export interface EquityChart {
   /** Polyline points in the 800×300 viewBox; empty with fewer than two samples. */
   line: string;
+  /** Filled area under the line; empty with fewer than two samples or a flat series. */
   area: string;
   /** Dashed baseline at the first value. */
   baseY: number;
@@ -183,6 +195,8 @@ export function equityChart(series: readonly NavPoint[], mode: EquityMode): Equi
     if (v < lo) lo = v;
     if (v > hi) hi = v;
   }
+  // A flat series has no shape: it gets the line only, no filled area.
+  const flat = hi === lo;
   // 8% headroom; a flat series gets a small band around its value.
   const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.001 || 1;
   lo -= pad;
@@ -194,7 +208,7 @@ export function equityChart(series: readonly NavPoint[], mode: EquityMode): Equi
   const line = points.length >= 2 ? points.map((p, i) => `${x(p.t).toFixed(1)},${y(vals[i]).toFixed(1)}`).join(' ') : '';
   return {
     line,
-    area: line ? `0,${CHART_H} ${line} ${CHART_W},${CHART_H}` : '',
+    area: line && !flat ? `0,${CHART_H} ${line} ${CHART_W},${CHART_H}` : '',
     baseY: y(vals[0]),
     endY: y(vals[vals.length - 1]),
     axis: AXIS_FRACS.map((frac) => ({ frac, value: hi - (hi - lo) * frac })),
@@ -518,4 +532,28 @@ export function accountTotals(a: AccountSummary | null, rows: readonly PositionR
 /** Gross position value / net liquidation. */
 export function leverage(gross: number | undefined, netLiq: number | undefined): number | undefined {
   return finite(gross) && finite(netLiq) && netLiq > 0 ? gross / netLiq : undefined;
+}
+
+/** "1.38×"; "—" when unknown. */
+export function leverageLabel(lev: number | undefined): string {
+  return finite(lev) ? `${f2(lev)}×` : DASH;
+}
+
+/** Margin usage (percent) above which the usage bar turns red. */
+export const MARGIN_WARN = 80;
+
+export interface MarginUsage {
+  /** Initial margin in percent of net liquidation. */
+  pct: number;
+  /** Bar fill in percent, clamped to 0–100. */
+  fill: number;
+  /** Above MARGIN_WARN. */
+  warn: boolean;
+}
+
+/** Initial margin / net liquidation; null when either is unknown or net liquidation is not positive. */
+export function marginUsage(initMargin: number | undefined, netLiq: number | undefined): MarginUsage | null {
+  if (!finite(initMargin) || !finite(netLiq) || netLiq <= 0) return null;
+  const pct = (initMargin / netLiq) * 100;
+  return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct > MARGIN_WARN };
 }

@@ -1,4 +1,4 @@
-// Sector allocation donut (design: portfolio dashboard, right card, 380px).
+// Sector allocation donut (design: portfolio dashboard, top of the 380px right column).
 
 import { useMemo } from 'react';
 import { useCommon } from '../../i18n/common';
@@ -13,9 +13,11 @@ export function AllocationCard({ rows, cash, netLiq, symbol }: { rows: PositionR
   const common = useCommon();
   const connected = useStore((s) => s.connection.status === 'connected');
   const slices = useMemo(() => allocation(rows.map((r) => ({ sector: r.sector, value: r.value })), cash, netLiq), [rows, cash, netLiq]);
+  // Account known but nothing held: the ring is all cash, and a hint says what will appear.
+  const empty = !rows.length && netLiq != null;
 
   return (
-    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
       <div style={{ padding: '22px 28px 4px', fontWeight: 600 }}>{m.allocation}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '12px 28px 16px' }}>
         <div style={{ position: 'relative', width: 140, height: 140, flexShrink: 0 }}>
@@ -53,7 +55,11 @@ export function AllocationCard({ rows, cash, netLiq, symbol }: { rows: PositionR
               </div>
             );
           })}
-          {!slices.length && <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5 }}>{connected ? m.noAllocation : common.notConnected}</div>}
+          {empty ? (
+            <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5, textWrap: 'balance', marginTop: slices.length ? 4 : 0 }}>{m.noPositionsHint}</div>
+          ) : (
+            !slices.length && <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5 }}>{connected ? m.noAllocation : common.notConnected}</div>
+          )}
         </div>
       </div>
     </div>

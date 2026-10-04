@@ -4,27 +4,15 @@
 import { useMemo } from 'react';
 import { DASH, f0, f2, pct, sg, signColor } from '@shared/format';
 import type { AccountSummary, NavPoint } from '@shared/types';
-import { RANGES, leverage, rangeReturn, sliceRange, type AccountTotals } from './calc';
+import { RANGES, leverage, leverageLabel, rangeReturn, sliceRange, type AccountTotals } from './calc';
 import { usePortfolioMessages } from './messages';
+import { ValueRows, type ValueRow } from './ValueRows';
 
-interface Row {
-  label: string;
-  value: string;
-  color?: string;
-}
-
-function Group({ title, rows }: { title: string; rows: Row[] }) {
+function Group({ title, rows }: { title: string; rows: ValueRow[] }) {
   return (
     <div style={{ background: 'var(--p)', padding: '8px 0 12px' }}>
       <div style={{ padding: '14px 28px 6px', fontWeight: 600 }}>{title}</div>
-      {rows.map((r) => (
-        <div key={r.label} style={{ height: 38, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '0 28px', fontSize: 13 }}>
-          <div style={{ color: 'var(--mu)' }}>{r.label}</div>
-          <div className="selectable" style={{ fontFamily: 'var(--num)', color: r.color ?? 'var(--tx)' }}>
-            {r.value}
-          </div>
-        </div>
-      ))}
+      <ValueRows rows={rows} />
     </div>
   );
 }
@@ -43,7 +31,7 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
   const a = account;
   const lev = leverage(totals.gross, a?.netLiquidation);
 
-  const groups: Array<{ title: string; rows: Row[] }> = [
+  const groups: Array<{ title: string; rows: ValueRow[] }> = [
     {
       title: m.balances,
       rows: [
@@ -59,7 +47,7 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
         { label: m.initMargin, value: f2(a?.initMarginReq) },
         { label: m.maintMargin, value: f2(a?.maintMarginReq) },
         { label: m.excessLiquidity, value: f2(a?.excessLiquidity) },
-        { label: m.leverage, value: lev == null ? DASH : `${f2(lev)}×` },
+        { label: m.leverage, value: leverageLabel(lev) },
       ],
     },
     {
@@ -73,7 +61,7 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)', padding: 'var(--pad)', marginTop: 'var(--gap)', flexShrink: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)', padding: 'var(--pad)', marginTop: 'var(--gap)', flex: '1 0 auto' }}>
       <div style={{ background: 'var(--p)', padding: '22px 28px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ fontWeight: 600 }}>{m.returns}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,minmax(0,1fr))', gap: 1, background: 'var(--ln2)' }}>
@@ -92,7 +80,7 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
           })}
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 'var(--gap)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 'var(--gap)', flex: 1 }}>
         {groups.map((g) => (
           <Group key={g.title} title={g.title} rows={g.rows} />
         ))}

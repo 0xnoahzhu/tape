@@ -1,5 +1,6 @@
 // Portfolio page (design 3a, "acct"): sticky account header with tabs, then
-// Dashboard (equity curve + sector allocation), Positions or Performance.
+// Dashboard (equity curve + sector allocation and account overview), Positions or Performance.
+// Each tab fills the page height, so no bare page background shows under short content.
 
 import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
@@ -7,6 +8,7 @@ import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
+import { AccountCard } from './AccountCard';
 import { accountTotals, type AccountTotals } from './calc';
 import { AllocationCard } from './AllocationCard';
 import { EquityCard, useNavSeries } from './EquityCard';
@@ -93,11 +95,14 @@ export function PortfolioPage() {
             gap: 'var(--gap)',
             padding: 'var(--pad)',
             marginTop: 'var(--gap)',
-            flexShrink: 0,
+            flex: '1 0 auto',
           }}
         >
           <EquityCard series={series} symbol={symbol} />
-          <AllocationCard rows={rows} cash={account?.totalCashValue} netLiq={account?.netLiquidation} symbol={symbol} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gap)', minWidth: 0 }}>
+            <AllocationCard rows={rows} cash={account?.totalCashValue} netLiq={account?.netLiquidation} symbol={symbol} />
+            <AccountCard account={account} totals={totals} />
+          </div>
         </div>
       )}
       {tab === 'pos' && <PositionsTable rows={rows} />}

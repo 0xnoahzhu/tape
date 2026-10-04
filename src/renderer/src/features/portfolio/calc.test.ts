@@ -7,6 +7,7 @@ import {
   CHART_W,
   ETF_SECTOR,
   MAX_BASE_GAP,
+  MIN_CURVE_SPAN,
   OTHER_SECTOR,
   accountTotals,
   allocation,
@@ -15,7 +16,9 @@ import {
   equityChart,
   grossValue,
   leverage,
+  leverageLabel,
   livePrice,
+  marginUsage,
   maxDrawdown,
   modeValues,
   moneyShort,
@@ -27,6 +30,7 @@ import {
   rangeReturn,
   rangeStart,
   sectorOf,
+  shortHistory,
   sliceRange,
   sortRows,
   sumRows,
@@ -186,6 +190,27 @@ describe('equityChart', () => {
     expect(c.endY).toBeCloseTo(CHART_H / 2);
     expect(c.ticks).toEqual([]);
     expect(equityChart([], 'value')).toBeNull();
+  });
+
+  it('draws a flat series as a line without an area', () => {
+    for (const mode of ['value', 'perf'] as const) {
+      const c = equityChart(daily(at(2026, 9, 1), 30, () => 1_020_171.48), mode)!;
+      expect(c.line).not.toBe('');
+      expect(c.area).toBe('');
+      expect(c.endY).toBeCloseTo(CHART_H / 2);
+    }
+    expect(equityChart([pt(0, 100), pt(DAY, 100.01)], 'value')!.area).not.toBe('');
+  });
+
+  it('flags history too short for a curve', () => {
+    const t = at(2026, 10, 4, 20);
+    expect(shortHistory([])).toBe(true);
+    expect(shortHistory([pt(t, 1)])).toBe(true);
+    // Just connected: the first stored sample and the live value seconds later.
+    expect(shortHistory([pt(t, 1_020_171), pt(t + 6_000, 1_020_171)])).toBe(true);
+    expect(shortHistory([pt(t, 1), pt(t + MIN_CURVE_SPAN - 1, 2)])).toBe(true);
+    expect(shortHistory([pt(t, 1), pt(t + MIN_CURVE_SPAN, 2)])).toBe(false);
+    expect(shortHistory(daily(t, 3, (i) => i + 1))).toBe(false);
   });
 });
 
@@ -430,5 +455,28 @@ describe('positionRow', () => {
     expect(leverage(1_772_651, 1_284_530)).toBeCloseTo(1.38, 2);
     expect(leverage(1, 0)).toBeUndefined();
     expect(leverage(undefined, 1)).toBeUndefined();
+  });
+
+  it('labels leverage', () => {
+    expect(leverageLabel(leverage(1_772_651, 1_284_530))).toBe('1.38×');
+    expect(leverageLabel(0)).toBe('0.00×');
+    expect(leverageLabel(12.346)).toBe('12.35×');
+    expect(leverageLabel(undefined)).toBe('—');
+    expect(leverageLabel(NaN)).toBe('—');
+  });
+
+  it('computes margin usage', () => {
+    expect(marginUsage(159_000, 1_284_530)).toEqual({ pct: expect.closeTo(12.378, 3), fill: expect.closeTo(12.378, 3), warn: false });
+    expect(marginUsage(0, 50_000)).toEqual({ pct: 0, fill: 0, warn: false });
+    // At the threshold it is not a warning yet; above it is.
+    expect(marginUsage(80, 100)?.warn).toBe(false);
+    expect(marginUsage(80.5, 100)?.warn).toBe(true);
+    // The bar never overflows its track or goes negative.
+    expect(marginUsage(150, 100)).toEqual({ pct: 150, fill: 100, warn: true });
+    expect(marginUsage(-5, 100)).toEqual({ pct: -5, fill: 0, warn: false });
+    expect(marginUsage(undefined, 100)).toBeNull();
+    expect(marginUsage(10, undefined)).toBeNull();
+    expect(marginUsage(10, 0)).toBeNull();
+    expect(marginUsage(10, -100)).toBeNull();
   });
 });
