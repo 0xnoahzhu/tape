@@ -10,6 +10,7 @@ import { createMessages, nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { changePct, lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useStore } from '../../state/store';
+import { SearchIcon } from '../../ui/icons';
 import { resolveSymbol } from './resolveSymbol';
 import { useSymbolSearch } from './useSymbolSearch';
 
@@ -213,7 +214,7 @@ export function SymbolSearch() {
       // The design's box is content-box: 420px plus 2 × 12px padding.
       style={{ flex: 1, maxWidth: 444, height: 36, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--p2)', marginLeft: 12, cursor: 'text' }}
     >
-      <div style={{ color: 'var(--dm)' }}>⌕</div>
+      <SearchIcon />
       <input
         ref={inputRef}
         value={text}
@@ -227,7 +228,7 @@ export function SymbolSearch() {
         onBlur={() => setFocused(false)}
         style={{ flex: 1, minWidth: 0, border: 'none', padding: 0, background: 'transparent', color: 'var(--tx)', font: '14px/1 var(--sans)', textOverflow: 'ellipsis' }}
       />
-      <div style={{ font: '11px/1 var(--mono)', color: 'var(--dm)', boxShadow: 'inset 0 0 0 1px var(--ln)', padding: '3px 5px', whiteSpace: 'nowrap' }}>{mac ? '⌘K' : 'Ctrl+K'}</div>
+      <div style={{ font: '500 12px/1 var(--sans)', letterSpacing: '0.04em', color: 'var(--dm)', boxShadow: 'inset 0 0 0 1px var(--ln)', padding: '4px 6px', whiteSpace: 'nowrap' }}>{mac ? '⌘K' : 'Ctrl+K'}</div>
       {showMenu &&
         rect &&
         createPortal(

@@ -35,3 +35,13 @@ export function SlidersIcon({ size = 18 }: { size?: number }) {
 export function Dot({ top, right, size = 6 }: { top: number; right: number; size?: number }) {
   return <div style={{ position: 'absolute', top, right, width: size, height: size, background: 'var(--ac)', boxShadow: '0 0 0 2px var(--p)' }} />;
 }
+
+/** Magnifier of the symbol search box. */
+export function SearchIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} style={{ display: 'block', flexShrink: 0, color: 'var(--dm)' }} aria-hidden>
+      <circle cx="6.75" cy="6.75" r="4.75" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path d="M10.25 10.25 14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
+    </svg>
+  );
+}
