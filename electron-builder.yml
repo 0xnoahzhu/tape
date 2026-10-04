@@ -1,0 +1,52 @@
+# Packaging for Tape. Build first (`pnpm build`), or use `pnpm dist` / `pnpm dist:dir`.
+# Icons come from `pnpm icons` (build/icon.*, resources/icons/*).
+appId: app.tape.client
+productName: Tape
+copyright: Copyright © 2026 Noah Zhu
+
+directories:
+  output: release
+  buildResources: build
+
+# The app has no runtime npm dependencies: everything (including the TWS API client in
+# src/main/ib/tws) is bundled into out/.
+files:
+  - out/**/*
+  - package.json
+
+# Theme-matched dock / window icons, loaded at runtime from process.resourcesPath/icons.
+extraResources:
+  - from: resources/icons
+    to: icons
+    filter:
+      - '*.png'
+
+asar: true
+
+mac:
+  category: public.app-category.finance
+  icon: build/icon.icns
+  target:
+    - dmg
+    - zip
+  darkModeSupport: true
+  # Local builds: no notarization. Set CSC_NAME / CSC_LINK and enable hardenedRuntime to distribute.
+  hardenedRuntime: false
+  extendInfo:
+    NSUserNotificationAlertStyle: alert
+
+dmg:
+  title: Tape ${version}
+
+win:
+  target: nsis
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  target: AppImage
+  category: Finance
+  synopsis: Desktop trading client for Interactive Brokers
