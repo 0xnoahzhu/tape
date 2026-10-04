@@ -359,7 +359,7 @@ export function OrderTicket() {
           <div style={label12}>{c.tif}</div>
           <div style={{ display: 'flex', gap: 4 }}>
             {TIFS.map((k) => (
-              <Chip key={k} active={t.tif === k} onClick={() => patch({ tif: k })}>
+              <Chip key={k} active={t.tif === k} title={m.tifHints[k]} onClick={() => patch({ tif: k })}>
                 {k}
               </Chip>
             ))}

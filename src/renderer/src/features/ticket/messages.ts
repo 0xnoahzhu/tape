@@ -1,6 +1,6 @@
 // Strings of the order ticket. Shared labels (Buy, Sell, Qty, TIF, …) come from i18n/common.
 
-import type { OrderType, SecType } from '@shared/types';
+import type { OrderType, SecType, TimeInForce } from '@shared/types';
 import { createMessages } from '../../i18n';
 
 export const useTicketM = createMessages({
@@ -12,6 +12,13 @@ export const useTicketM = createMessages({
     orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' } as Record<OrderType, string>,
     /** Label above the price box, per order type. */
     priceLabels: { LMT: 'Limit', MKT: 'Price', STP: 'Trigger', 'STP LMT': 'Trigger', TRAIL: 'Trigger' } as Record<OrderType, string>,
+    /** Tooltips of the time-in-force chips. */
+    tifHints: {
+      DAY: 'Day: good for today only; the unfilled quantity is cancelled at the close',
+      GTC: 'Good till cancelled: stays working until filled or cancelled (IBKR may cancel very old GTC orders)',
+      IOC: 'Immediate or cancel: fills what it can at once and cancels the rest',
+      OPG: 'At the open: only in the opening auction; the unfilled part is cancelled',
+    } as Record<TimeInForce, string>,
     limit: 'Limit',
     market: 'Market',
     trailBy: 'Trail by',
@@ -74,6 +81,12 @@ export const useTicketM = createMessages({
     ask: 'Ask',
     orderTypes: { LMT: '限价', MKT: '市价', STP: '止损', 'STP LMT': '止损限价', TRAIL: '跟踪止损' } as Record<OrderType, string>,
     priceLabels: { LMT: '限价', MKT: '价格', STP: '触发价', 'STP LMT': '触发价', TRAIL: '触发价' } as Record<OrderType, string>,
+    tifHints: {
+      DAY: '当日有效：仅今日有效，收盘时未成交的数量自动撤销',
+      GTC: '撤单前有效：一直有效，直到成交或撤单（IBKR 可能撤销挂了很久的 GTC 订单）',
+      IOC: '立即成交否则撤销：立即成交能成交的部分，其余撤销',
+      OPG: '开盘集合竞价：只参与开盘集合竞价，未成交部分撤销',
+    } as Record<TimeInForce, string>,
     limit: '限价',
     market: '市价',
     trailBy: '跟踪方式',
