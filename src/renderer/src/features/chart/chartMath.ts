@@ -1,6 +1,7 @@
-// Pure chart geometry: which bars are visible, candle/volume/MA coordinates in the
-// design's SVG spaces (price 800×300, volume 800×56), axis values, live-price merging
-// and hover lookup. No React or store imports so it can be unit tested in node.
+// Pure chart geometry: the pan / zoom window over the bars, which bars are visible,
+// candle/volume/MA coordinates in the design's SVG spaces (price 800×300, volume 800×56),
+// axis values, merging of older pages and the live price, and hover lookup. No React or
+// store imports so it can be unit tested in node.
 
 import { nyClock, type MarketSession } from '@shared/session';
 import type { Bar, Timeframe } from '@shared/types';
@@ -12,7 +13,7 @@ export const VB_H = 300;
 export const VOL_VB_H = 56;
 const VOL_MAX = 54;
 
-/** Roughly one bar per 15 px of chart width. */
+/** The automatic zoom: roughly one bar per 15 px of chart width, 30..200 bars. */
 export const PX_PER_BAR = 15;
 export const MIN_BARS = 30;
 export const MAX_BARS = 200;
@@ -26,7 +27,7 @@ export function isIntraday(tf: Timeframe): boolean {
   return INTRADAY_SECONDS[tf] != null;
 }
 
-/** Number of bars to show for a chart area `widthPx` wide. */
+/** Bars per screen at the automatic zoom for a chart area `widthPx` wide. */
 export function visibleBarCount(widthPx: number): number {
   const n = Math.floor((Number.isFinite(widthPx) ? widthPx : 0) / PX_PER_BAR);
   return Math.min(MAX_BARS, Math.max(MIN_BARS, n));
@@ -59,6 +60,150 @@ export function cleanBars(bars: Bar[]): Bar[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// View window (pan / zoom)
+
+/** Zoom limits in bars per screen. */
+export const MIN_SPAN = 20;
+export const MAX_SPAN = 400;
+
+/**
+ * The view's right edge, anchored to a bar time: `f` bars after the start of the first bar at or
+ * after time `t`. Bars added in front (older pages) or behind (new bars) do not move the view.
+ */
+export interface ViewAnchor {
+  t: number;
+  f: number;
+}
+
+/** Pan / zoom state of a chart; resolveView turns it into a window over the bars. */
+export interface ChartView {
+  /** Bars per screen; null: automatic from the chart width (visibleBarCount). */
+  span: number | null;
+  /** Right edge; null follows the newest bar. */
+  end: ViewAnchor | null;
+}
+
+export const LATEST_VIEW: ChartView = { span: null, end: null };
+
+/** A view in bar units of the full series: it shows bar positions [start, start + span). */
+export interface ViewWindow {
+  start: number;
+  span: number;
+  /** The newest bar is at the right edge. */
+  latest: boolean;
+}
+
+/** Index of the first bar at or after `time` (bars.length when there is none). */
+export function firstAtOrAfter(bars: readonly Bar[], time: number): number {
+  let lo = 0;
+  let hi = bars.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (bars[mid].time < time) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Zoom range for `n` loaded bars: out to all of them (at least MIN_BARS slots), at most MAX_SPAN. */
+export function spanLimits(n: number): { min: number; max: number } {
+  return { min: MIN_SPAN, max: Math.max(MIN_BARS, Math.min(MAX_SPAN, n)) };
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Right edges allowed for `n` bars: the oldest bar stays at or right of the left edge, nothing beyond the newest. */
+const clampEnd = (end: number, span: number, n: number) => clamp(end, Math.min(n, span), n);
+
+/** An anchor for bar position `end` (inside the series). */
+export function anchorAt(bars: readonly Bar[], end: number): ViewAnchor {
+  const i = clamp(Math.ceil(end) - 1, 0, bars.length - 1);
+  return { t: bars[i].time, f: end - i };
+}
+
+/** Bar position of an anchor in `bars`. */
+export function anchorIndex(bars: readonly Bar[], a: ViewAnchor): number {
+  return firstAtOrAfter(bars, a.t) + a.f;
+}
+
+export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: number): ViewWindow {
+  const n = bars.length;
+  const { min, max } = spanLimits(n);
+  const span = clamp(view.span ?? autoSpan, min, max);
+  const end = clampEnd(view.end && n ? anchorIndex(bars, view.end) : n, span, n);
+  return { start: end - span, span, latest: end >= n };
+}
+
+/** `span` with the right edge at bar position `end` (clamped); at the newest bar the view follows new bars. */
+function withEnd(span: number | null, end: number, bars: readonly Bar[]): ChartView {
+  return { span, end: end >= bars.length ? null : anchorAt(bars, end) };
+}
+
+/** Pans by `delta` bars (positive: towards newer bars). */
+export function panView(view: ChartView, bars: readonly Bar[], autoSpan: number, delta: number): ChartView {
+  if (!bars.length || !delta) return view;
+  const w = resolveView(view, bars, autoSpan);
+  return withEnd(view.span, clampEnd(w.start + w.span + delta, w.span, bars.length), bars);
+}
+
+/**
+ * Zooms by `factor` (< 1 zooms in) around the point at fraction `fx` of the width: the bar under
+ * that point stays in place unless the view has to be clamped.
+ */
+export function zoomView(view: ChartView, bars: readonly Bar[], autoSpan: number, factor: number, fx: number): ChartView {
+  const n = bars.length;
+  if (!n || !(factor > 0)) return view;
+  const w = resolveView(view, bars, autoSpan);
+  const { min, max } = spanLimits(n);
+  const span = clamp(w.span * factor, min, max);
+  if (span === w.span) return view;
+  const at = clamp(Number.isFinite(fx) ? fx : 1, 0, 1);
+  const pivot = w.start + at * w.span;
+  return withEnd(span, clampEnd(pivot + (1 - at) * span, span, n), bars);
+}
+
+/** The view is within one screen of the oldest loaded bar: time to load older ones. */
+export function nearOldest(w: ViewWindow): boolean {
+  return w.start < w.span;
+}
+
+/** Bars to draw: the ones in view plus one on each side (so the MA line runs to the edges). */
+export function renderRange(w: ViewWindow, n: number): { from: number; to: number } {
+  return { from: Math.max(0, Math.floor(w.start) - 1), to: Math.min(n, Math.ceil(w.start + w.span) + 1) };
+}
+
+// ---------------------------------------------------------------------------
+// Older pages
+
+/** Older bars (a history page) in front of `bars`; only bars strictly older than the first one are taken. */
+export function prependBars(older: readonly Bar[], bars: Bar[]): Bar[] {
+  if (!bars.length) return older.slice();
+  const first = bars[0].time;
+  const add = older.filter((b) => b.time < first);
+  return add.length ? add.concat(bars) : bars;
+}
+
+/** Relative close difference above which a reloaded bar means IB adjusted the history (a split). */
+const ADJUSTED = 0.005;
+
+/**
+ * A reloaded window (`fresh`) behind the loaded bars older than its first bar (pages fetched while
+ * scrolling back), so a refresh keeps the history and the view. Returns `fresh` alone when nothing
+ * is older or when the bar both have disagrees, i.e. IB adjusted the history.
+ */
+export function keepOlderBars(prev: readonly Bar[], fresh: Bar[]): Bar[] {
+  if (!prev.length || !fresh.length) return fresh;
+  const k = firstAtOrAfter(prev, fresh[0].time);
+  if (k === 0) return fresh;
+  const same = prev[k];
+  if (same && same.time === fresh[0].time && Math.abs(same.close - fresh[0].close) > Math.abs(fresh[0].close) * ADJUSTED) return fresh;
+  return prev.slice(0, k).concat(fresh);
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+
 export interface Candle {
   /** Index into the full bar series. */
   index: number;
@@ -80,17 +225,24 @@ export interface VolumeBar {
   h: number;
 }
 
+/** SVG path data of the drawn bars, one path per kind and direction (a few DOM nodes for any zoom). */
+export interface ChartPaths {
+  upWicks: string;
+  upBodies: string;
+  dnWicks: string;
+  dnBodies: string;
+  upVolume: string;
+  dnVolume: string;
+}
+
 export interface ChartGeometry {
   hi: number;
   lo: number;
-  /** Bar slots across the 800-wide viewBox (≥ visible bars; extra slots stay empty on the left). */
-  slots: number;
-  /** Empty slots before the first visible bar. */
-  lead: number;
-  /** Index of the first visible bar in the full series. */
-  offset: number;
+  window: ViewWindow;
+  /** Drawn bars: the ones in view plus one on each side. */
   candles: Candle[];
   volumes: VolumeBar[];
+  paths: ChartPaths;
   /** SVG polyline points for the moving average ("" when off or not enough data). */
   ma: string;
   /** Right axis labels at 15 / 50 / 85 % of the height. */
@@ -99,83 +251,121 @@ export interface ChartGeometry {
   y(price: number): number;
   /** Fraction of the height (0 = top) → price. */
   priceAt(fracY: number): number;
-  /** Fraction of the width (0 = left) → index into the full series, or null over empty slots. */
+  /** Fraction of the width (0 = left) → index into the full series, or null where there is no bar. */
   indexAt(fracX: number): number | null;
   /** viewBox x of the center of a bar (full-series index). */
   centerX(index: number): number;
 }
 
 export interface ChartOptions {
-  /** Maximum number of bars to show (see visibleBarCount). */
+  /** Automatic bars per screen (see visibleBarCount). */
   count: number;
+  /** Pan / zoom state; the newest bars at the automatic zoom by default. */
+  view?: ChartView;
   showMa: boolean;
-  /** Prices that must stay inside the vertical range (e.g. the live last price). */
+  /** The moving average of the full series (sma of the closes), when the caller keeps it per series. */
+  ma?: ReadonlyArray<number | undefined>;
+  /** Prices that stay inside the vertical range while the newest bar is in view (e.g. the live last price). */
   include?: Array<number | undefined>;
 }
 
-export function buildChart(all: Bar[], opts: ChartOptions): ChartGeometry | null {
-  if (!all.length) return null;
-  const count = Math.max(1, Math.floor(opts.count));
-  const visible = all.slice(-count);
-  const offset = all.length - visible.length;
-  const slots = Math.max(visible.length, Math.min(count, MIN_BARS));
-  const lead = slots - visible.length;
+const r2 = (v: number) => Math.round(v * 100) / 100;
 
+/**
+ * Geometry of the bars in view. Work is proportional to the bars in view (not the series), except
+ * for the moving average when `ma` is not passed.
+ */
+export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeometry | null {
+  const n = all.length;
+  if (!n) return null;
+  const win = resolveView(opts.view ?? LATEST_VIEW, all, opts.count);
+  const { start, span } = win;
+
+  // Vertical range and volume scale from the bars that overlap the view.
+  const v0 = Math.max(0, Math.floor(start));
+  const v1 = Math.min(n, Math.ceil(start + span));
   let hi = -Infinity;
   let lo = Infinity;
-  for (const b of visible) {
+  let maxVol = 0;
+  for (let i = v0; i < v1; i++) {
+    const b = all[i];
     if (b.high > hi) hi = b.high;
     if (b.low < lo) lo = b.low;
+    if (b.volume > maxVol) maxVol = b.volume;
   }
-  for (const p of opts.include ?? []) {
-    if (!finite(p) || p <= 0) continue;
-    if (p > hi) hi = p;
-    if (p < lo) lo = p;
+  if (v1 >= n) {
+    for (const p of opts.include ?? []) {
+      if (!finite(p) || p <= 0) continue;
+      if (p > hi) hi = p;
+      if (p < lo) lo = p;
+    }
   }
+  if (!(hi >= lo)) hi = lo = all[n - 1].close;
   let pad = (hi - lo) * 0.08;
   if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
   hi += pad;
   lo -= pad;
-  const span = hi - lo;
-  const y = (v: number) => ((hi - v) / span) * VB_H;
+  const range = hi - lo;
+  const y = (v: number) => ((hi - v) / range) * VB_H;
 
-  const cw = VB_W / slots;
-  const maxVol = visible.reduce((m, b) => Math.max(m, b.volume), 0);
-  const maValues = opts.showMa ? sma(all.map((b) => b.close), MA_PERIOD) : [];
+  const cw = VB_W / span;
+  const bw = cw * 0.56;
+  const ma = opts.showMa ? (opts.ma ?? sma(all.map((b) => b.close), MA_PERIOD)) : [];
+  const { from, to } = renderRange(win, n);
   const candles: Candle[] = [];
   const volumes: VolumeBar[] = [];
-  const ma: string[] = [];
-  visible.forEach((b, i) => {
-    const x = (lead + i) * cw + cw * 0.22;
-    const w = cw * 0.56;
+  const maPts: string[] = [];
+  let upWicks = '';
+  let upBodies = '';
+  let dnWicks = '';
+  let dnBodies = '';
+  let upVolume = '';
+  let dnVolume = '';
+  for (let i = from; i < to; i++) {
+    const b = all[i];
+    const x = (i - start) * cw + cw * 0.22;
+    const cx = x + bw / 2;
     const up = b.close >= b.open;
     const top = Math.min(y(b.open), y(b.close));
     const h = Math.max(1, Math.abs(y(b.open) - y(b.close)));
-    candles.push({ index: offset + i, up, x, w, cx: x + w / 2, top, h, yh: y(b.high), yl: y(b.low) });
-    const vh = maxVol > 0 ? (b.volume / maxVol) * VOL_MAX : 0;
-    if (vh > 0) volumes.push({ up, x, w, y: VOL_VB_H - vh, h: vh });
-    const m = maValues[offset + i];
-    if (m != null) ma.push(`${(x + w / 2).toFixed(1)},${y(m).toFixed(1)}`);
-  });
+    const c: Candle = { index: i, up, x, w: bw, cx, top, h, yh: y(b.high), yl: y(b.low) };
+    candles.push(c);
+    const wick = `M${r2(cx)} ${r2(c.yh)}V${r2(c.yl)}`;
+    const body = `M${r2(x)} ${r2(top)}h${r2(bw)}v${r2(h)}h${r2(-bw)}z`;
+    if (up) {
+      upWicks += wick;
+      upBodies += body;
+    } else {
+      dnWicks += wick;
+      dnBodies += body;
+    }
+    const vh = maxVol > 0 ? Math.min(VOL_MAX, (b.volume / maxVol) * VOL_MAX) : 0;
+    if (vh > 0) {
+      volumes.push({ up, x, w: bw, y: VOL_VB_H - vh, h: vh });
+      const rect = `M${r2(x)} ${r2(VOL_VB_H - vh)}h${r2(bw)}v${r2(vh)}h${r2(-bw)}z`;
+      if (up) upVolume += rect;
+      else dnVolume += rect;
+    }
+    const m = ma[i];
+    if (m != null) maPts.push(`${r2(cx)},${r2(y(m))}`);
+  }
 
   return {
     hi,
     lo,
-    slots,
-    lead,
-    offset,
+    window: win,
     candles,
     volumes,
-    ma: ma.length > 1 ? ma.join(' ') : '',
-    axis: [0.15, 0.5, 0.85].map((frac) => ({ frac, value: hi - span * frac })),
+    paths: { upWicks, upBodies, dnWicks, dnBodies, upVolume, dnVolume },
+    ma: maPts.length > 1 ? maPts.join(' ') : '',
+    axis: [0.15, 0.5, 0.85].map((frac) => ({ frac, value: hi - range * frac })),
     y,
-    priceAt: (fracY) => hi - span * fracY,
+    priceAt: (fracY) => hi - range * fracY,
     indexAt: (fracX) => {
-      const slot = Math.floor(Math.min(0.999999, Math.max(0, fracX)) * slots);
-      const i = slot - lead;
-      return i < 0 || i >= visible.length ? null : offset + i;
+      const i = Math.floor(start + clamp(fracX, 0, 0.999999) * span);
+      return i < 0 || i >= n ? null : i;
     },
-    centerX: (index) => (lead + index - offset) * cw + cw / 2,
+    centerX: (index) => (index - start + 0.5) * cw,
   };
 }
 

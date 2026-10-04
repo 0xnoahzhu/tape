@@ -2,23 +2,43 @@
 // axis and a hover crosshair. Coordinates follow the design: the price SVG uses an
 // 800×300 viewBox and the volume SVG 800×56, both stretched (preserveAspectRatio none)
 // with non-scaling strokes.
+//
+// The chart is explorable: drag (or scroll sideways / shift+wheel) pans, the wheel or a
+// trackpad pinch zooms around the pointer, ← / → and + / − do the same while the chart is
+// hovered, and a double-click returns to the latest bars at the automatic zoom. Only the bars
+// in view are drawn, as one path per kind and direction, and pointer input is applied once per
+// animation frame. Coming within a screen of the oldest loaded bar asks for older bars
+// (onNeedOlder), and asks again when a refused or empty page's wait is over, also while the view
+// stays put at the oldest bar; the view is anchored to bar times, so bars added in front do not
+// move it.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Bar, Timeframe } from '@shared/types';
 import { useLang } from '../../i18n';
+import { useStore } from '../../state/store';
+import { scheduleOlderRetry, type OlderState } from './barsStore';
 import {
   axisPrice,
   buildChart,
   clearOfTag,
   formatBarTime,
   LAST_TAG_H,
+  LATEST_VIEW,
+  MA_PERIOD,
+  nearOldest,
+  panView,
+  resolveView,
   SMALL_TAG_H,
+  sma,
   spreadAlertTags,
   VB_H,
   VB_W,
   VOL_VB_H,
   visibleBarCount,
+  zoomView,
+  type ChartView,
 } from './chartMath';
+import { useChartMessages } from './messages';
 import { useSize } from './useSize';
 
 export type ChartStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -26,6 +46,8 @@ export type ChartStatus = 'idle' | 'loading' | 'ready' | 'error';
 interface Props {
   bars: Bar[];
   timeframe: Timeframe;
+  /** Identifies the series (symbol + timeframe): a change returns the view to the latest bars. */
+  seriesKey: string;
   /** Text shown over an empty chart (loading, error, not connected, no data). */
   message?: string;
   lastPrice?: number;
@@ -34,37 +56,261 @@ interface Props {
   showMa: boolean;
   showVol: boolean;
   minTick?: number;
-  /** Hovered bar (index into `bars`), or null when the pointer leaves. */
-  onHover(index: number | null): void;
+  /** Paging of older bars: loading indicator and refusal / empty-page notes at the left edge. */
+  older?: OlderState;
+  /** The view is within a screen of the oldest loaded bar (called again when older.retryAt passes). */
+  onNeedOlder?(): void;
+  /** Hovered bar, or null when the pointer leaves. */
+  onHover(bar: Bar | null): void;
 }
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+/** Wheel zoom per pixel of deltaY (mouse wheel, trackpad scroll) and per pixel of a pinch (ctrlKey wheel). */
+const WHEEL_ZOOM = 0.0015;
+const PINCH_ZOOM = 0.01;
+/** Keyboard steps: a tenth of the screen per ← / →, 25 % per + / −. */
+const KEY_PAN = 0.1;
+const KEY_ZOOM = 1.25;
+const LINE_PX = 16;
 
 const line = (extra: CSSProperties): CSSProperties => ({ vectorEffect: 'non-scaling-stroke', ...extra });
 const axisTag: CSSProperties = { position: 'absolute', left: 4, right: 8, transform: 'translateY(-50%)', whiteSpace: 'nowrap' };
 /** Crosshair labels: muted solid chips, distinct from outlined alert tags and the accent last-price tag. */
 const crossTag: CSSProperties = { background: 'var(--mu)', color: 'var(--p)', padding: '3px 6px', font: '11px/1 var(--num)', pointerEvents: 'none' };
+/** Small notes over the plot (older bars loading / refused / not returned yet). */
+const plotNote: CSSProperties = {
+  position: 'absolute',
+  top: 6,
+  left: 8,
+  maxWidth: '60%',
+  padding: '3px 6px',
+  background: 'var(--p)',
+  font: '11px/1.2 var(--sans)',
+  color: 'var(--dm)',
+  pointerEvents: 'none',
+};
+const PULSE_CSS = '@keyframes tape-chart-pulse { 0%, 100% { opacity: 0.2 } 50% { opacity: 0.9 } }';
+/** The "Latest" button sits above the crosshair's time chip (SMALL_TAG_H tall at the bottom edge), which it would hide. */
+const LATEST_BOTTOM = SMALL_TAG_H + 6;
 
-export function PriceChart({ bars, timeframe, message, lastPrice, alerts, showMa, showVol, minTick, onHover }: Props) {
+function isEditable(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+}
+
+export const PriceChart = memo(function PriceChart({
+  bars,
+  timeframe,
+  seriesKey,
+  message,
+  lastPrice,
+  alerts,
+  showMa,
+  showVol,
+  minTick,
+  older,
+  onNeedOlder,
+  onHover,
+}: Props) {
   const lang = useLang();
+  const m = useChartMessages();
   const areaRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
   const size = useSize(areaRef);
-  const [pt, setPt] = useState<{ x: number; y: number } | null>(null);
-
   const count = visibleBarCount(size.w);
-  const geo = useMemo(() => buildChart(bars, { count, showMa, include: [lastPrice] }), [bars, count, showMa, lastPrice]);
+
+  const [view, setView] = useState<ChartView>(LATEST_VIEW);
+  const [pt, setPt] = useState<Point | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // Input is applied to refs right away and committed to state once per animation frame.
+  const viewRef = useRef(view);
+  const ptRef = useRef(pt);
+  const frameRef = useRef(0);
+  const live = useRef({ bars, count, w: size.w });
+  const rectRef = useRef<DOMRect | null>(null);
+  const dragRef = useRef<{ id: number; x: number } | null>(null);
+  const hoverRef = useRef(false);
+  useLayoutEffect(() => {
+    live.current = { bars, count, w: size.w };
+  });
+  useLayoutEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  useLayoutEffect(() => {
+    rectRef.current = null;
+  }, [size.w, size.h]);
+  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
+
+  // A new series (symbol or timeframe) starts at its latest bars.
+  const [shownKey, setShownKey] = useState(seriesKey);
+  if (shownKey !== seriesKey) {
+    setShownKey(seriesKey);
+    setView(LATEST_VIEW);
+    setPt(null);
+  }
+
+  const commit = () => {
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      setView(viewRef.current);
+      setPt(ptRef.current);
+    });
+  };
+  const update = (fn: (v: ChartView, bars: Bar[], count: number) => ChartView) => {
+    const { bars: b, count: c } = live.current;
+    if (!b.length) return;
+    viewRef.current = fn(viewRef.current, b, c);
+    commit();
+  };
+  /** Pans by `px` screen pixels (positive: towards newer bars). */
+  const panPx = (px: number) =>
+    update((v, b, c) => {
+      const w = live.current.w;
+      return w > 0 ? panView(v, b, c, (px / w) * resolveView(v, b, c).span) : v;
+    });
+  const zoomAt = (factor: number, fx: number) => update((v, b, c) => zoomView(v, b, c, factor, fx));
+  const reset = (keepZoom: boolean) => update((v) => (keepZoom ? { span: v.span, end: null } : LATEST_VIEW));
+
+  const plotRect = () => (rectRef.current ??= areaRef.current?.getBoundingClientRect() ?? null);
+  const track = (clientX: number, clientY: number) => {
+    const r = plotRect();
+    if (!r) return;
+    const x = clientX - r.left;
+    ptRef.current = x >= 0 && x <= r.width ? { x, y: clientY - r.top } : null;
+    commit();
+  };
+  const pointerFx = () => {
+    const p = ptRef.current;
+    const w = live.current.w;
+    return p && w > 0 ? p.x / w : 1;
+  };
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || !bars.length) return;
+    rectRef.current = null;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Not an active pointer (synthetic events): the drag works while the pointer stays over the chart.
+    }
+    dragRef.current = { id: e.pointerId, x: e.clientX };
+    setDragging(true);
+  };
+  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.id !== e.pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (!hoverRef.current) {
+      ptRef.current = null;
+      commit();
+    }
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // Also covers a pointer that was already over the chart when it mounted (no enter event).
+    hoverRef.current = true;
+    track(e.clientX, e.clientY);
+    const drag = dragRef.current;
+    if (!drag || drag.id !== e.pointerId) return;
+    // The button was released where no pointerup reached us (e.g. the window lost focus).
+    if (!(e.buttons & 1)) {
+      endDrag(e);
+      return;
+    }
+    const dx = e.clientX - drag.x;
+    drag.x = e.clientX;
+    // Dragging right reveals older bars.
+    if (dx) panPx(-dx);
+  };
+
+  // Wheel: React's wheel listeners are passive, so preventDefault needs a native one.
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!live.current.bars.length) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? live.current.w || 800 : 1;
+      let dx = e.deltaX * unit;
+      let dy = e.deltaY * unit;
+      // Shift+wheel scrolls sideways (macOS already turns it into deltaX).
+      if (e.shiftKey && !dx) [dx, dy] = [dy, 0];
+      track(e.clientX, e.clientY);
+      if (e.ctrlKey) zoomAt(Math.exp(dy * PINCH_ZOOM), pointerFx());
+      else if (Math.abs(dx) > Math.abs(dy)) panPx(dx);
+      else if (dy) zoomAt(Math.exp(dy * WHEEL_ZOOM), pointerFx());
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // The handlers read everything through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keyboard while hovered: ← / → pan, + / − zoom. Text fields, dialogs and modified keys are left alone.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!hoverRef.current || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      if (isEditable(e.target)) return;
+      const s = useStore.getState();
+      if (s.page !== 'trade' || s.bellOpen || s.pendingOrder || s.confirm || s.alertForm) return;
+      const w = live.current.w;
+      switch (e.key) {
+        case 'ArrowLeft':
+          panPx(-w * KEY_PAN);
+          break;
+        case 'ArrowRight':
+          panPx(w * KEY_PAN);
+          break;
+        case '+':
+        case '=':
+          zoomAt(1 / KEY_ZOOM, pointerFx());
+          break;
+        case '-':
+        case '_':
+          zoomAt(KEY_ZOOM, pointerFx());
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The moving average runs over the full series once per change of the bars, not per frame.
+  const maValues = useMemo(() => (showMa ? sma(bars.map((b) => b.close), MA_PERIOD) : undefined), [bars, showMa]);
+  const geo = useMemo(
+    () => buildChart(bars, { count, view, showMa, ma: maValues, include: [lastPrice] }),
+    [bars, count, view, showMa, maValues, lastPrice],
+  );
+  const win = geo?.window;
+
+  // Older bars when the view nears the oldest loaded one (the store ignores repeats). After a
+  // refused, empty or superseded page the store waits until retryAt; the view may not move at the
+  // oldest bar (it is clamped there), so a timer asks again then.
+  const near = !!win && nearOldest(win);
+  const retryAt = older?.retryAt;
+  useEffect(() => {
+    if (!near || !onNeedOlder) return;
+    onNeedOlder();
+    return scheduleOlderRetry(retryAt, onNeedOlder);
+  }, [near, win?.start, bars.length, older?.status, retryAt, onNeedOlder]);
 
   const hovered = geo && pt && size.w > 0 ? geo.indexAt(pt.x / size.w) : null;
-  useEffect(() => onHover(hovered), [hovered, onHover]);
-  useEffect(() => setPt(null), [timeframe]);
-
-  const onMove = (e: MouseEvent<HTMLDivElement>) => {
-    const r = areaRef.current?.getBoundingClientRect();
-    if (!r) return;
-    setPt({ x: e.clientX - r.left, y: e.clientY - r.top });
-  };
+  const hoveredBar = hovered != null ? bars[hovered] : null;
+  useEffect(() => onHover(hoveredBar), [hoveredBar, onHover]);
 
   const inRange = (p: number) => !!geo && p > geo.lo && p < geo.hi;
   const alertLevels = geo ? alerts.filter(inRange) : [];
-  const lastY = geo && lastPrice != null && lastPrice > 0 ? geo.y(lastPrice) : null;
+  // Scrolled back in time, the last price stays off the range (and hidden) unless it falls inside it.
+  const lastY = geo && lastPrice != null && lastPrice > 0 && inRange(lastPrice) ? geo.y(lastPrice) : null;
 
   // Crosshair: vertical line snaps to the hovered bar, horizontal follows the pointer.
   const crossX = geo && hovered != null ? geo.centerX(hovered) : null;
@@ -80,17 +326,45 @@ export function PriceChart({ bars, timeframe, message, lastPrice, alerts, showMa
     ...(crossY != null ? [{ y: crossY * size.h, h: SMALL_TAG_H }] : []),
   ];
   const axisLabels = (geo?.axis ?? []).filter((a) => tags.every((t) => clearOfTag(a.frac * size.h, t.y, t.h)));
-  const timeText = hovered != null ? formatBarTime(bars[hovered].time, timeframe, lang) : '';
+  const timeText = hoveredBar ? formatBarTime(hoveredBar.time, timeframe, lang) : '';
   const timeHalf = (timeText.length * 6.6 + 12) / 2;
   const timeLeft = crossX != null ? Math.min(Math.max((crossX / VB_W) * size.w, timeHalf), Math.max(timeHalf, size.w - timeHalf)) : 0;
   const crossStroke = line({ stroke: 'var(--dm)', strokeDasharray: '2 3' });
+  const paths = geo?.paths;
+
+  const olderLoading = older?.status === 'loading';
+  const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
+  const olderEmpty = older?.status === 'empty' && near;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', marginTop: 14 }}>
       <div
-        style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, cursor: geo ? 'crosshair' : undefined }}
-        onMouseMove={geo ? onMove : undefined}
-        onMouseLeave={() => setPt(null)}
+        ref={plotRef}
+        data-chart="plot"
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          cursor: geo ? (dragging ? 'grabbing' : 'grab') : undefined,
+          touchAction: 'none',
+        }}
+        onPointerEnter={() => {
+          hoverRef.current = true;
+          rectRef.current = null;
+        }}
+        onPointerLeave={() => {
+          hoverRef.current = false;
+          if (dragRef.current) return;
+          ptRef.current = null;
+          commit();
+        }}
+        onPointerDown={geo ? onPointerDown : undefined}
+        onPointerMove={geo ? onPointerMove : undefined}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
+        onDoubleClick={geo ? () => reset(false) : undefined}
       >
         <div ref={areaRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
           <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
@@ -98,15 +372,14 @@ export function PriceChart({ bars, timeframe, message, lastPrice, alerts, showMa
               <line key={y} x1={0} x2={VB_W} y1={y} y2={y} style={line({ stroke: 'var(--ln)', strokeDasharray: '1 3' })} />
             ))}
             {geo && showMa && geo.ma && <polyline points={geo.ma} style={line({ fill: 'none', stroke: 'var(--ac)', strokeWidth: 1.25 })} />}
-            {geo?.candles.map((c) => {
-              const color = c.up ? 'var(--up)' : 'var(--dn)';
-              return (
-                <g key={c.index}>
-                  <line x1={c.cx} x2={c.cx} y1={c.yh} y2={c.yl} style={line({ stroke: color })} />
-                  <rect x={c.x} y={c.top} width={c.w} height={c.h} style={{ fill: color }} />
-                </g>
-              );
-            })}
+            {paths && (
+              <>
+                <path d={paths.upWicks} style={line({ stroke: 'var(--up)', fill: 'none' })} />
+                <path d={paths.upBodies} style={{ fill: 'var(--up)' }} />
+                <path d={paths.dnWicks} style={line({ stroke: 'var(--dn)', fill: 'none' })} />
+                <path d={paths.dnBodies} style={{ fill: 'var(--dn)' }} />
+              </>
+            )}
             {lastY != null && (
               <line x1={0} x2={VB_W} y1={lastY} y2={lastY} style={line({ stroke: 'var(--ac)', strokeDasharray: '2 3', filter: 'drop-shadow(0 0 3px var(--ac))' })} />
             )}
@@ -136,16 +409,67 @@ export function PriceChart({ bars, timeframe, message, lastPrice, alerts, showMa
               <div style={{ background: 'var(--p)', padding: '0 10px' }}>{message}</div>
             </div>
           )}
+          {geo && olderLoading && (
+            <>
+              <style>{PULSE_CSS}</style>
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  background: 'linear-gradient(to bottom, transparent, var(--ac), transparent)',
+                  animation: 'tape-chart-pulse 1.2s ease-in-out infinite',
+                  pointerEvents: 'none',
+                }}
+              />
+              <div style={plotNote}>{m.olderLoading}</div>
+            </>
+          )}
+          {geo && !olderLoading && olderError && (
+            <div className="ellipsis" title={olderError} style={{ ...plotNote, color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)' }}>
+              {olderError}
+            </div>
+          )}
+          {geo && olderEmpty && <div style={plotNote}>{m.olderEmpty}</div>}
           {crossX != null && timeText && (
             <div style={{ ...crossTag, position: 'absolute', bottom: 0, left: timeLeft, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{timeText}</div>
+          )}
+          {win && !win.latest && (
+            <div
+              role="button"
+              title={m.latestHint}
+              className="hover-p2 hover-tx"
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onClick={() => reset(true)}
+              style={{
+                position: 'absolute',
+                right: 8,
+                bottom: LATEST_BOTTOM,
+                padding: '4px 8px',
+                font: '11px/1 var(--sans)',
+                color: 'var(--mu)',
+                background: 'var(--p)',
+                boxShadow: 'inset 0 0 0 1px var(--ln)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {m.latest}
+            </div>
           )}
         </div>
         {showVol && (
           <div style={{ height: 52, position: 'relative', marginTop: 6 }}>
             <svg viewBox={`0 0 ${VB_W} ${VOL_VB_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-              {geo?.volumes.map((v, i) => (
-                <rect key={i} x={v.x} y={v.y} width={v.w} height={v.h} style={{ fill: v.up ? 'var(--up)' : 'var(--dn)', opacity: 0.35 }} />
-              ))}
+              {paths && (
+                <>
+                  <path d={paths.upVolume} style={{ fill: 'var(--up)', opacity: 0.35 }} />
+                  <path d={paths.dnVolume} style={{ fill: 'var(--dn)', opacity: 0.35 }} />
+                </>
+              )}
               {crossX != null && <line x1={crossX} x2={crossX} y1={0} y2={VOL_VB_H} style={crossStroke} />}
             </svg>
           </div>
@@ -192,4 +516,4 @@ export function PriceChart({ bars, timeframe, message, lastPrice, alerts, showMa
       </div>
     </div>
   );
-}
+});

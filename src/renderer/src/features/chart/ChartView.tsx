@@ -2,15 +2,16 @@
 // session-aware price, price-alert bell, timeframes, OHLC row with indicator chips, and
 // the candlestick chart fed by IB historical bars plus the live last price.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
 import { change, compact, f2, signColor } from '@shared/format';
 import { usEquitySession } from '@shared/session';
+import type { Bar } from '@shared/types';
 import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
-import { barsKey, loadBars, useBarsStore } from './barsStore';
+import { barsKey, CHART_SLOT, loadBars, loadOlder, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
 import { isIntraday, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
 import { useContractInfo } from './contractInfo';
@@ -101,23 +102,31 @@ export function ChartView() {
   // Historical bars ---------------------------------------------------------
   const key = barsKey(symbol, timeframe);
   const entry = useBarsStore((s) => s.entries[key]);
+  const missing = !entry;
   useEffect(() => exposeChartDebugHandles(), []);
   useEffect(() => {
-    if (connected) void loadBars(symbol, timeframe);
+    // Also when the entry went away (a request superseded before it loaded, or evicted).
+    if (connected) void loadBars(symbol, timeframe, false, CHART_SLOT);
     // The key identifies symbol + timeframe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, connected]);
+  }, [key, connected, missing]);
   useEffect(() => {
     if (!connected || !isIntraday(timeframe)) return;
-    const t = setInterval(() => void loadBars(symbol, timeframe, true), REFRESH_MS);
+    const t = setInterval(() => void loadBars(symbol, timeframe, true, CHART_SLOT), REFRESH_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, connected]);
+  const needOlder = useCallback(() => {
+    if (connected) void loadOlder(symbol, timeframe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, connected]);
 
+  // The live price extends the forming bar wherever the chart is scrolled; the chart's view is
+  // anchored to bar times, so it only moves along when it shows the latest bars.
   const liveLast = quote?.last;
   const bars = useMemo(() => mergeLivePrice(entry?.bars ?? [], liveLast, timeframe, new Date(), session), [entry?.bars, liveLast, timeframe, session]);
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  useEffect(() => setHoverIndex(null), [key]);
+  const [hoverBar, setHoverBar] = useState<Bar | null>(null);
+  useEffect(() => setHoverBar(null), [key]);
 
   // Today's close after the regular session: IB sends no tick 57 with delayed data, so the
   // latest daily bar stands in, once loaded after the close.
@@ -156,7 +165,7 @@ export function ChartView() {
   const alertLevels = useMemo(() => alertsAll.filter((a) => a.active && sameContract(a.contract, symbol)).map((a) => a.price), [alertsAll, symbol]);
 
   // OHLC row: hovered bar, else the latest bar (on 1D, today's volume).
-  const shown = hoverIndex != null ? bars[hoverIndex] : bars[bars.length - 1];
+  const shown = hoverBar ?? bars[bars.length - 1];
   const volume = shown?.volume;
 
   // Chart message when there is nothing to draw.
@@ -318,13 +327,16 @@ export function ChartView() {
       <PriceChart
         bars={bars}
         timeframe={timeframe}
+        seriesKey={key}
         message={chartMessage}
         lastPrice={sq.price}
         alerts={alertLevels}
         showMa={showMa}
         showVol={showVol}
         minTick={minTick}
-        onHover={setHoverIndex}
+        older={entry?.older}
+        onNeedOlder={needOlder}
+        onHover={setHoverBar}
       />
     </div>
   );
