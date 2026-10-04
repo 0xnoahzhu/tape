@@ -1,8 +1,9 @@
 // Chart view of the Trade page (design 3a, top-left cell): instrument header with the
-// session-aware price, price-alert bell, timeframes, OHLC row with indicator chips, and
-// the candlestick chart fed by IB historical bars plus the live last price.
+// session-aware price, price-alert bell, timeframes, OHLC row with indicator chips (moving
+// averages and volume), and the candlestick chart fed by IB historical bars plus the live
+// last price.
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
 import { change, compact, f2, signColor } from '@shared/format';
 import { usEquitySession } from '@shared/session';
@@ -13,7 +14,7 @@ import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { chartTimeZone, isIntraday, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
+import { chartTimeZone, isIntraday, MA_PERIODS, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
@@ -55,6 +56,32 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
   );
 }
 
+/** Indicator toggle (design chip): accent ring when on; a moving average's chip carries a swatch of its line color. */
+function Chip({ on, onClick, title, swatch, children }: { on: boolean; onClick: () => void; title?: string; swatch?: string; children: ReactNode }) {
+  return (
+    <div
+      role="switch"
+      aria-checked={on}
+      onClick={onClick}
+      title={title}
+      className={on ? undefined : 'hover-tx'}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 8px',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        boxShadow: `inset 0 0 0 1px ${on ? 'var(--ac)' : 'var(--ln)'}`,
+        color: on ? 'var(--tx)' : 'var(--dm)',
+      }}
+    >
+      {swatch && <div aria-hidden style={{ width: 8, height: 8, flexShrink: 0, background: swatch }} />}
+      {children}
+    </div>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ whiteSpace: 'nowrap' }}>
@@ -72,7 +99,7 @@ export function ChartView() {
   const connected = useMarketDataAvailable();
   const openAlertForm = useStore((s) => s.openAlertForm);
   const alertsAll = useStore((s) => s.priceAlerts);
-  const { timeframe, showMa, showVol, setTimeframe, toggleMa, toggleVol } = useChartPrefs();
+  const { timeframe, mas, showVol, setTimeframe, toggleMa, toggleVol } = useChartPrefs();
 
   const contracts = useMemo(() => [symbol], [symbol]);
   useQuoteSubscriptions('chart', contracts, 'basic');
@@ -286,11 +313,14 @@ export function ChartView() {
           </div>
         )}
       </div>
+      {/* OHLC stats and indicator chips; in a narrow view the chips wrap onto their own line, right-aligned. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 18,
+          flexWrap: 'wrap',
+          columnGap: 18,
+          rowGap: 8,
           marginTop: 14,
           paddingRight: 28,
           fontSize: 12,
@@ -304,25 +334,16 @@ export function ChartView() {
           <Stat label={m.low} value={shown ? fmt(shown.low) : '—'} />
           <Stat label={m.vol} value={volume ? compact(volume) : '—'} />
         </div>
-        <div style={{ flex: 1 }} />
-        {[
-          { label: m.ma, on: showMa, toggle: toggleMa },
-          { label: m.volume, on: showVol, toggle: toggleVol },
-        ].map((c) => (
-          <div
-            key={c.label}
-            onClick={c.toggle}
-            style={{
-              padding: '4px 8px',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              boxShadow: `inset 0 0 0 1px ${c.on ? 'var(--ac)' : 'var(--ln)'}`,
-              color: c.on ? 'var(--tx)' : 'var(--dm)',
-            }}
-          >
-            {c.label}
-          </div>
-        ))}
+        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          {MA_PERIODS.map((p) => (
+            <Chip key={p} on={mas.includes(p)} onClick={() => toggleMa(p)} title={m.maHint(p)} swatch={`var(--ma${p})`}>
+              {m.ma(p)}
+            </Chip>
+          ))}
+          <Chip on={showVol} onClick={toggleVol}>
+            {m.volume}
+          </Chip>
+        </div>
       </div>
       <PriceChart
         bars={bars}
@@ -331,7 +352,7 @@ export function ChartView() {
         message={chartMessage}
         lastPrice={sq.price}
         alerts={alertLevels}
-        showMa={showMa}
+        mas={mas}
         showVol={showVol}
         minTick={minTick}
         timeZone={chartTimeZone(info?.timeZoneId)}

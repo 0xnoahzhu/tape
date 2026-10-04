@@ -3,41 +3,57 @@
 
 import { create } from 'zustand';
 import type { Timeframe } from '@shared/types';
-import { TIMEFRAMES } from './chartMath';
+import { DEFAULT_MAS, MA_PERIODS, TIMEFRAMES, type MaPeriod } from './chartMath';
 
 export type ActivityTab = 'pos' | 'open';
 
 interface ChartPrefs {
   timeframe: Timeframe;
-  showMa: boolean;
+  /** Moving averages shown, in MA_PERIODS order. */
+  mas: readonly MaPeriod[];
   showVol: boolean;
   activityTab: ActivityTab;
   setTimeframe(tf: Timeframe): void;
-  toggleMa(): void;
+  toggleMa(period: MaPeriod): void;
   toggleVol(): void;
   setActivityTab(tab: ActivityTab): void;
 }
 
 const STORAGE_KEY = 'tape.chart.prefs';
 
-type Persisted = Pick<ChartPrefs, 'timeframe' | 'showMa' | 'showVol'>;
+export type PersistedChartPrefs = Pick<ChartPrefs, 'timeframe' | 'mas' | 'showVol'>;
 
-function load(): Persisted {
-  const fallback: Persisted = { timeframe: '1D', showMa: true, showVol: true };
+/**
+ * Stored preferences, with defaults for anything missing or invalid. Before there were several
+ * moving averages the store had a single `showMa` flag (MA20): on (the default) becomes the new
+ * default set, off stays off (no moving averages).
+ */
+export function parseChartPrefs(raw: unknown): PersistedChartPrefs {
+  const fallback: PersistedChartPrefs = { timeframe: '1D', mas: DEFAULT_MAS, showVol: true };
+  if (!raw || typeof raw !== 'object') return fallback;
+  const r = raw as Record<string, unknown>;
+  const stored = r.mas;
+  return {
+    timeframe: TIMEFRAMES.includes(r.timeframe as Timeframe) ? (r.timeframe as Timeframe) : fallback.timeframe,
+    mas: Array.isArray(stored) ? MA_PERIODS.filter((p) => stored.includes(p)) : r.showMa === false ? [] : fallback.mas,
+    showVol: typeof r.showVol === 'boolean' ? r.showVol : fallback.showVol,
+  };
+}
+
+/** `mas` with `period` switched on or off, in MA_PERIODS order. */
+export function toggledMas(mas: readonly MaPeriod[], period: MaPeriod): MaPeriod[] {
+  return MA_PERIODS.filter((p) => (p === period ? !mas.includes(p) : mas.includes(p)));
+}
+
+function load(): PersistedChartPrefs {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Persisted> | null;
-    if (!raw || typeof raw !== 'object') return fallback;
-    return {
-      timeframe: TIMEFRAMES.includes(raw.timeframe as Timeframe) ? (raw.timeframe as Timeframe) : fallback.timeframe,
-      showMa: typeof raw.showMa === 'boolean' ? raw.showMa : fallback.showMa,
-      showVol: typeof raw.showVol === 'boolean' ? raw.showVol : fallback.showVol,
-    };
+    return parseChartPrefs(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
   } catch {
-    return fallback;
+    return parseChartPrefs(null);
   }
 }
 
-function save(p: Persisted): void {
+function save(p: PersistedChartPrefs): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
   } catch {
@@ -47,8 +63,8 @@ function save(p: Persisted): void {
 
 export const useChartPrefs = create<ChartPrefs>()((set, get) => {
   const persist = () => {
-    const { timeframe, showMa, showVol } = get();
-    save({ timeframe, showMa, showVol });
+    const { timeframe, mas, showVol } = get();
+    save({ timeframe, mas, showVol });
   };
   return {
     ...load(),
@@ -57,8 +73,8 @@ export const useChartPrefs = create<ChartPrefs>()((set, get) => {
       set({ timeframe });
       persist();
     },
-    toggleMa: () => {
-      set((s) => ({ showMa: !s.showMa }));
+    toggleMa: (period) => {
+      set((s) => ({ mas: toggledMas(s.mas, period) }));
       persist();
     },
     toggleVol: () => {

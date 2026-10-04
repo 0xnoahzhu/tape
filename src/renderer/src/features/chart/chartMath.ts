@@ -1,6 +1,7 @@
 // Pure chart geometry: the pan / zoom window over the bars, which bars are visible,
-// candle/volume/MA coordinates in the design's SVG spaces (price 800×300, volume 800×56),
-// axis values, time axis ticks, merging of older pages and the live price, and hover lookup.
+// candle/volume/moving-average coordinates in the design's SVG spaces (price 800×300, volume
+// 800×56), axis values, time axis ticks, the MA legend, merging of older pages and the live
+// price, and hover lookup.
 // No React or store imports so it can be unit tested in node.
 
 import { nyClock, type MarketSession } from '@shared/session';
@@ -17,7 +18,12 @@ const VOL_MAX = 54;
 export const PX_PER_BAR = 15;
 export const MIN_BARS = 30;
 export const MAX_BARS = 200;
-export const MA_PERIOD = 20;
+
+/** Moving averages offered on the chart (simple, on closes), shortest first. */
+export const MA_PERIODS = [5, 10, 20, 50, 200] as const;
+export type MaPeriod = (typeof MA_PERIODS)[number];
+/** Moving averages shown until the user picks others. */
+export const DEFAULT_MAS: readonly MaPeriod[] = [20, 50, 200];
 
 export const TIMEFRAMES: readonly Timeframe[] = ['1m', '5m', '1h', '1D', '1W', '1M', '1Y'];
 
@@ -34,15 +40,30 @@ export function visibleBarCount(widthPx: number): number {
 }
 
 /** Simple moving average of `values`; undefined until `period` values are available. */
-export function sma(values: number[], period: number): Array<number | undefined> {
-  const out: Array<number | undefined> = new Array(values.length).fill(undefined);
+export function sma(values: ArrayLike<number>, period: number): Array<number | undefined> {
+  const n = values.length;
+  const out: Array<number | undefined> = new Array(n).fill(undefined);
+  if (!(period >= 1) || !Number.isInteger(period)) return out;
   let sum = 0;
-  for (let i = 0; i < values.length; i++) {
+  for (let i = 0; i < n; i++) {
     sum += values[i];
     if (i >= period) sum -= values[i - period];
     if (i >= period - 1) out[i] = sum / period;
   }
   return out;
+}
+
+/** A moving average over a whole bar series: `values[i]` belongs to bar i (undefined before `period` bars). */
+export interface MaSeries {
+  period: MaPeriod;
+  values: ReadonlyArray<number | undefined>;
+}
+
+/** Simple moving averages of the closes for each of `periods`, over the full series. */
+export function movingAverages(bars: readonly Bar[], periods: readonly MaPeriod[]): MaSeries[] {
+  if (!periods.length) return [];
+  const closes = bars.map((b) => b.close);
+  return periods.map((period) => ({ period, values: sma(closes, period) }));
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -168,9 +189,14 @@ export function nearOldest(w: ViewWindow): boolean {
   return w.start < w.span;
 }
 
-/** Bars to draw: the ones in view plus one on each side (so the MA line runs to the edges). */
+/** Bars to draw: the ones in view plus one on each side (so the MA lines run to the edges). */
 export function renderRange(w: ViewWindow, n: number): { from: number; to: number } {
   return { from: Math.max(0, Math.floor(w.start) - 1), to: Math.min(n, Math.ceil(w.start + w.span) + 1) };
+}
+
+/** Index of the newest bar (at least partly) in view, for readouts while nothing is hovered. */
+export function latestInView(w: ViewWindow, n: number): number {
+  return clamp(Math.ceil(w.start + w.span) - 1, 0, n - 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +261,12 @@ export interface ChartPaths {
   dnVolume: string;
 }
 
+/** SVG path of one moving average over the drawn bars ("" with fewer than two points there). */
+export interface MaLine {
+  period: MaPeriod;
+  d: string;
+}
+
 export interface ChartGeometry {
   hi: number;
   lo: number;
@@ -243,8 +275,8 @@ export interface ChartGeometry {
   candles: Candle[];
   volumes: VolumeBar[];
   paths: ChartPaths;
-  /** SVG polyline points for the moving average ("" when off or not enough data). */
-  ma: string;
+  /** One path per moving average passed in ChartOptions.mas, in that order. */
+  mas: MaLine[];
   /** Right axis labels at 15 / 50 / 85 % of the height. */
   axis: Array<{ frac: number; value: number }>;
   /** Highest high and lowest low of the bars in view (full-series indices), for the extreme markers. */
@@ -269,19 +301,23 @@ export interface ChartOptions {
   count: number;
   /** Pan / zoom state; the newest bars at the automatic zoom by default. */
   view?: ChartView;
-  showMa: boolean;
-  /** The moving average of the full series (sma of the closes), when the caller keeps it per series. */
-  ma?: ReadonlyArray<number | undefined>;
+  /**
+   * Moving averages of the full series (movingAverages), kept by the caller per series so a pan
+   * or zoom only slices them. They never widen the vertical range: the candles define the scale.
+   */
+  mas?: readonly MaSeries[];
   /** Prices that stay inside the vertical range while the newest bar is in view (e.g. the live last price). */
   include?: Array<number | undefined>;
+  /**
+   * Fraction of the height kept free above the highest price in range (for the MA legend and the
+   * high marker under it); the range's top padding grows to it when the usual 8 % is less.
+   */
+  topClear?: number;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
-/**
- * Geometry of the bars in view. Work is proportional to the bars in view (not the series), except
- * for the moving average when `ma` is not passed.
- */
+/** Geometry of the bars in view. Work is proportional to the bars in view (not the series). */
 export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeometry | null {
   const n = all.length;
   if (!n) return null;
@@ -318,20 +354,25 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
     }
   }
   if (!(hi >= lo)) hi = lo = all[n - 1].close;
-  let pad = (hi - lo) * 0.08;
+  const raw = hi - lo;
+  let pad = raw * 0.08;
   if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
-  hi += pad;
+  // The top pad is `clear` of the padded range: pad / (raw + pad + bottom pad) = clear.
+  const clear = clamp(opts.topClear ?? 0, 0, 0.5);
+  const padTop = Math.max(pad, (clear * (raw + pad)) / (1 - clear));
+  hi += padTop;
   lo -= pad;
   const range = hi - lo;
   const y = (v: number) => ((hi - v) / range) * VB_H;
 
   const cw = VB_W / span;
   const bw = cw * 0.56;
-  const ma = opts.showMa ? (opts.ma ?? sma(all.map((b) => b.close), MA_PERIOD)) : [];
+  const maSeries = opts.mas ?? [];
+  const maD = maSeries.map(() => '');
+  const maPts = maSeries.map(() => 0);
   const { from, to } = renderRange(win, n);
   const candles: Candle[] = [];
   const volumes: VolumeBar[] = [];
-  const maPts: string[] = [];
   let upWicks = '';
   let upBodies = '';
   let dnWicks = '';
@@ -363,8 +404,12 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
       if (up) upVolume += rect;
       else dnVolume += rect;
     }
-    const m = ma[i];
-    if (m != null) maPts.push(`${r2(cx)},${r2(y(m))}`);
+    for (let k = 0; k < maSeries.length; k++) {
+      const v = maSeries[k].values[i];
+      if (v == null) continue;
+      // An average only starts (it is undefined before `period` bars), so one moveto per line.
+      maD[k] += `${maPts[k]++ ? 'L' : 'M'}${r2(cx)} ${r2(y(v))}`;
+    }
   }
 
   return {
@@ -374,7 +419,7 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
     candles,
     volumes,
     paths: { upWicks, upBodies, dnWicks, dnBodies, upVolume, dnVolume },
-    ma: maPts.length > 1 ? maPts.join(' ') : '',
+    mas: maSeries.map((m, k) => ({ period: m.period, d: maPts[k] > 1 ? maD[k] : '' })),
     axis: [0.15, 0.5, 0.85].map((frac) => ({ frac, value: hi - range * frac })),
     extremes,
     y,
@@ -515,12 +560,13 @@ export interface ExtremeLayout {
  * Leader and label position for the highest (kind 'high') or lowest ('low') bar in view. The
  * marker points into the free side: left when the bar is in the right 40 % of the plot (the
  * label would otherwise run into the price axis), right otherwise; up for the high, down for
- * the low, kept inside the plot vertically.
+ * the low, kept inside the plot vertically and with the label's center at or below `minY`.
  */
-export function extremeLayout(tipX: number, tipY: number, width: number, height: number, kind: 'high' | 'low'): ExtremeLayout {
+export function extremeLayout(tipX: number, tipY: number, width: number, height: number, kind: 'high' | 'low', minY = EXTREME_EDGE): ExtremeLayout {
   const dir: 1 | -1 = tipX > width * 0.6 ? -1 : 1;
   const want = kind === 'high' ? tipY - EXTREME_DIAG : tipY + EXTREME_DIAG;
-  const y = clamp(want, EXTREME_EDGE, Math.max(EXTREME_EDGE, height - EXTREME_EDGE));
+  const top = Math.max(EXTREME_EDGE, minY);
+  const y = clamp(want, top, Math.max(top, height - EXTREME_EDGE));
   const elbowX = tipX + dir * EXTREME_DIAG;
   const endX = elbowX + dir * EXTREME_RUN;
   const r = (v: number) => Math.round(v * 10) / 10;
@@ -549,6 +595,141 @@ export function extremeBox(m: ExtremeLayout, text: string): Rect {
     top: Math.min(m.tipY, m.y - EXTREME_LABEL_H / 2),
     bottom: Math.max(m.tipY, m.y + EXTREME_LABEL_H / 2),
   };
+}
+
+/** Whether two boxes overlap or come closer than `gap` px. */
+function overlaps(a: Rect, b: Rect, gap = 0): boolean {
+  return a.left < b.right + gap && b.left < a.right + gap && a.top < b.bottom + gap && b.top < a.bottom + gap;
+}
+
+/** Space (px) an extreme marker keeps from the MA legend. */
+const LEGEND_CLEAR_GAP = 2;
+
+/**
+ * Layout and box of an extreme marker showing `text` (see extremeLayout). A marker whose label
+ * would touch `avoid` (the MA legend) drops its label below it, beside the wick; the range keeps
+ * room above the highest bar for the legend (legendClearance), so this only happens in a very
+ * short plot.
+ */
+export function placeExtreme(
+  tipX: number,
+  tipY: number,
+  width: number,
+  height: number,
+  kind: 'high' | 'low',
+  text: string,
+  avoid?: Rect | null,
+): ExtremeLayout & { box: Rect } {
+  const layout = extremeLayout(tipX, tipY, width, height, kind);
+  const box = extremeBox(layout, text);
+  if (!avoid || !overlaps(box, avoid, LEGEND_CLEAR_GAP)) return { ...layout, box };
+  const moved = extremeLayout(tipX, tipY, width, height, kind, avoid.bottom + LEGEND_CLEAR_GAP + EXTREME_LABEL_H / 2);
+  return { ...moved, box: extremeBox(moved, text) };
+}
+
+// ---------------------------------------------------------------------------
+// MA legend
+
+/**
+ * The MA legend (PriceChart): 11px monospace items on a panel-colored pad at the plot's top-left
+ * (px), on as many lines of LEGEND_H as they need in the plot's width (legendLines).
+ */
+export const LEGEND_LEFT = 8;
+export const LEGEND_TOP = 6;
+export const LEGEND_H = 17;
+export const LEGEND_PAD_X = 6;
+export const LEGEND_GAP = 10;
+
+/**
+ * Room (px) kept above the highest price in range while a legend of `lines` lines shows
+ * (buildChart's topClear): the legend, a gap, and the high marker's leader and half its label
+ * (plus a pixel for rounding), so neither the bars nor the marker run under the legend.
+ */
+export function legendClearance(lines: number): number {
+  return LEGEND_TOP + lines * LEGEND_H + LEGEND_CLEAR_GAP + EXTREME_DIAG + EXTREME_LABEL_H / 2 + 1;
+}
+
+/** A legend item: the average's label and its value at a bar, or a dash where it has not started. */
+export function legendItem(label: string, value: number | undefined, minTick?: number): string {
+  return `${label} ${value != null ? axisPrice(value, minTick) : '—'}`;
+}
+
+/** Width (px) of the widest axisPrice text of any price from `lo` to `hi`. */
+function widestPriceWidth(lo: number, hi: number, minTick?: number): number {
+  // The text grows with the integer digits, but just below ±1 and ±10,000 it carries more decimals
+  // (and rounds up to "1.0000" or "10000.00"), so those are probed too.
+  const probes = [lo, hi, ...[1, -1, 10_000, -10_000].map((t) => t * (1 - 1e-12)).filter((p) => p > lo && p < hi)];
+  return Math.max(...probes.map((p) => labelWidth(axisPrice(p, minTick))));
+}
+
+/**
+ * Width (px) each legend item (legendItem) can take for a series: its label and the widest value
+ * of any price between the lowest and highest close, as a simple average of closes stays between
+ * them. Lines are packed by these widths, so hovering and panning never move items between lines
+ * or change the room the legend takes from the chart.
+ */
+export function legendItemWidths(bars: readonly Bar[], labels: readonly string[], minTick?: number): number[] {
+  if (!labels.length) return [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const b of bars) {
+    if (b.close < lo) lo = b.close;
+    if (b.close > hi) hi = b.close;
+  }
+  const value = Math.max(labelWidth('—'), lo <= hi ? widestPriceWidth(lo, hi, minTick) : 0);
+  return labels.map((label) => labelWidth(`${label} `) + value);
+}
+
+/**
+ * labelWidth's 0.6em per character is a hair under the monospace fonts' advance (SF Mono and
+ * Menlo at 11px measure about 6.62px): legend lines are packed with this margin, so a full line
+ * does not overflow and get cut.
+ */
+const LEGEND_FIT = 1.01;
+
+/**
+ * The legend's items as lines in a plot `width` px wide: in order, as many on a line as fit by
+ * their `widths` (legendItemWidths). An item too wide for any line gets a line of its own, where
+ * PriceChart cuts it with an ellipsis.
+ */
+export function legendLines(widths: readonly number[], width: number): number[][] {
+  const room = Math.max(0, width - 2 * LEGEND_LEFT - 2 * LEGEND_PAD_X) / LEGEND_FIT;
+  const lines: number[][] = [];
+  let used = 0;
+  widths.forEach((w, i) => {
+    const line = lines[lines.length - 1];
+    if (line && used + LEGEND_GAP + w <= room) {
+      line.push(i);
+      used += LEGEND_GAP + w;
+    } else {
+      lines.push([i]);
+      used = w;
+    }
+  });
+  return lines;
+}
+
+/** Box (px) of the MA legend showing `items` on `lines` (legendLines) in a plot `width` px wide, from approximate text widths. */
+export function legendBox(items: readonly string[], lines: readonly (readonly number[])[], width: number): Rect {
+  const text = Math.max(0, ...lines.map((line) => line.reduce((sum, i) => sum + labelWidth(items[i] ?? ''), 0) + LEGEND_GAP * Math.max(0, line.length - 1)));
+  const w = text + 2 * LEGEND_PAD_X;
+  return {
+    left: LEGEND_LEFT,
+    top: LEGEND_TOP,
+    right: LEGEND_LEFT + Math.min(w, Math.max(0, width - 2 * LEGEND_LEFT)),
+    bottom: LEGEND_TOP + lines.length * LEGEND_H,
+  };
+}
+
+export interface MaReading {
+  period: MaPeriod;
+  /** Undefined where the average has not started (fewer than `period` bars up to there). */
+  value: number | undefined;
+}
+
+/** The legend's values: each moving average at bar `index` (the hovered bar, else latestInView). */
+export function maReadings(mas: readonly MaSeries[], index: number): MaReading[] {
+  return mas.map((m) => ({ period: m.period, value: m.values[index] }));
 }
 
 /** The "Latest" button's distance (px) from the plot's bottom-right corner, and the space it keeps from markers. */

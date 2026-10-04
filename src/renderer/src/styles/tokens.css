@@ -31,6 +31,15 @@
   --btnTx: #0f1a13;
   --cv: #1b1f21;
   --ov: rgba(0, 0, 0, 0.5);
+  /* Moving average lines and their legend text (chart). Hues violet, cyan, gold, azure and
+     magenta, validated with the dataviz palette checks on --p, also against --g and --r (the
+     candles in either convention; --g is the accent too) as extra slots: OKLab dE >= 15 in
+     normal vision and >= 8 under protanopia and deuteranopia to both, and >= 4.5:1 as text. */
+  --ma5: #a37ddc;
+  --ma10: #0292a6;
+  --ma20: #928700;
+  --ma50: #1c81ff;
+  --ma200: #ec39b8;
   color-scheme: dark;
 }
 
@@ -52,6 +61,13 @@
   --btnTx: #f4f6f4;
   --cv: #d9deda;
   --ov: rgba(42, 58, 48, 0.25);
+  /* Moving averages: the same hue families stepped for the light panel, with the same checks
+     (see the dark theme). */
+  --ma5: #8042eb;
+  --ma10: #04769f;
+  --ma20: #7c4b02;
+  --ma50: #1b3acf;
+  --ma200: #8d187d;
   color-scheme: light;
 }
 

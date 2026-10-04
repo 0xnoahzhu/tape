@@ -1,16 +1,18 @@
-// Candlestick chart with MA20, volume, last-price and price-alert lines, a right price
-// axis, a bottom time axis and a hover crosshair. Coordinates follow the design: the price SVG
-// uses an 800×300 viewBox and the volume SVG 800×56, both stretched (preserveAspectRatio none)
-// with non-scaling strokes.
+// Candlestick chart with moving averages (MA5 … MA200) and their legend, volume, last-price
+// and price-alert lines, a right price axis, a bottom time axis and a hover crosshair.
+// Coordinates follow the design: the price SVG uses an 800×300 viewBox and the volume SVG
+// 800×56, both stretched (preserveAspectRatio none) with non-scaling strokes.
 //
 // The chart is explorable: drag (or scroll sideways / shift+wheel) pans, the wheel or a
 // trackpad pinch zooms around the pointer, ← / → and + / − do the same while the chart is
 // hovered, and a double-click returns to the latest bars at the automatic zoom. Only the bars
 // in view are drawn, as one path per kind and direction, and pointer input is applied once per
-// animation frame. Coming within a screen of the oldest loaded bar asks for older bars
-// (onNeedOlder), and asks again when a refused or empty page's wait is over, also while the view
-// stays put at the oldest bar; the view is anchored to bar times, so bars added in front do not
-// move it.
+// animation frame. The moving averages are computed over the full series once per change of
+// the bars (not per frame) and drawn for the bars in view, one path each, behind the candles;
+// they never widen the price range. Coming within a screen of the oldest loaded bar asks for
+// older bars (onNeedOlder), and asks again when a refused or empty page's wait is over, also
+// while the view stays put at the oldest bar; the view is anchored to bar times, so bars added
+// in front do not move it.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Bar, Timeframe } from '@shared/types';
@@ -21,20 +23,30 @@ import {
   axisPrice,
   buildChart,
   clearOfTag,
-  extremeBox,
-  extremeLayout,
   formatBarTime,
   labelWidth,
   LAST_TAG_H,
   latestButtonSpot,
+  latestInView,
   LATEST_VIEW,
-  MA_PERIOD,
+  LEGEND_GAP,
+  LEGEND_H,
+  LEGEND_LEFT,
+  LEGEND_PAD_X,
+  LEGEND_TOP,
+  legendBox,
+  legendClearance,
+  legendItem,
+  legendItemWidths,
+  legendLines,
+  maReadings,
+  movingAverages,
   nearOldest,
   NY_ZONE,
   panView,
+  placeExtreme,
   resolveView,
   SMALL_TAG_H,
-  sma,
   spreadAlertTags,
   timeAxisLabels,
   timeStepSpacing,
@@ -44,6 +56,7 @@ import {
   visibleBarCount,
   zoomView,
   type ChartView,
+  type MaPeriod,
 } from './chartMath';
 import { useChartMessages } from './messages';
 import { useSize } from './useSize';
@@ -60,7 +73,8 @@ interface Props {
   lastPrice?: number;
   /** Active price-alert levels for this instrument. */
   alerts: number[];
-  showMa: boolean;
+  /** Moving averages to draw (MA_PERIODS order); their colors are the --ma<period> tokens. */
+  mas: readonly MaPeriod[];
   showVol: boolean;
   minTick?: number;
   /** IANA time zone of intraday bars on the time axis and in the hover label (chartTimeZone of the instrument). */
@@ -104,6 +118,28 @@ const plotNote: CSSProperties = {
   pointerEvents: 'none',
 };
 const PULSE_CSS = '@keyframes tape-chart-pulse { 0%, 100% { opacity: 0.2 } 50% { opacity: 0.9 } }';
+/** Moving average lines: solid, the long MA200 a little lighter than the short ones. */
+const maStroke = (period: MaPeriod): CSSProperties => line({ fill: 'none', stroke: `var(--ma${period})`, strokeWidth: period === 200 ? 1 : 1.25, strokeLinejoin: 'round' });
+/**
+ * MA legend (chartMath's LEGEND_* and legendLines give its box): values in each line's color on a
+ * panel pad, so lines behind do not cut through, on as many lines as the plot's width needs.
+ */
+const legendStyle: CSSProperties = {
+  position: 'absolute',
+  top: LEGEND_TOP,
+  left: LEGEND_LEFT,
+  maxWidth: `calc(100% - ${2 * LEGEND_LEFT}px)`,
+  boxSizing: 'border-box',
+  padding: `0 ${LEGEND_PAD_X}px`,
+  background: 'var(--p)',
+  color: 'var(--mu)',
+  font: `11px/${LEGEND_H}px var(--num)`,
+  fontVariantNumeric: 'tabular-nums',
+  whiteSpace: 'nowrap',
+  pointerEvents: 'none',
+};
+/** One legend line; an item too wide for the plot on its own is cut with an ellipsis. */
+const legendLine: CSSProperties = { height: LEGEND_H, overflow: 'hidden', textOverflow: 'ellipsis' };
 /** Highest / lowest price in view: muted text on the panel color, so lines behind it do not cut through. */
 const extremeTag: CSSProperties = {
   position: 'absolute',
@@ -136,7 +172,7 @@ export const PriceChart = memo(function PriceChart({
   message,
   lastPrice,
   alerts,
-  showMa,
+  mas,
   showVol,
   minTick,
   timeZone = NY_ZONE,
@@ -312,8 +348,16 @@ export const PriceChart = memo(function PriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The moving average runs over the full series once per change of the bars, not per frame.
-  const maValues = useMemo(() => (showMa ? sma(bars.map((b) => b.close), MA_PERIOD) : undefined), [bars, showMa]);
+  // Moving averages over the full series once per change of the bars (a page of older bars, a new
+  // bar, the live price), not per frame: panning and zooming only slice them.
+  const maSeries = useMemo(() => movingAverages(bars, mas), [bars, mas]);
+  // MA legend lines: items packed by the widest value each can show in this series, so hovering
+  // and panning never move items between lines. While the legend shows, the range keeps room
+  // above the highest price for it and the high marker.
+  const maLabels = useMemo(() => mas.map((p) => m.ma(p)), [mas, m]);
+  const legendWidths = useMemo(() => legendItemWidths(bars, maLabels, minTick), [bars, maLabels, minTick]);
+  const legendRows = useMemo(() => (size.w > 0 ? legendLines(legendWidths, size.w) : []), [legendWidths, size.w]);
+  const topClear = legendRows.length > 0 && size.h > 0 ? Math.min(0.4, legendClearance(legendRows.length) / size.h) : 0;
   // Time axis step spacing: per series, not per live price update of the forming bar.
   const firstTime = bars[0]?.time;
   const lastTime = bars[bars.length - 1]?.time;
@@ -323,8 +367,8 @@ export const PriceChart = memo(function PriceChart({
     [timeframe, timeZone, bars.length, firstTime, lastTime],
   );
   const geo = useMemo(
-    () => buildChart(bars, { count, view, showMa, ma: maValues, include: [lastPrice] }),
-    [bars, count, view, showMa, maValues, lastPrice],
+    () => buildChart(bars, { count, view, mas: maSeries, include: [lastPrice], topClear }),
+    [bars, count, view, maSeries, lastPrice, topClear],
   );
   const win = geo?.window;
 
@@ -374,14 +418,18 @@ export const PriceChart = memo(function PriceChart({
   const crossStroke = line({ stroke: 'var(--dm)', strokeDasharray: '2 3' });
   const paths = geo?.paths;
 
-  // Highest high and lowest low of the bars in view, marked with a leader and their price.
+  // MA legend: the values at the hovered bar, else at the newest bar in view.
+  const readings = geo && maSeries.length ? maReadings(maSeries, hovered ?? latestInView(geo.window, bars.length)) : [];
+  const legendItems = readings.map((r, i) => legendItem(maLabels[i], r.value, minTick));
+  const legend = legendItems.length > 0 && legendRows.length > 0 ? legendBox(legendItems, legendRows, size.w) : null;
+
+  // Highest high and lowest low of the bars in view, marked with a leader and their price (clear of the legend).
   const extremes =
     geo && size.w > 0 && size.h > 0
       ? (['high', 'low'] as const).map((kind) => {
           const e = geo.extremes[kind];
-          const layout = extremeLayout((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind);
           const text = axisPrice(e.price, minTick);
-          return { kind, text, box: extremeBox(layout, text), ...layout };
+          return { kind, text, ...placeExtreme((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind, text, legend) };
         })
       : [];
   // The "Latest" button keeps out of the way of the markers (the lowest low may sit in the bottom-right corner).
@@ -399,6 +447,8 @@ export const PriceChart = memo(function PriceChart({
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
   const olderEmpty = older?.status === 'empty' && near;
+  // The notes sit at the top-left too: below the legend while it shows.
+  const note: CSSProperties = legend ? { ...plotNote, top: legend.bottom + 4 } : plotNote;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', marginTop: 14 }}>
@@ -438,7 +488,7 @@ export const PriceChart = memo(function PriceChart({
             {timeLabels.map((l) => (
               <line key={bars[l.index].time} x1={(l.x / size.w) * VB_W} x2={(l.x / size.w) * VB_W} y1={0} y2={VB_H} style={gridStroke} />
             ))}
-            {geo && showMa && geo.ma && <polyline points={geo.ma} style={line({ fill: 'none', stroke: 'var(--ac)', strokeWidth: 1.25 })} />}
+            {geo?.mas.map((l) => (l.d ? <path key={l.period} data-ma={l.period} d={l.d} style={maStroke(l.period)} /> : null))}
             {paths && (
               <>
                 <path d={paths.upWicks} style={line({ stroke: 'var(--up)', fill: 'none' })} />
@@ -473,6 +523,19 @@ export const PriceChart = memo(function PriceChart({
               {e.text}
             </div>
           ))}
+          {legend && (
+            <div data-chart="ma-legend" style={legendStyle}>
+              {legendRows.map((row) => (
+                <div key={row[0]} style={legendLine}>
+                  {row.map((i, k) => (
+                    <span key={readings[i].period} style={{ color: `var(--ma${readings[i].period})`, marginLeft: k ? LEGEND_GAP : 0 }}>
+                      {legendItems[i]}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
           {!geo && message && (
             <div
               style={{
@@ -507,15 +570,15 @@ export const PriceChart = memo(function PriceChart({
                   pointerEvents: 'none',
                 }}
               />
-              <div style={plotNote}>{m.olderLoading}</div>
+              <div style={note}>{m.olderLoading}</div>
             </>
           )}
           {geo && !olderLoading && olderError && (
-            <div className="ellipsis" title={olderError} style={{ ...plotNote, color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)' }}>
+            <div className="ellipsis" title={olderError} style={{ ...note, color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)' }}>
               {olderError}
             </div>
           )}
-          {geo && olderEmpty && <div style={plotNote}>{m.olderEmpty}</div>}
+          {geo && olderEmpty && <div style={note}>{m.olderEmpty}</div>}
           {showLatest && (
             <div
               ref={latestRef}

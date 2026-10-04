@@ -19,14 +19,28 @@ import {
   latestButtonSpot,
   LATEST_MARGIN,
   LATEST_VIEW,
-  MA_PERIOD,
+  latestInView,
+  LEGEND_GAP,
+  LEGEND_H,
+  LEGEND_LEFT,
+  LEGEND_PAD_X,
+  LEGEND_TOP,
+  legendBox,
+  legendClearance,
+  legendItem,
+  legendItemWidths,
+  legendLines,
+  MA_PERIODS,
+  maReadings,
   MAX_SPAN,
   mergeLivePrice,
   MIN_SPAN,
+  movingAverages,
   nearOldest,
   NY_ZONE,
   panView,
   pickTimeStep,
+  placeExtreme,
   prependBars,
   priceDecimals,
   renderRange,
@@ -43,6 +57,7 @@ import {
   visibleBarCount,
   zoomView,
   type ChartView,
+  type MaSeries,
   type Rect,
   type TimeAxisLabel,
   type ViewWindow,
@@ -72,6 +87,53 @@ describe('visibleBarCount', () => {
 describe('sma', () => {
   it('is undefined until the period is filled', () => {
     expect(sma([1, 2, 3, 4], 3)).toEqual([undefined, undefined, 2, 3]);
+  });
+
+  it('starts exactly at bar period - 1 and averages the last `period` values up to the end', () => {
+    const values = Array.from({ length: 250 }, (_, i) => (i * 37) % 101);
+    for (const period of MA_PERIODS) {
+      const out = sma(values, period);
+      expect(out).toHaveLength(250);
+      expect(out.slice(0, period - 1).every((v) => v === undefined)).toBe(true);
+      // First value: the mean of the first `period` values; last: of the last `period`.
+      const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+      expect(out[period - 1]).toBeCloseTo(mean(values.slice(0, period)), 9);
+      expect(out[249]).toBeCloseTo(mean(values.slice(250 - period)), 9);
+      if (period <= 121) expect(out[120]).toBeCloseTo(mean(values.slice(121 - period, 121)), 9);
+    }
+  });
+
+  it('handles series shorter than or equal to the period', () => {
+    expect(sma([1, 2, 3, 4], 5)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(sma([2, 4, 6, 8, 10], 5)).toEqual([undefined, undefined, undefined, undefined, 6]);
+    expect(sma([], 20)).toEqual([]);
+    expect(sma([7, 8], 1)).toEqual([7, 8]);
+  });
+
+  it('stays exact over a long series (no drift from the running sum)', () => {
+    const values = Array.from({ length: 20_000 }, (_, i) => 100 + Math.sin(i / 7) * 50 + i * 0.01);
+    const out = sma(values, 200);
+    const direct = values.slice(-200).reduce((x, y) => x + y, 0) / 200;
+    expect(Math.abs(out[19_999]! - direct)).toBeLessThan(1e-9);
+  });
+
+  it('returns nothing for an invalid period', () => {
+    expect(sma([1, 2, 3], 0)).toEqual([undefined, undefined, undefined]);
+    expect(sma([1, 2, 3], 2.5)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe('movingAverages', () => {
+  it('averages the closes for each period, in the order asked', () => {
+    const bars = series(60);
+    const mas = movingAverages(bars, [50, 5]);
+    expect(mas.map((m) => m.period)).toEqual([50, 5]);
+    // closes 100 + i: the average of closes i-4..i is 100 + i - 2
+    expect(mas[1].values[4]).toBeCloseTo(102);
+    expect(mas[1].values[3]).toBeUndefined();
+    expect(mas[0].values[48]).toBeUndefined();
+    expect(mas[0].values[49]).toBeCloseTo(124.5);
+    expect(movingAverages(bars, [])).toEqual([]);
   });
 });
 
@@ -222,12 +284,12 @@ describe('older pages', () => {
 
 describe('buildChart', () => {
   it('returns null without bars', () => {
-    expect(buildChart([], { count: 60, showMa: true })).toBeNull();
+    expect(buildChart([], { count: 60 })).toBeNull();
   });
 
   it('shows the most recent bars and pads the range by 8%', () => {
     const bars = series(100);
-    const g = buildChart(bars, { count: 60, showMa: false })!;
+    const g = buildChart(bars, { count: 60 })!;
     expect(g.window).toEqual({ start: 40, span: 60, latest: true });
     // In view 40..99, plus one off-screen bar on the left.
     expect(g.candles).toHaveLength(61);
@@ -242,7 +304,7 @@ describe('buildChart', () => {
   });
 
   it('keeps at least 30 slots and right-aligns short series', () => {
-    const g = buildChart(series(10), { count: 60, showMa: false })!;
+    const g = buildChart(series(10), { count: 60 })!;
     expect(g.window).toEqual({ start: -20, span: 30, latest: true });
     const cw = VB_W / 30;
     expect(g.candles[0].x).toBeCloseTo(20 * cw + cw * 0.22);
@@ -255,7 +317,7 @@ describe('buildChart', () => {
   it('draws the panned and zoomed window, ranging over the bars in view', () => {
     const bars = series(1000);
     const view = zoomView(panView(LATEST_VIEW, bars, 60, -500.5), bars, 60, 0.5, 0); // [439.5, 469.5)
-    const g = buildChart(bars, { count: 60, view, showMa: false })!;
+    const g = buildChart(bars, { count: 60, view })!;
     expect(g.window.start).toBeCloseTo(439.5);
     expect(g.window.span).toBeCloseTo(30);
     expect(g.candles.map((c) => c.index)).toEqual(Array.from({ length: 33 }, (_, i) => 438 + i));
@@ -270,38 +332,77 @@ describe('buildChart', () => {
 
   it('includes extra prices (live last) in the range only while the newest bar is in view', () => {
     const bars = series(400);
-    expect(buildChart(bars, { count: 60, showMa: false, include: [900, undefined] })!.hi).toBeGreaterThan(900);
+    expect(buildChart(bars, { count: 60, include: [900, undefined] })!.hi).toBeGreaterThan(900);
     const back = panView(LATEST_VIEW, bars, 60, -100);
-    expect(buildChart(bars, { count: 60, view: back, showMa: false, include: [900] })!.hi).toBeLessThan(500);
+    expect(buildChart(bars, { count: 60, view: back, include: [900] })!.hi).toBeLessThan(500);
   });
 
-  it('draws the moving average from the full series', () => {
+  /** Points of an MA path ("M x y L x y …"). */
+  const pathPoints = (d: string) => [...d.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((p) => [Number(p[1]), Number(p[2])]);
+
+  it('draws one path per moving average over the drawn bars, in the order given', () => {
     const bars = series(50);
-    const g = buildChart(bars, { count: 30, showMa: true })!;
-    // Bars 19..49 are drawn, and all have an MA point (index >= MA_PERIOD - 1).
-    expect(g.ma.split(' ')).toHaveLength(31);
-    const off = buildChart(bars, { count: 30, showMa: false })!;
-    expect(off.ma).toBe('');
-    const short = buildChart(series(MA_PERIOD - 1), { count: 30, showMa: true })!;
-    expect(short.ma).toBe('');
-    // A precomputed average is used as given.
-    const given = buildChart(bars, { count: 30, showMa: true, ma: bars.map(() => 120) })!;
-    expect(new Set(given.ma.split(' ').map((p) => p.split(',')[1])).size).toBe(1);
+    const g = buildChart(bars, { count: 30, mas: movingAverages(bars, [20, 5, 50]) })!;
+    expect(g.mas.map((m) => m.period)).toEqual([20, 5, 50]);
+    // Bars 19..49 are drawn; MA20 and MA5 have a value at each of them, a single moveto each.
+    expect(pathPoints(g.mas[0].d)).toHaveLength(31);
+    expect(g.mas[0].d.match(/M/g)).toHaveLength(1);
+    expect(pathPoints(g.mas[1].d)).toHaveLength(31);
+    // MA50 has a single point (bar 49): no line.
+    expect(g.mas[2].d).toBe('');
+    expect(buildChart(bars, { count: 30 })!.mas).toEqual([]);
   });
 
-  it('starts the moving average right at the left edge after panning', () => {
+  it('starts a moving average where enough bars exist', () => {
+    const bars = series(260);
+    const g = buildChart(bars, { count: 200, view: { span: 300, end: null }, mas: movingAverages(bars, [200]) })!;
+    // The view shows all 260 bars; MA200 starts at bar 199.
+    const pts = pathPoints(g.mas[0].d);
+    expect(pts).toHaveLength(61);
+    expect(pts[0][0]).toBeCloseTo(g.centerX(199), 1);
+    expect(pts[0][1]).toBeCloseTo(g.y(199.5), 1); // closes 100..299 average 199.5
+  });
+
+  it('starts the moving averages right at the left edge after panning', () => {
     const bars = series(300);
     const view = panView(LATEST_VIEW, bars, 60, -200); // [40, 100)
-    const g = buildChart(bars, { count: 60, view, showMa: true })!;
-    const first = g.ma.split(' ')[0].split(',').map(Number);
+    const g = buildChart(bars, { count: 60, view, mas: movingAverages(bars, [20, 10]) })!;
+    const first = pathPoints(g.mas[0].d)[0];
     expect(first[0]).toBeLessThan(0); // bar 39, just left of the view
     // sma of closes 120..139 = 129.5
     expect(first[1]).toBeCloseTo(g.y(129.5), 1);
+    // The last point is bar 100, just right of the view; MA10 of closes 191..200 = 195.5
+    const last = pathPoints(g.mas[1].d).at(-1)!;
+    expect(last[0]).toBeGreaterThan(VB_W);
+    expect(last[1]).toBeCloseTo(g.y(195.5), 1);
+  });
+
+  it('keeps the range on the candles: moving averages never widen it', () => {
+    // A slow average far below a recent jump.
+    const bars = series(300).map((b, i) => (i < 250 ? { ...b, open: 10, high: 11, low: 9, close: 10 } : b));
+    const plain = buildChart(bars, { count: 30 })!;
+    const withMas = buildChart(bars, { count: 30, mas: movingAverages(bars, [...MA_PERIODS]) })!;
+    expect([withMas.hi, withMas.lo]).toEqual([plain.hi, plain.lo]);
+    // MA200 lies far below the plot (clipped by the SVG viewport).
+    const ma200 = pathPoints(withMas.mas.find((m) => m.period === 200)!.d);
+    expect(Math.min(...ma200.map((p) => p[1]))).toBeGreaterThan(VB_H);
+  });
+
+  it('keeps room above the highest price for the legend (topClear)', () => {
+    const bars = series(100);
+    const plain = buildChart(bars, { count: 60 })!;
+    // The usual 8 % pad puts the highest high at 0.08 / 1.16 of the height.
+    expect(plain.y(200) / VB_H).toBeCloseTo(0.08 / 1.16);
+    const g = buildChart(bars, { count: 60, topClear: 0.15 })!;
+    expect(g.y(200) / VB_H).toBeCloseTo(0.15);
+    expect(g.lo).toBeCloseTo(plain.lo); // the bottom pad stays
+    // Less than the usual pad changes nothing.
+    expect(buildChart(bars, { count: 60, topClear: 0.02 })!.hi).toBeCloseTo(plain.hi);
   });
 
   it('scales volume to the largest visible bar', () => {
     const bars = [bar(1, 10, 11, 9, 11, 50), bar(2, 11, 12, 10, 10, 100), bar(3, 10, 10, 10, 10, 0)];
-    const g = buildChart(bars, { count: 30, showMa: false })!;
+    const g = buildChart(bars, { count: 30 })!;
     expect(g.volumes).toHaveLength(2);
     expect(g.volumes[1].h).toBeCloseTo(54);
     expect(g.volumes[1].y).toBeCloseTo(2);
@@ -313,13 +414,13 @@ describe('buildChart', () => {
   it('scales volume to the bars in view, not the series', () => {
     const bars = series(300).map((b, i) => ({ ...b, volume: i < 100 ? 1e9 : 1000 }));
     const view = panView(LATEST_VIEW, bars, 60, -100); // [140, 200)
-    const g = buildChart(bars, { count: 60, view, showMa: false })!;
+    const g = buildChart(bars, { count: 60, view })!;
     expect(Math.max(...g.volumes.map((v) => v.h))).toBeCloseTo(54);
   });
 
   it('builds one path per kind and direction', () => {
     const bars = [bar(1, 10, 11, 9, 11), bar(2, 11, 12, 10, 10), bar(3, 10, 12, 9, 11)];
-    const g = buildChart(bars, { count: 30, showMa: false })!;
+    const g = buildChart(bars, { count: 30 })!;
     expect(g.paths.upWicks.match(/M/g)).toHaveLength(2);
     expect(g.paths.upBodies.match(/z/g)).toHaveLength(2);
     expect(g.paths.dnWicks.match(/M/g)).toHaveLength(1);
@@ -333,14 +434,14 @@ describe('buildChart', () => {
   });
 
   it('handles a flat series', () => {
-    const g = buildChart([bar(1, 10, 10, 10, 10)], { count: 30, showMa: false })!;
+    const g = buildChart([bar(1, 10, 10, 10, 10)], { count: 30 })!;
     expect(g.hi).toBeGreaterThan(10);
     expect(g.lo).toBeLessThan(10);
     expect(g.candles[0].h).toBe(1);
   });
 
   it('maps hover fractions to prices', () => {
-    const g = buildChart(series(40), { count: 40, showMa: false })!;
+    const g = buildChart(series(40), { count: 40 })!;
     expect(g.priceAt(0)).toBeCloseTo(g.hi);
     expect(g.priceAt(1)).toBeCloseTo(g.lo);
   });
@@ -348,9 +449,10 @@ describe('buildChart', () => {
   it('draws only the bars in view of a long series', () => {
     const bars = series(20_000);
     const view = zoomView(panView(LATEST_VIEW, bars, 200, -9000), bars, 200, 2, 0.5);
-    const g = buildChart(bars, { count: 200, view, showMa: true, ma: sma(bars.map((b) => b.close), MA_PERIOD) })!;
+    const g = buildChart(bars, { count: 200, view, mas: movingAverages(bars, [...MA_PERIODS]) })!;
     expect(g.window.span).toBe(400);
     expect(g.candles.length).toBeLessThanOrEqual(402);
+    for (const m of g.mas) expect(pathPoints(m.d).length).toBeLessThanOrEqual(402);
   });
 });
 
@@ -463,18 +565,18 @@ describe('extreme markers', () => {
   it('finds the highest high and lowest low of the bars in view only', () => {
     const bars = [bar(1, 10, 50, 9, 10), bar(2, 10, 12, 1, 11), ...Array.from({ length: 40 }, (_, i) => bar(3 + i, 20, 21 + (i === 30 ? 9 : 0), 19 - (i === 10 ? 5 : 0), 20))];
     // The newest 30 bars: the old 50 high and 1 low are out of view.
-    const g = buildChart(bars, { count: 30, showMa: false })!;
+    const g = buildChart(bars, { count: 30 })!;
     expect(g.extremes.high).toEqual({ index: 32, price: 30 });
     expect(g.extremes.low).toEqual({ index: 12, price: 14 });
     // The whole series in view: the old extremes win.
-    const all = buildChart(bars, { count: 60, showMa: false })!;
+    const all = buildChart(bars, { count: 60 })!;
     expect(all.extremes.high).toEqual({ index: 0, price: 50 });
     expect(all.extremes.low).toEqual({ index: 1, price: 1 });
   });
 
   it('ignores the live price included in the range', () => {
     const bars = Array.from({ length: 30 }, (_, i) => bar(i, 20, 21, 19, 20));
-    const g = buildChart(bars, { count: 30, showMa: false, include: [99] })!;
+    const g = buildChart(bars, { count: 30, include: [99] })!;
     expect(g.hi).toBeGreaterThan(99);
     expect(g.extremes.high.price).toBe(21);
   });
@@ -511,6 +613,137 @@ describe('extreme markers', () => {
   });
 });
 
+describe('MA legend', () => {
+  const mas: MaSeries[] = movingAverages(series(30), [5, 20, 50]);
+
+  it('reads each average at the hovered bar, undefined where it has not started', () => {
+    expect(maReadings(mas, 25)).toEqual([
+      { period: 5, value: 123 }, // closes 121..125
+      { period: 20, value: 115.5 }, // closes 106..125
+      { period: 50, value: undefined },
+    ]);
+    expect(maReadings(mas, 3).map((r) => r.value)).toEqual([undefined, undefined, undefined]);
+    expect(maReadings([], 10)).toEqual([]);
+  });
+
+  it('reads the newest bar in view when nothing is hovered', () => {
+    expect(latestInView({ start: 70, span: 30, latest: true }, 100)).toBe(99);
+    expect(latestInView({ start: 40.5, span: 30, latest: false }, 100)).toBe(70);
+    expect(latestInView({ start: -20, span: 30, latest: true }, 10)).toBe(9);
+    // Panned back 10 bars: [60, 90) is in view, the legend reads bar 89.
+    const bars = series(100);
+    const g = buildChart(bars, { count: 30, view: panView(LATEST_VIEW, bars, 30, -10) })!;
+    const i = latestInView(g.window, bars.length);
+    expect(i).toBe(89);
+    expect(maReadings(movingAverages(bars, [5]), i)).toEqual([{ period: 5, value: 187 }]); // closes 185..189
+  });
+
+  it('formats an item from its label and value, a dash before the average starts', () => {
+    expect(legendItem('MA20', 227.314)).toBe('MA20 227.31');
+    expect(legendItem('MA200', 722387.62)).toBe('MA200 722387.6');
+    expect(legendItem('MA5', 1.23456, 0.0001)).toBe('MA5 1.2346');
+    expect(legendItem('MA50', undefined)).toBe('MA50 —');
+  });
+
+  it('sizes items for the widest value any average of the series can show', () => {
+    const closes = (cs: number[]) => cs.map((c, i) => bar(i, c, c, c, c));
+    /** Widths as whole characters (6.6 px each), so float sums compare exactly. */
+    const chars = (bars: Bar[], labels: string[]) => legendItemWidths(bars, labels).map((w) => Math.round(w / 6.6));
+    // Closes 98.5..227.4: the widest value is the highest ("227.40").
+    expect(chars(closes([98.5, 150, 227.4]), ['MA5', 'MA200'])).toEqual(['MA5 227.40'.length, 'MA200 227.40'.length]);
+    // Just below 10,000 prices carry two decimals (rounding up to "10000.00"), above it one.
+    expect(chars(closes([9_990, 10_050]), ['MA5'])).toEqual(['MA5 10000.00'.length]);
+    // Prices below 1 carry four decimals: the low end is the widest.
+    expect(chars(closes([0.5, 3]), ['MA5'])).toEqual(['MA5 0.5000'.length]);
+    // No bars: room for the dash; no averages: nothing.
+    expect(chars([], ['MA5'])).toEqual(['MA5 —'.length]);
+    expect(legendItemWidths(closes([1, 2]), [])).toEqual([]);
+  });
+
+  it('puts the items on one line while they fit, wrapping in order when they do not', () => {
+    const w = [70, 80, 80];
+    // Room for the items: the plot less the legend's margins and padding, with 1 % to spare for
+    // fonts a little wider than labelWidth's estimate.
+    const fit = Math.ceil((70 + 80 + 80 + 2 * LEGEND_GAP) * 1.01) + 2 * LEGEND_LEFT + 2 * LEGEND_PAD_X;
+    expect(legendLines(w, 800)).toEqual([[0, 1, 2]]);
+    expect(legendLines(w, fit)).toEqual([[0, 1, 2]]);
+    expect(legendLines(w, fit - 1)).toEqual([[0, 1], [2]]);
+    // An item wider than the room gets a line of its own.
+    expect(legendLines([30, 500, 30], 300)).toEqual([[0], [1], [2]]);
+    expect(legendLines([], 800)).toEqual([]);
+  });
+
+  it('wraps five averages of a six-digit price in the narrowest plot instead of cutting the last', () => {
+    // The minimum window (1180 × 720) leaves a 462 px plot; BRK.A-like prices around 700,000.
+    const bars = Array.from({ length: 400 }, (_, i) => bar(i, 0, 0, 0, 700_000 + Math.sin(i / 9) * 20_000 + i * 50));
+    const labels = MA_PERIODS.map((p) => `MA${p}`);
+    const widths = legendItemWidths(bars, labels);
+    const lines = legendLines(widths, 462);
+    expect(lines).toEqual([[0, 1, 2, 3], [4]]);
+    // Each line fits the room even at the fonts' real advance (6.62 px, not 6.6, per character).
+    const room = 462 - 2 * LEGEND_LEFT - 2 * LEGEND_PAD_X;
+    for (const line of lines) expect(line.reduce((sum, i) => sum + (widths[i] / 6.6) * 6.62, 0) + LEGEND_GAP * (line.length - 1)).toBeLessThanOrEqual(room);
+    // Every reading of the series fits its item's width, so hovering never overflows a line.
+    const mas = movingAverages(bars, MA_PERIODS);
+    for (let i = 0; i < bars.length; i++) {
+      maReadings(mas, i).forEach((r, k) => expect(labelWidth(legendItem(labels[k], r.value))).toBeLessThanOrEqual(widths[k]));
+    }
+    // On a wide plot they share one line.
+    expect(legendLines(widths, 760)).toEqual([[0, 1, 2, 3, 4]]);
+  });
+
+  it('boxes the legend from its text and lines, within the plot', () => {
+    const items = ['MA20 227.31', 'MA50 221.08'];
+    const box = legendBox(items, [[0, 1]], 800);
+    expect(box).toEqual({
+      left: LEGEND_LEFT,
+      top: LEGEND_TOP,
+      right: LEGEND_LEFT + 22 * 6.6 + LEGEND_GAP + 2 * LEGEND_PAD_X,
+      bottom: LEGEND_TOP + LEGEND_H,
+    });
+    expect(legendBox(items, [[0, 1]], 100).right).toBe(100 - LEGEND_LEFT);
+    // On two lines: as wide as the wider line, two lines tall.
+    const two = legendBox(['MA5 227.31', 'MA200 221.08'], [[0], [1]], 800);
+    expect(two.right).toBeCloseTo(LEGEND_LEFT + 12 * 6.6 + 2 * LEGEND_PAD_X);
+    expect(two.bottom).toBe(LEGEND_TOP + 2 * LEGEND_H);
+  });
+
+  it('keeps room above the prices for each legend line', () => {
+    expect(legendClearance(2) - legendClearance(1)).toBe(LEGEND_H);
+    expect(legendClearance(1)).toBeGreaterThan(LEGEND_TOP + LEGEND_H);
+  });
+
+  it('keeps the high marker clear of the legend', () => {
+    const legend = legendBox(['MA5 123.00', 'MA20 115.50'], [[0, 1]], 760);
+    // With the legend's clearance above the highest price, the marker stays where it is.
+    const clear = placeExtreme(60, legendClearance(1), 760, 300, 'high', '210.40', legend);
+    expect(clear.y).toBe(legendClearance(1) - 6);
+    expect(clear.box.top).toBeGreaterThanOrEqual(legend.bottom + 2);
+    // In a very short plot its label drops below the legend, beside the wick.
+    const moved = placeExtreme(60, 20, 760, 120, 'high', '210.40', legend);
+    expect(moved.y).toBe(legend.bottom + 2 + 6.5);
+    expect(moved.y - 6.5).toBeGreaterThanOrEqual(legend.bottom + 2);
+    expect(moved.points).toBe(`60,20 66,${moved.y} 76,${moved.y}`);
+    // Away from the legend (right side) nothing moves.
+    expect(placeExtreme(700, 20, 760, 120, 'high', '210.40', legend).y).toBe(14);
+    expect(placeExtreme(60, 20, 760, 120, 'high', '210.40', null).y).toBe(14);
+  });
+
+  it('keeps the legend clear of the bars and the high marker in a buildChart range', () => {
+    const H = 400;
+    const bars = series(100);
+    for (const lines of [[[0]], [[0], [1]]]) {
+      const g = buildChart(bars, { count: 60, topClear: legendClearance(lines.length) / H })!;
+      const tipY = (g.y(g.extremes.high.price) / VB_H) * H;
+      expect(tipY).toBeCloseTo(legendClearance(lines.length));
+      const legend = legendBox(['MA20 190.50', 'MA200 150.50'], lines, 760);
+      const e = placeExtreme(20, tipY, 760, H, 'high', '200.00', legend);
+      expect(e.y).toBeCloseTo(tipY - 6);
+      expect(e.box.top).toBeGreaterThan(legend.bottom);
+    }
+  });
+});
+
 describe('latest button', () => {
   const W = 760;
   const H = 300;
@@ -530,7 +763,7 @@ describe('latest button', () => {
   it('moves left of the lowest low when that is in the corner', () => {
     // Scrolled back with the lowest bar at the right edge: its tip in the 8 % bottom padding.
     const bars = Array.from({ length: 120 }, (_, i) => bar(i, 205, 206, i === 89 ? 200.12 : 204, 205));
-    const g = buildChart(bars, { count: 90, view: { span: 90, end: anchorAt(bars, 90) }, showMa: false })!;
+    const g = buildChart(bars, { count: 90, view: { span: 90, end: anchorAt(bars, 90) } })!;
     expect(g.extremes.low.index).toBe(89);
     const tipX = (g.centerX(89) / VB_W) * W;
     const low = extremeLayout(tipX, (g.y(200.12) / VB_H) * H, W, H, 'low');
