@@ -4,6 +4,7 @@
 import { useMemo } from 'react';
 import { DASH, f0, pct, sg, signColor, ymd } from '@shared/format';
 import type { NavPoint } from '@shared/types';
+import { useClock } from '../../i18n';
 import { Segmented } from '../../ui/primitives';
 import { useStore } from '../../state/store';
 import {
@@ -40,6 +41,7 @@ export function useNavSeries(): NavPoint[] {
 export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: string }) {
   const m = usePortfolioMessages();
   const { mode, range, setMode, setRange } = usePortfolioUi();
+  const clock = useClock();
 
   const view = useMemo(() => {
     const slice = sliceRange(series, range, Date.now());
@@ -47,9 +49,9 @@ export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: str
     const ret = rangeReturn(slice.points);
     const labels = chart ? axisLabels(chart.axis.map((a) => a.value), mode, symbol) : [];
     const axis = chart ? chart.axis.map((a, i) => ({ ...a, label: labels[i] })) : [];
-    const ticks = chart ? tickLabels(chart.ticks, range) : [];
+    const ticks = chart ? tickLabels(chart.ticks, range, clock) : [];
     return { slice, chart, ret, axis, ticks };
-  }, [series, range, mode, symbol]);
+  }, [series, range, mode, symbol, clock]);
 
   const { slice, chart, ret, axis, ticks } = view;
   const perf = mode === 'perf';

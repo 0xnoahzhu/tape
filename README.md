@@ -42,7 +42,9 @@ do-not-disturb switches. Clicking a notification about an instrument opens it.
 daily log files, retention and export.
 
 **General** — dark, light or system theme (the dock / window icon follows the theme), red-up / green-down
-(CN) or green-up / red-down (US) color convention, English and 中文.
+(CN) or green-up / red-down (US) color convention, English and 中文, and 12-hour ("9:41 AM", "上午 9:41";
+the default) or 24-hour ("09:41") clock times everywhere you read them; the API log, CSV exports and what is
+sent to IB stay 24-hour.
 
 **Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
 idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
+import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { NavPoint, Position, Quote } from '@shared/types';
 import {
   CASH_KEY,
@@ -245,21 +246,31 @@ describe('labels', () => {
   it('formats x ticks by span', () => {
     const t = at(2026, 6, 7, 9);
     const spread = (span: number) => [0, 0.33, 0.66, 1].map((f) => t + span * f);
-    expect(tickLabels(spread(DAY), 'MTD')).toEqual(['09:00', '16:55', '00:50', '09:00']);
-    expect(tickLabels(spread(30 * DAY), 'YTD')).toEqual(['6/7', '6/17', '6/27', '7/7']);
-    expect(tickLabels(spread(700 * DAY), 'ALL')).toEqual(['2026/6', '2027/1', '2027/9', '2028/5']);
-    expect(tickLabels(spread(30 * DAY), 'ALL')[0]).toBe('6/7');
-    expect(tickLabels([], '7D')).toEqual([]);
+    expect(tickLabels(spread(DAY), 'MTD', CLOCK_24H)).toEqual(['09:00', '16:55', '00:50', '09:00']);
+    expect(tickLabels(spread(30 * DAY), 'YTD', CLOCK_24H)).toEqual(['6/7', '6/17', '6/27', '7/7']);
+    expect(tickLabels(spread(700 * DAY), 'ALL', CLOCK_24H)).toEqual(['2026/6', '2027/1', '2027/9', '2028/5']);
+    expect(tickLabels(spread(30 * DAY), 'ALL', CLOCK_24H)[0]).toBe('6/7');
+    expect(tickLabels([], '7D', CLOCK_24H)).toEqual([]);
+  });
+
+  it('writes intraday x ticks in the clock format', () => {
+    const t = at(2026, 6, 7, 9);
+    const spread = (span: number) => [0, 0.33, 0.66, 1].map((f) => t + span * f);
+    expect(tickLabels(spread(DAY), 'MTD', createClock('12h', 'en'))).toEqual(['9:00 AM', '4:55 PM', '12:50 AM', '9:00 AM']);
+    expect(tickLabels(spread(DAY), 'MTD', createClock('12h', 'zh'))).toEqual(['上午 9:00', '下午 4:55', '上午 12:50', '上午 9:00']);
+    expect(tickLabels([t, t + 10_000], '7D', createClock('12h', 'en'))).toEqual(['9:00:00 AM', '9:00:10 AM']);
+    // Day labels do not depend on it.
+    expect(tickLabels(spread(30 * DAY), 'YTD', createClock('12h', 'en'))).toEqual(['6/7', '6/17', '6/27', '7/7']);
   });
 
   it('never repeats an x label', () => {
     const t = at(2026, 10, 4, 12) + 16 * 60_000;
     // Samples a few seconds apart (first launch) get seconds.
-    expect(tickLabels([t, t + 10_000, t + 20_000, t + 30_000], '7D')).toEqual(['12:16:00', '12:16:10', '12:16:20', '12:16:30']);
+    expect(tickLabels([t, t + 10_000, t + 20_000, t + 30_000], '7D', CLOCK_24H)).toEqual(['12:16:00', '12:16:10', '12:16:20', '12:16:30']);
     // Repeats left blank: a span below the label resolution, and day labels less than a day apart.
-    expect(tickLabels([t, t + 500, t + 1_000, t + 1_500], '7D')).toEqual(['12:16:00', '', '12:16:01', '']);
+    expect(tickLabels([t, t + 500, t + 1_000, t + 1_500], '7D', CLOCK_24H)).toEqual(['12:16:00', '', '12:16:01', '']);
     const d = at(2026, 10, 1, 1);
-    expect(tickLabels([d, d + 0.8 * DAY, d + 1.6 * DAY, d + 2.4 * DAY], 'MTD')).toEqual(['10/1', '', '10/2', '10/3']);
+    expect(tickLabels([d, d + 0.8 * DAY, d + 1.6 * DAY, d + 2.4 * DAY], 'MTD', CLOCK_24H)).toEqual(['10/1', '', '10/2', '10/3']);
   });
 
   it('formats weights with a true minus', () => {

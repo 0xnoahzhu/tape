@@ -105,6 +105,8 @@ export function TextField({
   placeholder,
   style,
   numeric = true,
+  onCompositionStart,
+  onCompositionEnd,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -112,6 +114,10 @@ export function TextField({
   placeholder?: string;
   style?: CSSProperties;
   numeric?: boolean;
+  /** An IME starts composing (pinyin): input events until the end carry its marked text. */
+  onCompositionStart?: () => void;
+  /** The IME has committed; receives the field's text. */
+  onCompositionEnd?: (v: string) => void;
 }) {
   const [focused, setFocused] = useState(false);
   const [frozen, setFrozen] = useState<string | null>(null);
@@ -125,6 +131,8 @@ export function TextField({
         setFrozen(null);
         onChange(e.target.value);
       }}
+      onCompositionStart={onCompositionStart}
+      onCompositionEnd={onCompositionEnd && ((e) => onCompositionEnd(e.currentTarget.value))}
       onFocus={(e) => {
         setFocused(true);
         setFrozen(value);

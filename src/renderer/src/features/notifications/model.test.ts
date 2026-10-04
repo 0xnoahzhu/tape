@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
+import { createClock, NEW_YORK_ZONE, TOKEN_CLOCK } from '@shared/timeFormat';
 import type { AppNotification, NotificationKind } from '@shared/types';
 import { useNotificationsMessages } from './messages';
-import { alertInstrumentParts, filterNotifications, opensTradePage, relativeTime, unreadCount } from './model';
+import { alertInstrumentParts, filterNotifications, notificationText, opensTradePage, relativeTime, stampText, unreadCount } from './model';
 
 const n = (id: string, kind: NotificationKind, t: number, read = false): AppNotification => ({
   id,
@@ -63,5 +64,29 @@ describe('alertInstrumentParts', () => {
       symbol: 'ESZ6',
       detail: '',
     });
+  });
+});
+
+describe('notification times', () => {
+  const close = Date.UTC(2026, 9, 9, 20);
+  const gtd = TOKEN_CLOCK.time(close, { timeZone: NEW_YORK_ZONE, zone: 'ET', date: 'md' });
+  const stored = { title: { en: 'Buy 100 AAPL submitted', zh: '买入 100 AAPL 已提交' }, body: { en: `Limit 226.95 · GTD ${gtd} · awaiting fill`, zh: `限价 226.95 · GTD ${gtd} · 等待成交` } };
+
+  it('shows stored clock times in the format chosen now', () => {
+    expect(notificationText(stored, 'en', createClock('12h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 4:00 PM ET · awaiting fill');
+    expect(notificationText(stored, 'zh', createClock('12h', 'zh'))).toEqual({ title: '买入 100 AAPL 已提交', body: '限价 226.95 · GTD 10/09 下午 4:00 ET · 等待成交' });
+    expect(notificationText(stored, 'en', createClock('24h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 16:00 ET · awaiting fill');
+  });
+
+  it('keeps texts stored before tokens existed as they are', () => {
+    const old = { title: { en: 'a', zh: 'a' }, body: { en: 'GTD 10/09 16:00 ET', zh: 'GTD 10/09 16:00 ET' } };
+    expect(notificationText(old, 'en', createClock('12h', 'en')).body).toBe('GTD 10/09 16:00 ET');
+  });
+
+  it('stamps the full date and time', () => {
+    const t = new Date(2026, 9, 5, 9, 41, 7).getTime();
+    expect(stampText(t, createClock('12h', 'en'))).toBe('2026-10-05 9:41:07 AM');
+    expect(stampText(t, createClock('12h', 'zh'))).toBe('2026-10-05 上午 9:41:07');
+    expect(stampText(t, createClock('24h', 'zh'))).toBe('2026-10-05 09:41:07');
   });
 });

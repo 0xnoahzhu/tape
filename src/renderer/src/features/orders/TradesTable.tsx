@@ -2,19 +2,23 @@
 
 import { useEffect } from 'react';
 import { contractLabel } from '@shared/contract';
-import { f0, f2, hms, px } from '@shared/format';
+import { f0, f2, px } from '@shared/format';
+import { timeColumn } from '@shared/timeFormat';
 import type { Execution } from '@shared/types';
+import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { useOrdersMessages } from './messages';
-import { priceOrUndefined, tradeAmount } from './model';
+import { priceOrUndefined, timeCell, tradeAmount } from './model';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
-const TRADE_COLUMNS = '90px minmax(0,2fr) 60px repeat(4,minmax(0,1fr)) 110px';
+const tradeColumns = (time: string) => `${time} minmax(0,2fr) 60px repeat(4,minmax(0,1fr)) 110px`;
 
 export function TradesTable({ executions }: { executions: Execution[] }) {
   const m = useOrdersMessages();
   const c = useCommon();
+  const clock = useClock();
+  const columns = tradeColumns(timeColumn(clock));
   const connected = useStore((s) => s.connection.status === 'connected');
 
   // Executions arrive as they happen; re-request today's list when the tab opens.
@@ -26,7 +30,7 @@ export function TradesTable({ executions }: { executions: Execution[] }) {
   return (
     <TableBody
       header={
-        <HeaderRow columns={TRADE_COLUMNS}>
+        <HeaderRow columns={columns}>
           {headers.map((h, i) => (
             <div key={i} style={{ textAlign: i >= 3 ? 'right' : 'left' }}>
               {h}
@@ -40,9 +44,9 @@ export function TradesTable({ executions }: { executions: Execution[] }) {
         const buy = e.side === 'BUY';
         const title = [e.exchange, e.execId].filter(Boolean).join(' · ');
         return (
-          <Row key={e.execId} columns={TRADE_COLUMNS} title={title}>
-            <div className="num" style={{ color: 'var(--dm)' }}>
-              {hms(e.time)}
+          <Row key={e.execId} columns={columns} title={title}>
+            <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
+              {timeCell(e.time, clock)}
             </div>
             <div className="ellipsis selectable" style={{ fontSize: 14 }}>
               {contractLabel(e.contract)}

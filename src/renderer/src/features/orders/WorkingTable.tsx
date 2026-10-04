@@ -1,22 +1,26 @@
 // Working orders table (design "ordRows" for the work tab).
 
 import { contractLabel } from '@shared/contract';
-import { f0, hms } from '@shared/format';
+import { f0 } from '@shared/format';
+import { timeColumn } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
+import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useOrdersMessages, type OrdersMessages } from './messages';
-import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFor } from './model';
+import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFor, timeCell } from './model';
 import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
 // The design gives the status column 70px, which truncates every status ("Working…");
 // it gets the largest flexible share here so "Waiting · AAPL ≥ 235.00" and the TIF with its
 // session or GTD expiry ("Pre-submitted · DAY · Overnight + Day", "Pre-submitted · GTD 10/09
-// 16:00 ET") stay readable at the minimum window width before IB's messages. Contract keeps room
+// 4:00 PM ET") stay readable at the minimum window width before IB's messages. Contract keeps room
 // for an option ("AAPL Oct16 230 Call") and Price for a stop-limit "240.00 / 239.50".
-export const WORKING_COLUMNS = '90px minmax(0,1.3fr) 60px 80px minmax(0,0.75fr) minmax(0,1.25fr) minmax(0,0.75fr) minmax(70px,2.45fr) 120px';
+// The time column is sized for the clock format (timeColumn).
+export const workingColumns = (time: string): string =>
+  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.75fr) minmax(0,1.25fr) minmax(0,0.75fr) minmax(70px,2.45fr) 120px`;
 
 function modify(o: WorkingOrder): void {
   const s = useStore.getState();
@@ -33,13 +37,15 @@ function clientLabel(clientId: number, m: OrdersMessages): string {
 export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
   const m = useOrdersMessages();
   const c = useCommon();
+  const clock = useClock();
+  const columns = workingColumns(timeColumn(clock));
   const myClientId = useStore((s) => s.connection.clientId);
   const connected = useStore((s) => s.connection.status === 'connected');
 
   return (
     <TableBody
       header={
-        <HeaderRow columns={WORKING_COLUMNS}>
+        <HeaderRow columns={columns}>
           <div>{m.time}</div>
           <div>{m.contract}</div>
           <div>{m.side}</div>
@@ -55,15 +61,15 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
       {orders.length === 0 && <EmptyRow>{connected ? c.noWorkingOrders : c.notConnected}</EmptyRow>}
       {orders.map((o) => {
         const own = o.clientId === myClientId;
-        const st = orderStatusText(o, m);
+        const st = orderStatusText(o, m, clock);
         const buy = o.action === 'BUY';
         const child = isChildRow(o, orders);
         const title = (own ? m.ownOrder(o.orderId, o.clientId) : m.otherOrder(o.orderId, o.clientId)) + (o.message ? `\n${o.message}` : '');
         const price = orderPriceText(o);
         return (
-          <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={WORKING_COLUMNS} title={title}>
-            <div className="num" style={{ color: 'var(--dm)' }}>
-              {hms(o.createdAt)}
+          <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title}>
+            <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
+              {timeCell(o.createdAt, clock)}
             </div>
             <div className="ellipsis selectable" style={{ fontSize: 14 }}>
               {child && <span style={{ color: 'var(--dm)' }}>↳ </span>}

@@ -324,10 +324,40 @@ the user's and saved as edited. The renderer edits them with the pure functions 
   (`ui/focus.ts → useRefocus`). Focus left on `<body>` would let the next Enter submit the
   order ticket (`useTicketKeys`).
 
+### Time format
+
+Settings › General › Time format (`settings.appearance.timeFormat`: `'12h'`, the default, or `'24h'`)
+decides how every clock time a person reads is written. `src/shared/timeFormat.ts` is the one
+formatter, pure and used by both processes:
+
+* `createClock(format, lang)` returns a cached `Clock`: `time(t, { seconds, timeZone, zone, date })`
+  for instants ("9:41 AM", "上午 9:41:07", "10/09 4:00 PM ET", "09:41"), `wall('16:00', { zone })` for
+  24-hour wall times as IB and the ticket keep them, `range()`, and `parts()` (digits and period apart,
+  for the lock screen). 12-hour Chinese puts 上午 / 下午 first; midnight is 12:00 AM / 上午 12:00.
+  The renderer gets the user's clock with `useClock()` (re-renders on a change, so open views follow it
+  live) or `currentClock()` outside React (`i18n/index.ts`). Model functions take the `Clock` as an
+  argument; shared helpers that predate it (`orderTiming.ts → timingText`) default to `CLOCK_24H`.
+* `parseTypedTime(text, format)` reads what users type in either format ("9:35 AM", "下午 9:35",
+  "09:35", "21:35") into 24-hour "HH:MM" (the good-after field stores that and shows it in the chosen
+  format). On the 12-hour clock an hour of 1–11 without a leading zero and without AM / PM ("3:55") is
+  ambiguous and rejected rather than read as morning. The good-after field does not filter text while
+  an IME composes (pinyin for 上午 / 下午). Tables of clock times size the column with
+  `timeColumn(clock)` and keep the cells on one line. Native
+  `datetime-local` inputs (GTD expiry) follow the OS; texts that echo their value use the clock.
+* Stored texts: notification titles and bodies are built once but read later, so their times are
+  tokens (`TOKEN_CLOCK` writes "⟦t:<ms>:<flags>⟧"); `resolveTimeTokens` writes them in the current
+  format when the bell list draws them and when main shows the OS notification.
+* Not affected: the API log (milliseconds), CSV exports and everything sent to IB.
+* The chart (`features/chart`) still formats its own times in 24-hour; it adopts the setting in a
+  follow-up.
+
 ## Conventions
 
 * Code, comments and docs are English. Chinese appears only in `zh` message tables.
 * Numbers use `src/shared/format.ts` (`f2`, `f0`, `sg`, `pct`, `px`, …) with U+2212 for negatives.
+* Clock times people read go through `src/shared/timeFormat.ts` (see *Time format*); `format.ts`'s
+  `hms` / `hmsMs` stay for the API log and CSV exports, and IB gets its own 24-hour strings
+  (`orderTiming.ts`).
 * Instruments are `ContractRef`; use `contractKey()` for map keys and `contractLabel()` for display.
 * No border radius anywhere; borders are `box-shadow: inset 0 0 0 1px var(--ln)`.
 * No npm runtime dependencies: `dependencies` stays empty; renderer libraries are devDependencies

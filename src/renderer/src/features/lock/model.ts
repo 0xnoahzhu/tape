@@ -1,14 +1,17 @@
 // Pure logic of the lock screen and the PIN dialogs (unit tested).
 
+import type { Clock, ClockParts } from '@shared/timeFormat';
 import type { Lang } from '@shared/types';
 
 // The PIN rule is shared with main (any six characters but whitespace and control characters).
 export { PIN_LENGTH, pinInput, pinLength } from '@shared/lock';
 
-/** "09:05" */
-export function lockTime(d: Date): string {
-  const p2 = (n: number) => String(n).padStart(2, '0');
-  return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+/**
+ * The large clock: digits "9:05" and the period ("AM", "上午") the screen sets smaller beside them
+ * (after the digits in English, before them in Chinese); 24-hour "09:05" has no period.
+ */
+export function lockTime(d: Date, clock: Clock): ClockParts {
+  return clock.parts(d);
 }
 
 const WEEKDAYS: Record<Lang, string[]> = {

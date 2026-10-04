@@ -5,6 +5,7 @@ import { OrderConditionType, type Contract, type Execution as IbExecution, type 
 import { contractKey, contractLabel } from '@shared/contract';
 import { f2, px } from '@shared/format';
 import { timingText, type TimingFields } from '@shared/orderTiming';
+import { TOKEN_CLOCK } from '@shared/timeFormat';
 import type { ContractRef, Execution, LocalizedText, OrderStatus, TradingSession, WorkingOrder } from '@shared/types';
 import { createMessages } from '../i18n';
 import { fromIbContract, num, parseIbTime } from './ibContract';
@@ -293,13 +294,16 @@ export interface NoticeText {
   body: LocalizedText;
 }
 
-/** "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". */
+/**
+ * "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". A GTD expiry
+ * is a time token, shown in the time format of the moment it is read (resolveTimeTokens).
+ */
 export function orderNotice(o: NoticeOrder, kind: 'submitted' | 'cancelled' | 'rejected', reason?: string): NoticeText {
   const label = contractLabel(o.contract);
   const qty = qtyText(o.totalQuantity);
   const title = m.both((t) => t[kind](o.action === 'BUY' ? t.buy : t.sell, qty, label));
   const body = m.both((t) => {
-    const parts = [priceText(o, t), timingText(o, t.sessions)];
+    const parts = [priceText(o, t), timingText(o, t.sessions, TOKEN_CLOCK)];
     if (kind === 'submitted') parts.push(t.working);
     if (kind === 'cancelled' && o.filled > 0) parts.push(t.filledOf(qtyText(o.filled), qty));
     if (kind === 'rejected' && reason) return reason;

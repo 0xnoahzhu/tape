@@ -3,6 +3,7 @@
 
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2, MINUS, pct } from '@shared/format';
+import type { Clock } from '@shared/timeFormat';
 import type { AccountSummary, ContractRef, NavPoint, Position, Quote, SecType } from '@shared/types';
 
 export type RangeKey = '7D' | 'MTD' | 'YTD' | '1Y' | 'ALL';
@@ -254,21 +255,17 @@ export function moneyShort(v: number | undefined, symbol = '$'): string {
   return `${sign}${symbol}${f0(a)}`;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-
 /**
- * X labels: "HH:MM" within two days ("HH:MM:SS" when the ticks are less than a minute apart),
- * "YYYY/M" for long ALL spans, otherwise "M/D". A label equal to the one before it is left
- * blank, so a short span never prints the same time four times.
+ * X labels: the clock time within two days ("9:41 AM" / "09:41" as the user reads clocks, with
+ * seconds when the ticks are less than a minute apart), "YYYY/M" for long ALL spans, otherwise
+ * "M/D". A label equal to the one before it is left blank, so a short span never prints the same
+ * time four times.
  */
-export function tickLabels(ticks: readonly number[], range: RangeKey): string[] {
+export function tickLabels(ticks: readonly number[], range: RangeKey, clock: Clock): string[] {
   const span = ticks.length > 1 ? ticks[ticks.length - 1] - ticks[0] : 0;
   const label = (t: number) => {
     const d = new Date(t);
-    if (span < 2 * DAY) {
-      const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-      return span < 3 * 60_000 ? `${hm}:${pad2(d.getSeconds())}` : hm;
-    }
+    if (span < 2 * DAY) return clock.time(d, { seconds: span < 3 * 60_000 });
     if (range === 'ALL' && span > 90 * DAY) return `${d.getFullYear()}/${d.getMonth() + 1}`;
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };

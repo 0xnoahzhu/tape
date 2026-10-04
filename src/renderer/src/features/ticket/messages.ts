@@ -1,6 +1,7 @@
 // Strings of the order ticket. Shared labels (Buy, Sell, Qty, TIF, …) come from i18n/common.
 
 import type { TimingProblem } from '@shared/orderTiming';
+import type { Clock } from '@shared/timeFormat';
 import type { OrderType, SecType, TimeInForce, TradingSession } from '@shared/types';
 import { createMessages } from '../../i18n';
 
@@ -13,26 +14,26 @@ export const useTicketM = createMessages({
     orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' } as Record<OrderType, string>,
     /** Label above the price box, per order type. */
     priceLabels: { LMT: 'Limit', MKT: 'Price', STP: 'Trigger', 'STP LMT': 'Trigger', TRAIL: 'Trigger' } as Record<OrderType, string>,
-    /** Tooltips of the time-in-force chips. */
-    tifHints: {
-      DAY: 'Day: works for the current trading day only; the unfilled part is cancelled when the session ends (the close, or 20:00 ET with extended hours)',
+    /** Tooltips of the time-in-force chips (times in the user's format). */
+    tifHints: (c: Clock): Record<TimeInForce, string> => ({
+      DAY: `Day: works for the current trading day only; the unfilled part is cancelled when the session ends (the close, or ${c.wall('20:00', { zone: 'ET' })} with extended hours)`,
       GTC: 'Good till cancelled: keeps working across days until filled or cancelled. IBKR still cancels it after a split or other share distribution, a dividend over 3% or a special dividend, 90 days without logging in, and at the end of the next calendar quarter',
       IOC: 'Immediate or cancel: fills whatever it can at once and cancels the rest (regular hours only)',
       FOK: 'Fill or kill: the whole quantity fills at once, or the order is cancelled (IBKR: options only)',
       OPG: 'At the open: only in the opening auction, as market-on-open (Market) or limit-on-open (Limit); the unfilled part is cancelled',
       GTD: 'Good till date: works until the date and time you choose (New York time); the unfilled part is cancelled then',
-    } as Record<TimeInForce, string>,
+    }),
     /** Title line added to a choice that cannot be combined with the rest of the order. */
     unavailable: (why: string) => `Not available: ${why}`,
     goodTill: 'Good till (ET)',
     session: 'Trading session',
-    /** Descriptions of the trading sessions (US stocks; times in New York). */
-    sessionHints: {
-      regular: 'Regular hours only, 09:30–16:00 ET',
-      extended: 'Also pre-market 04:00–09:30 and after-hours 16:00–20:00 ET',
-      overnight: 'Only IBKR’s overnight session, 20:00–03:50 ET, Sunday to Thursday nights; DAY limit orders',
+    /** Descriptions of the trading sessions (US stocks; times in New York, in the user's format). */
+    sessionHints: (c: Clock): Record<TradingSession, string> => ({
+      regular: `Regular hours only, ${c.range('09:30', '16:00')} ET`,
+      extended: `Also pre-market ${c.range('04:00', '09:30')} and after-hours ${c.range('16:00', '20:00')} ET`,
+      overnight: `Only IBKR’s overnight session, ${c.range('20:00', '03:50')} ET, Sunday to Thursday nights; DAY limit orders`,
       overnightDay: 'The overnight session, then the next trading day including pre-market and after-hours; DAY limit orders',
-    } as Record<TradingSession, string>,
+    }),
     sessionLocked: 'IBKR keeps a working order in its trading session: cancel it and place a new order to change it',
     /** A TIF chip IB refuses for the order being modified (shared/orderTiming.ts › tifChangeAllowed). */
     tifLocked: (from: string) => `IBKR does not let a working ${from} order change to this TIF (only DAY ↔ GTC, or to IOC): cancel it and place a new order`,
@@ -102,8 +103,10 @@ export const useTicketM = createMessages({
       slAbove: 'Stop loss must be above the order price',
       cond: 'Enter a valid trigger condition price',
       ice: 'Display size must be between 1 and the order quantity',
-      gat: 'Enter the activation time as HH:MM',
+      gat: 'Enter the activation time, e.g. 9:35 AM or 09:35',
     },
+    /** The good-after error in the 12-hour format, where "3:55" without AM / PM is not accepted. */
+    gat12h: 'Enter the activation time with AM or PM (3:55 PM), or in 24-hour time (15:55)',
   },
   zh: {
     title: (label: string) => `下单 · ${label}`,
@@ -112,23 +115,23 @@ export const useTicketM = createMessages({
     ask: 'Ask',
     orderTypes: { LMT: '限价', MKT: '市价', STP: '止损', 'STP LMT': '止损限价', TRAIL: '跟踪止损' } as Record<OrderType, string>,
     priceLabels: { LMT: '限价', MKT: '价格', STP: '触发价', 'STP LMT': '触发价', TRAIL: '触发价' } as Record<OrderType, string>,
-    tifHints: {
-      DAY: '当日有效：仅在当前交易日有效，交易时段结束时（收盘；含盘前盘后时为美东 20:00）未成交部分自动撤销',
+    tifHints: (c: Clock): Record<TimeInForce, string> => ({
+      DAY: `当日有效：仅在当前交易日有效，交易时段结束时（收盘；含盘前盘后时为美东 ${c.wall('20:00')}）未成交部分自动撤销`,
       GTC: '撤单前有效：跨日持续有效，直到成交或撤单。遇拆股等股份变动、超过 3% 的股息或特别股息、90 天未登录，以及下一个日历季度末，IBKR 仍会自动撤销',
       IOC: '立即成交否则撤销：立即成交能成交的部分，其余撤销（仅常规时段）',
       FOK: '全部成交否则撤销：全部数量立即成交，否则整单撤销（IBKR 仅支持期权）',
       OPG: '开盘集合竞价：只参与开盘集合竞价，市价即开盘市价单（MOO），限价即开盘限价单（LOO）；未成交部分撤销',
       GTD: '指定时间前有效：在所选日期时间（美东）之前有效，到期未成交部分撤销',
-    } as Record<TimeInForce, string>,
+    }),
     unavailable: (why: string) => `不可用：${why}`,
     goodTill: '有效至（美东）',
     session: '交易时段',
-    sessionHints: {
-      regular: '仅常规时段，美东 09:30–16:00',
-      extended: '另含盘前 04:00–09:30 和盘后 16:00–20:00（美东）',
-      overnight: '仅 IBKR 夜盘，美东周日至周四晚 20:00 至次日 03:50；限价单，当日有效',
+    sessionHints: (c: Clock): Record<TradingSession, string> => ({
+      regular: `仅常规时段，美东 ${c.range('09:30', '16:00')}`,
+      extended: `另含盘前 ${c.range('04:00', '09:30')} 和盘后 ${c.range('16:00', '20:00')}（美东）`,
+      overnight: `仅 IBKR 夜盘，美东周日至周四 ${c.wall('20:00')} 至次日 ${c.wall('03:50')}；限价单，当日有效`,
       overnightDay: '先在夜盘交易，再延续到下一交易日（含盘前盘后）；限价单，当日有效',
-    } as Record<TradingSession, string>,
+    }),
     sessionLocked: 'IBKR 不允许已提交订单更改交易时段：如需更改，请撤单后重新下单',
     tifLocked: (from: string) => `IBKR 不允许已提交的 ${from} 订单改为此有效期（仅限 DAY 与 GTC 互改，或改为 IOC）：如需更改，请撤单后重新下单`,
     problems: {
@@ -195,8 +198,9 @@ export const useTicketM = createMessages({
       slAbove: '止损价须高于委托价',
       cond: '请输入有效的触发条件价格',
       ice: '显示数量须在 1 到下单数量之间',
-      gat: '请按 HH:MM 输入生效时间',
+      gat: '请输入生效时间，如 上午 9:35 或 09:35',
     },
+    gat12h: '请输入生效时间并注明上午或下午（如 下午 3:55），或用 24 小时制（15:55）',
   },
 });
 

@@ -1,6 +1,7 @@
 import { ConjunctionConnection, Encoder, OrderConditionType, PriceCondition, TriggerMethod, type Contract, type Order, type OrderState } from './tws';
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
+import { createClock, resolveTimeTokens } from '@shared/timeFormat';
 import type { OrderRequest } from '@shared/types';
 import { buildOrders, goodAfterTime, validateOrderRequest } from './orderBuilder';
 import { applyOrderStatus, execBaseId, fillNotice, ibOrderSession, mapCompletedOrder, mapExecution, mapOpenOrder, orderKey, orderNotice } from './orderMapping';
@@ -386,9 +387,12 @@ describe('notification texts', () => {
       en: 'Limit 226.95 · DAY · Overnight + Day · awaiting fill',
       zh: '限价 226.95 · DAY · 夜盘 + 日盘 · 等待成交',
     });
-    expect(orderNotice({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', outsideRth: true }, 'submitted').body.en).toBe(
-      'Limit 226.95 · GTD 10/09 16:00 ET · Extended hours · awaiting fill',
-    );
+    // The GTD expiry is stored as a time token and shown in the time format of the moment.
+    const gtd = orderNotice({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', outsideRth: true }, 'submitted').body;
+    expect(gtd.en).toBe(`Limit 226.95 · GTD ⟦t:${Date.UTC(2026, 9, 9, 20)}:de⟧ · Extended hours · awaiting fill`);
+    expect(resolveTimeTokens(gtd.en, createClock('24h', 'en'))).toBe('Limit 226.95 · GTD 10/09 16:00 ET · Extended hours · awaiting fill');
+    expect(resolveTimeTokens(gtd.en, createClock('12h', 'en'))).toBe('Limit 226.95 · GTD 10/09 4:00 PM ET · Extended hours · awaiting fill');
+    expect(resolveTimeTokens(gtd.zh, createClock('12h', 'zh'))).toBe('限价 226.95 · GTD 10/09 下午 4:00 ET · 盘前盘后 · 等待成交');
     const opt = orderNotice({ ...order, contract: option('AAPL', '20261016', 230, 'C'), totalQuantity: 10, limitPrice: 3.1 }, 'submitted');
     expect(opt.title.en).toBe('Buy 10 AAPL 10/16 230 Call submitted');
   });

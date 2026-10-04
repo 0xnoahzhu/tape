@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
+import { createClock } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
 import { initialTicket, normalizeTicketPatch, withModifiedTiming, type StoreState, type TicketState } from '../../state/store';
-import { easternToUtc, fromLocalInput, goodTillTime, nextSessionClose, ticketTiming, toLocalInput } from './timing';
+import { useTicketM } from './messages';
+import {
+  easternToUtc,
+  fromLocalInput,
+  goodAfterCommit,
+  goodAfterDisplay,
+  goodAfterInput,
+  goodAfterTyping,
+  goodTillTime,
+  nextSessionClose,
+  ticketTiming,
+  toLocalInput,
+} from './timing';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 // 2026-10-05 is a Monday.
@@ -143,5 +156,70 @@ describe('withModifiedTiming', () => {
     expect(withModifiedTiming({ modifyingOrderId: null }, state)).toEqual({ modifyingOrderId: null });
     // Another client's order with that id is not the one being modified.
     expect(withModifiedTiming({ modifyingOrderId: 33, tif: 'DAY' }, { ...state, connection: { clientId: 8 } } as typeof state)).toEqual({ modifyingOrderId: 33, tif: 'DAY' });
+  });
+});
+
+describe('good-after time field', () => {
+  const h12en = createClock('12h', 'en');
+  const h12zh = createClock('12h', 'zh');
+  const h24 = createClock('24h', 'en');
+
+  it('shows a readable time in the clock format and anything else as typed', () => {
+    expect(goodAfterDisplay('09:35', h12en)).toBe('9:35 AM');
+    expect(goodAfterDisplay('21:35', h12zh)).toBe('下午 9:35');
+    expect(goodAfterDisplay('9:35 pm', h24)).toBe('21:35');
+    expect(goodAfterDisplay('25:00', h12en)).toBe('25:00');
+    expect(goodAfterDisplay('', h12en)).toBe('');
+  });
+
+  it('in the 12-hour format, leaves "3:55" without AM / PM as typed instead of reading it as morning', () => {
+    expect(goodAfterDisplay('3:55', h12en)).toBe('3:55');
+    expect(goodAfterDisplay('3:55', h12zh)).toBe('3:55');
+    expect(goodAfterDisplay('03:55', h12en)).toBe('3:55 AM');
+    expect(goodAfterDisplay('15:55', h12zh)).toBe('下午 3:55');
+    expect(goodAfterDisplay('3:55', h24)).toBe('03:55');
+    expect(goodAfterCommit('3:55', '12h')).toBe('3:55');
+    expect(goodAfterCommit('3:55 pm', '12h')).toBe('15:55');
+    expect(goodAfterCommit('15:55', '12h')).toBe('15:55');
+    expect(goodAfterCommit('3:55', '24h')).toBe('03:55');
+  });
+
+  it('keeps digits, separators and period markers of what is typed', () => {
+    expect(goodAfterInput('9:35 AM')).toBe('9:35 AM');
+    expect(goodAfterInput('下午 9:35')).toBe('下午 9:35');
+    expect(goodAfterInput('9:35 a.m.')).toBe('9:35 a.m.');
+    expect(goodAfterInput('9;35x!')).toBe('935');
+    expect(goodAfterInput('12:00:00:00:00')).toHaveLength(12);
+  });
+
+  it('keeps the text an IME is composing until the composition ends', () => {
+    // Pinyin on its way to 下午: filtering it to "a" would replace the IME's marked text.
+    expect(goodAfterTyping('xiawu', true)).toBe('xiawu');
+    expect(goodAfterTyping('shang', true)).toBe('shang');
+    expect(goodAfterTyping('下午 3:55', false)).toBe('下午 3:55');
+    expect(goodAfterTyping('xiawu', false)).toBe('a');
+  });
+
+  it('stores a readable time as 24-hour HH:MM when the field is left', () => {
+    expect(goodAfterCommit('9:35 AM', '12h')).toBe('09:35');
+    expect(goodAfterCommit('12:05 am', '12h')).toBe('00:05');
+    expect(goodAfterCommit('上午 12:00', '12h')).toBe('00:00');
+    expect(goodAfterCommit('下午 12:30', '12h')).toBe('12:30');
+    expect(goodAfterCommit('21:35', '12h')).toBe('21:35');
+    expect(goodAfterCommit('9:3', '12h')).toBe('9:3');
+  });
+});
+
+describe('session and TIF hints', () => {
+  it('write the session times in the clock format', () => {
+    const en = useTicketM.for('en');
+    const zh = useTicketM.for('zh');
+    expect(en.sessionHints(createClock('12h', 'en')).regular).toBe('Regular hours only, 9:30 AM–4:00 PM ET');
+    expect(en.sessionHints(createClock('24h', 'en')).regular).toBe('Regular hours only, 09:30–16:00 ET');
+    expect(en.sessionHints(createClock('12h', 'en')).overnight).toContain('8:00 PM–3:50 AM ET');
+    expect(zh.sessionHints(createClock('12h', 'zh')).extended).toBe('另含盘前 上午 4:00–9:30 和盘后 下午 4:00–8:00（美东）');
+    expect(zh.sessionHints(createClock('24h', 'zh')).overnight).toContain('美东周日至周四 20:00 至次日 03:50');
+    expect(en.tifHints(createClock('12h', 'en')).DAY).toContain('8:00 PM ET with extended hours');
+    expect(zh.tifHints(createClock('12h', 'zh')).DAY).toContain('美东 下午 8:00');
   });
 });

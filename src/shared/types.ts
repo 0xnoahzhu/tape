@@ -1,6 +1,8 @@
 // Domain models shared by the main process and the renderer.
 // Everything here must stay serializable (structured clone) because it crosses IPC.
 
+import type { TimeFormat } from './timeFormat';
+
 export type SecType = 'STK' | 'OPT' | 'IND' | 'FUT' | 'FOP' | 'CASH' | 'BAG' | 'CFD' | 'BOND' | 'WAR' | 'CRYPTO';
 export type OptionRight = 'C' | 'P';
 export type Lang = 'en' | 'zh';
@@ -512,6 +514,8 @@ export interface Settings {
   appearance: {
     theme: ThemeSetting;
     language: Lang;
+    /** Clock times: '12h' "9:41 AM" (the default) or '24h' "09:41" (shared/timeFormat.ts). */
+    timeFormat: TimeFormat;
     upColor: UpColor;
     showAccountId: boolean;
   };

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { option } from '@shared/contract';
 import type { Quote } from '@shared/types';
-import { unusualActivity, type FlowInput } from './flow';
+import { createClock } from '@shared/timeFormat';
+import { flowColumns, unusualActivity, type FlowInput } from './flow';
 
 const item = (strike: number, q: Partial<Quote>): FlowInput => ({
   contract: option('AAPL', '20261009', strike, 'P'),
@@ -35,5 +36,12 @@ describe('unusualActivity', () => {
       [330, 0.6, ['elevated']],
       [332.5, undefined, ['large']],
     ]);
+  });
+});
+
+describe('flowColumns', () => {
+  it('widens the time column for the 12-hour clock ("下午 12:00:30")', () => {
+    expect(flowColumns(createClock('12h', 'zh'))).toBe('112px minmax(0,2.2fr) repeat(5,minmax(0,1fr)) 70px');
+    expect(flowColumns(createClock('24h', 'en'))).toBe('90px minmax(0,2.2fr) repeat(5,minmax(0,1fr)) 70px');
   });
 });

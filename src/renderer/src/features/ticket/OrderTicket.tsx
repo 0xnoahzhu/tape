@@ -18,6 +18,7 @@ import {
 } from '@shared/orderTiming';
 import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
+import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { submitOrder } from '../../state/orderActions';
 import { useStore } from '../../state/store';
@@ -67,6 +68,9 @@ const qtyFontSize = (text: string) => Math.max(10, Math.min(15, Math.floor(118 /
 export function OrderTicket() {
   const m = useTicketM();
   const c = useCommon();
+  const clock = useClock();
+  const tifHints = m.tifHints(clock);
+  const sessionHints = m.sessionHints(clock);
   const symbol = useStore((s) => s.symbol);
   const t = useStore((s) => s.ticket);
   const patch = useStore((s) => s.patchTicket);
@@ -136,6 +140,7 @@ export function OrderTicket() {
     sell: c.sell,
     orderTypes: m.orderTypes,
     sessions: c.sessions,
+    clock,
     units: m.units,
     extras: m.extras,
   };
@@ -147,10 +152,18 @@ export function OrderTicket() {
       s.showToast(locked, 'error');
       return;
     }
-    const res = buildOrderRequest({ contract: s.symbol, ticket: { ...s.ticket, session }, market, hours: info });
+    const res = buildOrderRequest({ contract: s.symbol, ticket: { ...s.ticket, session }, market, hours: info, timeFormat: clock.format });
     if (!res.ok) {
       const e = res.error;
-      s.showToast(e === 'index' ? c.indexNotTradable(s.symbol.symbol) : isTimingProblem(e) ? m.problems[e] : m.errors[e], 'error');
+      const text =
+        e === 'index'
+          ? c.indexNotTradable(s.symbol.symbol)
+          : isTimingProblem(e)
+            ? m.problems[e]
+            : e === 'gat' && clock.format === '12h'
+              ? m.gat12h
+              : m.errors[e];
+      s.showToast(text, 'error');
       return;
     }
     submitOrder(pendingOrder(res.request, res.model, labels, market, s.ticket.modifyingOrderId));
@@ -408,7 +421,7 @@ export function OrderTicket() {
             {session !== 'regular' && (
               <div
                 onClick={() => patch({ advancedOpen: true })}
-                title={m.sessionHints[session]}
+                title={sessionHints[session]}
                 className="ellipsis hover-tx"
                 style={{ fontSize: 12, color: 'var(--mu)', cursor: 'pointer' }}
               >
@@ -423,7 +436,7 @@ export function OrderTicket() {
                 <Chip
                   key={k}
                   active={t.tif === k}
-                  title={why ? `${m.tifHints[k]}\n${m.unavailable(why)}` : m.tifHints[k]}
+                  title={why ? `${tifHints[k]}\n${m.unavailable(why)}` : tifHints[k]}
                   onClick={why ? undefined : () => patch({ tif: k })}
                   style={{ flex: 1, padding: '6px 0', textAlign: 'center', ...(why ? unavailableStyle : undefined) }}
                 >
@@ -438,7 +451,7 @@ export function OrderTicket() {
               <DateTimeField
                 value={goodTill ? toLocalInput(goodTill) : ''}
                 min={toLocalInput(zonedParts(now, NEW_YORK))}
-                title={m.tifHints.GTD}
+                title={tifHints.GTD}
                 onChange={(v) => patch({ goodTill: v })}
                 onFocusChange={setGtdFocus}
               />

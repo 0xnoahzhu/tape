@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react';
 import type { UnlockResult } from '@shared/types';
-import { useLang } from '../../i18n';
+import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { FingerprintIcon, LogoMark } from '../../ui/icons';
 import { clack } from './clack';
@@ -35,6 +35,7 @@ export function focusLockInput(): void {
 export function LockScreen() {
   const m = useLockMessages();
   const lang = useLang();
+  const clock = useClock();
   const lock = useStore((s) => s.lock);
   const biometricsSeen = useStore((s) => s.biometricsSeen);
   const sound = useStore((s) => s.settings.lock.sound);
@@ -178,6 +179,7 @@ export function LockScreen() {
   const success = phase === 'ok' || phase === 'out';
   const out = phase === 'out';
   const date = new Date(now);
+  const time = lockTime(date, clock);
 
   return (
     <div
@@ -230,7 +232,26 @@ export function LockScreen() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
           <LogoMark size={64} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-            <div style={{ font: '600 64px/1 var(--num)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{lockTime(date)}</div>
+            {/* Only the digits are centered: the period hangs beside them, so neither it nor the
+                language moves the clock (tabular digits keep the width while minutes change). */}
+            <div style={{ position: 'relative', font: '600 64px/1 var(--num)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
+              {time.time}
+              {time.period && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 6,
+                    [time.periodFirst ? 'right' : 'left']: 'calc(100% + 10px)',
+                    font: '500 20px/1 var(--sans)',
+                    letterSpacing: 0,
+                    color: 'var(--mu)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {time.period}
+                </div>
+              )}
+            </div>
             <div style={{ fontSize: 14, color: 'var(--mu)' }}>{lockDate(date, lang)}</div>
           </div>
         </div>

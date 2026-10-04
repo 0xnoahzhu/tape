@@ -6,6 +6,7 @@
 // and entries that cannot be repaired are skipped.
 
 import { NOTIFICATION_KINDS } from '@shared/defaults';
+import { TIME_FORMATS } from '@shared/timeFormat';
 import type {
   AppNotification,
   ComboLeg,
@@ -103,6 +104,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
   appearance: {
     theme: oneOf(['system', 'dark', 'light']),
     language: oneOf(['en', 'zh']),
+    timeFormat: oneOf(TIME_FORMATS),
     upColor: oneOf(['cn', 'us']),
     showAccountId: bool,
   },

@@ -3,6 +3,7 @@
 // (shared/orderTiming.ts) the chips are checked against. Pure, so it can be unit tested.
 
 import { NEW_YORK, zonedParts, zonedToUtc, type TimingInput } from '@shared/orderTiming';
+import { parseTypedTime, type Clock, type TimeFormat } from '@shared/timeFormat';
 import type { ContractRef, TradingSession } from '@shared/types';
 import type { TicketState } from '../../state/store';
 
@@ -113,4 +114,40 @@ export function ticketTiming(t: TicketState, contract: ContractRef, session: Tra
     goodAfter: t.goodAfter,
     goodTill: goodTill ? easternToUtc(goodTill) : undefined,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Good-after time (a New York wall time the user types)
+
+/**
+ * The good-after field when it does not have the focus: a time it can read ("09:35", "9:35 pm")
+ * in the user's format ("9:35 AM", "上午 9:35", "09:35"); anything else as typed, so the mistake
+ * stays visible next to the error. In the 12-hour format "3:55" is not a time it can read (AM or
+ * PM?), so it stays "3:55" rather than turning into "3:55 AM".
+ */
+export function goodAfterDisplay(value: string, clock: Clock): string {
+  const time = parseTypedTime(value, clock.format);
+  return time ? clock.wall(time) : value;
+}
+
+/** What the field keeps of a keystroke or paste: digits, separators and the AM / PM / 上午 / 下午 markers. */
+export function goodAfterInput(v: string): string {
+  return v.replace(/[^\d:：\s.aApPmM上下午]/g, '').slice(0, 12);
+}
+
+/**
+ * The field's text after an input event. While an IME composes (pinyin "shangwu" on its way to
+ * 上午) the text is kept as the IME wrote it: filtering it would replace the marked text and end
+ * the composition. The filter applies again once the composition ends.
+ */
+export function goodAfterTyping(v: string, composing: boolean): string {
+  return composing ? v : goodAfterInput(v);
+}
+
+/**
+ * Leaving the field stores a time it can read as 24-hour "HH:MM" (what IB gets), else the text as
+ * typed (an ambiguous "3:55" in the 12-hour format stays as typed and fails on submit).
+ */
+export function goodAfterCommit(value: string, format: TimeFormat): string {
+  return parseTypedTime(value, format) ?? value;
 }

@@ -1,6 +1,7 @@
 // Strings of the Settings page (English from the design's EN map, Chinese from its script).
 
 import { compact, f0 } from '@shared/format';
+import type { Clock } from '@shared/timeFormat';
 import { createMessages } from '../../i18n';
 import type { BiometricKind, LockBiometrics } from '@shared/types';
 import type { ShortcutId } from './logic';
@@ -86,9 +87,10 @@ const en = {
     flow: { l: 'Options flow', d: 'Unusual activity in the option chain. Requires OPRA' },
   } as Record<'depth' | 'options' | 'flow', Pair>,
   fieldsT: 'Quote field sources',
-  fields: [
+  /** Rows of the quote field table (the close time in the user's clock format). */
+  fields: (c: Clock) => [
     { l: 'Last (incl. extended hours)', tick: 'tick 4 LAST', d: 'Keeps updating pre-market and after hours' },
-    { l: "Today's close", tick: 'tick 57 LAST_RTH_TRADE', d: 'Needs genericTicks 318; shows the 16:00 close after hours' },
+    { l: "Today's close", tick: 'tick 57 LAST_RTH_TRADE', d: `Needs genericTicks 318; shows the ${c.wall('16:00')} close after hours` },
     { l: 'Previous close', tick: 'tick 9 CLOSE', d: 'Prior session close, used for change' },
     { l: 'Open / High / Low', tick: 'tick 14 / 6 / 7', d: 'Regular session' },
     { l: 'Bid / Ask', tick: 'tick 1 / 2', d: 'Includes extended-hours quotes' },
@@ -149,6 +151,9 @@ const en = {
   show: 'Show',
   hide: 'Hide',
   language: 'Language',
+  timeFormat: 'Time format',
+  hour12: '12-hour',
+  hour24: '24-hour',
   theme: 'Theme',
   system: 'System',
   dark: 'Dark',
@@ -319,9 +324,9 @@ const zh: typeof en = {
     flow: { l: '期权异动', d: '期权页的大单与异常成交，需要 OPRA 行情' },
   },
   fieldsT: '报价字段来源',
-  fields: [
+  fields: (c: Clock) => [
     { l: '最新价（含盘前盘后）', tick: 'tick 4 LAST', d: '盘前盘后时段也持续更新' },
-    { l: '今日收盘价', tick: 'tick 57 LAST_RTH_TRADE', d: '需 genericTicks 318，盘后显示 16:00 收盘价' },
+    { l: '今日收盘价', tick: 'tick 57 LAST_RTH_TRADE', d: `需 genericTicks 318，盘后显示 ${c.wall('16:00')} 收盘价` },
     { l: '昨收', tick: 'tick 9 CLOSE', d: '上一交易日收盘价，用来计算涨跌' },
     { l: '开 / 高 / 低', tick: 'tick 14 / 6 / 7', d: '常规时段' },
     { l: '买一 / 卖一', tick: 'tick 1 / 2', d: '含盘前盘后报价' },
@@ -376,6 +381,9 @@ const zh: typeof en = {
   show: '显示',
   hide: '隐藏',
   language: '语言',
+  timeFormat: '时间格式',
+  hour12: '12 小时制',
+  hour24: '24 小时制',
   theme: '主题',
   system: '跟随系统',
   dark: 'Dark',

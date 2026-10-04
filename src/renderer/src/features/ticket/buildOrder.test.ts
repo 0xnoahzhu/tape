@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSettings } from '@shared/defaults';
 import { index, option, stock } from '@shared/contract';
+import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { OrderRequest } from '@shared/types';
 import { initialTicket, type TicketState } from '../../state/store';
-import { buildOrderRequest, normalizeTime, pendingOrder, typePriceText, type BuildResult, type ReviewLabels } from './buildOrder';
+import { buildOrderRequest, pendingOrder, typePriceText, type BuildResult, type ReviewLabels } from './buildOrder';
 import type { TicketMarket } from './ticketModel';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
@@ -23,6 +24,7 @@ const labels: ReviewLabels = {
   sell: 'Sell',
   orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' },
   sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
+  clock: CLOCK_24H,
   extras: { bracket: ' · with bracket', conditional: ' · conditional', iceberg: ' · iceberg', goodAfter: (t) => ` · GAT ${t}` },
 };
 
@@ -30,7 +32,7 @@ function ok(r: BuildResult): OrderRequest {
   if (!r.ok) throw new Error(`expected ok, got ${r.error}`);
   return r.request;
 }
-const build = (patch: Partial<TicketState>, market: TicketMarket = mkt, contract = AAPL) => buildOrderRequest({ contract, ticket: ticket(patch), market });
+const build = (patch: Partial<TicketState>, market: TicketMarket = mkt, contract = AAPL) => buildOrderRequest({ contract, ticket: ticket(patch), market, timeFormat: '24h' });
 
 describe('buildOrderRequest: order types', () => {
   it('LMT buy at the ask', () => {
@@ -91,7 +93,7 @@ describe('buildOrderRequest: time in force and session', () => {
   // 2026-10-05 is a Monday; 14:00 UTC = 10:00 New York (EDT).
   const monday10 = Date.UTC(2026, 9, 5, 14, 0);
   const at = (patch: Partial<TicketState>, now = monday10, contract = AAPL, hours?: { liquidHours?: string; timeZoneId?: string }) =>
-    buildOrderRequest({ contract, ticket: ticket(patch), market: mkt, now, hours });
+    buildOrderRequest({ contract, ticket: ticket(patch), market: mkt, now, hours, timeFormat: '24h' });
   const OPT = option('AAPL', '20261016', 230, 'C');
 
   it('GTD defaults to the close of the current or next session, in New York time', () => {
@@ -223,11 +225,21 @@ describe('buildOrderRequest: condition, iceberg, good-after-time', () => {
     expect(build({ iceberg: true, iceQty: '2.5' })).toMatchObject({ error: 'ice' });
   });
 
-  it('adds a normalized good-after time', () => {
+  it('adds a normalized good-after time, typed in either format', () => {
     expect(ok(build({ goodAfter: true, goodAfterTime: '9:35' })).goodAfterTime).toBe('09:35');
+    expect(ok(build({ goodAfter: true, goodAfterTime: '15:59' })).goodAfterTime).toBe('15:59');
+    expect(ok(build({ goodAfter: true, goodAfterTime: '3:59 PM' })).goodAfterTime).toBe('15:59');
+    expect(ok(build({ goodAfter: true, goodAfterTime: '下午 3:59' })).goodAfterTime).toBe('15:59');
     expect(build({ goodAfter: true, goodAfterTime: '25:00' })).toMatchObject({ error: 'gat' });
-    expect(normalizeTime('15:59')).toBe('15:59');
-    expect(normalizeTime('9.30')).toBeNull();
+    expect(build({ goodAfter: true, goodAfterTime: '9.30' })).toMatchObject({ error: 'gat' });
+    expect(build({ goodAfter: true, goodAfterTime: '13:00 PM' })).toMatchObject({ error: 'gat' });
+    // On the 12-hour clock "3:55" may mean the afternoon: it needs AM / PM or a 24-hour form.
+    const build12 = (goodAfterTime: string) => buildOrderRequest({ contract: AAPL, ticket: ticket({ goodAfter: true, goodAfterTime }), market: mkt, timeFormat: '12h' });
+    expect(build12('3:55')).toMatchObject({ ok: false, error: 'gat' });
+    expect(build12('10:30')).toMatchObject({ ok: false, error: 'gat' });
+    expect(ok(build12('3:55 PM')).goodAfterTime).toBe('15:55');
+    expect(ok(build12('15:55')).goodAfterTime).toBe('15:55');
+    expect(ok(build12('09:35')).goodAfterTime).toBe('09:35');
   });
 });
 
@@ -256,7 +268,9 @@ describe('review rows', () => {
     expect(p.modifyOrderId).toBe(41);
     const byLabel = Object.fromEntries(p.rows.map((x) => [x.label, x]));
     expect(byLabel['Side']).toEqual({ label: 'Side', value: 'Sell', color: 'var(--dn)' });
-    expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35');
+    expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 ET');
+    const h12 = pendingOrder(r.request, r.model, { ...labels, clock: createClock('12h', 'en') }, mkt, 41);
+    expect(h12.rows.find((x) => x.label === 'TIF')?.value).toBe('GTC · Extended hours · conditional · iceberg · GAT 9:35 AM ET');
     expect(byLabel['Trigger'].value).toBe('AAPL ≥ 235.00');
     expect(byLabel['Take profit / Stop loss']).toBeUndefined();
   });
@@ -271,7 +285,7 @@ describe('review rows', () => {
 
   it('shows the GTD expiry and the overnight sessions', () => {
     const tif = (patch: Partial<TicketState>) => {
-      const r = buildOrderRequest({ contract: AAPL, ticket: ticket(patch), market: mkt, now: Date.UTC(2026, 9, 5, 14) });
+      const r = buildOrderRequest({ contract: AAPL, ticket: ticket(patch), market: mkt, now: Date.UTC(2026, 9, 5, 14), timeFormat: '24h' });
       if (!r.ok) throw new Error(r.error);
       return pendingOrder(r.request, r.model, labels, mkt).rows.find((x) => x.label === 'TIF')?.value;
     };
@@ -279,6 +293,17 @@ describe('review rows', () => {
     expect(tif({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'extended' })).toBe('GTD 10/09 16:00 ET · Extended hours');
     expect(tif({ session: 'overnightDay' })).toBe('DAY · Overnight + Day');
     expect(tif({ session: 'overnight' })).toBe('DAY · Overnight');
+  });
+
+  it('writes the GTD expiry in the clock format', () => {
+    const tif = (clock = CLOCK_24H) => {
+      const r = buildOrderRequest({ contract: AAPL, ticket: ticket({ tif: 'GTD', goodTill: '2026-10-09T16:00' }), market: mkt, now: Date.UTC(2026, 9, 5, 14), timeFormat: '24h' });
+      if (!r.ok) throw new Error(r.error);
+      return pendingOrder(r.request, r.model, { ...labels, clock }, mkt).rows.find((x) => x.label === 'TIF')?.value;
+    };
+    expect(tif(createClock('12h', 'en'))).toBe('GTD 10/09 4:00 PM ET');
+    expect(tif(createClock('12h', 'zh'))).toBe('GTD 10/09 下午 4:00 ET');
+    expect(tif(createClock('24h', 'zh'))).toBe('GTD 10/09 16:00 ET');
   });
 
   it('formats every order type', () => {
@@ -292,7 +317,7 @@ describe('review rows', () => {
 
   it('uses the multiplier and the option label', () => {
     const opt = option('AAPL', '20261016', 230, 'C');
-    const r = buildOrderRequest({ contract: opt, ticket: ticket({ qty: 2, limitPrice: 4.25 }), market: { ...mkt, minTick: 0.05, multiplier: 100 } });
+    const r = buildOrderRequest({ contract: opt, ticket: ticket({ qty: 2, limitPrice: 4.25 }), market: { ...mkt, minTick: 0.05, multiplier: 100 }, timeFormat: '24h' });
     if (!r.ok) throw new Error(r.error);
     const p = pendingOrder(r.request, r.model, labels, mkt);
     expect(p.summary).toBe('Buy 2 AAPL 10/16 230 Call');
@@ -301,7 +326,7 @@ describe('review rows', () => {
 
   it('shows the estimate in the contract currency', () => {
     const sap = { ...stock('SAP'), exchange: 'IBIS', currency: 'EUR' };
-    const r = buildOrderRequest({ contract: sap, ticket: ticket({ qty: 200, limitPrice: 231.965 }), market: mkt });
+    const r = buildOrderRequest({ contract: sap, ticket: ticket({ qty: 200, limitPrice: 231.965 }), market: mkt, timeFormat: '24h' });
     if (!r.ok) throw new Error(r.error);
     expect(pendingOrder(r.request, r.model, labels, mkt).rows.at(-1)?.value).toBe('46,393.00 EUR');
   });

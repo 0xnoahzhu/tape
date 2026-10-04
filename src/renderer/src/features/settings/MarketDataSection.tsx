@@ -3,6 +3,7 @@
 // never from assumed subscriptions.
 
 import { useMemo } from 'react';
+import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
 import { Toggle } from '../../ui/primitives';
 import { IssueNote } from './ConnectionSection';
@@ -43,6 +44,7 @@ function observedText(row: MarketRow, o: Observation | undefined, m: SettingsMes
 
 export function MarketDataSection() {
   const m = useSettingsMessages();
+  const clock = useClock();
   const obs = useObservations();
   const features = useStore((s) => s.settings.features);
   const issue = useStore((s) => (s.connection.status === 'connected' ? s.connection.marketDataIssue : undefined));
@@ -123,7 +125,7 @@ export function MarketDataSection() {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontWeight: 600 }}>{m.fieldsT}</div>
-        {m.fields.map((x) => (
+        {m.fields(clock).map((x) => (
           <div key={x.tick} style={{ display: 'grid', gridTemplateColumns: '150px 170px minmax(0,1fr)', gap: 12, fontSize: 13, alignItems: 'baseline' }}>
             <div>{x.l}</div>
             <div style={{ font: '12px/1 var(--mono)', color: 'var(--ac)' }}>{x.tick}</div>

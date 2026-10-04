@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
+import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { Execution, WorkingOrder } from '@shared/types';
 import { useOrdersMessages } from './messages';
 import {
@@ -13,6 +14,7 @@ import {
   parseGoodAfter,
   priceOrUndefined,
   ticketPatchFor,
+  timeCell,
   tradeAmount,
   workingOrders,
 } from './model';
@@ -113,6 +115,25 @@ describe('parseGoodAfter', () => {
     expect(parseGoodAfter('tomorrow')).toEqual({ label: 'tomorrow' });
     expect(parseGoodAfter('  ')).toBeNull();
   });
+
+  it('writes the label in the clock format, keeping the 24-hour ET time for the ticket', () => {
+    const h12en = createClock('12h', 'en');
+    const h12zh = createClock('12h', 'zh');
+    expect(parseGoodAfter('9:35', h12en)).toEqual({ label: '9:35 AM ET', etTime: '09:35' });
+    expect(parseGoodAfter('20261005 13:05:00 US/Eastern', h12zh)!.label).toBe('下午 1:05 ET');
+    expect(parseGoodAfter('20261205-14:35:00', h12en)!.label).toBe('9:35 AM ET');
+    expect(parseGoodAfter('20261005 21:35:00 Asia/Shanghai', h12en)!.label).toBe('9:35 PM Asia/Shanghai');
+    expect(parseGoodAfter('20261005 00:15:00', h12en)!.label).toBe('12:15 AM');
+  });
+});
+
+describe('timeCell', () => {
+  const t = new Date(2026, 9, 5, 14, 35, 7).getTime();
+  it('shows the local time with seconds in the clock format', () => {
+    expect(timeCell(t, createClock('12h', 'en'))).toBe('2:35:07 PM');
+    expect(timeCell(t, createClock('12h', 'zh'))).toBe('下午 2:35:07');
+    expect(timeCell(t, createClock('24h', 'zh'))).toBe('14:35:07');
+  });
 });
 
 describe('orderStatusText', () => {
@@ -120,45 +141,55 @@ describe('orderStatusText', () => {
 
   it('shows a pending price condition', () => {
     const o = order({ status: 'PreSubmitted', condition: { symbol: 'AAPL', operator: '>=', price: 235, outsideRth: false } });
-    expect(orderStatusText(o, en, now)).toEqual({ text: 'Waiting · AAPL ≥ 235.00', tone: 'ac' });
-    expect(orderStatusText(o, zh, now).text).toBe('等待触发 · AAPL ≥ 235.00');
+    expect(orderStatusText(o, en, CLOCK_24H, now)).toEqual({ text: 'Waiting · AAPL ≥ 235.00', tone: 'ac' });
+    expect(orderStatusText(o, zh, CLOCK_24H, now).text).toBe('等待触发 · AAPL ≥ 235.00');
   });
 
   it('falls back to the normal status once the condition released the order', () => {
     const o = order({ status: 'Submitted', tif: 'GTC', condition: { symbol: 'AAPL', operator: '<=', price: 220, outsideRth: false } });
-    expect(orderStatusText(o, en, now)).toEqual({ text: 'Submitted · GTC', tone: 'mu' });
+    expect(orderStatusText(o, en, CLOCK_24H, now)).toEqual({ text: 'Submitted · GTC', tone: 'mu' });
   });
 
   it('shows a pending good-after time until it passes', () => {
     const o = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
-    expect(orderStatusText(o, en, now)).toEqual({ text: 'After 09:35 ET · DAY', tone: 'ac' });
-    expect(orderStatusText(o, zh, now).text).toBe('定时 09:35 ET · DAY');
-    expect(orderStatusText(o, en, Date.UTC(2026, 9, 5, 14, 0)).text).toBe('Pre-submitted · DAY');
+    expect(orderStatusText(o, en, CLOCK_24H, now)).toEqual({ text: 'After 09:35 ET · DAY', tone: 'ac' });
+    expect(orderStatusText(o, zh, CLOCK_24H, now).text).toBe('定时 09:35 ET · DAY');
+    expect(orderStatusText(o, en, CLOCK_24H, Date.UTC(2026, 9, 5, 14, 0)).text).toBe('Pre-submitted · DAY');
   });
 
   it('adds trailing, iceberg, hold and IB messages', () => {
-    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3, tif: 'GTC' }), en, now).text).toBe('Submitted · GTC · 3%');
-    expect(orderStatusText(order({ orderType: 'TRAIL', auxPrice: 1.5 }), en, now).text).toBe('Submitted · DAY · $1.50');
-    expect(orderStatusText(order({ displaySize: 100 }), zh, now).text).toBe('已提交 · DAY · 冰山 100');
-    expect(orderStatusText(order({ whyHeld: 'locate' }), en, now).text).toBe('Submitted · DAY · Held: locate');
-    expect(orderStatusText(order({ message: 'Order will not be placed until 09:30' }), en, now).text).toBe(
+    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3, tif: 'GTC' }), en, CLOCK_24H, now).text).toBe('Submitted · GTC · 3%');
+    expect(orderStatusText(order({ orderType: 'TRAIL', auxPrice: 1.5 }), en, CLOCK_24H, now).text).toBe('Submitted · DAY · $1.50');
+    expect(orderStatusText(order({ displaySize: 100 }), zh, CLOCK_24H, now).text).toBe('已提交 · DAY · 冰山 100');
+    expect(orderStatusText(order({ whyHeld: 'locate' }), en, CLOCK_24H, now).text).toBe('Submitted · DAY · Held: locate');
+    expect(orderStatusText(order({ message: 'Order will not be placed until 09:30' }), en, CLOCK_24H, now).text).toBe(
       'Submitted · DAY · Order will not be placed until 09:30',
     );
   });
 
   it('describes transitional states', () => {
-    expect(orderStatusText(order({ status: 'PendingCancel' }), en, now).text).toBe('Cancelling');
-    expect(orderStatusText(order({ status: 'PendingSubmit' }), en, now).text).toBe('Submitting · DAY');
+    expect(orderStatusText(order({ status: 'PendingCancel' }), en, CLOCK_24H, now).text).toBe('Cancelling');
+    expect(orderStatusText(order({ status: 'PendingSubmit' }), en, CLOCK_24H, now).text).toBe('Submitting · DAY');
   });
 
   it('adds the GTD expiry and a session other than regular hours to the TIF', () => {
-    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), en, now).text).toBe('Submitted · DAY · Overnight + Day');
-    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), zh, now).text).toBe('已提交 · DAY · 夜盘 + 日盘');
-    expect(orderStatusText(order({ status: 'PreSubmitted', session: 'overnight' }), zh, now).text).toBe('预提交 · DAY · 夜盘');
-    expect(orderStatusText(order({ tif: 'GTC', session: 'extended', outsideRth: true }), en, now).text).toBe('Submitted · GTC · Extended hours');
-    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), en, now).text).toBe('Submitted · GTD 10/09 16:00 ET');
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), en, CLOCK_24H, now).text).toBe('Submitted · DAY · Overnight + Day');
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), zh, CLOCK_24H, now).text).toBe('已提交 · DAY · 夜盘 + 日盘');
+    expect(orderStatusText(order({ status: 'PreSubmitted', session: 'overnight' }), zh, CLOCK_24H, now).text).toBe('预提交 · DAY · 夜盘');
+    expect(orderStatusText(order({ tif: 'GTC', session: 'extended', outsideRth: true }), en, CLOCK_24H, now).text).toBe('Submitted · GTC · Extended hours');
+    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), en, CLOCK_24H, now).text).toBe('Submitted · GTD 10/09 16:00 ET');
     // Orders recorded before sessions existed: outsideRth decides.
-    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), zh, now).text).toBe('已提交 · GTC · 盘前盘后');
+    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), zh, CLOCK_24H, now).text).toBe('已提交 · GTC · 盘前盘后');
+  });
+
+  it('writes good-after and GTD times in the clock format', () => {
+    const gat = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
+    const gtd = order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(orderStatusText(gat, en, createClock('12h', 'en'), now).text).toBe('After 9:35 AM ET · DAY');
+    expect(orderStatusText(gat, zh, createClock('12h', 'zh'), now).text).toBe('定时 上午 9:35 ET · DAY');
+    expect(orderStatusText(gtd, en, createClock('12h', 'en'), now).text).toBe('Submitted · GTD 10/09 4:00 PM ET');
+    expect(orderStatusText(gtd, zh, createClock('12h', 'zh'), now).text).toBe('已提交 · GTD 10/09 下午 4:00 ET');
+    expect(orderStatusText(gtd, zh, createClock('24h', 'zh'), now).text).toBe('已提交 · GTD 10/09 16:00 ET');
   });
 });
 

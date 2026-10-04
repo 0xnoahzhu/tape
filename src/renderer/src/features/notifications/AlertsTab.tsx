@@ -2,10 +2,11 @@
 
 import { useMemo } from 'react';
 import { contractLabel } from '@shared/contract';
-import { hms, pct, px } from '@shared/format';
+import { pct, px } from '@shared/format';
 import type { PriceAlert } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { errorText } from '../../state/orderActions';
+import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useAlertMessages } from '../alerts/messages';
 import { distancePct } from '../alerts/model';
@@ -38,6 +39,7 @@ function confirmDelete(alert: PriceAlert): void {
 function AlertRow({ alert }: { alert: PriceAlert }) {
   const m = useNotificationsMessages();
   const a = useAlertMessages();
+  const clock = useClock();
   const quote = useQuote(alert.contract);
   const last = lastPrice(quote);
   const { symbol, detail } = alertInstrumentParts(alert.contract);
@@ -46,7 +48,7 @@ function AlertRow({ alert }: { alert: PriceAlert }) {
     `${m.last} ${px(last)}`,
     last != null ? pct(distancePct(alert.price, last)) : '',
     alert.repeat ? m.repeats : '',
-    !alert.active && alert.lastTriggeredAt ? m.triggered(hms(alert.lastTriggeredAt)) : '',
+    !alert.active && alert.lastTriggeredAt ? m.triggered(clock.time(alert.lastTriggeredAt, { seconds: true })) : '',
   ]
     .filter(Boolean)
     .join(' · ');

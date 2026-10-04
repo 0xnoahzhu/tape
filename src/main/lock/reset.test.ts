@@ -1,6 +1,8 @@
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { isResetConfirmation, resetWordMatches } from '@shared/lock';
+import { defaultSettings } from '@shared/defaults';
+import { loadSettings } from '../storeSchema';
 import { isTapeFile, readResetMarker, removeResetMarker, RESET_MARKER, startReset, wipeTapeData, writeResetMarker, type ResetFs, type StartResetDeps } from './reset';
 
 /** An in-memory file system: path → contents; directories are implied by their files. */
@@ -46,7 +48,7 @@ const UD = '/u/Tape';
 const LOGS = '/u/Logs/Tape';
 
 const profile = () => ({
-  [`${UD}/settings.json`]: '{"appearance":{"language":"zh","theme":"dark","upColor":"us"}}',
+  [`${UD}/settings.json`]: '{"appearance":{"language":"zh","theme":"dark","timeFormat":"24h","upColor":"us"}}',
   [`${UD}/watchlists.json`]: '[]',
   [`${UD}/alerts.json`]: '[]',
   [`${UD}/notifications.json`]: '[]',
@@ -108,6 +110,8 @@ describe('Forgot-PIN reset', () => {
       ].sort(),
     );
     expect(JSON.parse(data.get(`${UD}/settings.json`)!)).toEqual({ appearance: { language: 'zh', theme: 'dark' } });
+    // Only language and theme are kept: the time format (24-hour before) is back to the default.
+    expect(loadSettings(JSON.parse(data.get(`${UD}/settings.json`)!), defaultSettings('zh')).appearance).toMatchObject({ language: 'zh', theme: 'dark', timeFormat: '12h' });
     // The marker goes last, after the renderer storage was cleared (index.ts).
     removeResetMarker(fs, UD);
     expect(data.has(join(UD, RESET_MARKER))).toBe(false);

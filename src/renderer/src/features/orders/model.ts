@@ -4,6 +4,7 @@
 import { multiplierOf } from '@shared/contract';
 import { DASH, f0, px } from '@shared/format';
 import { isTimeInForce, NEW_YORK, parseIbDateTime, sessionOf, timingText, zonedParts } from '@shared/orderTiming';
+import { CLOCK_24H, type Clock } from '@shared/timeFormat';
 import { isOrderActive, type Execution, type OrderType, type WorkingOrder } from '@shared/types';
 import type { TicketState } from '../../state/store';
 import { toLocalInput } from '../ticket/timing';
@@ -47,6 +48,11 @@ export function isChildRow(o: WorkingOrder, rows: WorkingOrder[]): boolean {
 /** Executions newest first. */
 export function newestExecutions(executions: Execution[]): Execution[] {
   return [...executions].sort((a, b) => b.time - a.time || (a.execId < b.execId ? 1 : -1));
+}
+
+/** Time column of the order and trade lists: "9:41:07 AM", "下午 2:35:07", "14:35:07". */
+export function timeCell(t: number, clock: Clock): string {
+  return clock.time(t, { seconds: true });
 }
 
 /** Cash amount of a fill: shares × price × multiplier. */
@@ -117,7 +123,7 @@ function etHhmm(t: number): string {
 }
 
 export interface GoodAfter {
-  /** Display text, e.g. "09:35 ET". */
+  /** Display text in the clock's format, e.g. "9:35 AM ET" / "09:35 ET". */
   label: string;
   /** "HH:MM" in US/Eastern when known (for the order ticket). */
   etTime?: string;
@@ -127,15 +133,15 @@ export interface GoodAfter {
 
 /**
  * Parses IB's goodAfterTime: "YYYYMMDD HH:MM:SS US/Eastern", "YYYYMMDD-HH:MM:SS" (UTC)
- * or a bare "HH:MM" (US/Eastern, as the order ticket sends it).
+ * or a bare "HH:MM" (US/Eastern, as the order ticket sends it). The label is in `clock`'s format.
  */
-export function parseGoodAfter(raw: string): GoodAfter | null {
+export function parseGoodAfter(raw: string, clock: Clock = CLOCK_24H): GoodAfter | null {
   const s = raw.trim();
   if (!s) return null;
   const bare = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(s);
   if (bare) {
     const hhmm = `${two(Number(bare[1]))}:${bare[2]}`;
-    return { label: `${hhmm} ET`, etTime: hhmm };
+    return { label: clock.wall(hhmm, { zone: 'ET' }), etTime: hhmm };
   }
   const full = /^(\d{4})(\d{2})(\d{2})([ -])(\d{2}):(\d{2})(?::(\d{2}))?(?:\s+(\S+))?$/.exec(s);
   if (!full) return { label: s };
@@ -145,9 +151,9 @@ export function parseGoodAfter(raw: string): GoodAfter | null {
   if (full[4] === '-' && !zone) {
     const at = Date.UTC(y, mo - 1, d, h, mi, sec);
     const et = etHhmm(at);
-    return { label: `${et} ET`, etTime: et, at };
+    return { label: clock.wall(et, { zone: 'ET' }), etTime: et, at };
   }
-  if (!zone) return { label: hhmm };
+  if (!zone) return { label: clock.wall(hhmm) };
   const isEt = ET_ZONES.has(zone);
   let at: number | undefined;
   try {
@@ -155,8 +161,8 @@ export function parseGoodAfter(raw: string): GoodAfter | null {
   } catch {
     at = undefined; // unknown zone name
   }
-  if (isEt) return { label: `${hhmm} ET`, etTime: hhmm, at };
-  return { label: `${hhmm} ${zone}`, etTime: at != null ? etHhmm(at) : undefined, at };
+  if (isEt) return { label: clock.wall(hhmm, { zone: 'ET' }), etTime: hhmm, at };
+  return { label: clock.wall(hhmm, { zone }), etTime: at != null ? etHhmm(at) : undefined, at };
 }
 
 // ---------------------------------------------------------------------------
@@ -179,12 +185,13 @@ function trailText(o: WorkingOrder): string {
 
 /**
  * Status text as in the design: a pending price condition reads "Waiting · AAPL ≥ 235.00",
- * a pending good-after time "After 09:35 ET · DAY", anything else "<status> · <TIF>" plus
+ * a pending good-after time "After 9:35 AM ET · DAY", anything else "<status> · <TIF>" plus
  * trailing / iceberg details. The TIF carries a GTD expiry and a session other than regular
- * hours ("GTD 10/09 16:00 ET", "DAY · Overnight + Day"). IB warnings and hold reasons are appended.
+ * hours ("GTD 10/09 4:00 PM ET", "DAY · Overnight + Day"). IB warnings and hold reasons are
+ * appended. Times are in `clock`'s format.
  */
-export function orderStatusText(o: WorkingOrder, m: OrdersMessages, now: number = Date.now()): OrderStatusText {
-  const tif = timingText(o, m.sessions);
+export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock, now: number = Date.now()): OrderStatusText {
+  const tif = timingText(o, m.sessions, clock);
   const extra = (o.whyHeld ? ` · ${m.held}: ${o.whyHeld}` : '') + (o.message ? ` · ${o.message}` : '');
   if (o.status === 'PendingCancel') return { text: m.stCancelling + extra, tone: 'mu' };
   if (o.status === 'ApiPending' || o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
@@ -195,7 +202,7 @@ export function orderStatusText(o: WorkingOrder, m: OrdersMessages, now: number 
     const op = o.condition.operator === '>=' ? '≥' : '≤';
     return { text: `${m.waiting} · ${o.condition.symbol} ${op} ${px(o.condition.price)}${extra}`, tone: 'ac' };
   }
-  const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime) : null;
+  const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime, clock) : null;
   if (gat && !released && (gat.at == null || gat.at > now)) {
     return { text: `${m.after} ${gat.label} · ${tif}${extra}`, tone: 'ac' };
   }

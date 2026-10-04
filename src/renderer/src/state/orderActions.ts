@@ -6,6 +6,7 @@ import { timingText } from '@shared/orderTiming';
 import { orderPriceText } from '../features/orders/model';
 import { hostAppName } from '../features/settings/logic';
 import type { WorkingOrder } from '@shared/types';
+import { currentClock } from '../i18n';
 import { useCommon } from '../i18n/common';
 import { useStore, type PendingOrder } from './store';
 
@@ -120,7 +121,7 @@ export function confirmCancel(o: WorkingOrder): void {
       { label: m.contract, value: contractLabel(o.contract) },
       { label: m.side, value: o.action === 'BUY' ? m.buy : m.sell, color: o.action === 'BUY' ? 'var(--up)' : 'var(--dn)' },
       { label: `${m.qty} / ${m.price}`, value: `${f0(o.totalQuantity)} @ ${price}` },
-      { label: m.type, value: `${o.orderType} · ${timingText(o, m.sessions)}` },
+      { label: m.type, value: `${o.orderType} · ${timingText(o, m.sessions, currentClock())}` },
     ],
     label: m.cancelOrderLabel,
     danger: true,

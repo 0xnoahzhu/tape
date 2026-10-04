@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from './contract';
 import {
-  easternShort,
   ibEasternTime,
   isTimingProblem,
   overnightEligible,
@@ -160,7 +159,6 @@ describe('time zones', () => {
     expect(parseIbDateTime('20261009 16:00:00 Mars/Olympus')).toBeUndefined();
     expect(parseIbDateTime('soon')).toBeUndefined();
     expect(parseIbDateTime(undefined)).toBeUndefined();
-    expect(easternShort(Date.UTC(2026, 9, 9, 20))).toBe('10/09 16:00');
   });
 });
 

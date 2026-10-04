@@ -2,6 +2,7 @@
 // interest and premium. IB does not stream individual option prints through this API, so
 // rows are per contract (not per trade).
 
+import { timeColumn, type Clock } from '@shared/timeFormat';
 import type { ContractRef, OptionRight, Quote } from '@shared/types';
 import { markOf } from './chain';
 
@@ -80,4 +81,9 @@ export function chainTotals(items: Array<Pick<FlowInput, 'right' | 'quote'>>): {
     }
   }
   return t;
+}
+
+/** Grid columns of the flow list; the time column is sized for the clock format. */
+export function flowColumns(clock: Pick<Clock, 'format'>): string {
+  return `${timeColumn(clock)} minmax(0,2.2fr) repeat(5,minmax(0,1fr)) 70px`;
 }

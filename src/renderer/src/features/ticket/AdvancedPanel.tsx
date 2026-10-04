@@ -1,16 +1,18 @@
 // The ticket's "Advanced" section: trading session, bracket, price condition, iceberg and
 // good-after-time. Switches that do not combine with the session or TIF stay off and say why.
 
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { pct } from '@shared/format';
 import { TRADING_SESSIONS, unavailableReason, type TimingInput } from '@shared/orderTiming';
 import type { TradingSession } from '@shared/types';
+import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import type { TicketState } from '../../state/store';
 import { Toggle } from '../../ui/primitives';
 import { TextField } from './fields';
 import { useTicketM } from './messages';
 import type { TicketModel } from './ticketModel';
+import { goodAfterCommit, goodAfterDisplay, goodAfterInput, goodAfterTyping } from './timing';
 
 /** A clickable row with a label (and optional description) and a switch on the right. */
 function SwitchRow({
@@ -48,6 +50,43 @@ function SwitchRow({
 }
 
 /**
+ * The good-after time (New York): typed in either format ("9:35 AM", "上午 9:35", "09:35",
+ * "21:35"), shown in the user's format once the field is left, and kept as 24-hour "HH:MM".
+ * Text an IME is still composing (pinyin on its way to 上午 / 下午) is left alone until it ends.
+ */
+function GoodAfterField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const clock = useClock();
+  /** The text being typed; null while the field shows the stored time. */
+  const [draft, setDraft] = useState<string | null>(null);
+  const composing = useRef(false);
+  const type = (v: string) => {
+    const next = goodAfterTyping(v, composing.current);
+    setDraft(next);
+    onChange(next);
+  };
+  return (
+    <TextField
+      value={draft ?? goodAfterDisplay(value, clock)}
+      placeholder={clock.wall('09:35')}
+      numeric={false}
+      onChange={type}
+      onCompositionStart={() => {
+        composing.current = true;
+      }}
+      onCompositionEnd={(v) => {
+        composing.current = false;
+        type(v);
+      }}
+      onBlur={() => {
+        composing.current = false;
+        if (draft != null) onChange(goodAfterCommit(goodAfterInput(draft), clock.format));
+        setDraft(null);
+      }}
+    />
+  );
+}
+
+/**
  * Trading session (design-style segmented control, two by two so "Overnight + Day" fits), with a
  * line describing the selected one. Sessions that do not combine with the rest of the order are
  * inert and say why; a working order's session cannot change at all.
@@ -55,6 +94,7 @@ function SwitchRow({
 function SessionControl({ timing, locked, onChange }: { timing: TimingInput; locked: boolean; onChange: (s: TradingSession) => void }) {
   const m = useTicketM();
   const c = useCommon();
+  const hints = m.sessionHints(useClock());
   const reason = (k: TradingSession): string | null => {
     if (k === timing.session) return null;
     if (locked) return m.sessionLocked;
@@ -75,7 +115,7 @@ function SessionControl({ timing, locked, onChange }: { timing: TimingInput; loc
               aria-checked={on}
               aria-disabled={!!why}
               onClick={why || on ? undefined : () => onChange(k)}
-              title={why ? `${m.sessionHints[k]}\n${m.unavailable(why)}` : m.sessionHints[k]}
+              title={why ? `${hints[k]}\n${m.unavailable(why)}` : hints[k]}
               className="ellipsis"
               style={{
                 height: 28,
@@ -94,7 +134,7 @@ function SessionControl({ timing, locked, onChange }: { timing: TimingInput; loc
           );
         })}
       </div>
-      <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--dm)' }}>{m.sessionHints[timing.session]}</div>
+      <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--dm)' }}>{hints[timing.session]}</div>
     </div>
   );
 }
@@ -257,7 +297,7 @@ export function AdvancedPanel({
       {t.goodAfter && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center' }}>
           <div style={{ fontSize: 11, color: 'var(--dm)' }}>{m.activateAt}</div>
-          <TextField value={t.goodAfterTime} placeholder="09:35" numeric={false} onChange={(v) => patch({ goodAfterTime: v.replace(/[^\d:]/g, '').slice(0, 5) })} />
+          <GoodAfterField value={t.goodAfterTime} onChange={(goodAfterTime) => patch({ goodAfterTime })} />
         </div>
       )}
     </div>

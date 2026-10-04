@@ -9,6 +9,7 @@
 // for US stocks and ETFs, with DAY limit orders and without iceberg, condition or good-after time.
 // A working order can change its TIF only between DAY and GTC, or to IOC (tifChangeAllowed).
 
+import { CLOCK_24H, type Clock } from './timeFormat';
 import type { ContractRef, TimeInForce, TradingSession } from './types';
 
 export const TIME_IN_FORCES: readonly TimeInForce[] = ['DAY', 'GTC', 'IOC', 'FOK', 'OPG', 'GTD'];
@@ -237,12 +238,6 @@ export function parseIbDateTime(s: string | undefined): number | undefined {
   }
 }
 
-/** "10/09 16:00" in New York time. */
-export function easternShort(t: number): string {
-  const w = zonedParts(t, NEW_YORK);
-  return `${w.ymd.slice(4, 6)}/${w.ymd.slice(6, 8)} ${w.hhmm}`;
-}
-
 /** The order fields timingText describes (a request or a working order). */
 export interface TimingFields {
   tif: string;
@@ -253,13 +248,14 @@ export interface TimingFields {
 
 /**
  * TIF and trading session as shown in reviews, lists and notifications: "DAY",
- * "GTC · Extended hours", "DAY · Overnight + Day", "GTD 10/09 16:00 ET".
+ * "GTC · Extended hours", "DAY · Overnight + Day", "GTD 10/09 4:00 PM ET" (the expiry in
+ * `clock`'s format; 24-hour "GTD 10/09 16:00 ET" without one).
  */
-export function timingText(o: TimingFields, sessions: Record<TradingSession, string>): string {
+export function timingText(o: TimingFields, sessions: Record<TradingSession, string>, clock: Clock = CLOCK_24H): string {
   let tif = o.tif || 'DAY';
   if (tif === 'GTD' && o.goodTillDate) {
     const at = parseIbDateTime(o.goodTillDate);
-    tif = at != null ? `GTD ${easternShort(at)} ET` : `GTD ${o.goodTillDate}`;
+    tif = at != null ? `GTD ${clock.time(at, { timeZone: NEW_YORK, zone: 'ET', date: 'md' })}` : `GTD ${o.goodTillDate}`;
   }
   const session = sessionOf(o);
   return session === 'regular' ? tif : `${tif} · ${sessions[session]}`;

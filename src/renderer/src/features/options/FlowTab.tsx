@@ -3,15 +3,16 @@
 
 import { useMemo } from 'react';
 import { contractKey, contractLabel, shortExpiry } from '@shared/contract';
-import { DASH, f0, f2, hms } from '@shared/format';
-import { chainTotals, unusualActivity, type FlowInput } from './flow';
+import { DASH, f0, f2 } from '@shared/format';
+import { useClock } from '../../i18n';
+import { chainTotals, flowColumns, unusualActivity, type FlowInput } from './flow';
 import { useM } from './messages';
 import type { DeskModel } from './model';
 
-const COLS = '90px minmax(0,2.2fr) repeat(5,minmax(0,1fr)) 70px';
-
 export function FlowTab({ model }: { model: DeskModel }) {
   const m = useM();
+  const clock = useClock();
+  const cols = flowColumns(clock);
   const { quotedRows, quotes, exp, uq } = model;
   const items: FlowInput[] = useMemo(
     () =>
@@ -57,7 +58,7 @@ export function FlowTab({ model }: { model: DeskModel }) {
             {exp ? m.flowNote(shortExpiry(exp.expiry), quotedRows.length) : ''}
           </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '8px 24px', fontSize: 11, color: 'var(--dm)', boxShadow: 'inset 0 -1px 0 var(--ln)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, padding: '8px 24px', fontSize: 11, color: 'var(--dm)', boxShadow: 'inset 0 -1px 0 var(--ln)' }}>
           <div>{m.time}</div>
           <div>{m.contract}</div>
           <div>{m.side}</div>
@@ -72,9 +73,9 @@ export function FlowTab({ model }: { model: DeskModel }) {
           {rows.map((f) => (
             <div
               key={contractKey(f.contract)}
-              style={{ display: 'grid', gridTemplateColumns: COLS, gap: 12, padding: '0 24px', height: 38, alignItems: 'center', boxShadow: 'inset 0 -1px 0 var(--ln2)', font: '12.5px/1 var(--num)' }}
+              style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, padding: '0 24px', height: 38, alignItems: 'center', boxShadow: 'inset 0 -1px 0 var(--ln2)', font: '12.5px/1 var(--num)' }}
             >
-              <div style={{ color: 'var(--dm)' }}>{f.time ? hms(f.time) : DASH}</div>
+              <div style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>{f.time ? clock.time(f.time, { seconds: true }) : DASH}</div>
               <div className="ellipsis" style={{ fontFamily: 'var(--sans)', fontSize: 13, color: f.right === 'C' ? 'var(--up)' : 'var(--dn)' }}>
                 {contractLabel(f.contract)}
               </div>

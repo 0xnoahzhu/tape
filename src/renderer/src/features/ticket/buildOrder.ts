@@ -4,6 +4,7 @@
 import { contractLabel, isTradable } from '@shared/contract';
 import { f0, parseNum, roundToTick } from '@shared/format';
 import { ibEasternTime, sessionOutsideRth, timingProblem, timingText, type TimingProblem } from '@shared/orderTiming';
+import { parseTypedTime, type Clock, type TimeFormat } from '@shared/timeFormat';
 import type { ContractRef, OrderRequest, OrderType, SecType, TradingSession } from '@shared/types';
 import type { ConfirmRow, PendingOrder, TicketState } from '../../state/store';
 import { conditionContract, money, positive, priceText, resolveTicket, type TicketMarket, type TicketModel } from './ticketModel';
@@ -34,21 +35,13 @@ export interface OrderInput {
   now?: number;
   /** Trading hours of the instrument, for the default GTD expiry. */
   hours?: SessionHours;
+  /** The user's clock format: in '12h' a good-after "3:55" without AM / PM is ambiguous. */
+  timeFormat: TimeFormat;
 }
 
 export type BuildResult = { ok: true; request: OrderRequest; model: TicketModel } | { ok: false; error: TicketError };
 
-/** "9:35" -> "09:35"; null when not a valid 24h time. */
-export function normalizeTime(s: string): string | null {
-  const m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(s);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (h > 23 || min > 59) return null;
-  return `${String(h).padStart(2, '0')}:${m[2]}`;
-}
-
-export function buildOrderRequest({ contract, ticket: t, market, now = Date.now(), hours }: OrderInput): BuildResult {
+export function buildOrderRequest({ contract, ticket: t, market, now = Date.now(), hours, timeFormat }: OrderInput): BuildResult {
   if (!isTradable(contract)) return { ok: false, error: 'index' };
   if (!Number.isInteger(t.qty) || t.qty <= 0) return { ok: false, error: 'qty' };
 
@@ -125,7 +118,8 @@ export function buildOrderRequest({ contract, ticket: t, market, now = Date.now(
   }
 
   if (t.goodAfter) {
-    const time = normalizeTime(t.goodAfterTime);
+    // Typed in either format ("9:35 AM", "09:35", "21:35"); IB gets 24-hour "HH:MM" (ET).
+    const time = parseTypedTime(t.goodAfterTime, timeFormat);
     if (!time) return { ok: false, error: 'gat' };
     req.goodAfterTime = time;
   }
@@ -147,6 +141,8 @@ export interface ReviewLabels {
   sell: string;
   orderTypes: Record<OrderType, string>;
   sessions: Record<TradingSession, string>;
+  /** Clock times (GTD expiry, good-after time) in the user's format. */
+  clock: Clock;
   /** Quantity with its unit ("100 股" in Chinese); the bare number when absent. */
   units?: (qty: string, secType: SecType) => string;
   extras: { bracket: string; conditional: string; iceberg: string; goodAfter: (t: string) => string };
@@ -174,15 +170,15 @@ export function typePriceText(req: OrderRequest, labels: ReviewLabels, minTick: 
   }
 }
 
-/** TIF, session and the order's extra attributes, e.g. "GTD 10/09 16:00 ET · Extended hours · GAT 09:35". */
+/** TIF, session and the order's extra attributes, e.g. "GTD 10/09 4:00 PM ET · Extended hours · GAT 9:35 AM ET". */
 export function tifText(req: OrderRequest, labels: ReviewLabels): string {
   const x = labels.extras;
   return (
-    timingText(req, labels.sessions) +
+    timingText(req, labels.sessions, labels.clock) +
     (req.bracket ? x.bracket : '') +
     (req.condition ? x.conditional : '') +
     (req.displaySize != null ? x.iceberg : '') +
-    (req.goodAfterTime ? x.goodAfter(req.goodAfterTime) : '')
+    (req.goodAfterTime ? x.goodAfter(labels.clock.wall(req.goodAfterTime, { zone: 'ET' })) : '')
   );
 }
 

@@ -1,6 +1,7 @@
 // Defaults for first launch.
 
 import { index, stock } from './contract';
+import { DEFAULT_TIME_FORMAT } from './timeFormat';
 import type { Lang, NotificationKind, Settings, Watchlist } from './types';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['fill', 'order', 'price', 'opt', 'conn', 'sys'];
@@ -18,7 +19,7 @@ export function defaultSettings(language: Lang = 'en'): Settings {
       autoReconnect: true,
     },
     trading: { confirmOrders: true, defaultQty: 100, outsideRthDefault: false },
-    appearance: { theme: 'system', language, upColor: 'cn', showAccountId: true },
+    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, upColor: 'cn', showAccountId: true },
     features: { depth: false, options: true, flow: true },
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },

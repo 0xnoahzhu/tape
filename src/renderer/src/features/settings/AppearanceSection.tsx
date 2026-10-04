@@ -1,5 +1,6 @@
-// Settings › General: language, theme, up/down color convention.
+// Settings › General: language, time format, theme, up/down color convention.
 
+import type { TimeFormat } from '@shared/timeFormat';
 import type { Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
 import { useSettingsMessages } from './messages';
@@ -32,6 +33,15 @@ export function AppearanceSection() {
         ]}
         value={a.language}
         onChange={(language) => saveSettings({ appearance: { language } })}
+      />
+      <OptionRow<TimeFormat>
+        label={m.timeFormat}
+        options={[
+          { key: '12h', label: m.hour12 },
+          { key: '24h', label: m.hour24 },
+        ]}
+        value={a.timeFormat}
+        onChange={(timeFormat) => saveSettings({ appearance: { timeFormat } })}
       />
       <OptionRow<ThemeSetting>
         label={m.theme}

@@ -1,7 +1,8 @@
 // Pure helpers for the bell panel.
 
 import { contractLabel } from '@shared/contract';
-import type { AppNotification, ContractRef, NotificationKind } from '@shared/types';
+import { resolveTimeTokens, type Clock } from '@shared/timeFormat';
+import type { AppNotification, ContractRef, Lang, NotificationKind } from '@shared/types';
 import type { Page } from '../../state/store';
 import type { NotificationsMessages } from './messages';
 
@@ -48,6 +49,16 @@ export function relativeTime(t: number, now: number, m: Pick<NotificationsMessag
   const hours = Math.round(minutes / 60);
   if (hours < 24) return m.hoursAgo(hours);
   return m.daysAgo(Math.round(hours / 24));
+}
+
+/** Title and body in a language, with their clock times (stored as tokens) in `clock`'s format. */
+export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lang: Lang, clock: Clock): { title: string; body: string } {
+  return { title: resolveTimeTokens(n.title[lang], clock), body: resolveTimeTokens(n.body[lang], clock) };
+}
+
+/** Full date and time of a notification or alert trigger: "2026-10-05 9:41:07 AM", "2026-10-05 下午 2:35:07". */
+export function stampText(t: number, clock: Clock): string {
+  return clock.time(t, { date: 'ymd', seconds: true });
 }
 
 /**

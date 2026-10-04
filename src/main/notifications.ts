@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { Notification } from 'electron';
 import type { NewNotification } from '@shared/ipc';
+import { createClock, resolveTimeTokens } from '@shared/timeFormat';
 import type { AppNotification } from '@shared/types';
 import type { MainContext, Notifier } from './context';
 import { iconImage } from './appearance';
@@ -55,13 +56,15 @@ export function createNotifier(ctx: MainContext): Notifier {
     if (!Notification.isSupported()) return;
     const settings = ctx.store.getSettings();
     const lang = settings.appearance.language;
+    // Clock times in the stored texts follow the time format set now.
+    const clock = createClock(settings.appearance.timeFormat, lang);
     // macOS always shows the app icon; elsewhere pass the theme-matched one.
     const icon = process.platform === 'darwin' ? null : iconImage(ctx.appearance.isDark(), 'window');
     const os = new Notification({
       id: item.id,
       groupId: item.kind,
-      title: item.title[lang],
-      body: item.body[lang],
+      title: resolveTimeTokens(item.title[lang], clock),
+      body: resolveTimeTokens(item.body[lang], clock),
       silent: !settings.notifications.sound,
       ...(icon ? { icon } : {}),
     });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
+import type { TimeFormat } from '@shared/timeFormat';
 import type { Lang, OrderRequest, WorkingOrder } from '@shared/types';
 import { confirmCancel, orderErrorText, sendOrder } from './orderActions';
 import { useStore } from './store';
@@ -16,13 +17,13 @@ const GATEWAY_HINT = 'Turn off “Read-Only API” in IB Gateway › Configure 
 const TWS_HINT = 'Turn off “Read-Only API” in TWS › Global Configuration › API › Settings to trade.';
 
 /** The connected port, the configured mode and the UI language. */
-function setUp(port: number, mode: 'tws' | 'gateway' = 'gateway', language: Lang = 'en') {
+function setUp(port: number, mode: 'tws' | 'gateway' = 'gateway', language: Lang = 'en', timeFormat: TimeFormat = '12h') {
   useStore.setState((s) => ({
     toast: null,
     confirm: null,
     pendingOrder: null,
     connection: { ...s.connection, status: 'connected', port },
-    settings: { ...s.settings, connection: { ...s.settings.connection, mode, port }, appearance: { ...s.settings.appearance, language } },
+    settings: { ...s.settings, connection: { ...s.settings.connection, mode, port }, appearance: { ...s.settings.appearance, language, timeFormat } },
   }));
 }
 
@@ -165,7 +166,10 @@ describe('order toasts', () => {
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `${IB_321} ${GATEWAY_HINT}` });
 
     confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', session: 'extended', outsideRth: true });
-    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 16:00 ET · Extended hours');
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 4:00 PM ET · Extended hours');
+    setUp(4002, 'gateway', 'zh', '24h');
+    confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 16:00 ET');
     setUp(4002, 'gateway', 'zh');
     confirmCancel({ ...order, session: 'overnightDay', outsideRth: true });
     expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: '类型', value: 'LMT · DAY · 夜盘 + 日盘' });

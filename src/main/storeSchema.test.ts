@@ -108,6 +108,13 @@ describe('loadSettings', () => {
     expect(s.lock).toEqual({ autoLock: '60', customMinutes: 90, unlockWith: 'biometric', sound: true });
   });
 
+  it('defaults the time format to 12-hour, also for settings saved before it existed', () => {
+    expect(defaults.appearance.timeFormat).toBe('12h');
+    expect(loadSettings({ appearance: { theme: 'dark', language: 'zh', upColor: 'us', showAccountId: false } }, defaults).appearance.timeFormat).toBe('12h');
+    expect(loadSettings({ appearance: { timeFormat: '24h' } }, defaults).appearance.timeFormat).toBe('24h');
+    for (const bad of ['24', 'h24', 24, true, null, '']) expect(loadSettings({ appearance: { timeFormat: bad } }, defaults).appearance.timeFormat).toBe('12h');
+  });
+
   it('validates the lock preferences', () => {
     const s = loadSettings({ lock: { autoLock: 'custom', customMinutes: '5000', unlockWith: 'face', sound: 0, pin: '123456' } }, defaults);
     expect(s.lock).toEqual({ autoLock: 'custom', customMinutes: 1440, unlockWith: 'biometric', sound: false });
@@ -124,6 +131,12 @@ describe('applySettingsPatch', () => {
     expect(next.appearance.theme).toBe('dark');
     expect(next.appearance.language).toBe('zh');
     expect(next.connection.port).toBe(4001);
+  });
+
+  it('changes the time format and keeps it on an invalid patch', () => {
+    const h24 = applySettingsPatch(current, { appearance: { timeFormat: '24h' } });
+    expect(h24.appearance).toMatchObject({ timeFormat: '24h', language: 'zh', theme: 'system' });
+    expect(applySettingsPatch(h24, { appearance: { timeFormat: 'am/pm' as never } }).appearance.timeFormat).toBe('24h');
   });
 
   it('keeps the current value (not the default) when the patch is invalid', () => {
