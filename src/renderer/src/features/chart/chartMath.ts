@@ -247,6 +247,8 @@ export interface ChartGeometry {
   ma: string;
   /** Right axis labels at 15 / 50 / 85 % of the height. */
   axis: Array<{ frac: number; value: number }>;
+  /** Highest high and lowest low of the bars in view (full-series indices), for the extreme markers. */
+  extremes: { high: Extreme; low: Extreme };
   /** Price → viewBox y. */
   y(price: number): number;
   /** Fraction of the height (0 = top) → price. */
@@ -255,6 +257,11 @@ export interface ChartGeometry {
   indexAt(fracX: number): number | null;
   /** viewBox x of the center of a bar (full-series index). */
   centerX(index: number): number;
+}
+
+export interface Extreme {
+  index: number;
+  price: number;
 }
 
 export interface ChartOptions {
@@ -287,12 +294,22 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
   let hi = -Infinity;
   let lo = Infinity;
   let maxVol = 0;
+  let hiIndex = v0;
+  let loIndex = v0;
   for (let i = v0; i < v1; i++) {
     const b = all[i];
-    if (b.high > hi) hi = b.high;
-    if (b.low < lo) lo = b.low;
+    if (b.high > hi) {
+      hi = b.high;
+      hiIndex = i;
+    }
+    if (b.low < lo) {
+      lo = b.low;
+      loIndex = i;
+    }
     if (b.volume > maxVol) maxVol = b.volume;
   }
+  // Extremes of the bars themselves, before the live price may widen the range.
+  const extremes = { high: { index: hiIndex, price: hi }, low: { index: loIndex, price: lo } };
   if (v1 >= n) {
     for (const p of opts.include ?? []) {
       if (!finite(p) || p <= 0) continue;
@@ -359,6 +376,7 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
     paths: { upWicks, upBodies, dnWicks, dnBodies, upVolume, dnVolume },
     ma: maPts.length > 1 ? maPts.join(' ') : '',
     axis: [0.15, 0.5, 0.85].map((frac) => ({ frac, value: hi - range * frac })),
+    extremes,
     y,
     priceAt: (fracY) => hi - range * fracY,
     indexAt: (fracX) => {
@@ -470,6 +488,40 @@ export function spreadAlertTags(ys: number[], lastY: number | null, height: numb
 /** Whether an axis label at `labelY` stays clear of a tag `tagH` px tall centered at `tagY`. */
 export function clearOfTag(labelY: number, tagY: number, tagH: number): boolean {
   return Math.abs(labelY - tagY) >= (AXIS_LABEL_H + tagH) / 2 + TAG_GAP;
+}
+
+// ---------------------------------------------------------------------------
+// Extreme markers
+
+/** Leader of an extreme marker: a short diagonal away from the wick, then a horizontal run (px). */
+export const EXTREME_DIAG = 6;
+export const EXTREME_RUN = 10;
+/** Half the label height plus a margin: labels stay this far inside the plot. */
+const EXTREME_EDGE = 9;
+
+export interface ExtremeLayout {
+  /** SVG polyline points in plot pixels: wick tip, elbow, end of the leader. */
+  points: string;
+  /** Label anchor (px): the leader's end; the label extends to the right (dir 1) or left (dir -1). */
+  x: number;
+  y: number;
+  dir: 1 | -1;
+}
+
+/**
+ * Leader and label position for the highest (kind 'high') or lowest ('low') bar in view. The
+ * marker points into the free side: left when the bar is in the right 40 % of the plot (the
+ * label would otherwise run into the price axis), right otherwise; up for the high, down for
+ * the low, kept inside the plot vertically.
+ */
+export function extremeLayout(tipX: number, tipY: number, width: number, height: number, kind: 'high' | 'low'): ExtremeLayout {
+  const dir: 1 | -1 = tipX > width * 0.6 ? -1 : 1;
+  const want = kind === 'high' ? tipY - EXTREME_DIAG : tipY + EXTREME_DIAG;
+  const y = clamp(want, EXTREME_EDGE, Math.max(EXTREME_EDGE, height - EXTREME_EDGE));
+  const elbowX = tipX + dir * EXTREME_DIAG;
+  const endX = elbowX + dir * EXTREME_RUN;
+  const r = (v: number) => Math.round(v * 10) / 10;
+  return { points: `${r(tipX)},${r(tipY)} ${r(elbowX)},${r(y)} ${r(endX)},${r(y)}`, x: endX, y, dir };
 }
 
 // ---------------------------------------------------------------------------

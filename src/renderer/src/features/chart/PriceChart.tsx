@@ -21,6 +21,7 @@ import {
   axisPrice,
   buildChart,
   clearOfTag,
+  extremeLayout,
   formatBarTime,
   LAST_TAG_H,
   LATEST_VIEW,
@@ -94,6 +95,17 @@ const plotNote: CSSProperties = {
   pointerEvents: 'none',
 };
 const PULSE_CSS = '@keyframes tape-chart-pulse { 0%, 100% { opacity: 0.2 } 50% { opacity: 0.9 } }';
+/** Highest / lowest price in view: muted text on the panel color, so lines behind it do not cut through. */
+const extremeTag: CSSProperties = {
+  position: 'absolute',
+  transform: 'translateY(-50%)',
+  padding: '1px 3px',
+  background: 'var(--p)',
+  font: '11px/1 var(--num)',
+  color: 'var(--mu)',
+  whiteSpace: 'nowrap',
+  pointerEvents: 'none',
+};
 /** The "Latest" button sits above the crosshair's time chip (SMALL_TAG_H tall at the bottom edge), which it would hide. */
 const LATEST_BOTTOM = SMALL_TAG_H + 6;
 
@@ -332,6 +344,16 @@ export const PriceChart = memo(function PriceChart({
   const crossStroke = line({ stroke: 'var(--dm)', strokeDasharray: '2 3' });
   const paths = geo?.paths;
 
+  // Highest high and lowest low of the bars in view, marked with a leader and their price.
+  const extremes =
+    geo && size.w > 0 && size.h > 0
+      ? (['high', 'low'] as const).map((kind) => {
+          const e = geo.extremes[kind];
+          const layout = extremeLayout((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind);
+          return { kind, price: e.price, ...layout };
+        })
+      : [];
+
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
   const olderEmpty = older?.status === 'empty' && near;
@@ -390,6 +412,22 @@ export const PriceChart = memo(function PriceChart({
             {crossX != null && <line x1={crossX} x2={crossX} y1={0} y2={VB_H} style={crossStroke} />}
             {crossY != null && <line x1={0} x2={VB_W} y1={crossY * VB_H} y2={crossY * VB_H} style={crossStroke} />}
           </svg>
+          {extremes.length > 0 && (
+            <svg width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
+              {extremes.map((e) => (
+                <polyline key={e.kind} points={e.points} style={{ fill: 'none', stroke: 'var(--dm)', strokeWidth: 1 }} />
+              ))}
+            </svg>
+          )}
+          {extremes.map((e) => (
+            <div
+              key={e.kind}
+              data-extreme={e.kind}
+              style={{ ...extremeTag, top: e.y, ...(e.dir === 1 ? { left: e.x } : { right: size.w - e.x }) }}
+            >
+              {axisPrice(e.price, minTick)}
+            </div>
+          ))}
           {!geo && message && (
             <div
               style={{

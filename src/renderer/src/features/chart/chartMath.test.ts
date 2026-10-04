@@ -8,6 +8,7 @@ import {
   buildChart,
   cleanBars,
   clearOfTag,
+  extremeLayout,
   firstAtOrAfter,
   formatBarTime,
   isCurrentBar,
@@ -435,5 +436,43 @@ describe('right axis tags', () => {
     expect(clearOfTag(100, 117, 20)).toBe(true);
     expect(clearOfTag(100, 85, 17)).toBe(false);
     expect(clearOfTag(100, 84, 17)).toBe(true);
+  });
+});
+
+describe('extreme markers', () => {
+  it('finds the highest high and lowest low of the bars in view only', () => {
+    const bars = [bar(1, 10, 50, 9, 10), bar(2, 10, 12, 1, 11), ...Array.from({ length: 40 }, (_, i) => bar(3 + i, 20, 21 + (i === 30 ? 9 : 0), 19 - (i === 10 ? 5 : 0), 20))];
+    // The newest 30 bars: the old 50 high and 1 low are out of view.
+    const g = buildChart(bars, { count: 30, showMa: false })!;
+    expect(g.extremes.high).toEqual({ index: 32, price: 30 });
+    expect(g.extremes.low).toEqual({ index: 12, price: 14 });
+    // The whole series in view: the old extremes win.
+    const all = buildChart(bars, { count: 60, showMa: false })!;
+    expect(all.extremes.high).toEqual({ index: 0, price: 50 });
+    expect(all.extremes.low).toEqual({ index: 1, price: 1 });
+  });
+
+  it('ignores the live price included in the range', () => {
+    const bars = Array.from({ length: 30 }, (_, i) => bar(i, 20, 21, 19, 20));
+    const g = buildChart(bars, { count: 30, showMa: false, include: [99] })!;
+    expect(g.hi).toBeGreaterThan(99);
+    expect(g.extremes.high.price).toBe(21);
+  });
+
+  it('points the label away from the price axis and into the plot', () => {
+    const right = extremeLayout(700, 100, 800, 400, 'high');
+    expect(right.dir).toBe(-1);
+    expect(right.x).toBe(700 - 16);
+    expect(right.y).toBe(94);
+    const left = extremeLayout(100, 300, 800, 400, 'low');
+    expect(left.dir).toBe(1);
+    expect(left.x).toBe(116);
+    expect(left.y).toBe(306);
+    expect(left.points).toBe('100,300 106,306 116,306');
+  });
+
+  it('keeps labels inside the plot at the top and bottom edges', () => {
+    expect(extremeLayout(100, 2, 800, 400, 'high').y).toBe(9);
+    expect(extremeLayout(100, 398, 800, 400, 'low').y).toBe(391);
   });
 });
