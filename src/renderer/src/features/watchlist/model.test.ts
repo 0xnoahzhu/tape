@@ -8,7 +8,6 @@ import {
   createGroup,
   createList,
   deleteList,
-  kindTag,
   listAccepts,
   listContracts,
   listHas,
@@ -121,8 +120,8 @@ describe('list and group operations', () => {
 });
 
 describe('symbol search', () => {
-  it('normalizes stock and index contracts', () => {
-    expect(normalizeMatch({ symbol: 'AAPL', secType: 'STK', exchange: 'NASDAQ', currency: 'USD', conId: 265598 })).toEqual({
+  it('normalizes stock and index contracts, keeping the route main chose', () => {
+    expect(normalizeMatch({ symbol: 'AAPL', secType: 'STK', exchange: 'SMART', primaryExchange: 'NASDAQ', currency: 'USD', conId: 265598 })).toEqual({
       symbol: 'AAPL',
       secType: 'STK',
       exchange: 'SMART',
@@ -130,6 +129,16 @@ describe('symbol search', () => {
       primaryExchange: 'NASDAQ',
       conId: 265598,
     });
+    // SMART does not reach MEXI listings (IB error 200): the MXN line stays on MEXI so it can be quoted.
+    expect(normalizeMatch({ symbol: 'AAPL', secType: 'STK', exchange: 'MEXI', primaryExchange: 'MEXI', currency: 'MXN', conId: 38708077 })).toEqual({
+      symbol: 'AAPL',
+      secType: 'STK',
+      exchange: 'MEXI',
+      currency: 'MXN',
+      primaryExchange: 'MEXI',
+      conId: 38708077,
+    });
+    expect(normalizeMatch({ symbol: 'ZZZ', secType: 'STK', exchange: '', currency: '' })).toEqual({ symbol: 'ZZZ', secType: 'STK', exchange: 'SMART', currency: 'USD' });
     expect(normalizeMatch({ symbol: 'SPX', secType: 'IND', exchange: '', primaryExchange: 'CBOE', currency: 'USD' })).toEqual({
       symbol: 'SPX',
       secType: 'IND',
@@ -138,14 +147,7 @@ describe('symbol search', () => {
     });
   });
 
-  it('tags kinds', () => {
-    expect(kindTag(stock('SPY'), 'SPDR S&P 500 ETF TRUST')).toBe('ETF');
-    expect(kindTag(stock('AAPL'), 'APPLE INC')).toBe('STK');
-    expect(kindTag(index('SPX', 'CBOE'), 'S&P 500 Stock Index')).toBe('IND');
-    expect(kindTag({ ...stock('AAPL'), currency: 'MXN' }, 'APPLE INC')).toBe('STK MXN');
-  });
-
-  it('ranks USD listings first, exact symbol first, drops duplicates, listed and unsupported types', () => {
+  it('ranks the US listing first, drops duplicates, listed and unsupported types', () => {
     const matches = [
       match({ symbol: 'AAPL', currency: 'MXN', exchange: 'MEXI' }, 'APPLE INC'),
       match({ symbol: 'AAPB' }, 'GRANITESHARES 2X LONG AAPL'),
@@ -155,21 +157,24 @@ describe('symbol search', () => {
       match({ symbol: 'NVDA' }, 'NVIDIA CORP'),
     ];
     const out = suggestionsFrom(matches, 'aapl', new Set([contractKey(stock('NVDA'))]));
-    expect(out.map((s) => `${s.contract.symbol}:${s.contract.currency}:${s.kind}`)).toEqual(['AAPL:USD:STK', 'AAPB:USD:STK', 'AAPL:MXN:STK MXN']);
+    // The USD line on BVL shares the US listing's key: only the US listing is offered.
+    expect(out.map((s) => `${s.contract.symbol}:${s.contract.currency}`)).toEqual(['AAPL:USD', 'AAPB:USD', 'AAPL:MXN']);
     expect(out[0]).toMatchObject({ name: 'APPLE INC', contract: { primaryExchange: 'NASDAQ', exchange: 'SMART' } });
+    expect(out[2].contract).toMatchObject({ exchange: 'MEXI', primaryExchange: 'MEXI' });
   });
 
-  it('keeps US share classes ahead of foreign exact matches', () => {
+  it('keeps US share classes ahead of at most two foreign exact matches', () => {
     const foreign = ['CAD', 'GBP', 'AUD', 'RON', 'EUR', 'CHF'].map((currency) => match({ symbol: 'BRK', currency, exchange: 'SMART' }, `BRK ${currency}`));
     const matches = [...foreign, match({ symbol: 'BRK B', primaryExchange: 'NYSE' }, 'BERKSHIRE HATHAWAY INC-CL B'), match({ symbol: 'BRK A', primaryExchange: 'NYSE' }, 'BERKSHIRE HATHAWAY INC-CL A')];
-    expect(suggestionsFrom(matches, 'BRK', new Set()).map((s) => contractKey(s.contract))).toEqual(['STK:BRK B', 'STK:BRK A', 'STK:BRK:CAD', 'STK:BRK:GBP', 'STK:BRK:AUD', 'STK:BRK:RON']);
+    expect(suggestionsFrom(matches, 'BRK', new Set()).map((s) => contractKey(s.contract))).toEqual(['STK:BRK B', 'STK:BRK A', 'STK:BRK:CAD', 'STK:BRK:GBP']);
   });
 
-  it('drops corporate-action listings', () => {
+  it('drops corporate-action and delisted listings', () => {
     const matches = [
       match({ symbol: 'BABA', primaryExchange: 'NYSE' }, 'ALIBABA GROUP HOLDING-SP ADR'),
       match({ symbol: 'BABA.TEN', primaryExchange: 'CORPACT' }, 'ALIBABA GROUP HOLDING-SP ADR'),
       match({ symbol: 'BABA.TEN3', primaryExchange: 'CORPACT' }, 'ALIBABA GROUP HOLDING-SP ADR'),
+      match({ symbol: 'BABA.OLD', primaryExchange: 'VALUE' }, 'ALIBABA GROUP HOLDING-SP ADR'),
     ];
     expect(suggestionsFrom(matches, 'BABA', new Set()).map((s) => s.contract.symbol)).toEqual(['BABA']);
   });

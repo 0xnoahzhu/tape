@@ -3,6 +3,7 @@
 
 import { contractKey } from '@shared/contract';
 import type { ContractRef, LocalizedName, SymbolMatch, WatchItem, WatchGroup, Watchlist } from '@shared/types';
+import { rankMatches } from '../search/listing';
 
 /** The built-in Indices list only accepts indices. */
 export const INDEX_LIST_ID = 'idx';
@@ -115,22 +116,25 @@ export interface Suggestion {
   contract: ContractRef;
   /** Company / index name from the search description. */
   name?: string;
-  /** Short type tag: STK, ETF, IND (plus the currency when it is not USD). */
-  kind: string;
 }
 
 /** Instrument types the watchlist accepts from symbol search. */
 const SEARCHABLE = new Set(['STK', 'IND']);
 
-/** Normalizes a search result into a contract suitable for quotes and persistence. */
+/**
+ * Normalizes a search result into a contract suitable for quotes and persistence. A stock keeps
+ * the routing the main process chose: SMART, or its own exchange where SMART does not reach it
+ * (MEXI, SEHK …; contracts.ts → routeMatch).
+ */
 export function normalizeMatch(c: ContractRef): ContractRef {
   const currency = c.currency || 'USD';
   if (c.secType === 'STK') {
-    const primaryExchange = c.primaryExchange || (c.exchange && c.exchange !== 'SMART' ? c.exchange : undefined);
+    const exchange = c.exchange || 'SMART';
+    const primaryExchange = c.primaryExchange || (exchange !== 'SMART' ? exchange : undefined);
     return {
       symbol: c.symbol,
       secType: 'STK',
-      exchange: 'SMART',
+      exchange,
       currency,
       ...(primaryExchange ? { primaryExchange } : {}),
       ...(c.conId ? { conId: c.conId } : {}),
@@ -145,39 +149,20 @@ export function normalizeMatch(c: ContractRef): ContractRef {
   };
 }
 
-export function kindTag(contract: ContractRef, description?: string): string {
-  const base = contract.secType === 'STK' && description && /\bETF\b/i.test(description) ? 'ETF' : contract.secType;
-  return contract.currency && contract.currency !== 'USD' ? `${base} ${contract.currency}` : base;
-}
-
-/** Temporary corporate-action listings (tender offers, conversions such as "BABA.TEN"). */
-const isCorporateAction = (c: ContractRef): boolean => c.primaryExchange === 'CORPACT' || c.exchange === 'CORPACT';
-
 /**
- * Turns IB search results into suggestions: stocks and indices only, USD listings first
- * (exact symbol first within each currency tier), one row per instrument key, excluding
- * corporate-action listings and instruments already in the list.
+ * Turns IB search results into suggestions: stocks and indices not yet in the list, ranked and
+ * deduplicated like the top bar search (US listings first, at most two foreign listings next to
+ * US ones, no corporate-action or delisted lines; search/listing.ts).
  */
 export function suggestionsFrom(matches: SymbolMatch[], query: string, exclude: Set<string>, limit: number = MAX_SUGGESTIONS): Suggestion[] {
-  const q = query.trim().toUpperCase();
-  const rank = (m: SymbolMatch) => ((m.contract.currency || 'USD') === 'USD' ? 0 : 2) + (m.contract.symbol.toUpperCase() === q ? 0 : 1);
-  const sorted = matches
-    .filter((m) => SEARCHABLE.has(m.contract.secType) && !isCorporateAction(m.contract))
-    .map((m, i) => ({ m, i, r: rank(m) }))
-    .sort((a, b) => a.r - b.r || a.i - b.i)
-    .map((x) => x.m);
-  const seen = new Set<string>();
-  const out: Suggestion[] = [];
-  for (const m of sorted) {
-    const contract = normalizeMatch(m.contract);
-    const key = contractKey(contract);
-    if (seen.has(key) || exclude.has(key)) continue;
-    seen.add(key);
+  const candidates = matches
+    .filter((m) => SEARCHABLE.has(m.contract.secType))
+    .map((m) => ({ ...m, contract: normalizeMatch(m.contract) }))
+    .filter((m) => !exclude.has(contractKey(m.contract)));
+  return rankMatches(candidates, query, limit).map((m) => {
     const name = m.description?.trim() || undefined;
-    out.push({ contract, ...(name ? { name } : {}), kind: kindTag(contract, name) });
-    if (out.length >= limit) break;
-  }
-  return out;
+    return { contract: m.contract, ...(name ? { name } : {}) };
+  });
 }
 
 /**

@@ -11,7 +11,10 @@ import { useCommon } from '../../i18n/common';
 import { changePct, lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useStore } from '../../state/store';
 import { SearchIcon } from '../../ui/icons';
+import { listingTag, priceUnit, rankMatches } from './listing';
+import { ListingName, listingTagStyle } from './ListingName';
 import { resolveSymbol } from './resolveSymbol';
+import { usePriceMagnifier } from './usePriceMagnifier';
 import { useSymbolSearch } from './useSymbolSearch';
 
 const useM = createMessages({
@@ -41,22 +44,14 @@ function localMatches(term: string, watchlists: Watchlist[], lang: 'en' | 'zh'):
   return out;
 }
 
-/** Design order: symbols starting with the term first, then shorter symbols. */
-function rank(rows: SymbolMatch[], term: string): SymbolMatch[] {
-  return rows
-    .map((r, i) => ({ r, i }))
-    .sort((a, b) => {
-      const pa = a.r.contract.symbol.toUpperCase().startsWith(term) ? 0 : 1;
-      const pb = b.r.contract.symbol.toUpperCase().startsWith(term) ? 0 : 1;
-      return pa - pb || a.r.contract.symbol.length - b.r.contract.symbol.length || a.i - b.i;
-    })
-    .map((x) => x.r);
-}
-
-function ResultRow({ match, selected, onPick }: { match: SymbolMatch; selected: boolean; onPick: () => void }) {
+function ResultRow({ match, tag, selected, onPick }: { match: SymbolMatch; tag: string; selected: boolean; onPick: () => void }) {
   const q = useQuote(match.contract);
   const last = lastPrice(q);
   const chg = changePct(q);
+  // A price in another currency carries its unit, so it is not read as dollars (nor pence as pounds).
+  const otherCurrency = last != null && priceUnit(match.contract, 1) !== undefined;
+  const magnifier = usePriceMagnifier(otherCurrency ? match.contract : null);
+  const unit = last != null ? priceUnit(match.contract, magnifier) : undefined;
   return (
     <div
       onMouseDown={(e) => {
@@ -67,7 +62,8 @@ function ResultRow({ match, selected, onPick }: { match: SymbolMatch; selected: 
       style={{
         height: 40,
         display: 'grid',
-        gridTemplateColumns: '64px minmax(0,1fr) auto 64px',
+        // The price column is at least as wide as a typical price, so prices and dashes line up.
+        gridTemplateColumns: '64px minmax(0,1fr) minmax(64px,auto) 64px',
         gap: 12,
         alignItems: 'center',
         padding: '0 12px',
@@ -77,10 +73,11 @@ function ResultRow({ match, selected, onPick }: { match: SymbolMatch; selected: 
       }}
     >
       <div style={{ font: '600 13px/1 var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden' }}>{match.contract.symbol}</div>
-      <div className="ellipsis" style={{ fontSize: 12, color: 'var(--mu)' }}>
-        {match.description}
+      <ListingName name={match.description} tag={tag} />
+      <div style={{ font: '13px/1 var(--num)', whiteSpace: 'nowrap', textAlign: 'right' }}>
+        {px(last)}
+        {unit && <span style={{ ...listingTagStyle, marginLeft: 4 }}>{unit}</span>}
       </div>
-      <div style={{ font: '13px/1 var(--num)' }}>{px(last)}</div>
       <div style={{ font: '12px/1 var(--num)', color: signColor(chg), textAlign: 'right' }}>{pct(chg)}</div>
     </div>
   );
@@ -115,7 +112,7 @@ export function SymbolSearch() {
     // While a newer term is loading, keep the previous results that still fit it.
     const ib = fresh ? search.matches : search.matches.filter((r) => r.contract.symbol.toUpperCase().startsWith(term));
     const src = fresh && search.error ? localMatches(term, watchlists, lang) : ib;
-    return term ? rank(src, term).slice(0, MAX_ROWS) : [];
+    return term ? rankMatches(src, term, MAX_ROWS) : [];
   }, [fresh, search.matches, search.error, term, watchlists, lang]);
 
   useEffect(() => setSel(0), [term]);
@@ -251,7 +248,13 @@ export function SymbolSearch() {
             }}
           >
             {rows.map((r, i) => (
-              <ResultRow key={contractKey(r.contract) + (r.contract.conId ?? '') + i} match={r} selected={i === sel} onPick={() => open(r.contract, r.description)} />
+              <ResultRow
+                key={contractKey(r.contract) + (r.contract.conId ?? '') + i}
+                match={r}
+                tag={listingTag(r.contract, common.index)}
+                selected={i === sel}
+                onPick={() => open(r.contract, r.description)}
+              />
             ))}
           </div>,
           document.body,

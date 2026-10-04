@@ -57,6 +57,8 @@ export interface ContractInfo {
   orderTypes?: string[];
   /** IB's stock type for STK contracts: 'COMMON', 'ETF', 'ADR', 'REIT', 'PREFERRED', … */
   stockType?: string;
+  /** IB's price magnifier: 100 when prices are in the currency's minor unit (pence on the LSE). */
+  priceMagnifier?: number;
 }
 
 // ---------------------------------------------------------------------------

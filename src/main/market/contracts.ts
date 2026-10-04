@@ -1,4 +1,6 @@
 // Symbol search (reqMatchingSymbols) and contract details (reqContractDetails) with caching.
+// Stocks found by search are routed through SMART where IB reaches their listing that way, else
+// on their own exchange (routeMatch).
 // Contract details are persisted in the kv cache (namespace 'contract', by contract key and by
 // conId), so instruments resolve without IB after a restart; entries older than a week are
 // refreshed in the background. In demo mode without a connection both are answered from the
@@ -23,6 +25,69 @@ export const SEARCH_TTL_MS = 5 * 60_000;
 export const CONTRACT_REFRESH_MS = 7 * 86_400_000;
 export const CONTRACT_NS = 'contract';
 const conIdKey = (conId: number) => `conId:${conId}`;
+
+/**
+ * Listing exchanges whose stocks IB reaches through SMART: the US markets and those where a
+ * reqContractDetails by conId with exchange SMART resolved every listing tried (IB paper
+ * account, October 2026). Elsewhere (MEXI, B3, SEHK, NSE, TWSE, JSE, TASE, WSE, FWB2, MOEX,
+ * DOLLR4LOT …) IB answers SMART requests with error 200, so those stocks are quoted and routed
+ * on their own exchange, as are stocks of exchanges not listed here: with the primary exchange
+ * as the exchange every listing tried resolved, except on venues that only list stocks (PINK,
+ * AQSE, AEQLIT, ISED, PURE), and those are all reached through SMART.
+ */
+const SMART_LISTINGS = new Set([
+  // US
+  'NASDAQ',
+  'NYSE',
+  'ARCA',
+  'AMEX',
+  'BATS',
+  'IEX',
+  'NYSENAT',
+  'MEMX',
+  'LTSE',
+  'PINK',
+  // Canada
+  'TSE',
+  'VENTURE',
+  'AEQLIT',
+  'PURE',
+  // Europe
+  'LSE',
+  'LSEETF',
+  'LSEIOB1',
+  'AQSE',
+  'IBIS',
+  'IBIS2',
+  'FWB',
+  'SWB',
+  'GETTEX',
+  'GETTEX2',
+  'SBF',
+  'AEB',
+  'ENEXT.BE',
+  'BVL',
+  'ISED',
+  'BM',
+  'BVME',
+  'BVME.ETF',
+  'EBS',
+  'SFB',
+  'CPH',
+  'HEX',
+  'OSE',
+  // Asia-Pacific
+  'TSEJ',
+  'KRX',
+  'ASX',
+]);
+
+/** Routes a stock found by symbol search: SMART where it reaches the listing, else its own exchange. */
+export function routeMatch(m: SymbolMatch): SymbolMatch {
+  const c = m.contract;
+  if (c.secType !== 'STK' || c.exchange !== 'SMART' || !c.primaryExchange || SMART_LISTINGS.has(c.primaryExchange)) return m;
+  return { ...m, contract: { ...c, exchange: c.primaryExchange } };
+}
 
 class SupersededError extends Error {}
 class OfflineError extends Error {}
@@ -121,6 +186,7 @@ export function createContractService(ctx: MainContext): ContractService {
     const picked = pickDetails(await fetchDetails(c), c);
     if (!picked) return null;
     const info = toContractInfo(picked, c);
+    if (picked.priceMagnifier && picked.priceMagnifier > 0) info.priceMagnifier = picked.priceMagnifier;
     remember(info);
     persist(info, key);
     return info;
@@ -179,7 +245,10 @@ export function createContractService(ctx: MainContext): ContractService {
       send: (api, reqId) => api.reqMatchingSymbols(reqId, pattern),
       events: {
         [EventName.symbolSamples]: ([descriptions], ctl) => {
-          const matches = ((descriptions as ContractDescription[]) ?? []).map(toSymbolMatch).filter((m): m is SymbolMatch => !!m);
+          const matches = ((descriptions as ContractDescription[]) ?? [])
+            .map(toSymbolMatch)
+            .filter((m): m is SymbolMatch => !!m)
+            .map(routeMatch);
           ctl.resolve(sortMatches(matches, pattern));
         },
       },

@@ -142,6 +142,63 @@ describe('ContractService', () => {
     expect(fake.callsOf('reqMatchingSymbols')).toHaveLength(2);
   });
 
+  it('routes found stocks through SMART only where IB reaches their listing that way', async () => {
+    const { fake, ctx } = setup();
+    fake.ready();
+    const pending = ctx.contracts.search('AAPL');
+    const sample = (conId: number, primaryExch: string, currency: string, secType = 'STK') => ({
+      contract: { conId, symbol: 'AAPL', secType, primaryExch, currency, description: 'APPLE INC' },
+      derivativeSecTypes: [],
+    });
+    // What IB returned for "AAPL" (paper account, October 2026), plus an exchange Tape does not know.
+    fake.emit('symbolSamples', fake.callsOf('reqMatchingSymbols')[0][0], [
+      sample(265598, 'NASDAQ', 'USD'),
+      sample(38708077, 'MEXI', 'MXN'),
+      sample(273982664, 'EBS', 'CHF'),
+      sample(532640894, 'TSE', 'CAD'),
+      sample(55279376, 'PINK', 'USD'),
+      sample(1, 'NEWEXCH', 'EUR'),
+      sample(86792725, 'NASDAQ', 'USD', 'IND'),
+    ]);
+    const routes = Object.fromEntries((await pending).map((m) => [m.contract.conId, m.contract.exchange]));
+    // IB answers {conId: 38708077, exchange: 'SMART'} with error 200; on MEXI it quotes the listing.
+    expect(routes).toEqual({ 265598: 'SMART', 38708077: 'MEXI', 273982664: 'SMART', 532640894: 'SMART', 55279376: 'SMART', 1: 'NEWEXCH', 86792725: 'NASDAQ' });
+    const mexi = (await pending).find((m) => m.contract.conId === 38708077)!.contract;
+    expect(mexi).toMatchObject({ exchange: 'MEXI', primaryExchange: 'MEXI', currency: 'MXN' });
+
+    // Its details are asked for on MEXI, and carry IB's price magnifier.
+    fake.onCall = (name, args) => {
+      if (name !== 'reqContractDetails') return;
+      const id = args[0];
+      queueMicrotask(() => {
+        fake.emit('contractDetails', id, { ...aaplDetails('MEXI', 'MXN', 38708077), priceMagnifier: 1 });
+        fake.emit('contractDetailsEnd', id);
+      });
+    };
+    expect(await ctx.contracts.getInfo(mexi)).toMatchObject({ contract: { exchange: 'MEXI', conId: 38708077 }, priceMagnifier: 1 });
+    expect(fake.callsOf('reqContractDetails')[0][1]).toMatchObject({ conId: 38708077, exchange: 'MEXI' });
+  });
+
+  it('keeps the price magnifier of LSE stocks (quoted in pence)', async () => {
+    const { fake, ctx } = setup();
+    fake.ready();
+    fake.onCall = (name, args) => {
+      if (name !== 'reqContractDetails') return;
+      const id = args[0];
+      queueMicrotask(() => {
+        fake.emit('contractDetails', id, {
+          contract: { symbol: 'VOD', secType: 'STK', exchange: 'SMART', currency: 'GBP', conId: 140148322, primaryExch: 'LSE' },
+          longName: 'VODAFONE GROUP PLC',
+          minTick: 0.02,
+          priceMagnifier: 100,
+        });
+        fake.emit('contractDetailsEnd', id);
+      });
+    };
+    const vod = { symbol: 'VOD', secType: 'STK' as const, exchange: 'SMART', primaryExchange: 'LSE', currency: 'GBP', conId: 140148322 };
+    expect((await ctx.contracts.getInfo(vod))?.priceMagnifier).toBe(100);
+  });
+
   it('works offline in demo mode and refuses otherwise', async () => {
     expect((await setup(true).ctx.contracts.search('nvda'))[0].description).toBe('NVIDIA CORP');
     expect((await setup(true).ctx.contracts.getInfo(stock('AAPL')))?.longName).toBe('APPLE INC');

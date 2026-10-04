@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { contractKey, contractLabel, stock } from '@shared/contract';
 import type { WatchItem, Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
+import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { TextInput } from '../../ui/primitives';
+import { listingTag } from '../search/listing';
+import { ListingName } from '../search/ListingName';
 import { fillMissingName, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
 import { addItem, listKeys, looksLikeTicker, normalizeTicker, suggestionsFrom, type Suggestion } from './model';
@@ -20,13 +23,14 @@ function rowsFor(search: SearchResult, exclude: Set<string>): Row[] {
   if (search.status === 'unavailable') {
     if (!looksLikeTicker(search.query)) return [];
     const contract = stock(normalizeTicker(search.query));
-    return exclude.has(contractKey(contract)) ? [] : [{ contract, kind: 'STK', fallback: true }];
+    return exclude.has(contractKey(contract)) ? [] : [{ contract, fallback: true }];
   }
   return suggestionsFrom(search.matches, search.query, exclude);
 }
 
 export function AddSymbol({ list, targetGroupId, onTarget, onClose }: { list: Watchlist; targetGroupId: string | undefined; onTarget: (groupId: string) => void; onClose: () => void }) {
   const m = useWatchlistMessages();
+  const common = useCommon();
   const lang = useLang();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(-1);
@@ -110,10 +114,8 @@ export function AddSymbol({ list, targetGroupId, onTarget, onClose }: { list: Wa
           <div className="ellipsis" title={contractLabel(row.contract)} style={{ minWidth: 52, maxWidth: 112, flexShrink: 0, font: '600 13px/1 var(--mono)' }}>
             {contractLabel(row.contract)}
           </div>
-          <div className="ellipsis" title={row.name} style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--mu)' }}>
-            {row.fallback ? m.usStock : (row.name ?? '')}
-          </div>
-          <div style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{row.kind}</div>
+          {/* Where it is listed ("NASDAQ", "MEXI · MXN", "Index") tells listings of one name apart. */}
+          <ListingName name={row.fallback ? m.usStock : (row.name ?? '')} tag={listingTag(row.contract, common.index)} tagAtEnd style={{ flex: 1 }} />
         </div>
       ))}
       {status && <div style={{ height: 34, display: 'flex', alignItems: 'center', padding: '0 8px', fontSize: 12, color: 'var(--dm)' }}>{status}</div>}
