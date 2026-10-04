@@ -23,12 +23,15 @@ extraResources:
 
 asar: true
 
+# Only installers are kept: a DMG for macOS and an NSIS setup for Windows (scripts/clean-release.ts
+# removes the intermediate unpacked apps afterwards). No update metadata or block maps.
+publish: null
+
 mac:
   category: public.app-category.finance
   icon: build/icon.icns
   target:
     - dmg
-    - zip
   darkModeSupport: true
   # Local builds: no notarization. Set CSC_NAME / CSC_LINK and enable hardenedRuntime to distribute.
   hardenedRuntime: false
@@ -37,14 +40,24 @@ mac:
 
 dmg:
   title: Tape ${version}
+  writeUpdateInfo: false
+
+# NSIS 3.12 toolset: ships a native makensis for Apple Silicon (the legacy 3.0.4 one is x86_64 only).
+toolsets:
+  nsis: 1.2.1
 
 win:
-  target: nsis
+  target:
+    - target: nsis
+      arch:
+        - x64
   icon: build/icon.ico
 
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  differentialPackage: false
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
 
 linux:
   target: AppImage
