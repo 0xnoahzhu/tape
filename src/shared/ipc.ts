@@ -14,6 +14,7 @@ import type {
   DeepPartial,
   DepthBook,
   Execution,
+  HistoryPage,
   HistoryRequest,
   LocalizedText,
   NavPoint,
@@ -90,6 +91,11 @@ export interface TapeApi {
    */
   setQuoteSubscriptions(owner: string, subs: QuoteSubscription[]): Promise<void>;
   getHistory(req: HistoryRequest): Promise<Bar[]>;
+  /**
+   * Up to `limit` bars older than `before` (unix seconds) for the same series as `req`, served from
+   * the local cache when it covers the range and from IB otherwise (then cached).
+   */
+  getOlderBars(req: HistoryRequest, before: number, limit: number): Promise<HistoryPage>;
   searchSymbols(pattern: string): Promise<SymbolMatch[]>;
   /** Resolves and caches contract details. Returns null when IB does not know the contract. */
   getContractInfo(contract: ContractRef): Promise<ContractInfo | null>;
@@ -142,6 +148,7 @@ export const INVOKE_METHODS: readonly TapeInvokeMethod[] = [
   'disconnect',
   'setQuoteSubscriptions',
   'getHistory',
+  'getOlderBars',
   'searchSymbols',
   'getContractInfo',
   'setDepthSubscription',

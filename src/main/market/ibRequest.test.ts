@@ -26,6 +26,18 @@ describe('TtlCache', () => {
     expect(await cache.get('k', (v) => (v ? 1000 : 0), async () => 'x')).toBe('x');
     expect(cache.peek('k')).toBe('x');
   });
+
+  it('sweeps expired entries of keys that are never read again', () => {
+    let now = 0;
+    const cache = new TtlCache<number>(() => now);
+    for (let i = 0; i < 1000; i++) {
+      cache.set(`page-${i}`, i, 15_000);
+      now += 1000;
+    }
+    // Only about the last 15 s of entries (plus what the amortized sweep has not reached yet) stay.
+    expect(cache.size).toBeLessThan(64);
+    expect(cache.peek('page-999')).toBe(999);
+  });
 });
 
 describe('Limiter', () => {

@@ -6,9 +6,9 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { Bar, NavPoint } from '@shared/types';
 import type { ExecutionRow } from './protocol';
 import { configure, migrate, NewerSchemaError } from './schema';
+import { INTRADAY_RETENTION_DAYS } from './types';
 
-/** Intraday bars older than this are dropped by maintenance; daily and longer bars are kept. */
-export const INTRADAY_RETENTION_DAYS = 30;
+export { INTRADAY_RETENTION_DAYS };
 /** kv holds caches: entries not rewritten for this many days are dropped ('*' = any namespace). */
 export const KV_TTL_DAYS: Readonly<Record<string, number>> = { '*': 180 };
 /** Namespace for the database's own bookkeeping (exempt from the TTL). */
@@ -29,6 +29,7 @@ const SQLITE_NOTADB = 26;
 /** Statements whose query plans the tests check (no full scans on large tables). */
 export const SQL = {
   barsRange: 'SELECT time, o, h, l, c, v FROM bars WHERE series_id = ? AND time >= ? ORDER BY time',
+  barsBetween: 'SELECT time, o, h, l, c, v FROM bars WHERE series_id = ? AND time >= ? AND time < ? ORDER BY time',
   barsLast: 'SELECT max(time) AS t FROM bars WHERE series_id = ?',
   barsPut: 'INSERT OR REPLACE INTO bars (series_id, time, o, h, l, c, v) VALUES (?, ?, ?, ?, ?, ?, ?)',
   barsExpire: 'DELETE FROM bars WHERE series_id = ? AND time <= ?',
@@ -45,8 +46,8 @@ export interface SqliteStore {
   readonly recovered?: string;
   /** Runs `fn` in a transaction (a savepoint when nested). */
   transaction<T>(fn: () => T): T;
-  /** Packed [time, o, h, l, c, v] * n, ascending. */
-  barsGet(series: string, fromTime: number | null): Float64Array;
+  /** Packed [time, o, h, l, c, v] * n, ascending; `toTime` is exclusive. */
+  barsGet(series: string, fromTime: number | null, toTime?: number | null): Float64Array;
   /**
    * Bars as objects, or packed [time, o, h, l, c, v] * n (what the worker receives).
    * `intraday` null: inferred from the series key and bar spacing.
@@ -289,10 +290,11 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
     recovered,
     transaction,
 
-    barsGet(series, fromTime) {
+    barsGet(series, fromTime, toTime) {
       const s = seriesOf(series);
       if (!s) return new Float64Array(0);
-      const rows = arrays(SQL.barsRange).all(s.id, fromTime ?? Number.MIN_SAFE_INTEGER) as unknown as Array<Array<number | null>>;
+      const from = fromTime ?? Number.MIN_SAFE_INTEGER;
+      const rows = (toTime == null ? arrays(SQL.barsRange).all(s.id, from) : arrays(SQL.barsBetween).all(s.id, from, toTime)) as unknown as Array<Array<number | null>>;
       const out = new Float64Array(rows.length * BAR_FIELDS);
       for (let i = 0, j = 0; i < rows.length; i++) {
         const r = rows[i];

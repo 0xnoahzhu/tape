@@ -17,6 +17,7 @@ import type {
   ContractRef,
   DeepPartial,
   Execution,
+  HistoryPage,
   HistoryRequest,
   NavPoint,
   OptionChainParams,
@@ -121,6 +122,8 @@ export interface QuoteService {
 
 export interface HistoryService {
   get(req: HistoryRequest): Promise<Bar[]>;
+  /** Bars older than `before` (unix seconds), at most `limit`; cache first, then IB. */
+  getOlder(req: HistoryRequest, before: number, limit: number): Promise<HistoryPage>;
 }
 
 export interface DepthService {

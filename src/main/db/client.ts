@@ -131,7 +131,7 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
     },
     ready,
     bars: {
-      get: (series, fromTime) => call('bars.get', [series, fromTime ?? null], (m) => m.bars.get(series, fromTime), unpackBars),
+      get: (series, fromTime, toTime) => call('bars.get', [series, fromTime ?? null, toTime ?? null], (m) => m.bars.get(series, fromTime, toTime), unpackBars),
       put: (series, bars, opts) => {
         const packed = packBars(bars);
         return call('bars.put', [series, packed, opts?.intraday ?? null], (m) => m.bars.put(series, bars, opts), undefined, [packed.buffer as ArrayBuffer]);

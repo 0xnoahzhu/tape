@@ -61,6 +61,10 @@ describe('SQLite store', () => {
     store.barsPut('MSFT|1D', [bar(DAY, 300)], null);
     expect(unpackBars(store.barsGet('AAPL|1D', null)).map((b) => b.close)).toEqual([101, 202, 103]);
     expect(unpackBars(store.barsGet('AAPL|1D', 2 * DAY)).map((b) => b.time)).toEqual([2 * DAY, 3 * DAY]);
+    // Bounded reads (paging back in time): the upper bound is exclusive.
+    expect(unpackBars(store.barsGet('AAPL|1D', DAY, 3 * DAY)).map((b) => b.time)).toEqual([DAY, 2 * DAY]);
+    expect(unpackBars(store.barsGet('AAPL|1D', null, 2 * DAY)).map((b) => b.time)).toEqual([DAY]);
+    expect(store.barsGet('AAPL|1D', 3 * DAY, 3 * DAY).length).toBe(0);
     expect(store.barsLast('AAPL|1D')).toBe(3 * DAY);
     expect(store.barsLast('nope')).toBeNull();
     expect(store.barsGet('nope', null).length).toBe(0);
@@ -136,6 +140,9 @@ describe('SQLite store', () => {
       const p = plan(store.db, SQL.barsRange);
       expect(p).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\? AND time>\?\)/);
       expect(p).not.toMatch(/SCAN|TEMP B-TREE/);
+      const between = plan(store.db, SQL.barsBetween);
+      expect(between).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\? AND time>\? AND time<\?\)/);
+      expect(between).not.toMatch(/SCAN|TEMP B-TREE/);
       expect(plan(store.db, SQL.barsLast)).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\?\)/);
       expect(plan(store.db, SQL.barsExpire)).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\? AND time<\?\)/);
       expect(plan(store.db, SQL.barsExpireBound)).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\? AND time<\?\)/);

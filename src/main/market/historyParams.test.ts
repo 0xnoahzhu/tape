@@ -14,6 +14,7 @@ import {
   lastSettledMs,
   mergeTail,
   normalizeBars,
+  overlapAdjusted,
   parseBarTime,
   planFetch,
   seriesKey,
@@ -28,7 +29,7 @@ describe('historySpec', () => {
     const table: Array<[Timeframe, string, string]> = [
       ['1m', '1 min', '2 D'],
       ['5m', '5 mins', '10 D'],
-      ['1h', '1 hour', '2 M'],
+      ['1h', '1 hour', '20 D'],
       ['1D', '1 day', '2 Y'],
       ['1W', '1 week', '10 Y'],
       ['1M', '1 month', '20 Y'],
@@ -89,8 +90,9 @@ describe('historySpec', () => {
     expect(days('1m')).toBeGreaterThanOrEqual(5);
     expect(days('1m')).toBeLessThan(8);
     expect(days('5m')).toBeGreaterThanOrEqual(17);
-    // '2 M' reaches back up to 62 days; a flat 30-day intraday limit would cut it in half.
-    expect(days('1h')).toBeGreaterThanOrEqual(65);
+    // Every intraday window fits the database's 30-day retention of intraday bars.
+    expect(days('1h')).toBeGreaterThanOrEqual(28);
+    expect(days('1h')).toBeLessThanOrEqual(33);
     expect(days('1D')).toBeGreaterThanOrEqual(2 * 366);
   });
 
@@ -196,22 +198,26 @@ describe('windows and tails', () => {
     expect(lastSettledMs(ny('2026-10-01', '05:00'), false)).toBeUndefined();
   });
 
-  it('plans none, a tail or the full window', () => {
+  it('plans none, a tail or the full window from the coverage', () => {
     const spec = historySpec({ contract: stock('AAPL'), timeframe: '1D' });
     const now = ny('2026-09-30', '14:00');
     const stored = [b(d('20240930')), b(d('20260929')), b(d('20260930'))];
     const base = { spec, contract: stock('AAPL'), stored, nowMs: now, ttlMs: 300_000 };
-    expect(planFetch({ ...base, meta: undefined })).toEqual({ kind: 'full' });
-    expect(planFetch({ ...base, stored: [], meta: { fetchedAt: 0 } })).toEqual({ kind: 'full' });
-    expect(planFetch({ ...base, meta: { first: d('20240930'), fetchedAt: now - 1000 } })).toEqual({ kind: 'none' });
-    expect(planFetch({ ...base, meta: { first: d('20240930'), fetchedAt: now - 1000 }, fresh: true })).toEqual({ kind: 'tail', duration: '2 D', from: d('20260929') });
-    expect(planFetch({ ...base, meta: { first: d('20240930'), fetchedAt: now - 3_600_000 } })).toEqual({ kind: 'tail', duration: '2 D', from: d('20260929') });
-    // Not covering the window (only recent bars stored): full.
-    expect(planFetch({ ...base, stored: stored.slice(1), meta: { first: d('20240930'), fetchedAt: 0 } })).toEqual({ kind: 'full' });
-    // A recent listing: IB's data starts after the window start, and the stored bars still do.
-    expect(planFetch({ ...base, stored: stored.slice(1), meta: { first: d('20260929'), fetchedAt: 0 } }).kind).toBe('tail');
+    const covered = (fetchedAt: number, start = d('20240930'), first?: number) => ({ ranges: [[start, now / 1000]] as Array<[number, number]>, fetchedAt, ...(first ? { first } : {}) });
+    expect(planFetch({ ...base, coverage: undefined })).toEqual({ kind: 'full' });
+    expect(planFetch({ ...base, coverage: { ranges: [] } })).toEqual({ kind: 'full' });
+    // Covered, but never loaded as the newest bars (only pages): full.
+    expect(planFetch({ ...base, coverage: { ranges: covered(0).ranges } })).toEqual({ kind: 'full' });
+    expect(planFetch({ ...base, stored: [], coverage: covered(0) })).toEqual({ kind: 'full' });
+    expect(planFetch({ ...base, coverage: covered(now - 1000) })).toEqual({ kind: 'none' });
+    expect(planFetch({ ...base, coverage: covered(now - 1000), fresh: true })).toEqual({ kind: 'tail', duration: '2 D', from: d('20260929') });
+    expect(planFetch({ ...base, coverage: covered(now - 3_600_000) })).toEqual({ kind: 'tail', duration: '2 D', from: d('20260929') });
+    // The newest covered range does not reach the window start: full (stored bars do not count).
+    expect(planFetch({ ...base, coverage: covered(0, d('20260929')) })).toEqual({ kind: 'full' });
+    // A recent listing: IB's data starts after the window start, and the coverage still does.
+    expect(planFetch({ ...base, stored: stored.slice(1), coverage: covered(0, d('20260929'), d('20260929')) }).kind).toBe('tail');
     // A tail longer than half the window: full.
-    expect(planFetch({ ...base, stored: [b(d('20240930')), b(d('20250101')), b(d('20250102'))], meta: { first: d('20240930'), fetchedAt: 0 } })).toEqual({ kind: 'full' });
+    expect(planFetch({ ...base, stored: [b(d('20240930')), b(d('20250101')), b(d('20250102'))], coverage: covered(0) })).toEqual({ kind: 'full' });
   });
 
   it('merges a tail and detects adjusted history', () => {
@@ -224,6 +230,13 @@ describe('windows and tails', () => {
     expect(historyAdjusted(stored, [b(d('20260929'), 2.01)])).toBe(false);
     expect(historyAdjusted(stored, [b(d('20260929'), 1)])).toBe(true);
     expect(historyAdjusted(stored, [b(d('20261001'), 9)])).toBe(false);
+    // A full window over older stored bars: the oldest overlapping final bar decides.
+    const old = [b(d('20260921'), 10), b(d('20260922'), 11), b(d('20260929'), 2), b(d('20260930'), 3)];
+    expect(overlapAdjusted(old, [b(d('20260922'), 11.05), b(d('20260930'), 99)])).toBe(false);
+    expect(overlapAdjusted(old, [b(d('20260922'), 5.5), b(d('20260929'), 1)])).toBe(true);
+    // Only the forming (newest two) stored bars overlap: no evidence.
+    expect(overlapAdjusted(old, [b(d('20260929'), 1), b(d('20260930'), 1)])).toBe(false);
+    expect(overlapAdjusted(old, [])).toBe(false);
   });
 });
 

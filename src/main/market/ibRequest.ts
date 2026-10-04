@@ -191,6 +191,8 @@ function abortReason(signal: AbortSignal): Error {
 export class TtlCache<V> {
   private readonly entries = new Map<string, { value: V; expires: number }>();
   private readonly inflight = new Map<string, Promise<V>>();
+  /** Size at which expired entries of keys never read again are swept (amortized over the writes). */
+  private sweepAt = 64;
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -205,7 +207,16 @@ export class TtlCache<V> {
   }
 
   set(key: string, value: V, ttlMs: number): void {
-    if (ttlMs > 0) this.entries.set(key, { value, expires: this.now() + ttlMs });
+    if (!(ttlMs > 0)) return;
+    this.entries.set(key, { value, expires: this.now() + ttlMs });
+    if (this.entries.size < this.sweepAt) return;
+    const now = this.now();
+    for (const [k, e] of this.entries) if (e.expires <= now) this.entries.delete(k);
+    this.sweepAt = Math.max(64, this.entries.size * 2);
+  }
+
+  get size(): number {
+    return this.entries.size;
   }
 
   get(key: string, ttlMs: number | ((value: V) => number), load: () => Promise<V>): Promise<V> {

@@ -156,6 +156,14 @@ export interface Bar {
   volume: number;
 }
 
+/** A page of older bars, for scrolling a chart back in time. */
+export interface HistoryPage {
+  /** Ascending, all strictly older than the requested `before` time. */
+  bars: Bar[];
+  /** True when nothing older exists (the earliest data IB has was reached). */
+  done: boolean;
+}
+
 export interface DepthLevel {
   price: number;
   size: number;

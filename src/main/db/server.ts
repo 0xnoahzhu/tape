@@ -184,7 +184,7 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
     const a = req.args as never[];
     switch (req.op) {
       case 'bars.get':
-        return store.barsGet(a[0], a[1]);
+        return store.barsGet(a[0], a[1], a[2] ?? null);
       case 'bars.last':
         return store.barsLast(a[0]);
       case 'kv.get':

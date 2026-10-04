@@ -68,12 +68,13 @@ export function createMemoryDatabase(): Database {
   return {
     kind: 'memory',
     bars: {
-      async get(series, fromTime) {
+      async get(series, fromTime, toTime) {
         const list = bars.get(series);
         if (!list) return [];
         const from = fromTime == null ? 0 : lowerBound(list, fromTime);
-        const out = new Array<Bar>(list.length - from);
-        for (let i = from; i < list.length; i++) out[i - from] = { ...list[i] };
+        const to = toTime == null ? list.length : Math.max(from, lowerBound(list, toTime));
+        const out = new Array<Bar>(to - from);
+        for (let i = from; i < to; i++) out[i - from] = { ...list[i] };
         return out;
       },
       async put(series, list) {

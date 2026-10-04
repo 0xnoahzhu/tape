@@ -90,6 +90,7 @@ describe('database client <-> worker protocol', () => {
     await db.bars.put('AAPL|1D', [bar(300), bar(100), bar(200)]);
     expect(await db.bars.get('AAPL|1D')).toEqual([bar(100), bar(200), bar(300)]);
     expect(await db.bars.get('AAPL|1D', 200)).toEqual([bar(200), bar(300)]);
+    expect(await db.bars.get('AAPL|1D', 100, 300)).toEqual([bar(100), bar(200)]);
     expect(await db.bars.last('AAPL|1D')).toBe(300);
     expect(await db.bars.last('none')).toBeUndefined();
     await db.kv.set('contract', '1', { symbol: 'AAPL', strikes: [1, 2] });

@@ -12,10 +12,16 @@
 
 import type { Bar, Execution, NavPoint } from '@shared/types';
 
+/** Intraday bars older than this many days are dropped by maintenance; daily and longer bars are kept. */
+export const INTRADAY_RETENTION_DAYS = 30;
+
 /** Bars per series; a series key identifies contract + bar size + whatToShow + useRTH. */
 export interface BarCache {
-  /** Bars of a series in ascending time order, optionally from `fromTime` (unix seconds, inclusive). */
-  get(series: string, fromTime?: number): Promise<Bar[]>;
+  /**
+   * Bars of a series in ascending time order, optionally from `fromTime` (unix seconds, inclusive)
+   * and before `toTime` (exclusive).
+   */
+  get(series: string, fromTime?: number, toTime?: number): Promise<Bar[]>;
   /**
    * Inserts or replaces bars (matched by time). `intraday` selects the 30-day retention; when
    * omitted it is inferred from the key ("…|5m|…", "1 min") and the bar spacing.

@@ -2,6 +2,7 @@
 // post-processing (pure, unit-tested).
 
 import type { Bar, ContractRef, HistoryRequest, Timeframe } from '@shared/types';
+import type { SeriesCoverage } from './coverage';
 import { addDays, type CalendarDay, isWeekday, nyDay, nyWallToEpochMs, previousWeekday, RTH_CLOSE, RTH_OPEN } from './nyTime';
 
 export type WhatToShow = NonNullable<HistoryRequest['whatToShow']>;
@@ -31,8 +32,8 @@ export interface HistorySpec {
   intraday: boolean;
   /**
    * Calendar span of the fetch window plus slack: how long stored bars of this series have to
-   * stay to cover a full chart. The database keeps intraday bars for 30 days only, so for the
-   * 2-month 1h window a load after that refetches the window (see planFetch's coverage check).
+   * stay to cover a full chart. Every intraday window fits the database's 30-day retention of
+   * intraday bars (older bars are paged in from IB again).
    */
   retentionSec: number;
 }
@@ -66,10 +67,15 @@ interface TimeframeSpec {
   intraday: boolean;
 }
 
+/**
+ * The window a chart opens with; older bars are paged in (HistoryService.getOlder). Intraday
+ * windows are trading sessions ('N D', which IB counts as sessions) and stay within the 30 days
+ * the database keeps intraday bars, so a cached window stays complete.
+ */
 const TIMEFRAMES: Record<Timeframe, TimeframeSpec> = {
   '1m': { barSize: '1 min', duration: '2 D', intraday: true },
   '5m': { barSize: '5 mins', duration: '10 D', intraday: true },
-  '1h': { barSize: '1 hour', duration: '2 M', intraday: true },
+  '1h': { barSize: '1 hour', duration: '20 D', intraday: true },
   '1D': { barSize: '1 day', duration: '2 Y', intraday: false },
   '1W': { barSize: '1 week', duration: '10 Y', intraday: false },
   '1M': { barSize: '1 month', duration: '20 Y', intraday: false },
@@ -81,6 +87,9 @@ const TIMEFRAMES: Record<Timeframe, TimeframeSpec> = {
  * and monthly request with 162 "No data of type EODChart is available … 'Option' and '2 y' and
  * '1 day'" (any duration, any whatToShow; checked live). 8-hour bars work and reach back over
  * the life of the contract, so all four timeframes share one daily series built from them.
+ * Intraday option bars use the stock windows (checked live 2026-10-04 on an AAPL call: 1 min x
+ * 2 D, 5 mins x 10 D, 1 hour x 2 M / 20 D / 1 Y, and pages ending in the past). A window
+ * without trades answers 162 "HMDS query returned no data", which is an empty answer.
  */
 const OPTION_DAILY = { barSize: '8 hours', duration: '2 Y' } as const;
 const OPTION_PERIODS: Partial<Record<Timeframe, Exclude<Period, 'day'>>> = { '1W': 'week', '1M': 'month', '1Y': 'year' };
@@ -284,14 +293,6 @@ export function seriesKey(spec: HistorySpec, contractKey: string): string {
 // ---------------------------------------------------------------------------
 // Incremental loads
 
-/** Bookkeeping per stored series (kv namespace 'series'). */
-export interface SeriesMeta {
-  /** First bar of the last full load: IB has nothing older (a recent listing, an option). */
-  first?: number;
-  /** Unix ms of the last successful fetch (full or tail). */
-  fetchedAt: number;
-}
-
 export type FetchPlan = { kind: 'none' } | { kind: 'full' } | { kind: 'tail'; duration: string; from: number };
 
 const BAR_SEC: Record<string, number> = { '1 min': 60, '5 mins': 300, '1 hour': 3600, '8 hours': 28_800, '1 day': DAY_SEC, '1 week': 7 * DAY_SEC, '1 month': 31 * DAY_SEC };
@@ -355,7 +356,7 @@ export function windowStartSec(duration: string, nowMs: number): number {
 }
 
 /** Instruments whose bars only move during US sessions (New York time, weekdays). */
-function usSessions(contract: ContractRef): boolean {
+export function usSessions(contract: ContractRef): boolean {
   const usd = !contract.currency || contract.currency === 'USD';
   return usd && (contract.secType === 'STK' || contract.secType === 'IND' || contract.secType === 'OPT');
 }
@@ -363,7 +364,7 @@ function usSessions(contract: ContractRef): boolean {
 /** Extended hours 04:00–20:00 New York; bars are taken as final 30 minutes after a close. */
 const EXT_OPEN = 240;
 const EXT_CLOSE = 1200;
-const SETTLE_MIN = 30;
+export const SETTLE_MIN = 30;
 
 /**
  * Unix ms since which bars of a US instrument cannot change any more (the last close plus
@@ -413,30 +414,34 @@ export function tailDuration(barSize: string, fromSec: number, nowMs: number, da
 }
 
 /**
- * What to fetch for a request, given the stored bars from the window start on:
- * - none: the stored series was fetched within `ttlMs` or is settled (and not `fresh`);
- * - tail: from the second-newest stored bar (the newest may have been forming), when the stored
- *   bars cover the window and the tail is less than half of it;
+ * What to fetch for the newest bars, given the series' coverage and the stored bars from the
+ * window start on:
+ * - none: the newest bars were loaded within `ttlMs` or are settled (and not `fresh`);
+ * - tail: from the second-newest stored bar of the newest covered range (the newest may have
+ *   been forming), when that range covers the window and the tail is less than half of it;
  * - full: otherwise.
  */
 export function planFetch(o: {
   spec: HistorySpec;
   contract: ContractRef;
+  coverage: SeriesCoverage | undefined;
   stored: readonly Bar[];
-  meta: SeriesMeta | undefined;
   nowMs: number;
   ttlMs: number;
   fresh?: boolean;
 }): FetchPlan {
-  const { spec, stored, meta, nowMs } = o;
-  if (!stored.length || !meta) return { kind: 'full' };
+  const { spec, coverage, nowMs } = o;
+  const newest = coverage?.ranges[coverage.ranges.length - 1];
+  if (!newest || coverage?.fetchedAt === undefined) return { kind: 'full' };
   const start = windowStartSec(spec.duration, nowMs);
-  const first = stored[0].time;
-  const covered = first <= start + coverageGapSec(spec.seriesBarSize) || (meta.first !== undefined && first <= meta.first);
+  const covered = newest[0] <= start + coverageGapSec(spec.seriesBarSize) || (coverage.first !== undefined && newest[0] <= coverage.first);
   if (!covered) return { kind: 'full' };
-  if (!o.fresh && (nowMs - meta.fetchedAt < o.ttlMs || isSettled(spec, o.contract, meta.fetchedAt, nowMs))) return { kind: 'none' };
-  const from = stored[Math.max(0, stored.length - 2)].time;
-  if (Math.floor(nowMs / 1000) - from > (Math.floor(nowMs / 1000) - start) / 2) return { kind: 'full' };
+  if (!o.fresh && (nowMs - coverage.fetchedAt < o.ttlMs || isSettled(spec, o.contract, coverage.fetchedAt, nowMs))) return { kind: 'none' };
+  const inRange = o.stored.filter((b) => b.time >= newest[0]);
+  if (!inRange.length) return { kind: 'full' };
+  const from = inRange[Math.max(0, inRange.length - 2)].time;
+  const nowSec = Math.floor(nowMs / 1000);
+  if (nowSec - from > (nowSec - start) / 2) return { kind: 'full' };
   const dailyStamps = (BAR_SEC[spec.seriesBarSize] ?? DAY_SEC) >= DAY_SEC;
   return { kind: 'tail', duration: tailDuration(spec.barSize, from, nowMs, dailyStamps), from };
 }
@@ -454,6 +459,21 @@ export function historyAdjusted(stored: readonly Bar[], tail: readonly Bar[]): b
   const fresh = tail.find((b) => b.time === final.time);
   if (!fresh || !(final.close > 0) || !(fresh.close > 0)) return false;
   return Math.abs(fresh.close / final.close - 1) > ADJUSTED_RATIO;
+}
+
+/**
+ * True when a fetched window disagrees with a stored final bar it overlaps (the oldest one; the
+ * newest two may have been forming): IB has adjusted the series since the stored bars were
+ * loaded, so older stored bars are stale as well.
+ */
+export function overlapAdjusted(stored: readonly Bar[], fetched: readonly Bar[]): boolean {
+  if (stored.length < 3 || !fetched.length) return false;
+  const closes = new Map<number, number>();
+  for (let i = 0; i < stored.length - 2; i++) closes.set(stored[i].time, stored[i].close);
+  const fresh = fetched.find((b) => closes.has(b.time));
+  const old = fresh && closes.get(fresh.time);
+  if (!fresh || !(old! > 0) || !(fresh.close > 0)) return false;
+  return Math.abs(fresh.close / old! - 1) > ADJUSTED_RATIO;
 }
 
 /**

@@ -106,6 +106,7 @@ const handlers: TapeHandlers = {
   disconnect: () => ctx.ib.disconnect(),
   setQuoteSubscriptions: async (owner, subs) => ctx.quotes.setSubscriptions(owner, subs),
   getHistory: (req) => ctx.history.get(req),
+  getOlderBars: (req, before, limit) => ctx.history.getOlder(req, before, limit),
   searchSymbols: (pattern) => ctx.contracts.search(pattern),
   getContractInfo: (c) => ctx.contracts.getInfo(c),
   setDepthSubscription: (c) => ctx.depth.set(c),

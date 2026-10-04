@@ -16,7 +16,7 @@ export interface ExecutionRow {
  * Packing is done separately on each side (the bundles share no runtime code).
  */
 export interface DbOps {
-  'bars.get': [args: [series: string, fromTime: number | null], result: Float64Array];
+  'bars.get': [args: [series: string, fromTime: number | null, toTime: number | null], result: Float64Array];
   'bars.put': [args: [series: string, bars: Float64Array, intraday: boolean | null], result: void];
   'bars.last': [args: [series: string], result: number | null];
   'kv.get': [args: [ns: string, key: string], result: { json: string; updatedAt: number } | null];

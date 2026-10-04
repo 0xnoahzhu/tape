@@ -28,6 +28,11 @@ describe('memory bar cache', () => {
     expect((await db.bars.get('s', 20)).map((b) => b.time)).toEqual([20, 30]);
     expect((await db.bars.get('s', 21)).map((b) => b.time)).toEqual([30]);
     expect(await db.bars.get('s', 31)).toEqual([]);
+    // An upper bound is exclusive.
+    expect((await db.bars.get('s', 10, 30)).map((b) => b.time)).toEqual([10, 20]);
+    expect((await db.bars.get('s', undefined, 11)).map((b) => b.time)).toEqual([10]);
+    expect(await db.bars.get('s', 20, 20)).toEqual([]);
+    expect(await db.bars.get('s', 25, 15)).toEqual([]);
     const [first] = await db.bars.get('s');
     first.close = -1;
     expect((await db.bars.get('s'))[0].close).toBe(10);
