@@ -3,7 +3,7 @@
 
 import { contractLabel, isTradable } from '@shared/contract';
 import { f0, parseNum, roundToTick } from '@shared/format';
-import type { ContractRef, OrderRequest, OrderType } from '@shared/types';
+import type { ContractRef, OrderRequest, OrderType, SecType } from '@shared/types';
 import type { ConfirmRow, PendingOrder, TicketState } from '../../state/store';
 import { conditionContract, money, positive, priceText, resolveTicket, type TicketMarket, type TicketModel } from './ticketModel';
 
@@ -132,8 +132,12 @@ export interface ReviewLabels {
   buy: string;
   sell: string;
   orderTypes: Record<OrderType, string>;
+  /** Quantity with its unit ("100 股" in Chinese); the bare number when absent. */
+  units?: (qty: string, secType: SecType) => string;
   extras: { outsideRth: string; bracket: string; conditional: string; iceberg: string; goodAfter: (t: string) => string };
 }
+
+const withUnits = (req: OrderRequest, labels: ReviewLabels) => (labels.units ? labels.units(f0(req.quantity), req.contract.secType) : f0(req.quantity));
 
 /** "Limit 227.49", "Stop limit 229.75 / 230.21", "Trail 3% · 220.65", "Market". */
 export function typePriceText(req: OrderRequest, labels: ReviewLabels, minTick: number): string {
@@ -174,7 +178,7 @@ export function reviewRows(req: OrderRequest, model: TicketModel, labels: Review
   const rows: ConfirmRow[] = [
     { label: labels.contract, value: contractLabel(req.contract) },
     { label: labels.side, value: buy ? labels.buy : labels.sell, color: buy ? 'var(--up)' : 'var(--dn)' },
-    { label: labels.qty, value: f0(req.quantity) },
+    { label: labels.qty, value: withUnits(req, labels) },
     { label: labels.typePrice, value: typePriceText(req, labels, minTick) },
     { label: labels.tif, value: tifText(req, labels) },
   ];
@@ -203,6 +207,6 @@ export function pendingOrder(
     rows: reviewRows(req, model, labels, market),
     label: side,
     ...(modifyOrderId != null ? { modifyOrderId } : {}),
-    summary: `${side} ${f0(req.quantity)} ${contractLabel(req.contract)}`,
+    summary: `${side} ${withUnits(req, labels)} ${contractLabel(req.contract)}`,
   };
 }

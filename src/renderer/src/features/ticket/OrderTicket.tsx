@@ -102,6 +102,7 @@ export function OrderTicket() {
     buy: c.buy,
     sell: c.sell,
     orderTypes: m.orderTypes,
+    units: m.units,
     extras: m.extras,
   };
 
@@ -415,7 +416,7 @@ export function OrderTicket() {
               textOverflow: 'ellipsis',
             }}
           >
-            {modifying != null ? m.modify(modifying) : m.submit(buy ? c.buy : c.sell, f0(t.qty), label)}
+            {modifying != null ? m.modify(modifying) : m.submit(buy ? c.buy : c.sell, m.units(f0(t.qty), symbol.secType), label)}
           </button>
           {modifying != null && (
             <div onClick={() => patch({ modifyingOrderId: null })} className="hover-tx" style={{ alignSelf: 'center', fontSize: 12, color: 'var(--dm)', cursor: 'pointer' }}>

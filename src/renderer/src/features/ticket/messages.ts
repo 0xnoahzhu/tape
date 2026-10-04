@@ -1,6 +1,6 @@
 // Strings of the order ticket. Shared labels (Buy, Sell, Qty, TIF, …) come from i18n/common.
 
-import type { OrderType } from '@shared/types';
+import type { OrderType, SecType } from '@shared/types';
 import { createMessages } from '../../i18n';
 
 export const useTicketM = createMessages({
@@ -39,6 +39,8 @@ export const useTicketM = createMessages({
     activateAt: 'Activate at',
     bpAfter: 'BP after order',
     submit: (side: string, qty: string, label: string) => `${side} ${qty} ${label}`,
+    /** Quantity with its unit: English trading UIs omit it ("Sell 100 AAPL"). */
+    units: (qty: string, _secType: SecType) => qty,
     modify: (id: number) => `Modify #${id}`,
     cancelModify: 'Cancel modify',
     noMarketData: (code: number) => `No market data (${code})`,
@@ -99,6 +101,7 @@ export const useTicketM = createMessages({
     activateAt: '生效时间',
     bpAfter: '下单后购买力',
     submit: (side: string, qty: string, label: string) => `${side} ${qty} ${label}`,
+    units: (qty: string, secType: SecType) => (secType === 'OPT' || secType === 'FOP' ? `${qty} 张` : secType === 'STK' ? `${qty} 股` : qty),
     modify: (id: number) => `改单 #${id}`,
     cancelModify: '取消改单',
     noMarketData: (code: number) => `无行情数据（${code}）`,
