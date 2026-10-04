@@ -48,8 +48,8 @@ export function AppearanceSection() {
         label={m.theme}
         options={[
           { key: 'system', label: m.system },
-          { key: 'dark', label: m.dark },
           { key: 'light', label: m.light },
+          { key: 'dark', label: m.dark },
         ]}
         value={a.theme}
         onChange={(theme) => saveSettings({ appearance: { theme } })}
