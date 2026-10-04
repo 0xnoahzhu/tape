@@ -278,9 +278,21 @@ function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
     { l: m.rr, v: !a || a.profitUnlimited || a.lossUnlimited ? DASH : (a.maxProfit / Math.max(1, Math.abs(a.maxLoss))).toFixed(2), col: 'var(--tx)' },
   ];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px 12px', background: 'var(--ln2)', margin: '14px 20px 0', fontVariantNumeric: 'tabular-nums' }}>
-      {stats.map((s) => (
-        <div key={s.l} style={{ background: 'var(--p)', padding: '9px 0', display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+    // Hairlines between rows only: the design's gray grid background also showed through the
+    // 12px column gaps as vertical bars.
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', columnGap: 12, margin: '14px 20px 0', fontVariantNumeric: 'tabular-nums' }}>
+      {stats.map((s, i) => (
+        <div
+          key={s.l}
+          style={{
+            padding: '9px 0',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 5,
+            minWidth: 0,
+            boxShadow: i < Math.ceil(stats.length / 3) * 3 - 3 ? 'inset 0 -1px 0 var(--ln2)' : undefined,
+          }}
+        >
           <div style={{ fontSize: 11, color: 'var(--dm)' }}>{s.l}</div>
           {s.wrap ? (
             <div style={{ font: '500 13px/1.3 var(--num)', color: s.col }}>{s.v}</div>
@@ -291,7 +303,6 @@ function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
           )}
         </div>
       ))}
-      <div style={{ background: 'var(--p)' }} />
     </div>
   );
 }
