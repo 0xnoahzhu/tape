@@ -198,7 +198,8 @@ function Cell({ k, d, itm, side, onAdd }: { k: ColumnKey; d: OptionData; itm: bo
   const style: CSSProperties = {
     display: 'flex',
     alignItems: 'center',
-    background: itm ? 'var(--sel)' : 'transparent',
+    // The ITM shade stops 1px short of the bottom so the row's separator (accent on the ATM row) stays visible.
+    background: itm ? 'linear-gradient(var(--sel), var(--sel)) top / 100% calc(100% - 1px) no-repeat' : 'transparent',
     color: cellColor(k, d),
     cursor: click ? 'pointer' : 'default',
     whiteSpace: 'nowrap',
