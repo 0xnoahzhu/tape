@@ -5,7 +5,10 @@
 // its coverage, the time ranges whose bars are known to be complete because IB was asked for
 // them, in ctx.db.kv (namespace 'coverage'; coverage.ts, and historyPages.ts for what an answer
 // proves). Intraday coverage is limited to the database's retention of intraday bars (from
-// 00:00 New York after the retention minus a day).
+// 00:00 New York after the retention minus a day). The database also evicts whole series (not
+// used for months, or over its size cap) with their coverage, and can be cleared; the service
+// then drops its in-memory copy of their coverage (watchEvictions), so they are fetched again,
+// and a load that read bars and coverage across the eviction does not trust that coverage.
 //
 // Newest bars, get(req):
 // - cold (the newest covered range does not reach the window start): the window is fetched;
@@ -184,7 +187,10 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   const slots = new Map<string, Job>();
   /** Coverage documents by series (the in-memory copy is the one that is updated). */
   const coverages = new Map<string, SeriesCoverage>();
-  const coverageLoads = new Map<string, Promise<SeriesCoverage>>();
+  /** Coverage reads in flight; `evicted` when the series was evicted meanwhile (what is read may predate it). */
+  const coverageLoads = new Map<string, { promise: Promise<SeriesCoverage>; evicted: boolean }>();
+  /** Reads pairing a series' stored bars with its coverage, in flight; `evicted` as above. */
+  const pairedReads = new Set<{ series: string; evicted: boolean }>();
   const heads = new Map<string, { head: number | null; at: number }>();
   /** Head timestamps IB could not tell just now (pacing, permissions, timeout), by key: until when they are not asked again. */
   const headErrors = new Map<string, number>();
@@ -427,15 +433,17 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   };
 
   const coverageOf = (series: string): Promise<SeriesCoverage> => {
+    watchEvictions();
     const known = coverages.get(series);
     if (known) return Promise.resolve(known);
     let load = coverageLoads.get(series);
     if (!load) {
-      load = (async () => {
+      const entry = { evicted: false } as { promise: Promise<SeriesCoverage>; evicted: boolean };
+      entry.promise = (async () => {
         let doc: SeriesCoverage = { ranges: [] };
         try {
           const row = await ctx.db?.kv.get(COVERAGE_NS, series);
-          if (row) doc = parseCoverage(row.value);
+          if (row && !entry.evicted) doc = parseCoverage(row.value);
         } catch (err) {
           console.warn('[history] coverage unavailable:', err);
         }
@@ -443,10 +451,60 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         if (updated) return updated;
         remember(coverages, series, doc);
         return doc;
-      })().finally(() => coverageLoads.delete(series));
-      coverageLoads.set(series, load);
+      })().finally(() => coverageLoads.get(series) === entry && coverageLoads.delete(series));
+      coverageLoads.set(series, (load = entry));
     }
-    return load;
+    return load.promise;
+  };
+
+  /**
+   * The database evicts series (maintenance: not used for months, or over its size cap) together
+   * with their coverage, or clears all market data: what is kept here about them goes too, so
+   * they are fetched again instead of answered from bars that are gone. A coverage write made
+   * from the dropped copy before the notice arrived (the worker evicted first) is deleted again,
+   * and reads in flight are flagged (pairedRead). Head timestamps of evicted series stay in
+   * memory: they are IB's answers, not claims about stored bars (a clear drops them as well).
+   */
+  let evictionsWatched = false;
+  const watchEvictions = () => {
+    if (evictionsWatched) return;
+    evictionsWatched = true;
+    ctx.db?.onEvicted?.((evicted) => {
+      if (evicted === 'all') {
+        for (const load of coverageLoads.values()) load.evicted = true;
+        for (const read of pairedReads) read.evicted = true;
+        coverages.clear();
+        heads.clear();
+        densities.clear();
+        return;
+      }
+      const gone = new Set(evicted);
+      for (const read of pairedReads) if (gone.has(read.series)) read.evicted = true;
+      for (const series of evicted) {
+        const load = coverageLoads.get(series);
+        if (load) load.evicted = true;
+        if (coverages.delete(series) || load) void ctx.db?.kv.delete(COVERAGE_NS, series);
+        densities.delete(series);
+      }
+    });
+  };
+
+  /**
+   * Runs a read of a series' stored bars and its coverage, telling whether the series was
+   * evicted meanwhile. The two may then disagree: the coverage (often the in-memory copy, read
+   * at once) can predate the eviction while the bars were read after it, so the coverage would
+   * claim bars that are gone.
+   */
+  const pairedRead = async <T>(series: string, read: () => Promise<T>): Promise<{ value: T; evicted: boolean }> => {
+    watchEvictions();
+    const entry = { series, evicted: false };
+    pairedReads.add(entry);
+    try {
+      const value = await read();
+      return { value, evicted: entry.evicted };
+    } finally {
+      pairedReads.delete(entry);
+    }
   };
 
   /** Coverage the cache can answer from: intraday bars older than the retention may be gone. */
@@ -517,8 +575,11 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     const now = Date.now();
     const windowStart = windowStartSec(spec.duration, now);
     const readFrom = spec.aggregate ? periodStart(windowStart, spec.aggregate) : windowStart;
-    const [stored, cov] = await Promise.all([readBars(spec, job.series, readFrom), coverageOf(job.series)]);
+    const read = await pairedRead(job.series, () => Promise.all([readBars(spec, job.series, readFrom), coverageOf(job.series)]));
     job.abort.signal.throwIfAborted();
+    const stored = read.value[0];
+    // Evicted while being read: nothing is known to be stored, so the window is loaded cold.
+    const cov: SeriesCoverage = read.evicted ? { ranges: [] } : read.value[1];
     const ranges = usable(spec, cov.ranges, now);
     const ttlMs = cov.fetchedAt !== undefined && !stillCurrent(req, spec, cov.fetchedAt, now) ? 0 : historyTtlMs(req.timeframe);
     const plan = planFetch({ spec, contract: req.contract, coverage: { ...cov, ranges }, stored, nowMs: now, ttlMs, fresh });
@@ -624,20 +685,27 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     let claimed: Range[] = [];
     const period = seriesPeriod(spec.seriesBarSize);
     for (let requests = 0; ; ) {
-      const cov = await coverageOf(job.series);
-      const range = rangeBefore(normalizeRanges([...usable(spec, cov.ranges, Date.now()), ...claimed]), bound);
-      const start = range ? range[0] : bound;
-      const seriesHead = headAt();
-      const complete = seriesHead !== undefined && start <= seriesHead;
-      const from = complete ? start : completeFrom(spec, start);
-      let series: Bar[] = [];
-      if (from < bound) {
-        const own = fetched.filter((b) => b.time >= from && b.time < bound);
-        const merged = normalizeBars([...(await readBars(spec, job.series, from, bound)), ...own]);
-        series = period ? dedupePeriods(merged, period) : merged;
-      }
-      const bars = present(spec, series).filter((b) => b.time < before);
+      const read = await pairedRead(job.series, async () => {
+        const cov = await coverageOf(job.series);
+        const range = rangeBefore(normalizeRanges([...usable(spec, cov.ranges, Date.now()), ...claimed]), bound);
+        const start = range ? range[0] : bound;
+        const seriesHead = headAt();
+        const complete = seriesHead !== undefined && start <= seriesHead;
+        const from = complete ? start : completeFrom(spec, start);
+        let series: Bar[] = [];
+        if (from < bound) {
+          const own = fetched.filter((b) => b.time >= from && b.time < bound);
+          const merged = normalizeBars([...(await readBars(spec, job.series, from, bound)), ...own]);
+          series = period ? dedupePeriods(merged, period) : merged;
+        }
+        return { start, complete, series };
+      });
       job.abort.signal.throwIfAborted();
+      // Evicted while being read: the coverage may claim bars that were gone already. Read
+      // again (the coverage is gone now) instead of asking IB for older bars than needed.
+      if (read.evicted) continue;
+      const { start, complete, series } = read.value;
+      const bars = present(spec, series).filter((b) => b.time < before);
       if (bars.length >= limit) return { bars: bars.slice(bars.length - limit), done: false };
       if (complete) return { bars, done: true };
       if (requests >= MAX_PAGE_REQUESTS) return { bars, done: false };

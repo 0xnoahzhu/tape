@@ -1,7 +1,7 @@
 // Messages between the main process (client.ts) and the database worker (server.ts).
 // Types only: the two sides are separate bundles and must not share runtime code.
 
-import type { NavPoint } from '@shared/types';
+import type { CacheStats, NavPoint } from '@shared/types';
 
 /** A journaled execution: the JSON text is what ExecutionJournal.since returns. */
 export interface ExecutionRow {
@@ -30,6 +30,12 @@ export interface DbOps {
   'nav.replace': [args: [points: NavPoint[]], result: void];
   /** Runs retention and vacuum now (tests, diagnostics). */
   maintain: [args: [], result: void];
+  'cache.stats': [args: [], result: CacheStats];
+  /**
+   * Deletes the cached market data (not executions or NAV); answered once the freed space is
+   * returned to the file system (other requests are served meanwhile).
+   */
+  'cache.clear': [args: [], result: void];
   /** Commits pending writes, checkpoints the WAL and closes the database. */
   close: [args: [], result: void];
 }
@@ -46,16 +52,22 @@ export interface DbRequest<K extends DbOp = DbOp> {
 
 export type DbResponse = { id: number; ok: true; value: unknown } | { id: number; ok: false; message: string };
 
-/** Sent once by the server after opening (or failing to open) the database. */
+/**
+ * Sent by the server: once after opening (or failing to open) the database, and whenever
+ * maintenance evicted series (their bars, coverage and head timestamps are gone).
+ */
 export type DbStatus =
   | { type: 'ready'; file: string; schemaVersion: number; recovered?: string }
-  | { type: 'unavailable'; message: string };
+  | { type: 'unavailable'; message: string }
+  | { type: 'evicted'; series: string[] };
 
 export type DbMessage = DbResponse | DbStatus;
 
 /** Worker options (workerData). */
 export interface DbWorkerData {
   file: string;
+  /** Size cap of the database plus its WAL (default sqlite.ts → CACHE_CAP_BYTES). */
+  capBytes?: number;
   /** Set to 1 (and notified) once the database is closed, so the main thread can wait on quit. */
   closed?: Int32Array;
 }

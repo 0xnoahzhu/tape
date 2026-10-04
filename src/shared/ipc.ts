@@ -8,6 +8,7 @@ import type {
   AppNotification,
   AppSnapshot,
   Bar,
+  CacheStats,
   ConnectionState,
   ContractInfo,
   ContractRef,
@@ -103,6 +104,16 @@ export interface TapeApi {
   setDepthSubscription(contract: ContractRef | null): Promise<void>;
   getOptionChainParams(underlying: ContractRef): Promise<OptionChainParams[]>;
 
+  // Local cache ------------------------------------------------------------
+  /** Size and contents of tape.db (bars, series, journaled executions). */
+  getCacheStats(): Promise<CacheStats>;
+  /**
+   * Deletes the cached market data (bars, series, coverage, head timestamps, contract details,
+   * option chain parameters) and returns the space to the file system. Executions and the NAV
+   * history are kept.
+   */
+  clearMarketDataCache(): Promise<void>;
+
   // Orders -----------------------------------------------------------------
   placeOrder(req: OrderRequest): Promise<PlaceOrderResult>;
   modifyOrder(orderId: number, req: OrderRequest): Promise<void>;
@@ -153,6 +164,8 @@ export const INVOKE_METHODS: readonly TapeInvokeMethod[] = [
   'getContractInfo',
   'setDepthSubscription',
   'getOptionChainParams',
+  'getCacheStats',
+  'clearMarketDataCache',
   'placeOrder',
   'modifyOrder',
   'cancelOrder',

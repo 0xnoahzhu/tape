@@ -43,6 +43,16 @@ const MIGRATIONS: readonly string[] = [
     net_liq REAL NOT NULL
   );
   `,
+  // v2: retention by use. last_access (unix ms) is when a series was last read or written (kept
+  // to the hour); existing series count as used now. bar_count keeps the number of bars, so
+  // the cache size does not need a scan of the bars table.
+  `
+  ALTER TABLE series ADD COLUMN last_access INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE series ADD COLUMN bar_count INTEGER NOT NULL DEFAULT 0;
+  UPDATE series SET
+    last_access = CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+    bar_count = (SELECT count(*) FROM bars WHERE bars.series_id = series.id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -82,15 +92,15 @@ function knownVersion(db: DatabaseSync): number {
   return v;
 }
 
-/** Applies pending migrations, each in its own transaction. */
-export function migrate(db: DatabaseSync): number {
+/** Applies pending migrations (up to `target`, tests only), each in its own transaction. */
+export function migrate(db: DatabaseSync, target = SCHEMA_VERSION): number {
   let v = knownVersion(db);
-  while (v < SCHEMA_VERSION) {
+  while (v < target) {
     db.exec('BEGIN IMMEDIATE');
     try {
       // Read again under the write lock: another connection may have migrated meanwhile.
       v = knownVersion(db);
-      if (v < SCHEMA_VERSION) {
+      if (v < target) {
         db.exec(MIGRATIONS[v]);
         db.exec(`PRAGMA user_version = ${++v}`);
       }
@@ -102,5 +112,5 @@ export function migrate(db: DatabaseSync): number {
   }
   // Long-lived connection: let SQLite gather the statistics it is missing (cheap, bounded).
   db.exec('PRAGMA optimize = 0x10002');
-  return SCHEMA_VERSION;
+  return v;
 }

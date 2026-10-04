@@ -2,7 +2,7 @@
 // market data observation, API log filtering/formatting and shortcut labels.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
-import { hmsMs } from '@shared/format';
+import { DASH, hmsMs } from '@shared/format';
 import type { ApiLogEntry, ConnectionState, DepthBook, MarketDataType, Quote, Settings } from '@shared/types';
 
 // ---------------------------------------------------------------------------
@@ -254,6 +254,29 @@ export function logDetail(e: ApiLogEntry): string {
 /** "/Users/me/Library/Logs/x.log" -> "~/Library/Logs/x.log". */
 export function tildify(path: string): string {
   return path.replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, '~');
+}
+
+// ---------------------------------------------------------------------------
+// Local cache
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+/** 88_290_000 -> "84.2 MB" (binary units, like the cache's 512 MB cap); bytes are whole. */
+export function formatBytes(n: number | null | undefined): string {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return DASH;
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < BYTE_UNITS.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  if (i === 0) return `${Math.round(v)} B`;
+  // A value that rounds up to 1024 of a unit moves to the next one.
+  if (Number(v.toFixed(1)) >= 1024 && i < BYTE_UNITS.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(1)} ${BYTE_UNITS[i]}`;
 }
 
 // ---------------------------------------------------------------------------

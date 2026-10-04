@@ -190,6 +190,19 @@ export interface OptionChainParams {
   strikes: number[];
 }
 
+/** What the local database (tape.db) holds, for Settings › Market data. */
+export interface CacheStats {
+  /** Size on disk: the database file plus its write-ahead log. */
+  bytes: number;
+  /** Stored bar series (contract + bar size + whatToShow + useRTH). */
+  series: number;
+  bars: number;
+  /** Journaled executions (never removed by the cache cleanup). */
+  executions: number;
+  /** Unix ms of the least recently used series, when there is one. */
+  oldestAccess?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Account
 

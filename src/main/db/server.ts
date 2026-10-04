@@ -1,35 +1,80 @@
 // Database worker loop: request / response over a message port. Writes that arrive together are
 // committed in one transaction (one WAL append instead of one per call; a burst longer than
 // BATCH_MS is split); a read first commits the writes queued before it. When the port has been
-// quiet for a while the worker checkpoints the WAL and, at most daily, runs retention,
-// incremental vacuum and optimize in small steps.
+// quiet for a while the worker writes the noted series accesses, checkpoints the WAL and, about
+// two minutes after startup and then every six hours, runs maintenance (retention, size cap,
+// incremental vacuum, WAL truncation, optimize) in slices of small steps that stop as soon as a
+// request arrives. Series that maintenance evicted are announced with an 'evicted' message
+// before the worker reads its next request. Clearing the market data drops the bars at once and
+// returns the freed pages in slices too, with requests served in between; the clear is
+// answered when the space is back.
 
 import type { MessagePort, Transferable } from 'node:worker_threads';
 import type { DbMessage, DbOp, DbRequest, DbWorkerData } from './protocol';
 import { SCHEMA_VERSION } from './schema';
-import { isCorruption, openStore, type SqliteStore } from './sqlite';
+import { isCorruption, openStore, type MaintenanceStep, type SqliteStore } from './sqlite';
 
 const WRITE_OPS: ReadonlySet<DbOp> = new Set<DbOp>(['bars.put', 'kv.set', 'kv.delete', 'executions.put', 'nav.append', 'nav.replace']);
-const DAY_MS = 86_400_000;
-/** Quiet time before idle work (checkpoint, maintenance) starts. */
+/** First maintenance after startup (once the worker is idle). */
+export const MAINTENANCE_DELAY_MS = 2 * 60_000;
+/** Maintenance while the app keeps running. */
+export const MAINTENANCE_INTERVAL_MS = 6 * 3_600_000;
+/** Quiet time before idle work (access flush, checkpoint, maintenance) starts. */
 export const IDLE_MS = 5_000;
 const IDLE_CHECK_MS = 1_000;
 /** Longest write transaction before it is committed and the rest of the queue waits a turn. */
 const BATCH_MS = 50;
-/** Longest maintenance slice before the worker looks at its queue again. */
-const SLICE_MS = 20;
+/**
+ * Longest maintenance slice before the worker looks at its queue again: a request waits at most
+ * about this long, plus the amount a step takes longer than the one before it.
+ */
+export const SLICE_MS = 20;
 
 export interface ServerOptions extends DbWorkerData {
   idleMs?: number;
+  maintenanceDelayMs?: number;
+  maintenanceIntervalMs?: number;
   log?: (message: string, err?: unknown) => void;
   /** Opens the store (tests wrap it to observe transactions and checkpoints). */
   open?: typeof openStore;
+  /** Clock of the maintenance slices, in ms (tests). */
+  now?: () => number;
+}
+
+type Steps = Generator<MaintenanceStep, void, void>;
+
+/**
+ * Runs a generator's steps in slices. A slice ends before a step that, taking as long as the
+ * step before it, would end more than `sliceMs` after the slice started; its first step
+ * always runs, so a slice makes progress however long steps take.
+ */
+export function createSlicer(now: () => number = () => performance.now(), sliceMs = SLICE_MS) {
+  let lastStepMs = 0;
+  return {
+    /**
+     * Runs steps while `go()` allows; evicted series keys are added to `evicted`. Returns
+     * whether steps are left. Errors of a step propagate.
+     */
+    run(steps: Steps, evicted: string[], go: () => boolean): boolean {
+      const started = now();
+      for (let n = 0; go(); n++) {
+        const at = now();
+        if (n > 0 && at - started + lastStepMs > sliceMs) return true;
+        const step = steps.next();
+        lastStepMs = now() - at;
+        if (step.value) evicted.push(...step.value);
+        if (step.done) return false;
+      }
+      return true;
+    },
+  };
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export function serve(port: MessagePort, opts: ServerOptions): void {
   const idleMs = opts.idleMs ?? IDLE_MS;
+  const intervalMs = opts.maintenanceIntervalMs ?? MAINTENANCE_INTERVAL_MS;
   const log = opts.log ?? ((message, err) => console.warn(`[db] ${message}`, ...(err === undefined ? [] : [err])));
   const open = opts.open ?? openStore;
   const post = (msg: DbMessage, transfer?: Transferable[]) => (transfer ? port.postMessage(msg, transfer) : port.postMessage(msg));
@@ -48,8 +93,16 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
   let lastActivity = Date.now();
   let dirty = false;
   let closed = false;
-  let maintenance: Generator<void, void, void> | null = null;
-  let nextMaintenanceAt = store.maintainedAt() + DAY_MS;
+  let maintenance: Steps | null = null;
+  /** Whether the next maintenance slice is scheduled already (setImmediate). */
+  let sliceScheduled = false;
+  /**
+   * Free pages of a clear being returned; the clear requests are answered when it ends. While
+   * it is set, a clearSlice is scheduled or running.
+   */
+  let clearing: { steps: Steps; waiting: DbRequest[] } | null = null;
+  const slicer = createSlicer(opts.now);
+  let nextMaintenanceAt = Date.now() + (opts.maintenanceDelayMs ?? MAINTENANCE_DELAY_MS);
   const timer = setInterval(onIdleCheck, IDLE_CHECK_MS);
   // The main side went away without closing: stop idle work (the file stays consistent).
   port.on('close', () => {
@@ -66,6 +119,7 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
     }
     flushWrites();
     if (req.op === 'close') return close(req);
+    if (req.op === 'cache.clear') return clear(req);
     try {
       const value = run(() => read(req));
       post({ id: req.id, ok: true, value }, value instanceof Float64Array ? [value.buffer as ArrayBuffer] : undefined);
@@ -89,6 +143,8 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
   function recover(cause: unknown): void {
     log('database corrupted; moving it aside and starting a new one', cause);
     maintenance = null;
+    // The new file holds no market data: a clear in progress is done (its next slice answers it).
+    if (clearing) clearing.steps = emptySteps();
     try {
       store.db.close();
     } catch {
@@ -194,13 +250,20 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
       case 'nav.all':
         return store.navAll();
       case 'maintain': {
-        const steps = store.maintenance(Date.now());
-        while (!steps.next().done);
+        const steps = startMaintenance();
+        const evicted: string[] = [];
+        try {
+          for (let step = steps.next(); !step.done; step = steps.next()) if (step.value) evicted.push(...step.value);
+        } finally {
+          announce(evicted);
+        }
         maintenance = null;
-        nextMaintenanceAt = Date.now() + DAY_MS;
+        nextMaintenanceAt = Date.now() + intervalMs;
         store.checkpoint();
         return undefined;
       }
+      case 'cache.stats':
+        return store.stats();
       default:
         throw new Error(`Unknown request ${req.op}`);
     }
@@ -208,10 +271,22 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
 
   const isIdle = () => Date.now() - lastActivity >= idleMs;
 
+  const startMaintenance = () => store.maintenance(Date.now(), opts.capBytes ? { capBytes: opts.capBytes } : {});
+
+  /** Tells the main side which series are gone (before the worker reads its next request). */
+  function announce(series: string[]): void {
+    if (series.length) post({ type: 'evicted', series });
+  }
+
   function onIdleCheck(): void {
-    if (closed || !isIdle()) return;
-    if (!maintenance && Date.now() >= nextMaintenanceAt) maintenance = store.maintenance(Date.now());
-    if (maintenance) return maintainSlice();
+    if (closed || !isIdle() || clearing) return;
+    if (!maintenance && Date.now() >= nextMaintenanceAt) maintenance = startMaintenance();
+    if (maintenance) return void (sliceScheduled || maintainSlice());
+    try {
+      if (run(() => store.flushAccess())) dirty = true;
+    } catch (err) {
+      log('recording series access failed', err);
+    }
     if (!dirty) return;
     try {
       run(() => store.checkpoint());
@@ -221,13 +296,18 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
     }
   }
 
-  /** Runs maintenance for up to SLICE_MS, then yields; stops as soon as a request arrives. */
+  /**
+   * Runs a slice of maintenance and schedules the next one while the worker stays idle; once a
+   * request arrives, the idle check resumes it.
+   */
   function maintainSlice(): void {
-    const started = performance.now();
-    while (maintenance && !closed && isIdle()) {
-      if (performance.now() - started > SLICE_MS) return void setImmediate(maintainSlice);
+    sliceScheduled = false;
+    const evicted: string[] = [];
+    try {
+      if (!maintenance || closed || clearing || !isIdle()) return;
+      let more = false;
       try {
-        if (!maintenance.next().done) continue;
+        more = slicer.run(maintenance, evicted, () => !closed && isIdle());
       } catch (err) {
         log('maintenance failed', err);
         if (isCorruption(err)) {
@@ -238,15 +318,82 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
           }
         }
       }
-      maintenance = null;
-      nextMaintenanceAt = Date.now() + DAY_MS;
-      dirty = true;
+      if (!more) {
+        maintenance = null;
+        nextMaintenanceAt = Date.now() + intervalMs;
+        dirty = true;
+      } else if (!closed && isIdle()) {
+        sliceScheduled = true;
+        setImmediate(maintainSlice);
+      }
+    } finally {
+      announce(evicted);
     }
+  }
+
+  /**
+   * Drops the market data at once (a single DROP TABLE), then returns the freed pages in slices
+   * with requests served in between (a full cache frees hundreds of MB: up to about a second of
+   * vacuum steps); the clear is answered when the space is back.
+   */
+  function clear(req: DbRequest): void {
+    try {
+      run(() => store.clearMarketData());
+    } catch (err) {
+      return post({ id: req.id, ok: false, message: errorText(err) });
+    }
+    // A maintenance run in progress would go on from a list of series that are gone; it is still
+    // due, so the next idle check starts a new one.
+    maintenance = null;
+    dirty = true;
+    const waiting = clearing ? clearing.waiting : [];
+    waiting.push(req);
+    // A clear while one is returning space starts over (the free list changed).
+    if (!clearing) setImmediate(clearSlice);
+    clearing = { steps: store.vacuum(), waiting };
+  }
+
+  function clearSlice(): void {
+    if (!clearing) return;
+    let more = false;
+    try {
+      more = !closed && slicer.run(clearing.steps, [], () => !closed);
+    } catch (err) {
+      // The data is gone already; the space comes back with the next maintenance.
+      log('returning the space of the cleared cache failed', err);
+      if (isCorruption(err)) {
+        try {
+          recover(err);
+        } catch {
+          // unavailable: answered below
+        }
+      }
+    }
+    if (more) return void setImmediate(clearSlice);
+    finishClear();
+  }
+
+  /** Truncates the WAL and answers the clear requests. */
+  function finishClear(): void {
+    const done = clearing;
+    clearing = null;
+    if (!done) return;
+    if (!closed) {
+      try {
+        run(() => store.checkpoint());
+      } catch (err) {
+        log('checkpoint failed', err);
+      }
+    }
+    lastActivity = Date.now();
+    for (const req of done.waiting) post({ id: req.id, ok: true, value: undefined });
   }
 
   function close(req: DbRequest): void {
     closed = true;
     clearInterval(timer);
+    // A clear returning space: the data is gone, the rest of the space comes back next run.
+    finishClear();
     let message: string | null = null;
     try {
       store.close();
@@ -260,3 +407,5 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
     }
   }
 }
+
+function* emptySteps(): Steps {}

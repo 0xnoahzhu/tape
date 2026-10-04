@@ -104,14 +104,50 @@ executions journal, the NAV history). It is `userData/tape.db`, opened with `nod
 worker thread (`worker.ts` → `server.ts` → `sqlite.ts`), so database work never blocks the socket
 or IPC; the main side (`client.ts`) is an async RPC.
 
-* Schema (`schema.ts`): `series` + `bars` (WITHOUT ROWID, clustered by series and time), `kv`
-  (`ns`, `key`, JSON, `updated_at`), `executions` (by `exec_id`, indexed by time), `nav` (`t`,
-  `net_liq`). WAL; versioned migrations.
+* Schema (`schema.ts`): `series` (`key`, `intraday`, `last_access`, `bar_count`) + `bars`
+  (WITHOUT ROWID, clustered by series and time), `kv` (`ns`, `key`, JSON, `updated_at`),
+  `executions` (by `exec_id`, indexed by time), `nav` (`t`, `net_liq`). WAL; versioned migrations
+  (v2 added `last_access`, set to the migration time, and `bar_count`, counted once).
 * Writes never reject (best-effort, logged); writes that arrive together commit in one transaction.
   Reads reject on database errors.
-* Retention, when the worker is idle and at most daily: intraday bars older than 30 days and kv
-  entries not rewritten for 180 days are deleted, followed by an incremental vacuum. Executions and
-  NAV points are kept (NAV is compacted to one point per day after 10 days by `navHistory.ts`).
+* Series access: every `bars.get` / `bars.put` notes the series in the worker's memory; its
+  `last_access` (unix ms) is written at most once an hour per series, in one transaction for all
+  pending series when the worker is idle (and on close).
+* Retention policy (`db/types.ts`), so the file cannot grow without bound:
+
+  | Data | Kept |
+  | --- | --- |
+  | Intraday bars | 30 days; a series left empty is removed |
+  | Any series (in practice daily and longer) | Evicted with its coverage and head timestamp when not read or written for 90 days |
+  | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (intraday before daily, least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
+  | `kv` (contract details, option chains, coverage, head timestamps) | Entries not rewritten for 180 days are deleted |
+  | Executions | Never deleted automatically (the trade journal is the user's record) |
+  | NAV | All of it; compacted to one point per day after 10 days by `navHistory.ts` |
+
+* Maintenance runs in the worker about 2 minutes after startup and then every 6 hours, once the
+  port has been quiet for 5 s: retention deletes, the size cap, `PRAGMA incremental_vacuum` in
+  steps, `wal_checkpoint(TRUNCATE)`, `PRAGMA optimize`. It is a generator of steps: one transaction
+  deleting at most 5,000 rows (up to about 10 ms), or one `incremental_vacuum` whose page count
+  follows the measured time of the previous one to take about 5 ms (a fixed 8 MB step took
+  25–80 ms). The worker runs steps in slices of 20 ms, ending a slice before a step that would
+  overrun it if it took as long as the one before, and reads its queue between slices: a request
+  waits at most about one slice, and maintenance pauses until the port is quiet again. A series
+  is evicted oldest bars first, its coverage and head timestamp (`kv` `coverage`, the head only
+  when no other series of the contract shares it) with the first chunk; a series read or written
+  again meanwhile is left alone.
+* Evictions reach the main side as an `evicted` message before the worker reads its next request
+  (`ctx.db.onEvicted`). The history service drops its in-memory coverage of those series (and
+  deletes a coverage document it may have written from that copy in the meantime), so an evicted
+  series is fetched again instead of being answered from bars that are gone. A load whose bar
+  read was answered after the eviction while it held the old coverage (`pairedRead`) does not
+  trust that coverage: the newest bars load cold, a page reads again.
+* Settings › Market data › Local cache shows `getCacheStats()` (file + WAL size, series, bars,
+  executions) and `clearMarketDataCache()` deletes bars, series and the `coverage` / `contract` /
+  `secdef` namespaces (dropping and recreating `bars`: about 0.1 s for millions of rows, much
+  faster than deleting them; requests wait for that statement), then returns the freed pages in
+  the same vacuum slices, serving other requests in between (0.2–1 s of vacuum steps for a full
+  cache), and answers once the space is back and the WAL truncated; executions and NAV are kept.
+  Listeners hear `'all'` before the clear is sent.
 * A corrupt or unreadable file is moved aside as `tape.db.corrupt-<ts>` and recreated; a file from a
   newer Tape version, or a worker that cannot start, falls back to the in-memory implementation
   (`memory.ts`, also used by tests). `close()` runs on quit.

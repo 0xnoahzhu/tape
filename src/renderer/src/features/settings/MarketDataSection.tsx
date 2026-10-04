@@ -1,10 +1,12 @@
 // Settings › Market data: request type, what each market actually delivers, feature switches,
-// quote field sources. Tags are derived from received quotes, never from assumed subscriptions.
+// quote field sources, the local cache (LocalCacheBlock). Tags are derived from received quotes,
+// never from assumed subscriptions.
 
 import { useMemo } from 'react';
 import { useStore } from '../../state/store';
 import { Toggle } from '../../ui/primitives';
 import { IssueNote } from './ConnectionSection';
+import { LocalCacheBlock } from './LocalCacheBlock';
 import { MARKET_ROWS, observeMarkets, type MarketRow, type Observation } from './logic';
 import { useSettingsMessages, type SettingsMessages } from './messages';
 import { LabelBlock, ObservedTagBox, SectionHeader, SubHeader, saveSettings } from './parts';
@@ -139,6 +141,7 @@ export function MarketDataSection() {
       >
         {m.link}
       </a>
+      <LocalCacheBlock />
     </>
   );
 }

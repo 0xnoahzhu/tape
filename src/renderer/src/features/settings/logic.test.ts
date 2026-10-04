@@ -4,6 +4,7 @@ import {
   countNewSince,
   farmList,
   filterLog,
+  formatBytes,
   hostAppName,
   isInfo,
   logBody,
@@ -20,6 +21,7 @@ import {
   statusDotColor,
   tildify,
 } from './logic';
+import { useSettingsMessages } from './messages';
 
 describe('connection inputs', () => {
   it('validates hosts', () => {
@@ -277,3 +279,29 @@ describe('shortcuts', () => {
     expect(win.every((k) => !k.keys.includes('⌘'))).toBe(true);
   });
 });
+
+describe('local cache stats', () => {
+  it('formats sizes in binary units', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(1023)).toBe('1023 B');
+    expect(formatBytes(1024)).toBe('1.0 KB');
+    expect(formatBytes(88_290_000)).toBe('84.2 MB');
+    expect(formatBytes(512 * 1024 * 1024)).toBe('512.0 MB');
+    expect(formatBytes(1024 * 1024 - 1)).toBe('1.0 MB'); // not "1024.0 KB"
+    expect(formatBytes(3.5 * 1024 ** 3)).toBe('3.5 GB');
+    expect(formatBytes(NaN)).toBe('—');
+    expect(formatBytes(-1)).toBe('—');
+    expect(formatBytes(undefined)).toBe('—');
+  });
+
+  it('summarizes size, series and bars in both languages', () => {
+    const en = useSettingsMessages.for('en');
+    const zh = useSettingsMessages.for('zh');
+    expect(en.cacheLine(formatBytes(88_290_000), 312, 1_234_567)).toBe('84.2 MB · 312 series · 1.2M bars');
+    expect(en.cacheLine('0 B', 0, 0)).toBe('0 B · 0 series · 0 bars');
+    expect(en.cacheLine('8.0 KB', 1, 1)).toBe('8.0 KB · 1 series · 1 bar');
+    expect(en.cacheLine('1.0 GB', 1_200, 12_400)).toBe('1.0 GB · 1,200 series · 12.4K bars');
+    expect(zh.cacheLine(formatBytes(88_290_000), 312, 1_234_567)).toBe('84.2 MB · 312 个序列 · 1.2M 根K线');
+  });
+});
+

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import type { Bar, ContractRef, HistoryRequest } from '@shared/types';
 import type { HistoryService } from '../context';
+import type { MemoryDatabase } from '../db/memory';
 import type { SeriesCoverage } from './coverage';
 import { createFakeContext, createFakeIb } from './fakeIb';
 import { BACKOFF_START_MS, COVERAGE_NS, createHistoryService, HEAD_ERROR_MS, MAX_QUEUED, PAGE_BUDGET, PAGE_BUDGET_WINDOW_MS, PAGE_TTL_MS, SupersededError } from './history';
@@ -755,5 +756,89 @@ describe('scheduling', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(await p).toMatch(/timed out after 20 s/);
     expect(t.fake.callsOf('cancelHistoricalData')).toHaveLength(1);
+  });
+});
+
+describe('evictions from the bar cache', () => {
+  const series = 'STK:AAPL|1 day|TRADES|1';
+
+  it('an evicted series is loaded again in full instead of answered from coverage whose bars are gone', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    t.answers.set('2 Y', [row('20241007', 100), row('20261001', 201), row('20261002', 202)]);
+    await t.get(aapl1D);
+    const db = t.ctx.db as MemoryDatabase;
+    const deletes = vi.spyOn(db.kv, 'delete');
+    // Maintenance evicts the series (not opened for months, or over the size cap).
+    db.evictSeries([series]);
+    // A coverage write made from the dropped copy before the notice arrived would claim bars that are gone.
+    expect(deletes).toHaveBeenCalledWith(COVERAGE_NS, series);
+    // Sunday: settled bars would be answered from the cache without a request (see above), but
+    // the coverage went with the bars, so the window is loaded again.
+    vi.setSystemTime(ny('2026-10-04', '12:00'));
+    expect(closes(await t.get(aapl1D))).toEqual([100, 201, 202]);
+    expect(t.hist().map((c) => c[3])).toEqual(['2 Y', '2 Y']);
+    expect((await t.coverage(aapl1D))?.ranges).toEqual([[day('20241007'), nySec('2026-10-04', '12:00')]]);
+    // Other series are not affected.
+    db.evictSeries(['STK:MSFT|1 day|TRADES|1']);
+    vi.setSystemTime(ny('2026-10-04', '13:00'));
+    expect(closes(await t.get(aapl1D))).toEqual([100, 201, 202]);
+    expect(t.hist()).toHaveLength(2);
+  });
+
+  /**
+   * The worker evicts the series in the maintenance slice before it reads the bars a load asked
+   * for: the notice arrives first, then the (now empty) answer. The coverage the load holds came
+   * from memory before either.
+   */
+  const evictBeforeNextRead = (db: MemoryDatabase) => {
+    const get = db.bars.get.bind(db.bars);
+    return vi.spyOn(db.bars, 'get').mockImplementationOnce(async (s, from, to) => {
+      await Promise.resolve();
+      db.evictSeries([s]);
+      return get(s, from, to);
+    });
+  };
+
+  it('a load whose bar read races an eviction loads the window instead of trusting the coverage it holds', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    t.answers.set('2 Y', [row('20241007', 100), row('20261001', 201), row('20261002', 202)]);
+    await t.get(aapl1D);
+    // Sunday: the coverage in memory is settled, so without the eviction no request would be made.
+    vi.setSystemTime(ny('2026-10-04', '12:00'));
+    evictBeforeNextRead(t.ctx.db as MemoryDatabase);
+    expect(closes(await t.get(aapl1D))).toEqual([100, 201, 202]);
+    expect(t.hist().map((c) => c[3])).toEqual(['2 Y', '2 Y']);
+    expect((await t.coverage(aapl1D))?.ranges).toEqual([[day('20241007'), nySec('2026-10-04', '12:00')]]);
+    // The answer is kept as usual.
+    expect(closes(await t.get(aapl1D))).toEqual([100, 201, 202]);
+    expect(t.hist()).toHaveLength(2);
+  });
+
+  it('a page whose bar read races an eviction reads again instead of paging past the bars that are gone', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    t.answers.set('2 Y', [row('20241007', 100), row('20250102', 150), row('20261001', 201), row('20261002', 202)]);
+    t.setHead(String(day('20241007')));
+    await t.get(aapl1D);
+    // Without the eviction the page comes from the cache.
+    expect(closes((await t.older(aapl1D, day('20261001'), 10)).bars)).toEqual([100, 150]);
+    expect(t.hist()).toHaveLength(1);
+    evictBeforeNextRead(t.ctx.db as MemoryDatabase);
+    t.answers.set('1 Y@20250103-00:00:00', [row('20241007', 100), row('20250102', 150)]);
+    const page = await t.older(aapl1D, day('20250103'), 10);
+    // One request for the bars that are gone, ending where the page ends (not before the
+    // covered range the dropped coverage claimed).
+    expect(t.asked().slice(1)).toEqual([['1 Y', '20250103-00:00:00']]);
+    expect(page).toEqual({ bars: [expect.objectContaining({ close: 100 }), expect.objectContaining({ close: 150 })], done: true });
+  });
+
+  it('clearing the cache drops every coverage, and the series loads again', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    t.answers.set('2 Y', [row('20241007', 100), row('20261001', 201), row('20261002', 202)]);
+    await t.get(aapl1D);
+    await t.ctx.db.clearMarketData();
+    expect(await t.ctx.db.bars.get(series)).toEqual([]);
+    vi.setSystemTime(ny('2026-10-04', '12:00'));
+    expect(closes(await t.get(aapl1D))).toEqual([100, 201, 202]);
+    expect(t.hist().map((c) => c[3])).toEqual(['2 Y', '2 Y']);
   });
 });

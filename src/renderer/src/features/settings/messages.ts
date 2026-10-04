@@ -1,5 +1,6 @@
 // Strings of the Settings page (English from the design's EN map, Chinese from its script).
 
+import { compact, f0 } from '@shared/format';
 import { createMessages } from '../../i18n';
 import type { ShortcutId } from './logic';
 
@@ -96,6 +97,22 @@ const en = {
     10168: 'Delayed market data is not enabled for this account.',
     162: 'IB rejected a historical data request. Charts may stay empty while this persists.',
   } as Record<number, string>,
+  cacheTitle: 'Local cache',
+  cacheDesc:
+    'Bars, contract details and option chains are stored on this computer, so charts open at once and IB is asked only for what is missing. Intraday bars are kept for 30 days, charts not opened for 90 days are removed, and the cache stays under 512 MB by removing the least recently used charts first, intraday charts not opened in the past week before all others. Trade history and net liquidation history are always kept.',
+  /** "84.2 MB · 312 series · 1.2M bars" */
+  cacheLine: (size: string, series: number, bars: number) => `${size} · ${f0(series)} series · ${compact(bars)} ${bars === 1 ? 'bar' : 'bars'}`,
+  cacheOldest: (date: string) => `Least recently used chart: ${date}`,
+  cacheLoading: 'Calculating…',
+  cacheUnavailable: 'Size not available',
+  cacheClear: 'Clear cache',
+  cacheClearing: 'Clearing…',
+  cacheClearTitle: 'Clear local cache',
+  cacheSize: 'Size',
+  cacheSeries: 'Series',
+  cacheBars: 'Bars',
+  cacheClearNote: 'Charts load their bars from IB again, which takes a while for long histories. Trade history and net liquidation history are kept.',
+  cacheCleared: 'Local cache cleared',
 
   // Trade
   confirmOrders: 'Confirm before sending',
@@ -272,6 +289,21 @@ const zh: typeof en = {
     10168: '此账户未开通延迟行情。',
     162: 'IB 拒绝了历史数据请求，问题持续期间图表可能为空。',
   },
+  cacheTitle: '本地缓存',
+  cacheDesc:
+    'K线、合约详情和期权链保存在本机，图表可以立即打开，只向 IB 请求缺少的部分。日内K线保留 30 天，90 天未打开的图表会被删除；缓存超过 512 MB 时先删除最久未用的图表，其中一周内未打开的日内图表最先删除。成交记录和净值历史始终保留。',
+  cacheLine: (size: string, series: number, bars: number) => `${size} · ${f0(series)} 个序列 · ${compact(bars)} 根K线`,
+  cacheOldest: (date: string) => `最久未用的图表：${date}`,
+  cacheLoading: '计算中…',
+  cacheUnavailable: '无法读取缓存大小',
+  cacheClear: '清除缓存',
+  cacheClearing: '正在清除…',
+  cacheClearTitle: '清除本地缓存',
+  cacheSize: '大小',
+  cacheSeries: '序列',
+  cacheBars: 'K线',
+  cacheClearNote: '图表会重新从 IB 加载K线，较长的历史需要一些时间。成交记录和净值历史会保留。',
+  cacheCleared: '本地缓存已清除',
 
   confirmOrders: '下单前确认',
   confirmOrdersD: '弹窗核对合约、数量、价格',

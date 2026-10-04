@@ -4,12 +4,16 @@
 //
 // Writes never reject: persistence is best-effort, a failed write is logged. Reads reject with
 // the worker's error message.
+//
+// Evictions reach onEvicted listeners: the worker's 'evicted' messages, and 'all' when
+// clearMarketData is called (synchronously, before the request is sent, so a listener that drops
+// its copy of the evicted data re-reads it only after the clear).
 
 import type { Transferable } from 'node:worker_threads';
 import type { Bar, Execution, NavPoint } from '@shared/types';
 import { createMemoryDatabase } from './memory';
 import type { DbArgs, DbMessage, DbOp, DbRequest, DbResult, ExecutionRow } from './protocol';
-import type { Database } from './types';
+import type { Database, EvictedSeries } from './types';
 
 /** How long close() waits for the worker to commit and close the file. */
 const CLOSE_TIMEOUT_MS = 3_000;
@@ -52,6 +56,16 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
   let fellBack = false;
   let closing: Promise<void> | null = null;
   let writeErrors = 0;
+  const evictionListeners = new Set<(evicted: EvictedSeries) => void>();
+  const notifyEvicted = (evicted: EvictedSeries) => {
+    for (const l of [...evictionListeners]) {
+      try {
+        l(evicted);
+      } catch (err) {
+        log(`[db] eviction listener failed: ${(err as Error).message}`);
+      }
+    }
+  };
   let markReady: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => (markReady = resolve));
 
@@ -75,6 +89,8 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
         if (m.type === 'ready') {
           if (m.recovered) log(`[db] tape.db was unreadable and has been recreated (old file: ${m.recovered})`);
           markReady();
+        } else if (m.type === 'evicted') {
+          if (!memory && m.series.length) notifyEvicted(m.series);
         } else {
           useMemory(m.message);
         }
@@ -152,6 +168,15 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
       append: (points) => call('nav.append', [points], (m) => m.nav.append(points)),
       all: () => call('nav.all', [], (m) => m.nav.all(), unpackNav),
       replace: (points) => call('nav.replace', [points], (m) => m.nav.replace(points)),
+    },
+    stats: () => call('cache.stats', [], (m) => m.stats()),
+    clearMarketData() {
+      notifyEvicted('all');
+      return call('cache.clear', [], (m) => m.clearMarketData());
+    },
+    onEvicted(listener) {
+      evictionListeners.add(listener);
+      return () => void evictionListeners.delete(listener);
     },
     close() {
       closing ??= (async () => {

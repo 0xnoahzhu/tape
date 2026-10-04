@@ -1,7 +1,13 @@
 // In-memory Database: used in tests and as the fallback when SQLite cannot be opened.
+// Nothing is evicted on its own; tests evict series with evictSeries, as maintenance would.
 
 import type { Bar, Execution, NavPoint } from '@shared/types';
-import type { Database } from './types';
+import type { Database, EvictedSeries } from './types';
+
+export interface MemoryDatabase extends Database {
+  /** Drops series with their coverage documents and reports them, like SQLite maintenance. */
+  evictSeries(series: readonly string[]): void;
+}
 
 /** Index of the first bar with time >= t in an ascending series (bars.length when none). */
 function lowerBound(bars: readonly Bar[], t: number): number {
@@ -57,13 +63,23 @@ function mergeSorted(cur: readonly Bar[], next: readonly Bar[]): Bar[] {
   return out;
 }
 
-export function createMemoryDatabase(): Database {
+const kvKey = (ns: string, key: string) => `${ns}\u0000${key}`;
+/** Coverage documents of bar series, as in sqlite.ts (the bundles share no runtime code). */
+const COVERAGE_KV_NS = 'coverage';
+/** kv namespaces of cached market data, as sqlite.ts → MARKET_DATA_NS. */
+export const MEMORY_MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef'];
+
+export function createMemoryDatabase(): MemoryDatabase {
   /** Ascending, unique times per series (kept sorted on write, so reads never sort). */
   const bars = new Map<string, Bar[]>();
   /** JSON text like the SQLite table: readers get their own copy of every value. */
   const kv = new Map<string, { json: string; updatedAt: number }>();
   const execs = new Map<string, Execution>();
   let nav: NavPoint[] = [];
+  const listeners = new Set<(evicted: EvictedSeries) => void>();
+  const notify = (evicted: EvictedSeries) => {
+    for (const l of [...listeners]) l(evicted);
+  };
 
   return {
     kind: 'memory',
@@ -93,14 +109,14 @@ export function createMemoryDatabase(): Database {
     },
     kv: {
       async get<T>(ns: string, key: string) {
-        const row = kv.get(`${ns}\u0000${key}`);
+        const row = kv.get(kvKey(ns, key));
         return row ? { value: JSON.parse(row.json) as T, updatedAt: row.updatedAt } : undefined;
       },
       async set(ns, key, value) {
-        kv.set(`${ns}\u0000${key}`, { json: JSON.stringify(value ?? null), updatedAt: Date.now() });
+        kv.set(kvKey(ns, key), { json: JSON.stringify(value ?? null), updatedAt: Date.now() });
       },
       async delete(ns, key) {
-        kv.delete(`${ns}\u0000${key}`);
+        kv.delete(kvKey(ns, key));
       },
     },
     executions: {
@@ -121,6 +137,27 @@ export function createMemoryDatabase(): Database {
       async replace(points) {
         nav = points.slice().sort((a, b) => a.t - b.t);
       },
+    },
+    async stats() {
+      let count = 0;
+      for (const list of bars.values()) count += list.length;
+      return { bytes: 0, series: bars.size, bars: count, executions: execs.size };
+    },
+    async clearMarketData() {
+      notify('all');
+      bars.clear();
+      for (const k of [...kv.keys()]) if (MEMORY_MARKET_DATA_NS.includes(k.slice(0, k.indexOf('\u0000')))) kv.delete(k);
+    },
+    onEvicted(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    evictSeries(series) {
+      for (const s of series) {
+        bars.delete(s);
+        kv.delete(kvKey(COVERAGE_KV_NS, s));
+      }
+      if (series.length) notify(series);
     },
     async close() {},
   };

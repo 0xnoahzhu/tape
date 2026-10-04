@@ -60,4 +60,26 @@ describe('memory bar cache', () => {
     expect(row?.value).toEqual({ a: 1 });
     expect(row && 'b' in row.value).toBe(false);
   });
+
+  it('evicts series with their coverage and clears the market data like SQLite', async () => {
+    const db = createMemoryDatabase();
+    const heard: Array<readonly string[] | 'all'> = [];
+    db.onEvicted((e) => heard.push(e));
+    await db.bars.put('A', [bar(1), bar(2)]);
+    await db.bars.put('B', [bar(1)]);
+    await db.kv.set('coverage', 'A', { ranges: [] });
+    await db.kv.set('contract', '1', {});
+    await db.kv.set('mine', '1', {});
+    await db.executions.put([{ execId: 'e', orderId: 1, key: 'A', contract: { symbol: 'A', secType: 'STK', exchange: 'SMART', currency: 'USD' }, side: 'BUY', shares: 1, price: 1, time: 1 }]);
+    expect(await db.stats()).toEqual({ bytes: 0, series: 2, bars: 3, executions: 1 });
+    db.evictSeries(['A']);
+    expect(heard).toEqual([['A']]);
+    expect(await db.bars.get('A')).toEqual([]);
+    expect(await db.kv.get('coverage', 'A')).toBeUndefined();
+    await db.clearMarketData();
+    expect(heard).toEqual([['A'], 'all']);
+    expect(await db.stats()).toEqual({ bytes: 0, series: 0, bars: 0, executions: 1 });
+    expect(await db.kv.get('contract', '1')).toBeUndefined();
+    expect(await db.kv.get('mine', '1')).toBeDefined();
+  });
 });

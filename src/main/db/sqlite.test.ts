@@ -40,7 +40,7 @@ describe('SQLite store', () => {
     expect(pragma(db, 'foreign_keys')).toBe(1);
     expect(pragma(db, 'busy_timeout')).toBe(5000);
     expect(pragma(db, 'temp_store')).toBe(2); // memory
-    expect(pragma(db, 'user_version')).toBe(1);
+    expect(pragma(db, 'user_version')).toBe(SCHEMA_VERSION);
     expect(Number(pragma(db, 'cache_size'))).toBeLessThan(0);
     const tables = (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>).map((t) => t.name);
     expect(tables).toEqual(['bars', 'executions', 'kv', 'nav', 'series']);
