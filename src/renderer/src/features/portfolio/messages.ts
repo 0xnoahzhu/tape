@@ -1,0 +1,176 @@
+// Strings of the Portfolio page.
+
+import { createMessages } from '../../i18n';
+
+export const usePortfolioMessages = createMessages({
+  en: {
+    netLiq: 'Net liquidation',
+    dayPnl: 'Day P&L',
+    unrealizedPnl: 'Unrealized P&L',
+    buyingPower: 'Buying Power',
+    cash: 'Cash',
+    tabDash: 'Dashboard',
+    tabPos: 'Positions',
+    tabPerf: 'Performance',
+
+    // Equity curve
+    modeValue: 'Value',
+    modePerf: 'Performance',
+    titleValue: 'Net liquidation value',
+    titlePerf: 'Return',
+    span7D: 'Past 7 days',
+    spanMTD: 'Month to date',
+    spanYTD: 'Year to date',
+    span1Y: 'Past year',
+    since: (date: string) => `Since ${date}`,
+    historyNote: (date: string) => `Tape records your net liquidation while connected; history starts ${date}.`,
+    noHistory: 'Tape records your net liquidation while connected. No history yet.',
+
+    // Allocation
+    allocation: 'Sector allocation',
+    netLiqShort: 'Net liq',
+    noAllocation: 'No account data',
+    /** Display names of IB industries and the special buckets (@etf, @other, @cash). */
+    sectorNames: {
+      '@etf': 'ETF / Index',
+      '@other': 'Other',
+      '@cash': 'Cash',
+      Communications: 'Communication',
+      'Consumer, Cyclical': 'Consumer Cyclical',
+      'Consumer, Non-cyclical': 'Consumer Non-cyclical',
+    } as Record<string, string>,
+
+    // Positions table: [label, full name]
+    headers: [
+      ['Symbol', 'Symbol'],
+      ['Qty', 'Quantity'],
+      ['Avg', 'Average cost'],
+      ['Last', 'Last price'],
+      ['Value', 'Market value'],
+      ['% NLV', 'Percent of net liquidation value'],
+      ['Unrl. P&L', 'Unrealized P&L'],
+      ['Day P&L', "Today's P&L"],
+    ] as Array<[string, string]>,
+    kinds: {
+      STK: 'Stock',
+      OPT: 'Option',
+      IND: 'Index',
+      FUT: 'Future',
+      FOP: 'Future option',
+      CASH: 'Forex',
+      BOND: 'Bond',
+      WAR: 'Warrant',
+      CFD: 'CFD',
+      CRYPTO: 'Crypto',
+      BAG: 'Combo',
+    } as Record<string, string>,
+    noPositions: 'No positions',
+
+    // Performance
+    returns: 'Returns',
+    maxDrawdown: (v: string) => `Max drawdown ${v}`,
+    balances: 'Balances',
+    stockValue: 'Stock value',
+    optionValue: 'Option value',
+    accruedDividends: 'Accrued dividends',
+    margin: 'Margin',
+    initMargin: 'Initial margin',
+    maintMargin: 'Maintenance margin',
+    excessLiquidity: 'Excess liquidity',
+    leverage: 'Leverage',
+    pnl: 'P&L',
+    today: 'Today',
+    unrealized: 'Unrealized',
+    realized: 'Realized',
+  },
+  zh: {
+    netLiq: '净清算值',
+    dayPnl: '今日盈亏',
+    unrealizedPnl: '未实现盈亏',
+    buyingPower: '购买力',
+    cash: '现金',
+    tabDash: '概览',
+    tabPos: '持仓',
+    tabPerf: '业绩',
+
+    modeValue: '金额',
+    modePerf: '收益率',
+    titleValue: '账户净值',
+    titlePerf: '收益率',
+    span7D: '近 7 天',
+    spanMTD: '本月至今',
+    spanYTD: '今年至今',
+    span1Y: '近 1 年',
+    since: (date: string) => `自 ${date} 起`,
+    historyNote: (date: string) => `Tape 在连接期间记录净清算值，历史从 ${date} 开始。`,
+    noHistory: 'Tape 在连接期间记录净清算值，目前还没有历史。',
+
+    allocation: '板块分布',
+    netLiqShort: '净清算值',
+    noAllocation: '暂无账户数据',
+    sectorNames: {
+      '@etf': 'ETF / 指数',
+      '@other': '其他',
+      '@cash': '现金',
+      Technology: '科技',
+      Communications: '通信服务',
+      'Consumer, Cyclical': '非必需消费',
+      'Consumer, Non-cyclical': '必需消费',
+      Financial: '金融',
+      Industrial: '工业',
+      Energy: '能源',
+      'Basic Materials': '基础材料',
+      Utilities: '公用事业',
+      Diversified: '多元化',
+      Government: '政府',
+    } as Record<string, string>,
+
+    headers: [
+      ['代码', '代码'],
+      ['数量', '持仓数量'],
+      ['成本', '平均成本'],
+      ['现价', '最新价'],
+      ['市值', '市值'],
+      ['占净值', '占净清算值的百分比'],
+      ['未实现盈亏', '未实现盈亏'],
+      ['今日盈亏', '今日盈亏'],
+    ] as Array<[string, string]>,
+    kinds: {
+      STK: '股票',
+      OPT: '期权',
+      IND: '指数',
+      FUT: '期货',
+      FOP: '期货期权',
+      CASH: '外汇',
+      BOND: '债券',
+      WAR: '权证',
+      CFD: '差价合约',
+      CRYPTO: '加密货币',
+      BAG: '组合',
+    } as Record<string, string>,
+    noPositions: '暂无持仓',
+
+    returns: '收益',
+    maxDrawdown: (v: string) => `最大回撤 ${v}`,
+    balances: '余额',
+    stockValue: '股票市值',
+    optionValue: '期权市值',
+    accruedDividends: '应计股息',
+    margin: '保证金',
+    initMargin: '初始保证金',
+    maintMargin: '维持保证金',
+    excessLiquidity: '剩余流动性',
+    leverage: '杠杆率',
+    pnl: '盈亏',
+    today: '今日',
+    unrealized: '未实现',
+    realized: '已实现',
+  },
+});
+
+export type PortfolioMessages = ReturnType<typeof usePortfolioMessages>;
+
+/** Display name of a sector key (IB industry or one of the special buckets). */
+export function sectorLabel(m: PortfolioMessages, key: string): string {
+  return m.sectorNames[key] ?? key;
+}

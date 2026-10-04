@@ -1,0 +1,66 @@
+/* Design tokens from "Trading Client v5" (skin "a": square, dense, monospace numbers).
+   The root element carries data-th (dark | light), data-sk (a) and data-cv (cn | us). */
+
+:root {
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Segoe UI', sans-serif;
+  --mono: 'SF Mono', ui-monospace, Menlo, 'PingFang SC', Consolas, monospace;
+}
+
+[data-sk='a'] {
+  --gap: 1px;
+  --pad: 0px;
+  --num: var(--mono);
+  --rowGap: 0px;
+}
+
+[data-sk='a'][data-th='dark'] {
+  --bg: #15181a;
+  --p: #1a1e20;
+  --p2: #20262a;
+  --ln: #2a3236;
+  --ln2: #242b2f;
+  --gbg: #2a3236;
+  --tx: #b6c0ba;
+  --mu: #7f8b85;
+  --dm: #66736c;
+  --ac: #4fcb86;
+  --acI: #0f1a13;
+  --sel: #1e2a24;
+  --g: #4fcb86;
+  --r: #e06a6e;
+  --btnTx: #0f1a13;
+  --cv: #1b1f21;
+  --ov: rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+[data-sk='a'][data-th='light'] {
+  --bg: #eaedea;
+  --p: #f4f6f4;
+  --p2: #eaeeeb;
+  --ln: #d6ddd8;
+  --ln2: #e2e8e4;
+  --gbg: #d6ddd8;
+  --tx: #2a3a30;
+  --mu: #5b6b61;
+  --dm: #8a978f;
+  --ac: #27925c;
+  --acI: #f4f6f4;
+  --sel: #e1ebe4;
+  --g: #27925c;
+  --r: #c4575c;
+  --btnTx: #f4f6f4;
+  --cv: #d9deda;
+  --ov: rgba(42, 58, 48, 0.25);
+  color-scheme: light;
+}
+
+/* cn = red up / green down, us = green up / red down */
+[data-cv='us'] {
+  --up: var(--g);
+  --dn: var(--r);
+}
+[data-cv='cn'] {
+  --up: var(--r);
+  --dn: var(--g);
+}

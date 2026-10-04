@@ -1,0 +1,65 @@
+// The full options desk (Trade › Options): header, tabs and the active tab.
+
+import { useState } from 'react';
+import { useStore } from '../../state/store';
+import { ChainPanel } from './ChainPanel';
+import { DeskHeader } from './DeskHeader';
+import { DeskTabs } from './DeskTabs';
+import { useDesk, type DeskTab } from './deskStore';
+import { FlowTab } from './FlowTab';
+import { useM } from './messages';
+import { useDeskModel, type DeskModel } from './model';
+import { PositionsTab, useOptionPositions } from './PositionsTab';
+import { StrategyPanel } from './StrategyPanel';
+import { VolatilityTab } from './VolatilityTab';
+
+export function DeskFull() {
+  const m = useM();
+  const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
+  const model = useDeskModel(visible);
+  const flow = useStore((s) => s.settings.features.flow);
+  const rawTab = useDesk((s) => s.tab);
+  const posCount = useOptionPositions(model.symbol).length;
+
+  const tabs: DeskTab[] = ['chain', 'vol', ...(flow ? (['flow'] as const) : []), 'pos'];
+  const tab = tabs.includes(rawTab) ? rawTab : 'chain';
+
+  if (!model.underlying) {
+    return <div style={{ flex: 1, background: 'var(--p)', padding: '20px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.notOptionable}</div>;
+  }
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', fontSize: 14, color: 'var(--tx)', fontFamily: 'var(--sans)' }}>
+      <DeskHeader model={model} />
+      <DeskTabs tabs={tabs} expiries={model.chain.expiries} selected={model.exp?.expiry} posCount={posCount} />
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {tab === 'chain' && (
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 384px', gap: 'var(--gap)', padding: 'var(--pad)', background: 'var(--gbg)' }}>
+            <ChainPanel model={model} onVisible={setVisible} state={model.chain.status === 'ready' ? null : <ChainState model={model} />} />
+            <StrategyPanel model={model} />
+          </div>
+        )}
+        {tab === 'vol' && <VolatilityTab model={model} />}
+        {tab === 'flow' && <FlowTab model={model} />}
+        {tab === 'pos' && <PositionsTab model={model} />}
+      </div>
+    </div>
+  );
+}
+
+/** Loading / empty / error state of the chain. */
+function ChainState({ model }: { model: DeskModel }) {
+  const m = useM();
+  const { chain, symbol } = model;
+  const text = chain.status === 'error' ? m.chainError(chain.error ?? '') : chain.status === 'empty' ? m.noChain(symbol) : m.loadingChain;
+  return (
+    <div style={{ padding: '18px 20px', display: 'flex', gap: 14, alignItems: 'baseline', fontSize: 13, color: 'var(--dm)' }}>
+      <div>{text}</div>
+      {(chain.status === 'error' || chain.status === 'empty') && (
+        <div onClick={chain.retry} style={{ fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>
+          {m.retry}
+        </div>
+      )}
+    </div>
+  );
+}

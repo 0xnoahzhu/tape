@@ -1,0 +1,137 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--tx);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea {
+  user-select: text;
+  min-width: 0;
+}
+
+input:focus,
+textarea:focus,
+button:focus {
+  outline: none;
+}
+
+/* Keyboard focus (Tab) stays visible, e.g. Cancel / Confirm in dialogs. */
+button:focus-visible {
+  outline: 1px solid var(--ac);
+  outline-offset: 2px;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+}
+
+a:hover {
+  opacity: 0.8;
+}
+
+/* Selectable data (prices, ids, log rows) */
+.selectable {
+  user-select: text;
+}
+
+.num {
+  font-family: var(--num);
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hover helpers that replace the design's style-hover attributes. */
+.hover-tx:hover {
+  color: var(--tx) !important;
+}
+.hover-p2:hover {
+  background: var(--p2) !important;
+}
+.hover-r:hover {
+  color: var(--r) !important;
+}
+
+/* Thin, theme-aware scrollbars on Windows / Linux. macOS keeps its native overlay scrollbars,
+   which take no layout space (styling them would turn them into classic, space-taking ones). */
+:root:not([data-platform='darwin']) ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+:root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb {
+  background: var(--ln);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+:root:not([data-platform='darwin']) ::-webkit-scrollbar-thumb:hover {
+  background: var(--dm);
+  background-clip: content-box;
+}
+:root:not([data-platform='darwin']) ::-webkit-scrollbar-track,
+:root:not([data-platform='darwin']) ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Window dragging: the top bar is the title bar. */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+input::placeholder {
+  color: var(--dm);
+}
+
+@keyframes tape-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

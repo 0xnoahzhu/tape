@@ -1,0 +1,83 @@
+// Orders page strings (design TPL k62–k72, ordTabs, ordStL, the trades header trH and the status texts of stOf()).
+import { createMessages } from '../../i18n';
+
+export const useOrdersMessages = createMessages({
+  en: {
+    orders: 'Orders',
+    trades: 'Trades',
+    time: 'Time',
+    contract: 'Contract',
+    side: 'Side',
+    type: 'Type',
+    qty: 'Qty',
+    price: 'Price',
+    fillPrice: 'Price',
+    filled: 'Filled',
+    statusTif: 'Status / TIF',
+    amount: 'Amount',
+    commission: 'Comm.',
+    orderId: 'Order ID',
+    modify: 'Modify',
+    cancel: 'Cancel',
+    noTrades: 'No trades today',
+    // Order types (design OTYPES)
+    typeLabels: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail', 'TRAIL LIMIT': 'Trail limit' } as Record<string, string>,
+    // Status column
+    stWorking: 'Working',
+    stPreSubmitted: 'Pre-submitted',
+    stSubmitting: 'Submitting',
+    stCancelling: 'Cancelling',
+    stUnknown: 'Unknown',
+    waiting: 'Waiting',
+    after: 'After',
+    held: 'Held',
+    ice: 'ice',
+    stopLimitTitle: 'Stop / Limit',
+    // Ownership
+    tws: 'TWS',
+    clientN: (id: number) => `Client ${id}`,
+    ownOrder: (id: number, client: number) => `Order #${id} · placed by this app (client ${client})`,
+    otherOrder: (id: number, client: number) =>
+      `Order #${id} · placed by ${client === 0 ? 'TWS' : `API client ${client}`}. Modify or cancel it there.`,
+    // Modify
+    modifyHint: (id: number) => `Modify #${id}: edit in the order ticket and resubmit`,
+  },
+  zh: {
+    orders: '挂单',
+    trades: '成交',
+    time: '时间',
+    contract: '合约',
+    side: '方向',
+    type: '类型',
+    qty: '数量',
+    price: '价格',
+    fillPrice: '成交价',
+    filled: '已成交',
+    statusTif: '状态 / 有效期',
+    amount: '金额',
+    commission: '佣金',
+    orderId: '订单号',
+    modify: '改单',
+    cancel: '撤单',
+    noTrades: '今日没有成交',
+    typeLabels: { LMT: '限价', MKT: '市价', STP: '止损', 'STP LMT': '止损限价', TRAIL: '跟踪止损', 'TRAIL LIMIT': '跟踪止损限价' } as Record<string, string>,
+    stWorking: '已提交',
+    stPreSubmitted: '预提交',
+    stSubmitting: '提交中',
+    stCancelling: '撤单中',
+    stUnknown: '未知',
+    waiting: '等待触发',
+    after: '定时',
+    held: '暂挂',
+    ice: '冰山',
+    stopLimitTitle: '触发价 / 限价',
+    tws: 'TWS',
+    clientN: (id: number) => `客户端 ${id}`,
+    ownOrder: (id: number, client: number) => `订单 #${id} · 由本应用提交（客户端 ${client}）`,
+    otherOrder: (id: number, client: number) =>
+      `订单 #${id} · 由 ${client === 0 ? 'TWS' : `API 客户端 ${client}`} 提交。请在该处改单或撤单。`,
+    modifyHint: (id: number) => `改单 #${id}：在下单面板修改后重新提交`,
+  },
+});
+
+export type OrdersMessages = ReturnType<typeof useOrdersMessages.for>;
