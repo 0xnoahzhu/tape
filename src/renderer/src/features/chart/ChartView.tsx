@@ -13,7 +13,7 @@ import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { isIntraday, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
+import { chartTimeZone, isIntraday, mergeLivePrice, priceDecimals, TIMEFRAMES } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
@@ -334,6 +334,7 @@ export function ChartView() {
         showMa={showMa}
         showVol={showVol}
         minTick={minTick}
+        timeZone={chartTimeZone(info?.timeZoneId)}
         older={entry?.older}
         onNeedOlder={needOlder}
         onHover={setHoverBar}

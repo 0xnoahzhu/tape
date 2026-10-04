@@ -1,6 +1,6 @@
 // Candlestick chart with MA20, volume, last-price and price-alert lines, a right price
-// axis and a hover crosshair. Coordinates follow the design: the price SVG uses an
-// 800×300 viewBox and the volume SVG 800×56, both stretched (preserveAspectRatio none)
+// axis, a bottom time axis and a hover crosshair. Coordinates follow the design: the price SVG
+// uses an 800×300 viewBox and the volume SVG 800×56, both stretched (preserveAspectRatio none)
 // with non-scaling strokes.
 //
 // The chart is explorable: drag (or scroll sideways / shift+wheel) pans, the wheel or a
@@ -21,17 +21,23 @@ import {
   axisPrice,
   buildChart,
   clearOfTag,
+  extremeBox,
   extremeLayout,
   formatBarTime,
+  labelWidth,
   LAST_TAG_H,
+  latestButtonSpot,
   LATEST_VIEW,
   MA_PERIOD,
   nearOldest,
+  NY_ZONE,
   panView,
   resolveView,
   SMALL_TAG_H,
   sma,
   spreadAlertTags,
+  timeAxisLabels,
+  timeStepSpacing,
   VB_H,
   VB_W,
   VOL_VB_H,
@@ -57,6 +63,8 @@ interface Props {
   showMa: boolean;
   showVol: boolean;
   minTick?: number;
+  /** IANA time zone of intraday bars on the time axis and in the hover label (chartTimeZone of the instrument). */
+  timeZone?: string;
   /** Paging of older bars: loading indicator and refusal / empty-page notes at the left edge. */
   older?: OlderState;
   /** The view is within a screen of the oldest loaded bar (called again when older.retryAt passes). */
@@ -79,6 +87,7 @@ const KEY_ZOOM = 1.25;
 const LINE_PX = 16;
 
 const line = (extra: CSSProperties): CSSProperties => ({ vectorEffect: 'non-scaling-stroke', ...extra });
+const gridStroke = line({ stroke: 'var(--ln)', strokeDasharray: '1 3' });
 const axisTag: CSSProperties = { position: 'absolute', left: 4, right: 8, transform: 'translateY(-50%)', whiteSpace: 'nowrap' };
 /** Crosshair labels: muted solid chips, distinct from outlined alert tags and the accent last-price tag. */
 const crossTag: CSSProperties = { background: 'var(--mu)', color: 'var(--p)', padding: '3px 6px', font: '11px/1 var(--num)', pointerEvents: 'none' };
@@ -106,8 +115,14 @@ const extremeTag: CSSProperties = {
   whiteSpace: 'nowrap',
   pointerEvents: 'none',
 };
-/** The "Latest" button sits above the crosshair's time chip (SMALL_TAG_H tall at the bottom edge), which it would hide. */
-const LATEST_BOTTOM = SMALL_TAG_H + 6;
+/** Volume pane height and its gap below the price pane; the time axis row under both (px). */
+const VOL_H = 52;
+const VOL_GAP = 6;
+const TIME_AXIS_H = 20;
+/** Horizontal padding of the crosshair chips (crossTag). */
+const CHIP_PAD = 6;
+/** Space kept between the crosshair's time chip and the time labels beside it. */
+const CHIP_CLEAR = 6;
 
 function isEditable(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -124,6 +139,7 @@ export const PriceChart = memo(function PriceChart({
   showMa,
   showVol,
   minTick,
+  timeZone = NY_ZONE,
   older,
   onNeedOlder,
   onHover,
@@ -298,6 +314,14 @@ export const PriceChart = memo(function PriceChart({
 
   // The moving average runs over the full series once per change of the bars, not per frame.
   const maValues = useMemo(() => (showMa ? sma(bars.map((b) => b.close), MA_PERIOD) : undefined), [bars, showMa]);
+  // Time axis step spacing: per series, not per live price update of the forming bar.
+  const firstTime = bars[0]?.time;
+  const lastTime = bars[bars.length - 1]?.time;
+  const timeSpacing = useMemo(
+    () => timeStepSpacing(bars, timeframe, timeZone),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timeframe, timeZone, bars.length, firstTime, lastTime],
+  );
   const geo = useMemo(
     () => buildChart(bars, { count, view, showMa, ma: maValues, include: [lastPrice] }),
     [bars, count, view, showMa, maValues, lastPrice],
@@ -338,9 +362,15 @@ export const PriceChart = memo(function PriceChart({
     ...(crossY != null ? [{ y: crossY * size.h, h: SMALL_TAG_H }] : []),
   ];
   const axisLabels = (geo?.axis ?? []).filter((a) => tags.every((t) => clearOfTag(a.frac * size.h, t.y, t.h)));
-  const timeText = hoveredBar ? formatBarTime(hoveredBar.time, timeframe, lang) : '';
-  const timeHalf = (timeText.length * 6.6 + 12) / 2;
+  // Time axis: labels at their bars' centers, with faint vertical grid lines above them in both panes;
+  // the crosshair's time chip sits in the axis row and hides the labels it would touch.
+  const timeLabels = win && size.w > 0 ? timeAxisLabels(bars, timeframe, win, size.w, lang, timeZone, timeSpacing) : [];
+  const timeText = crossX != null && hoveredBar ? formatBarTime(hoveredBar.time, timeframe, lang, timeZone) : '';
+  const timeHalf = labelWidth(timeText) / 2 + CHIP_PAD;
   const timeLeft = crossX != null ? Math.min(Math.max((crossX / VB_W) * size.w, timeHalf), Math.max(timeHalf, size.w - timeHalf)) : 0;
+  const shownTimeLabels = timeText
+    ? timeLabels.filter((l) => Math.abs(l.x - timeLeft) >= timeHalf + labelWidth(l.label) / 2 + CHIP_CLEAR)
+    : timeLabels;
   const crossStroke = line({ stroke: 'var(--dm)', strokeDasharray: '2 3' });
   const paths = geo?.paths;
 
@@ -350,9 +380,21 @@ export const PriceChart = memo(function PriceChart({
       ? (['high', 'low'] as const).map((kind) => {
           const e = geo.extremes[kind];
           const layout = extremeLayout((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind);
-          return { kind, price: e.price, ...layout };
+          const text = axisPrice(e.price, minTick);
+          return { kind, text, box: extremeBox(layout, text), ...layout };
         })
       : [];
+  // The "Latest" button keeps out of the way of the markers (the lowest low may sit in the bottom-right corner).
+  const showLatest = !!win && !win.latest;
+  const latestRef = useRef<HTMLDivElement>(null);
+  const [latestSize, setLatestSize] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = latestRef.current;
+    if (!el) return;
+    const [w, h] = [el.offsetWidth, el.offsetHeight];
+    setLatestSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+  }, [showLatest, m.latest]);
+  const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
@@ -391,7 +433,10 @@ export const PriceChart = memo(function PriceChart({
         <div ref={areaRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
           <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
             {[75, 150, 225].map((y) => (
-              <line key={y} x1={0} x2={VB_W} y1={y} y2={y} style={line({ stroke: 'var(--ln)', strokeDasharray: '1 3' })} />
+              <line key={y} x1={0} x2={VB_W} y1={y} y2={y} style={gridStroke} />
+            ))}
+            {timeLabels.map((l) => (
+              <line key={bars[l.index].time} x1={(l.x / size.w) * VB_W} x2={(l.x / size.w) * VB_W} y1={0} y2={VB_H} style={gridStroke} />
             ))}
             {geo && showMa && geo.ma && <polyline points={geo.ma} style={line({ fill: 'none', stroke: 'var(--ac)', strokeWidth: 1.25 })} />}
             {paths && (
@@ -425,7 +470,7 @@ export const PriceChart = memo(function PriceChart({
               data-extreme={e.kind}
               style={{ ...extremeTag, top: e.y, ...(e.dir === 1 ? { left: e.x } : { right: size.w - e.x }) }}
             >
-              {axisPrice(e.price, minTick)}
+              {e.text}
             </div>
           ))}
           {!geo && message && (
@@ -471,11 +516,9 @@ export const PriceChart = memo(function PriceChart({
             </div>
           )}
           {geo && olderEmpty && <div style={plotNote}>{m.olderEmpty}</div>}
-          {crossX != null && timeText && (
-            <div style={{ ...crossTag, position: 'absolute', bottom: 0, left: timeLeft, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>{timeText}</div>
-          )}
-          {win && !win.latest && (
+          {showLatest && (
             <div
+              ref={latestRef}
               role="button"
               title={m.latestHint}
               className="hover-p2 hover-tx"
@@ -484,8 +527,8 @@ export const PriceChart = memo(function PriceChart({
               onClick={() => reset(true)}
               style={{
                 position: 'absolute',
-                right: 8,
-                bottom: LATEST_BOTTOM,
+                right: latestSpot.right,
+                bottom: latestSpot.bottom,
                 padding: '4px 8px',
                 font: '11px/1 var(--sans)',
                 color: 'var(--mu)',
@@ -500,8 +543,11 @@ export const PriceChart = memo(function PriceChart({
           )}
         </div>
         {showVol && (
-          <div style={{ height: 52, position: 'relative', marginTop: 6 }}>
+          <div style={{ height: VOL_H, flexShrink: 0, position: 'relative', marginTop: VOL_GAP }}>
             <svg viewBox={`0 0 ${VB_W} ${VOL_VB_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+              {timeLabels.map((l) => (
+                <line key={bars[l.index].time} x1={(l.x / size.w) * VB_W} x2={(l.x / size.w) * VB_W} y1={0} y2={VOL_VB_H} style={gridStroke} />
+              ))}
               {paths && (
                 <>
                   <path d={paths.upVolume} style={{ fill: 'var(--up)', opacity: 0.35 }} />
@@ -512,6 +558,28 @@ export const PriceChart = memo(function PriceChart({
             </svg>
           </div>
         )}
+        <div
+          data-chart="time-axis"
+          style={{
+            height: TIME_AXIS_H,
+            flexShrink: 0,
+            position: 'relative',
+            borderTop: '1px solid var(--ln2)',
+            font: '11px/1 var(--num)',
+            color: 'var(--dm)',
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {shownTimeLabels.map((l) => (
+            <div key={bars[l.index].time} style={{ position: 'absolute', left: l.x, top: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}>
+              {l.label}
+            </div>
+          ))}
+          {timeText && (
+            <div style={{ ...crossTag, position: 'absolute', left: timeLeft, top: '50%', transform: 'translate(-50%, -50%)', whiteSpace: 'nowrap' }}>{timeText}</div>
+          )}
+        </div>
       </div>
       <div
         style={{
@@ -520,7 +588,7 @@ export const PriceChart = memo(function PriceChart({
           font: '12px/1 var(--num)',
           color: 'var(--dm)',
           fontVariantNumeric: 'tabular-nums',
-          marginBottom: showVol ? 58 : 0,
+          marginBottom: (showVol ? VOL_H + VOL_GAP : 0) + TIME_AXIS_H,
         }}
       >
         {axisLabels.map((a) => (

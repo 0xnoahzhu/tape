@@ -1,7 +1,7 @@
 // Pure chart geometry: the pan / zoom window over the bars, which bars are visible,
 // candle/volume/MA coordinates in the design's SVG spaces (price 800×300, volume 800×56),
-// axis values, merging of older pages and the live price, and hover lookup. No React or
-// store imports so it can be unit tested in node.
+// axis values, time axis ticks, merging of older pages and the live price, and hover lookup.
+// No React or store imports so it can be unit tested in node.
 
 import { nyClock, type MarketSession } from '@shared/session';
 import type { Bar, Timeframe } from '@shared/types';
@@ -502,6 +502,9 @@ const EXTREME_EDGE = 9;
 export interface ExtremeLayout {
   /** SVG polyline points in plot pixels: wick tip, elbow, end of the leader. */
   points: string;
+  /** The wick tip the leader starts at (px). */
+  tipX: number;
+  tipY: number;
   /** Label anchor (px): the leader's end; the label extends to the right (dir 1) or left (dir -1). */
   x: number;
   y: number;
@@ -521,7 +524,65 @@ export function extremeLayout(tipX: number, tipY: number, width: number, height:
   const elbowX = tipX + dir * EXTREME_DIAG;
   const endX = elbowX + dir * EXTREME_RUN;
   const r = (v: number) => Math.round(v * 10) / 10;
-  return { points: `${r(tipX)},${r(tipY)} ${r(elbowX)},${r(y)} ${r(endX)},${r(y)}`, x: endX, y, dir };
+  return { points: `${r(tipX)},${r(tipY)} ${r(elbowX)},${r(y)} ${r(endX)},${r(y)}`, tipX, tipY, x: endX, y, dir };
+}
+
+/** A rectangle in plot pixels. */
+export interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Extreme marker labels (PriceChart's extremeTag): 11px monospace text, 1px × 3px padding. */
+const EXTREME_LABEL_H = 13;
+const EXTREME_LABEL_PAD_X = 3;
+
+/** Box around an extreme marker: its leader from the wick tip and its label showing `text`. */
+export function extremeBox(m: ExtremeLayout, text: string): Rect {
+  const w = labelWidth(text) + 2 * EXTREME_LABEL_PAD_X;
+  const labelLeft = m.dir === 1 ? m.x : m.x - w;
+  return {
+    left: Math.min(m.tipX, labelLeft),
+    right: Math.max(m.tipX, labelLeft + w),
+    top: Math.min(m.tipY, m.y - EXTREME_LABEL_H / 2),
+    bottom: Math.max(m.tipY, m.y + EXTREME_LABEL_H / 2),
+  };
+}
+
+/** The "Latest" button's distance (px) from the plot's bottom-right corner, and the space it keeps from markers. */
+export const LATEST_MARGIN = 8;
+const LATEST_CLEAR = 4;
+
+/**
+ * Where the "Latest" button (`w` × `h` px) goes in a plot `width` × `height` px, as offsets from the
+ * plot's right and bottom edges: the bottom-right corner, unless one of the `avoid` boxes (the extreme
+ * markers) is there. It then moves left past the boxes in its way, staying in the padding under the
+ * lowest low rather than covering the bars above it; only where that leaves no room on the left
+ * does it move up past them instead.
+ */
+export function latestButtonSpot(avoid: readonly Rect[], width: number, height: number, w: number, h: number): { right: number; bottom: number } {
+  const blocking = (right: number, bottom: number) => {
+    const l = width - right - w;
+    const t = height - bottom - h;
+    return avoid.filter(
+      (r) => r.left < l + w + LATEST_CLEAR && l < r.right + LATEST_CLEAR && r.top < t + h + LATEST_CLEAR && t < r.bottom + LATEST_CLEAR,
+    );
+  };
+  const corner = { right: LATEST_MARGIN, bottom: LATEST_MARGIN };
+  if (!blocking(corner.right, corner.bottom).length) return corner;
+  // Each move clears at least one more box, so this ends after a pass per box.
+  const left = { ...corner };
+  for (let hit = blocking(left.right, left.bottom); hit.length; hit = blocking(left.right, left.bottom)) {
+    left.right = width - Math.min(...hit.map((r) => r.left)) + LATEST_CLEAR;
+  }
+  if (width - left.right - w >= LATEST_MARGIN) return left;
+  const up = { ...corner };
+  for (let hit = blocking(up.right, up.bottom); hit.length; hit = blocking(up.right, up.bottom)) {
+    up.bottom = height - Math.min(...hit.map((r) => r.top)) + LATEST_CLEAR;
+  }
+  return up;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,16 +605,98 @@ export function axisPrice(v: number, minTick?: number): string {
   return v < 0 && Number(s) !== 0 ? '−' + s : s;
 }
 
-const nyParts = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  weekday: 'short',
-  hour12: false,
-});
+// ---------------------------------------------------------------------------
+// Exchange time
+
+/** Intraday bars of US instruments, and of any whose exchange time zone is unknown, are shown in New York time. */
+export const NY_ZONE = 'America/New_York';
+
+/**
+ * IB time zone ids (contract details' timeZoneId) that are not IANA names, or not the zone IB
+ * means by them: older TWS versions send abbreviations ("EST", "HKT"); "EST" and "MST" are fixed
+ * offsets in the IANA database, IB means the exchange's local time.
+ */
+const IB_ZONES: Record<string, string> = {
+  EST: NY_ZONE,
+  EDT: NY_ZONE,
+  ET: NY_ZONE,
+  CST: 'America/Chicago',
+  CDT: 'America/Chicago',
+  MST: 'America/Denver',
+  PST: 'America/Los_Angeles',
+  GMT: 'Europe/London',
+  BST: 'Europe/London',
+  HKT: 'Asia/Hong_Kong',
+  JST: 'Asia/Tokyo',
+  CTT: 'Asia/Shanghai',
+  KST: 'Asia/Seoul',
+  SGT: 'Asia/Singapore',
+  IST: 'Asia/Kolkata',
+  AET: 'Australia/Sydney',
+  AEST: 'Australia/Sydney',
+  AEDT: 'Australia/Sydney',
+  NZT: 'Pacific/Auckland',
+};
+
+/** US zones besides IANA's "US/…" links: their instruments are shown in New York time, like the rest of the app. */
+const US_ZONES = new Set([NY_ZONE, 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Phoenix', 'EST5EDT', 'CST6CDT', 'MST7MDT', 'PST8PDT']);
+
+const zoneNames = new Map<string, string>();
+
+/**
+ * The IANA time zone an instrument's intraday bars are shown in (time axis and hover label): the
+ * exchange's, from IB's timeZoneId ("Hongkong", "Asia/Hong_Kong", "MET", "HKT", ...), but New York
+ * for US exchanges and when the id is missing or unknown.
+ */
+export function chartTimeZone(timeZoneId: string | undefined): string {
+  const id = timeZoneId?.trim() ?? '';
+  let zone = zoneNames.get(id);
+  if (zone === undefined) {
+    zone = IB_ZONES[id.toUpperCase()] ?? id;
+    if (!zone || zone.startsWith('US/') || US_ZONES.has(zone)) zone = NY_ZONE;
+    else {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: zone });
+      } catch {
+        zone = NY_ZONE; // not a zone this runtime knows
+      }
+    }
+    zoneNames.set(id, zone);
+  }
+  return zone;
+}
+
+/** Per zone: a formatter and its UTC offsets (s) per hour since the epoch (exchange zones change offset on the hour, UTC). */
+const zoneClocks = new Map<string, { parts: Intl.DateTimeFormat; offsets: Map<number, number> }>();
+
+/** UTC offset (s) of time zone `zone` at unix time `t` (s). */
+function zoneOffset(zone: string, t: number): number {
+  let clock = zoneClocks.get(zone);
+  if (!clock) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    clock = { parts, offsets: new Map() };
+    zoneClocks.set(zone, clock);
+  }
+  const h = Math.floor(t / 3600);
+  let off = clock.offsets.get(h);
+  if (off === undefined) {
+    const p = Object.fromEntries(clock.parts.formatToParts(new Date(h * 3_600_000)).map((x) => [x.type, x.value]));
+    off = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour) % 24, Number(p.minute)) / 1000 - h * 3600;
+    if (clock.offsets.size >= 100_000) clock.offsets.clear();
+    clock.offsets.set(h, off);
+  }
+  return off;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 
 const MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -579,15 +722,14 @@ const BAR_LABELS = {
 };
 
 /**
- * Hover label for a bar. Intraday bars are shown in exchange time (ET);
- * daily and longer bars by their trading date.
+ * Hover label for a bar. Intraday bars are shown in exchange time (`zone`, see chartTimeZone), as
+ * on the time axis; daily and longer bars by their trading date.
  */
-export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh'): string {
+export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh', zone: string = NY_ZONE): string {
   const L = BAR_LABELS[lang];
   if (isIntraday(tf)) {
-    const p = Object.fromEntries(nyParts.formatToParts(new Date(time * 1000)).map((x) => [x.type, x.value]));
-    const hh = String(Number(p.hour) % 24).padStart(2, '0');
-    return L.intraday(L.weekdays[WEEKDAYS.indexOf(p.weekday)] ?? p.weekday, `${p.month}/${p.day}`, `${hh}:${p.minute}`);
+    const f = barFields(time, true, zone);
+    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}`);
   }
   const day = barDay(time);
   const [y, m] = [day.slice(0, 4), Number(day.slice(5, 7))];
@@ -602,4 +744,256 @@ export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh'): s
     default:
       return L.day(day, wd);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Time axis
+
+/** Minimum distance (px) between the centers of two time axis labels. */
+export const TIME_TICK_GAP = 70;
+
+/**
+ * What a tick marks, from the finest to the coarsest calendar unit it starts. The label follows
+ * the kind ("10:30", "10/02", "Oct", "2026"), and a coarser kind wins where two labels would collide.
+ */
+export type TimeTickKind = 'time' | 'day' | 'month' | 'year';
+const KIND_RANK: Record<TimeTickKind, number> = { time: 0, day: 1, month: 2, year: 3 };
+
+export interface TimeTick {
+  /** Index into the full bar series. */
+  index: number;
+  kind: TimeTickKind;
+  label: string;
+}
+
+/** A tick in view: `x` is the center of its bar in px from the plot's left edge. */
+export interface TimeAxisLabel extends TimeTick {
+  x: number;
+}
+
+/** Calendar fields of a bar: exchange time for intraday bars, the trading date otherwise. */
+interface BarFields {
+  y: number;
+  /** 1..12 */
+  mo: number;
+  d: number;
+  /** Days since 1970-01-01 of the (exchange) date. */
+  day: number;
+  /** 0 = Sunday */
+  wd: number;
+  /** Minutes since midnight (exchange time); 0 for daily and longer bars. */
+  min: number;
+}
+
+function barFields(time: number, intraday: boolean, zone: string): BarFields {
+  // Daily and longer bars: the trading date as in barDay (robust to the bar's midnight time zone).
+  const s = intraday ? time + zoneOffset(zone, time) : time + 12 * 3600;
+  const dt = new Date(s * 1000);
+  return {
+    y: dt.getUTCFullYear(),
+    mo: dt.getUTCMonth() + 1,
+    d: dt.getUTCDate(),
+    day: Math.floor(s / 86_400),
+    wd: dt.getUTCDay(),
+    min: intraday ? dt.getUTCHours() * 60 + dt.getUTCMinutes() : 0,
+  };
+}
+
+/** A tick step: a bar starts a tick where its key differs from the previous bar's. */
+type TimeStep = (f: BarFields) => number;
+
+const monthIndex = (f: BarFields) => f.y * 12 + f.mo - 1;
+/** Every `n` minutes of the exchange clock; every new day too. */
+const everyMinutes =
+  (n: number): TimeStep =>
+  (f) =>
+    f.day * 1440 + Math.floor(f.min / n);
+const everyDay: TimeStep = (f) => f.day;
+/** Monday-based weeks; the first bar of a month too (the month label replaces its week's). */
+const everyWeek: TimeStep = (f) => monthIndex(f) * 1e6 + (f.day - ((f.wd + 6) % 7));
+const everyMonths =
+  (n: number): TimeStep =>
+  (f) =>
+    Math.floor(monthIndex(f) / n);
+const everyYears =
+  (n: number): TimeStep =>
+  (f) =>
+    Math.floor(f.y / n);
+
+/** Candidate steps per timeframe, finest first; the finest one whose labels stay TIME_TICK_GAP apart is used. */
+const TIME_STEPS: Record<Timeframe, TimeStep[]> = {
+  '1m': [5, 15, 30, 60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1)),
+  '5m': [15, 30, 60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1)),
+  '1h': [60, 120, 240, 360].map(everyMinutes).concat(everyDay, everyWeek, everyMonths(1), everyMonths(3), everyYears(1)),
+  '1D': [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
+  '1W': [everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
+  '1M': [everyMonths(3), everyMonths(6), ...[1, 2, 5, 10, 20].map(everyYears)],
+  '1Y': [1, 2, 5, 10, 20, 50].map(everyYears),
+};
+
+/** Bars sampled (the newest) to measure how far apart each step's ticks are. */
+const SPACING_SAMPLE = 5000;
+/**
+ * The spacing of a step is this quantile of the gaps between its ticks of the same kind: the median,
+ * so the odd short gap (a holiday week, a half day) does not make the step look denser than it is.
+ */
+const SPACING_QUANTILE = 0.5;
+
+/**
+ * How far apart (in bars) the ticks of each of the timeframe's steps (TIME_STEPS order) are,
+ * measured over the newest bars: the median gap between consecutive ticks of the same kind. Ticks
+ * of different kinds may be closer (a day start half an hour before "10:00"); the coarser one wins
+ * there. It only changes with the series (and its time zone, see chartTimeZone), not with the view,
+ * so the step stays put while panning; callers keep it per series.
+ */
+export function timeStepSpacing(bars: readonly Bar[], tf: Timeframe, zone: string = NY_ZONE): number[] {
+  const steps = TIME_STEPS[tf];
+  const from = Math.max(0, bars.length - SPACING_SAMPLE);
+  const n = bars.length - from;
+  if (n < 2) return steps.map(() => Infinity);
+  const intraday = isIntraday(tf);
+  const last = steps.map(() => ({ index: -1, kind: 'time' as TimeTickKind }));
+  const gaps: number[][] = steps.map(() => []);
+  const counts = steps.map(() => 0);
+  let prev = barFields(bars[from].time, intraday, zone);
+  for (let i = from + 1; i < bars.length; i++) {
+    const f = barFields(bars[i].time, intraday, zone);
+    const kind = tickKind(prev, f, intraday);
+    for (let s = 0; s < steps.length; s++) {
+      if (steps[s](f) === steps[s](prev)) continue;
+      counts[s]++;
+      if (last[s].index >= 0 && last[s].kind === kind) gaps[s].push(i - last[s].index);
+      last[s] = { index: i, kind };
+    }
+    prev = f;
+  }
+  return gaps.map((g, s) => {
+    if (!g.length) return n / Math.max(1, counts[s]);
+    g.sort((a, b) => a - b);
+    return g[Math.floor(SPACING_QUANTILE * (g.length - 1))];
+  });
+}
+
+/** Index of the finest step whose ticks are on average at least `minGap` px apart (else the coarsest). */
+export function pickTimeStep(spacing: readonly number[], pxPerBar: number, minGap = TIME_TICK_GAP): number {
+  const i = spacing.findIndex((bars) => bars * pxPerBar >= minGap);
+  return i < 0 ? spacing.length - 1 : i;
+}
+
+/**
+ * Priority of a tick where labels would collide: its kind first, then how round it is (10:00 over
+ * 10:30, July over August, 2030 over 2028), so a too dense row thins out to the rounder ticks.
+ */
+function tickRank(kind: TimeTickKind, f: BarFields): number {
+  const divides = (v: number, ds: number[]) => ds.filter((d) => v % d === 0).length;
+  const round =
+    kind === 'time' ? divides(f.min, [15, 30, 60, 120, 240]) : kind === 'month' ? divides(f.mo - 1, [3, 6]) : kind === 'year' ? divides(f.y, [2, 5, 10]) : 0;
+  return KIND_RANK[kind] * 10 + round;
+}
+
+function tickKind(prev: BarFields, f: BarFields, intraday: boolean): TimeTickKind {
+  if (f.y !== prev.y) return 'year';
+  if (f.mo !== prev.mo) return 'month';
+  return intraday && f.day === prev.day ? 'time' : 'day';
+}
+
+function tickLabel(kind: TimeTickKind, f: BarFields, lang: 'en' | 'zh'): string {
+  switch (kind) {
+    case 'year':
+      return String(f.y);
+    case 'month':
+      return lang === 'zh' ? `${f.mo}月` : MONTH_EN[f.mo - 1];
+    case 'day':
+      return `${pad2(f.mo)}/${pad2(f.d)}`;
+    default:
+      return `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}`;
+  }
+}
+
+/**
+ * Ticks of step `step` (an index into the timeframe's steps) for the bars in [from, to). A tick is
+ * dropped when one of a higher rank (tickRank) is within `minGap` px, or an earlier one of the same
+ * rank that is not itself dropped for a higher one ("Sep" on Tue 09/01 drops the week start on Tue
+ * 09/08 after Labor Day, and 09/14 stays). Only ticks within twice `minGap` decide, and they are
+ * read beyond [from, to) as well, so a tick keeps its label and visibility wherever the view is
+ * (no jitter while panning). Intraday ticks follow the clock of time zone `zone` (see chartTimeZone).
+ */
+export function timeTicks(
+  bars: readonly Bar[],
+  tf: Timeframe,
+  step: number,
+  from: number,
+  to: number,
+  pxPerBar: number,
+  lang: 'en' | 'zh',
+  zone: string = NY_ZONE,
+  minGap = TIME_TICK_GAP,
+): TimeTick[] {
+  const steps = TIME_STEPS[tf];
+  const key = steps[Math.min(Math.max(0, step), steps.length - 1)];
+  if (!(pxPerBar > 0) || !key) return [];
+  const reach = Math.ceil(minGap / pxPerBar);
+  const lo = Math.max(1, Math.floor(from) - 2 * reach);
+  const hi = Math.min(bars.length, Math.ceil(to) + reach);
+  if (lo >= hi) return [];
+  const intraday = isIntraday(tf);
+  const cands: Array<TimeTick & { rank: number }> = [];
+  let prev = barFields(bars[lo - 1].time, intraday, zone);
+  for (let i = lo; i < hi; i++) {
+    const f = barFields(bars[i].time, intraday, zone);
+    if (key(f) !== key(prev)) {
+      const kind = tickKind(prev, f, intraday);
+      cands.push({ index: i, kind, label: tickLabel(kind, f, lang), rank: tickRank(kind, f) });
+    }
+    prev = f;
+  }
+  const near = (j: number, k: number) => j >= 0 && j < cands.length && Math.abs(cands[j].index - cands[k].index) * pxPerBar < minGap;
+  // A higher rank within the gap on either side.
+  const outranked = cands.map((c, k) => {
+    for (let j = k - 1; near(j, k); j--) if (cands[j].rank > c.rank) return true;
+    for (let j = k + 1; near(j, k); j++) if (cands[j].rank > c.rank) return true;
+    return false;
+  });
+  const out: TimeTick[] = [];
+  for (let k = 0; k < cands.length; k++) {
+    const c = cands[k];
+    if (c.index < from || c.index >= to || outranked[k]) continue;
+    let keep = true;
+    for (let j = k - 1; keep && near(j, k); j--) keep = cands[j].rank !== c.rank || outranked[j];
+    if (keep) out.push({ index: c.index, kind: c.kind, label: c.label });
+  }
+  return out;
+}
+
+/** Approximate width (px) of 11px monospace text: 0.6em per Latin character, 1em per CJK one. */
+export function labelWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) w += ch.charCodeAt(0) > 0x2e7f ? 11 : 6.6;
+  return w;
+}
+
+/**
+ * Time axis labels for a view `widthPx` wide: ticks at their bars' centers (px), without the ones
+ * whose label would run past either edge. Intraday bars are labelled in time zone `zone` (see
+ * chartTimeZone); `spacing` is timeStepSpacing of the series in that zone.
+ */
+export function timeAxisLabels(
+  bars: readonly Bar[],
+  tf: Timeframe,
+  win: ViewWindow,
+  widthPx: number,
+  lang: 'en' | 'zh',
+  zone: string = NY_ZONE,
+  spacing: readonly number[] = timeStepSpacing(bars, tf, zone),
+): TimeAxisLabel[] {
+  if (!bars.length || !(widthPx > 0) || !(win.span > 0)) return [];
+  const ppb = widthPx / win.span;
+  const step = pickTimeStep(spacing, ppb);
+  const out: TimeAxisLabel[] = [];
+  for (const t of timeTicks(bars, tf, step, Math.max(0, Math.floor(win.start)), Math.ceil(win.start + win.span), ppb, lang, zone)) {
+    const x = (t.index - win.start + 0.5) * ppb;
+    const half = labelWidth(t.label) / 2;
+    if (x - half >= 0 && x + half <= widthPx) out.push({ ...t, x });
+  }
+  return out;
 }
