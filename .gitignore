@@ -147,3 +147,12 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Tape
+out/
+out-*/
+release/
+.DS_Store
+
+# Local copies of the Claude Design source files (reference only)
+design/
