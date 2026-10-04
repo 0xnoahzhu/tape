@@ -125,7 +125,7 @@ describe('orderStatusText', () => {
 
   it('falls back to the normal status once the condition released the order', () => {
     const o = order({ status: 'Submitted', tif: 'GTC', condition: { symbol: 'AAPL', operator: '<=', price: 220, outsideRth: false } });
-    expect(orderStatusText(o, en, now)).toEqual({ text: 'Working · GTC', tone: 'mu' });
+    expect(orderStatusText(o, en, now)).toEqual({ text: 'Submitted · GTC', tone: 'mu' });
   });
 
   it('shows a pending good-after time until it passes', () => {
@@ -136,12 +136,12 @@ describe('orderStatusText', () => {
   });
 
   it('adds trailing, iceberg, hold and IB messages', () => {
-    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3, tif: 'GTC' }), en, now).text).toBe('Working · GTC · 3%');
-    expect(orderStatusText(order({ orderType: 'TRAIL', auxPrice: 1.5 }), en, now).text).toBe('Working · DAY · $1.50');
+    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3, tif: 'GTC' }), en, now).text).toBe('Submitted · GTC · 3%');
+    expect(orderStatusText(order({ orderType: 'TRAIL', auxPrice: 1.5 }), en, now).text).toBe('Submitted · DAY · $1.50');
     expect(orderStatusText(order({ displaySize: 100 }), zh, now).text).toBe('已提交 · DAY · 冰山 100');
-    expect(orderStatusText(order({ whyHeld: 'locate' }), en, now).text).toBe('Working · DAY · Held: locate');
+    expect(orderStatusText(order({ whyHeld: 'locate' }), en, now).text).toBe('Submitted · DAY · Held: locate');
     expect(orderStatusText(order({ message: 'Order will not be placed until 09:30' }), en, now).text).toBe(
-      'Working · DAY · Order will not be placed until 09:30',
+      'Submitted · DAY · Order will not be placed until 09:30',
     );
   });
 

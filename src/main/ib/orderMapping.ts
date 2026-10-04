@@ -206,7 +206,7 @@ const m = createMessages({
     submitted: (side: string, qty: string, label: string) => `${side} ${qty} ${label} submitted`,
     cancelled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} cancelled`,
     rejected: (side: string, qty: string, label: string) => `${side} ${qty} ${label} rejected`,
-    working: 'working',
+    working: 'awaiting fill',
     market: 'Market',
     limit: (p: string) => `Limit ${p}`,
     stop: (p: string) => `Stop ${p}`,
@@ -268,7 +268,7 @@ export interface NoticeText {
   body: LocalizedText;
 }
 
-/** "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · working". */
+/** "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · awaiting fill". */
 export function orderNotice(o: NoticeOrder, kind: 'submitted' | 'cancelled' | 'rejected', reason?: string): NoticeText {
   const label = contractLabel(o.contract);
   const qty = qtyText(o.totalQuantity);

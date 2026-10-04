@@ -44,7 +44,7 @@ const m = createMessages({
     zoomIn: 'Zoom In',
     zoomOut: 'Zoom Out',
     fullScreen: 'Toggle Full Screen',
-    cancelLast: 'Cancel last working order',
+    cancelLast: 'Cancel last open order',
     window: 'Window',
     minimize: 'Minimize',
     zoom: 'Zoom',

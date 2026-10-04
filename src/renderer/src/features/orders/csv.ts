@@ -56,7 +56,7 @@ export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): stri
   const rows: Cell[][] = [HEADER];
   for (const o of orders) {
     rows.push([
-      'Working order',
+      'Open order',
       localTime(o.createdAt),
       o.account,
       o.orderId,

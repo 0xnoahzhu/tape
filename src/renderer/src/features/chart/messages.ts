@@ -11,7 +11,7 @@ const statusEn: StatusLabels = {
   after: (t) => `After ${t} ET`,
   pending: 'Pending',
   cancelling: 'Cancelling…',
-  working: 'Working',
+  working: 'Submitted',
   iceberg: 'ice',
   filled: (n) => `${n} filled`,
 };

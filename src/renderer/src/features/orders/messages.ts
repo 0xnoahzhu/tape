@@ -3,7 +3,7 @@ import { createMessages } from '../../i18n';
 
 export const useOrdersMessages = createMessages({
   en: {
-    orders: 'Orders',
+    orders: 'Open orders',
     trades: 'Trades',
     time: 'Time',
     contract: 'Contract',
@@ -23,7 +23,7 @@ export const useOrdersMessages = createMessages({
     // Order types (design OTYPES)
     typeLabels: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail', 'TRAIL LIMIT': 'Trail limit' } as Record<string, string>,
     // Status column
-    stWorking: 'Working',
+    stWorking: 'Submitted',
     stPreSubmitted: 'Pre-submitted',
     stSubmitting: 'Submitting',
     stCancelling: 'Cancelling',

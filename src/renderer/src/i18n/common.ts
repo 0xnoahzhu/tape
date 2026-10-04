@@ -40,7 +40,7 @@ export const useCommon = createMessages({
     orderFailed: (msg: string) => `Order failed: ${msg}`,
     cancelOrderTitle: 'Cancel order',
     cancelOrderLabel: 'Cancel order',
-    noWorkingOrders: 'No working orders',
+    noWorkingOrders: 'No open orders',
     notConnected: 'Not connected to TWS / IB Gateway',
     readOnly: 'Read-only mode is on: orders are blocked',
     renderFailed: 'This area failed to display',

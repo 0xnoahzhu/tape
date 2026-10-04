@@ -249,9 +249,9 @@ describe('notification texts', () => {
   it('describes submitted, cancelled and rejected orders like the design', () => {
     expect(orderNotice(order, 'submitted')).toEqual({
       title: { en: 'Buy 100 AAPL submitted', zh: '买入 100 AAPL 已提交' },
-      body: { en: 'Limit 226.95 · DAY · working', zh: '限价 226.95 · DAY · 等待成交' },
+      body: { en: 'Limit 226.95 · DAY · awaiting fill', zh: '限价 226.95 · DAY · 等待成交' },
     });
-    expect(orderNotice({ ...order, orderType: 'MKT', limitPrice: undefined }, 'submitted').body).toEqual({ en: 'Market · DAY · working', zh: '市价 · DAY · 等待成交' });
+    expect(orderNotice({ ...order, orderType: 'MKT', limitPrice: undefined }, 'submitted').body).toEqual({ en: 'Market · DAY · awaiting fill', zh: '市价 · DAY · 等待成交' });
     const cancelled = orderNotice({ ...order, action: 'SELL', filled: 40 }, 'cancelled');
     expect(cancelled.title.en).toBe('Sell 100 AAPL cancelled');
     expect(cancelled.body.en).toBe('Limit 226.95 · DAY · 40 of 100 filled');
