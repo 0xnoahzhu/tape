@@ -4,7 +4,8 @@
 // App commands are shortcuts the renderer already handles itself (App.tsx), so their
 // accelerators are display-only: registerAccelerator is false (Windows/Linux) and clicks that
 // come from an accelerator are ignored (macOS sends unhandled key equivalents to the menu).
-// Role items keep their native accelerators.
+// Role items keep their native accelerators. While Tape is locked every custom item is disabled
+// except Lock; the standard roles (Quit, Hide, Minimize, Close, Edit, …) keep working.
 
 import type { MenuItemConstructorOptions } from 'electron';
 import type { AppCommand } from '@shared/ipc';
@@ -18,6 +19,7 @@ const m = createMessages({
   en: {
     about: 'About Tape',
     settings: 'Settings…',
+    lock: 'Lock Tape',
     services: 'Services',
     hide: 'Hide Tape',
     hideOthers: 'Hide Others',
@@ -57,6 +59,7 @@ const m = createMessages({
   zh: {
     about: '关于 Tape',
     settings: '设置…',
+    lock: '锁定 Tape',
     services: '服务',
     hide: '隐藏 Tape',
     hideOthers: '隐藏其他',
@@ -98,18 +101,22 @@ const m = createMessages({
 export interface MenuActions {
   command(command: AppCommand): void;
   openExternal(url: string): void;
+  /** Locks Tape (main asks the renderer for a PIN first when none is set). */
+  lock(): void;
 }
 
 export interface MenuOptions {
   platform: NodeJS.Platform;
   lang: Lang;
   isDev: boolean;
+  /** Tape is locked: custom items other than Lock are disabled. */
+  locked?: boolean;
   actions: MenuActions;
 }
 
 const separator: MenuItemConstructorOptions = { type: 'separator' };
 
-export function buildMenuTemplate({ platform, lang, isDev, actions }: MenuOptions): MenuItemConstructorOptions[] {
+export function buildMenuTemplate({ platform, lang, isDev, locked = false, actions }: MenuOptions): MenuItemConstructorOptions[] {
   const t = m(lang);
   const mac = platform === 'darwin';
 
@@ -118,11 +125,22 @@ export function buildMenuTemplate({ platform, lang, isDev, actions }: MenuOption
     label,
     accelerator,
     registerAccelerator: false,
+    enabled: !locked,
     click: (_item, _window, event) => {
       if (!event?.triggeredByAccelerator) actions.command(cmd);
     },
   });
-  const link = (label: string, url: string): MenuItemConstructorOptions => ({ label, click: () => actions.openExternal(url) });
+  const link = (label: string, url: string): MenuItemConstructorOptions => ({ label, enabled: !locked, click: () => actions.openExternal(url) });
+  // ⌘L / Ctrl+L is handled by the renderer like the other shortcuts (⌘⇧L is the theme toggle).
+  const lockItem: MenuItemConstructorOptions = {
+    id: 'lock',
+    label: t.lock,
+    accelerator: 'CmdOrCtrl+L',
+    registerAccelerator: false,
+    click: (_item, _window, event) => {
+      if (!event?.triggeredByAccelerator) actions.lock();
+    },
+  };
 
   const appMenu: MenuItemConstructorOptions = {
     label: 'Tape',
@@ -130,6 +148,7 @@ export function buildMenuTemplate({ platform, lang, isDev, actions }: MenuOption
       { label: t.about, role: 'about' },
       separator,
       command(t.settings, 'CmdOrCtrl+,', 'open-settings'),
+      lockItem,
       separator,
       { label: t.services, role: 'services' },
       separator,
@@ -143,7 +162,7 @@ export function buildMenuTemplate({ platform, lang, isDev, actions }: MenuOption
 
   const fileMenu: MenuItemConstructorOptions = {
     label: t.file,
-    submenu: [command(t.settings, 'CmdOrCtrl+,', 'open-settings'), separator, { label: t.quit, role: 'quit' }],
+    submenu: [command(t.settings, 'CmdOrCtrl+,', 'open-settings'), lockItem, separator, { label: t.quit, role: 'quit' }],
   };
 
   const editMenu: MenuItemConstructorOptions = {

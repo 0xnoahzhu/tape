@@ -40,7 +40,7 @@ through the shared `MainContext` (never inside their factory).
 
 | Module | Responsibility |
 | --- | --- |
-| `store.ts` | JSON persistence in `userData` (settings, watchlists, alerts, notifications, window bounds; `nav.json` only for its one-time import into `tape.db`) |
+| `store.ts` | JSON persistence in `userData` (settings, watchlists, alerts, notifications, window bounds; `nav.json` only for its one-time import into `tape.db`); the lock PIN is not here (`lock/lockFile.ts`) |
 | `db/` | `ctx.db`: SQLite caches and journals in a worker thread (see *Database*) |
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
@@ -56,6 +56,8 @@ through the shared `MainContext` (never inside their factory).
 | `notifications.ts` | In-app notification list + OS notifications |
 | `appearance.ts` | Theme (`nativeTheme.themeSource`) and theme-matched dock/window icon |
 | `menu.ts` | Application menu (localized), menu commands |
+| `lock/` | `ctx.lock`: lock state, PIN, idle auto-lock, biometrics, Forgot-PIN reset (see *Lock screen*) |
+| `ipcDispatch.ts` | The `InvokeResult` envelope around every handler and the lock's IPC allow-list |
 
 ### Connection
 
@@ -224,6 +226,71 @@ Live `apiLog` events are sent only while a view streams them (`STREAM_BY_DEFAULT
 4. Streaming is tracked per renderer (`createLogViewers`, keyed by webContents): the last view to
    unmount turns it off, and a reload (`did-start-loading`) or a destroyed window ends it too.
 
+### Lock screen (`src/main/lock`)
+
+Main is the only authority on whether Tape is locked; the renderer draws `LockState` (snapshot field
+`lock`, then `lock` events) and asks to unlock.
+
+* `service.ts` — `createLockService`: `locked` starts true whenever a PIN exists, so a relaunch does not
+  bypass the lock. PIN checks are serialized. `verifyPin` / `verifyBiometrics` hand out a single-use token
+  (5 minutes) that `setPin` (once a PIN exists) and `removePin` require; biometrics only count (to unlock or
+  to change the PIN) when *Unlock with* is Touch ID / Windows Hello. The wrong-PIN counter is applied in
+  memory first and persisted best-effort (a disk that cannot be written neither disables the backoff nor
+  blocks the right PIN), and each wait also has a monotonic deadline (`performance.now`), so moving the
+  system clock forward does not end it.
+* `pin.ts` / `lockFile.ts` — the PIN rule is shared (`@shared/lock`: 6 code points after NFC, no whitespace or
+  control characters). `userData/lock.json` (mode 0600, written atomically and synchronously) holds the
+  scrypt record (random 16-byte salt, N 2^15, r 8, p 1; compared with `timingSafeEqual`), the count of
+  consecutive wrong PINs and the next allowed time: 5 free attempts, then 30 s doubling to 15 minutes. It is
+  never part of Settings and never reaches the renderer; a retry time is capped at now + 15 min, so a clock
+  set back cannot lock the user out longer. Reading fails closed: only a missing file or `"pin": null` means
+  "no PIN". A file that cannot be read (after a few retries for EBUSY / EPERM …), is not JSON or holds an
+  unknown record is `unreadable`: Tape starts locked, every check answers `pinUnreadable` (the lock screen
+  points to Forgot PIN, which deletes the file), the file is re-read on each attempt and never overwritten.
+* `idle.ts` — every 15 s, locks when `powerMonitor.getSystemIdleTime()` (system-wide input) reaches the
+  configured minutes (`settings.lock`). A tick that comes late (the machine slept; the wake-up key press
+  resets the system idle time) adds the gap to the idle time seen at the previous tick; `suspend` /
+  `resume` run a check too. Nothing happens without a PIN.
+* `biometrics.ts` picks the provider (`types.ts → BiometricProvider`): `touchId.ts`
+  (`systemPreferences.canPromptTouchID` / `promptTouchID`), `windowsHello.ts`, none on Linux, or a fake one
+  from `TAPE_FAKE_BIOMETRICS` in development. Availability starts as `checking` and is asked when Settings
+  opens, and — only with a PIN and *Unlock with* biometrics, since Windows Hello's check starts a PowerShell
+  helper — at launch, on resume, on lock and when the lock screen opens; `prepare()` (the warm helper) also
+  runs only then. An answer that arrives after the provider was disposed (unlocked with the PIN) is dropped. The prompt only opens on an explicit click; every rejection is "not verified", never
+  "Incorrect PIN".
+* While locked: `ipcDispatch.ts` refuses every method whose `LOCK_POLICY` (`src/shared/ipc.ts`, one entry
+  per method, so new methods must be classified) is `deny` with `LOCKED_MESSAGE`. Allowed: the snapshot,
+  data feeds that mounted views keep using (quotes, depth, history, contract info, option chains,
+  executions refresh), the cache size poll, API log streaming, `notify` (the option risk watcher) and the lock methods. The order
+  service checks the lock again before sending (also after its contract lookup). The menu disables its
+  custom items except *Lock Tape*; notification clicks only show the window; on Windows / Linux the
+  caption buttons take the lock screen's background (`Appearance.setLocked`; restored ~1.1 s after the
+  unlock, when the renderer's animation has played). Handlers that wait for the user (the API log's save
+  dialog) check the lock again afterwards. Scripted captures (`devCapture.ts`) never run in a packaged app. IB stays connected; alerts
+  keep running in main.
+* Renderer: `features/lock/LockScreen.tsx` sits above everything (z-index 40) while the app under it is
+  `inert`; `state/lockActions.ts` closes dialogs, the bell, popovers and drops a pending order review when
+  locking; a capture key listener (`features/lock/actions.ts → installLockKeyGuard`) keeps every shortcut
+  from running and sends typed keys to the PIN input. The store's `unlocking` keeps the screen up while the
+  unlock animation plays after main has already unlocked.
+
+**Forgot PIN → Reset** (`reset.ts`) runs in two phases, so nothing still running can write a file after it
+was deleted (pending JSON writes, window bounds, API log appends, the SQLite worker; Windows refuses to
+delete open files):
+
+1. `resetApp(word)` (allowed while locked) checks the word (RESET / 重置), writes `userData/reset-pending`
+   with the language and theme, disconnects, closes the database (each bounded to 1.5 s), then
+   `app.relaunch()` + `app.exit(0)` (no before-quit, so nothing is flushed). Development and capture runs
+   exit without relaunching; their next launch finishes the reset.
+2. The new process, only when it holds the single-instance lock and before any service opens a file,
+   deletes Tape's own files by name (the JSON documents with their corrupt backups and temporary files,
+   `lock.json`, `tape.db` with WAL / SHM and corrupt copies, the `api-YYYYMMDD.log` files in the log
+   folder) and writes `settings.json` with the kept language and theme. After ready it clears the renderer
+   storage (`session.clearStorageData`, `clearCache`) and removes the marker last, so a crash midway resets
+   again. The first snapshot has `afterReset`: Settings › Connection opens and this launch does not
+   auto-connect. Files that could not be deleted are listed in a notification. The folder itself is never
+   removed: Chromium's files and the single-instance lock live there.
+
 ## Renderer
 
 * `src/renderer/src/state/store.ts` — mirrored main state + cross-feature UI state (page, current
@@ -286,4 +353,5 @@ Environment variables for development:
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
 | `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
+| `TAPE_FAKE_BIOMETRICS=[touchId:\|windowsHello:]ok\|fail\|cancel\|unavailable` | Fake Touch ID / Windows Hello without a system prompt (ignored when packaged) |
 | `TAPE_LIVE_IB=<host:port>` | Runs `src/main/ib/live.test.ts` against a logged-in paper TWS / IB Gateway (with `TAPE_CLIENT_ID`) |

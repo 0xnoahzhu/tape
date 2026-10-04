@@ -18,6 +18,7 @@ import type {
   HistoryPage,
   HistoryRequest,
   LocalizedText,
+  LockState,
   NavPoint,
   NotificationKind,
   OptionChainParams,
@@ -29,6 +30,8 @@ import type {
   QuoteSubscription,
   Settings,
   SymbolMatch,
+  UnlockResult,
+  VerifyResult,
   Watchlist,
   WorkingOrder,
 } from './types';
@@ -53,6 +56,8 @@ export type TapeEvent =
   | { type: 'watchlists'; watchlists: Watchlist[] }
   | { type: 'priceAlerts'; alerts: PriceAlert[] }
   | { type: 'nav'; points: NavPoint[] }
+  /** The lock state changed (main is the only authority; the renderer just draws it). */
+  | { type: 'lock'; state: LockState }
   /** Application menu commands, so menu accelerators and in-app shortcuts share one code path. */
   | { type: 'command'; command: AppCommand }
   /** A notification (system or in-app) was clicked: open this instrument. */
@@ -65,7 +70,9 @@ export type AppCommand =
   | 'page-trade'
   | 'page-orders'
   | 'focus-search'
-  | 'cancel-last-order';
+  | 'cancel-last-order'
+  /** Sent by the menu's Lock item when no PIN exists yet: the renderer asks for one first. */
+  | 'set-pin-and-lock';
 
 export interface NewNotification {
   kind: NotificationKind;
@@ -145,6 +152,27 @@ export interface TapeApi {
   // Misc -------------------------------------------------------------------
   openExternal(url: string): Promise<void>;
 
+  // Lock screen ------------------------------------------------------------
+  getLockState(): Promise<LockState>;
+  /** Locks now. Refused when no PIN is set. */
+  lock(): Promise<void>;
+  unlockWithPin(pin: string): Promise<UnlockResult>;
+  /** Shows the Touch ID / Windows Hello prompt (main decides the wording). */
+  unlockWithBiometrics(): Promise<UnlockResult>;
+  /** Checks the current PIN before a change or removal; failures count like unlock attempts. */
+  verifyLockPin(pin: string): Promise<VerifyResult>;
+  /** Checks the user with Touch ID / Windows Hello before a PIN change. */
+  verifyLockBiometrics(): Promise<VerifyResult>;
+  /** Sets the PIN (any 6 characters, see @shared/lock). A token from verifyLockPin / verifyLockBiometrics is required once a PIN exists. */
+  setLockPin(pin: string, token: string | null): Promise<LockState>;
+  /** Removes the PIN (turns the lock off). Needs a token from verifyLockPin. */
+  removeLockPin(token: string): Promise<LockState>;
+  /**
+   * Forgot PIN: deletes all of Tape's local data except language and theme and restarts the app.
+   * `confirmation` must be the word the user typed (RESET / 重置).
+   */
+  resetApp(confirmation: string): Promise<void>;
+
   /** Subscribes to push events. Returns an unsubscribe function. */
   onEvent(listener: (event: TapeEvent) => void): () => void;
 }
@@ -152,37 +180,57 @@ export interface TapeApi {
 /** Methods that are invoked over ipcRenderer.invoke (everything except onEvent). */
 export type TapeInvokeMethod = Exclude<keyof TapeApi, 'onEvent'>;
 
-export const INVOKE_METHODS: readonly TapeInvokeMethod[] = [
-  'getSnapshot',
-  'updateSettings',
-  'connect',
-  'disconnect',
-  'setQuoteSubscriptions',
-  'getHistory',
-  'getOlderBars',
-  'searchSymbols',
-  'getContractInfo',
-  'setDepthSubscription',
-  'getOptionChainParams',
-  'getCacheStats',
-  'clearMarketDataCache',
-  'placeOrder',
-  'modifyOrder',
-  'cancelOrder',
-  'cancelAllOrders',
-  'refreshExecutions',
-  'saveWatchlists',
-  'savePriceAlerts',
-  'notify',
-  'markNotificationsRead',
-  'testNotification',
-  'getApiLog',
-  'setApiLogStreaming',
-  'clearApiLog',
-  'exportApiLog',
-  'revealLogFile',
-  'openExternal',
-];
+/**
+ * Which methods still work while Tape is locked. Every method must be listed, so a new one has to
+ * be classified. Allowed: data feeds that mounted views keep using (and release on unmount),
+ * read-only polls such as the cache size, the risk watcher's notifications and the lock itself. Everything a user would do (orders, settings,
+ * watchlists, alerts, cache, logs, connecting) is refused by main with LOCKED_MESSAGE.
+ */
+export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> = {
+  getSnapshot: 'allow',
+  updateSettings: 'deny',
+  connect: 'deny',
+  disconnect: 'deny',
+  setQuoteSubscriptions: 'allow',
+  getHistory: 'allow',
+  getOlderBars: 'allow',
+  searchSymbols: 'deny',
+  getContractInfo: 'allow',
+  setDepthSubscription: 'allow',
+  getOptionChainParams: 'allow',
+  getCacheStats: 'allow',
+  clearMarketDataCache: 'deny',
+  placeOrder: 'deny',
+  modifyOrder: 'deny',
+  cancelOrder: 'deny',
+  cancelAllOrders: 'deny',
+  refreshExecutions: 'allow',
+  saveWatchlists: 'deny',
+  savePriceAlerts: 'deny',
+  notify: 'allow',
+  markNotificationsRead: 'deny',
+  testNotification: 'deny',
+  getApiLog: 'deny',
+  setApiLogStreaming: 'allow',
+  clearApiLog: 'deny',
+  exportApiLog: 'deny',
+  revealLogFile: 'deny',
+  openExternal: 'deny',
+  getLockState: 'allow',
+  lock: 'allow',
+  unlockWithPin: 'allow',
+  unlockWithBiometrics: 'allow',
+  verifyLockPin: 'deny',
+  verifyLockBiometrics: 'deny',
+  setLockPin: 'deny',
+  removeLockPin: 'deny',
+  resetApp: 'allow',
+};
+
+export const INVOKE_METHODS: readonly TapeInvokeMethod[] = Object.keys(LOCK_POLICY) as TapeInvokeMethod[];
+
+/** Error message of every method refused while locked. */
+export const LOCKED_MESSAGE = 'Tape is locked';
 
 export const EVENT_CHANNEL = 'tape:event';
 

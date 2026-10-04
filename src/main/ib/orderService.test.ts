@@ -82,7 +82,9 @@ function setup() {
   const events: TapeEvent[] = [];
   const notices: NewNotification[] = [];
   let resolveContract = async (c: unknown) => ({ ...(c as object), conId: 265598 });
+  const lock = { locked: false };
   const ctx = {
+    lock: { isLocked: () => lock.locked },
     emit: (e: TapeEvent) => events.push(e),
     notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
     contracts: { resolve: (c: unknown) => resolveContract(c), getInfo: async () => null },
@@ -96,7 +98,7 @@ function setup() {
     resolveContract = (c: unknown) => new Promise((resolve) => held.push(() => resolve({ ...(c as object), conId: 265598 })));
     return () => held.splice(0).forEach((release) => release());
   };
-  return { ...f, svc, notices, events, holdLookups };
+  return { ...f, svc, notices, events, holdLookups, lock };
 }
 
 /** Lets the deferred subscriptions and pending promises run. */
@@ -117,6 +119,27 @@ describe('OrderService', () => {
     t.calls.length = 0;
     return t;
   }
+
+  it('sends nothing while Tape is locked', async () => {
+    const t = await loaded();
+    t.lock.locked = true;
+    await expect(t.svc.place(req)).rejects.toThrow('Tape is locked');
+    await expect(t.svc.modify(7, req)).rejects.toThrow('Tape is locked');
+    await expect(t.svc.cancel(7)).rejects.toThrow('Tape is locked');
+    await expect(t.svc.cancelAll()).rejects.toThrow('Tape is locked');
+    expect(t.calls).toEqual([]);
+  });
+
+  it('does not send an order when Tape locks while its contract is being resolved', async () => {
+    const t = await loaded();
+    const release = t.holdLookups();
+    const p = t.svc.place({ ...req, contract: stock('AAPL') });
+    await tick();
+    t.lock.locked = true;
+    release();
+    await expect(p).rejects.toThrow('Tape is locked');
+    expect(t.calls.filter((c) => c[0] === 'placeOrder')).toEqual([]);
+  });
 
   it('places an order and resolves once IB acknowledges it', async () => {
     const t = await loaded();

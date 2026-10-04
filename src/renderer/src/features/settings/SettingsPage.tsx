@@ -10,19 +10,22 @@ import { ConnectionSection } from './ConnectionSection';
 import { MarketDataSection } from './MarketDataSection';
 import { useSettingsMessages } from './messages';
 import { NotificationsSection } from './NotificationsSection';
+import { PrivacySection } from './PrivacySection';
 import { ShortcutsSection } from './ShortcutsSection';
 import { TradeSection } from './TradeSection';
 
-const TABS: readonly SettingsTab[] = ['conn', 'data', 'trade', 'notif', 'view', 'log', 'keys'];
+/** Nav order (design setNav, with Trade after Market data). Settings opens on General. */
+export const TABS: readonly SettingsTab[] = ['view', 'conn', 'data', 'trade', 'notif', 'sec', 'keys', 'log'];
 
 const SECTIONS: Record<SettingsTab, () => React.JSX.Element> = {
+  view: AppearanceSection,
   conn: ConnectionSection,
   data: MarketDataSection,
   trade: TradeSection,
   notif: NotificationsSection,
-  view: AppearanceSection,
-  log: ApiLogSection,
+  sec: PrivacySection,
   keys: ShortcutsSection,
+  log: ApiLogSection,
 };
 
 export function SettingsPage() {
@@ -30,7 +33,7 @@ export function SettingsPage() {
   const tab = useStore((s) => s.settingsTab);
   const openSettings = useStore((s) => s.openSettings);
   const scroller = useRef<HTMLDivElement>(null);
-  const Section = SECTIONS[tab] ?? ConnectionSection;
+  const Section = SECTIONS[tab] ?? AppearanceSection;
 
   useEffect(() => {
     scroller.current?.scrollTo(0, 0);

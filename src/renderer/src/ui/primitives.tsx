@@ -71,6 +71,8 @@ export interface Option<K extends string | number> {
   key: K;
   label: ReactNode;
   title?: string;
+  /** Shown dimmed and not selectable (the title can say why). */
+  disabled?: boolean;
 }
 
 /** Segmented control: p2 track, selected item on p. */
@@ -97,11 +99,12 @@ export function Segmented<K extends string | number>({
         <div
           key={String(o.key)}
           title={o.title}
-          onClick={() => onChange(o.key)}
+          onClick={o.disabled ? undefined : () => onChange(o.key)}
           style={{
             padding: '6px 12px',
             fontSize: 12,
-            cursor: 'pointer',
+            cursor: o.disabled ? 'not-allowed' : 'pointer',
+            opacity: o.disabled ? 0.45 : undefined,
             whiteSpace: 'nowrap',
             display: 'flex',
             alignItems: 'center',

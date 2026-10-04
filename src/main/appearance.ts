@@ -54,6 +54,7 @@ export function createAppearance(ctx: MainContext): Appearance {
   const windows = new Set<BrowserWindow>();
   /** The resolved theme the icon and backgrounds were last updated for. */
   let applied: boolean | null = null;
+  let locked = false;
 
   const isDark = () => nativeTheme.shouldUseDarkColors;
 
@@ -71,7 +72,7 @@ export function createAppearance(ctx: MainContext): Appearance {
     if (process.platform === 'darwin') return;
     // Native window controls drawn over the top bar (titleBarOverlay) follow the panel colors.
     try {
-      win.setTitleBarOverlay(titleBarOverlay(dark));
+      win.setTitleBarOverlay(titleBarOverlay(dark, locked));
     } catch {
       // The window was created without an overlay.
     }
@@ -115,13 +116,28 @@ export function createAppearance(ctx: MainContext): Appearance {
       win.once('closed', () => windows.delete(win));
       styleWindow(win, isDark());
     },
+    setLocked(next) {
+      if (next === locked) return;
+      locked = next;
+      if (process.platform === 'darwin') return;
+      for (const win of windows) {
+        if (win.isDestroyed()) continue;
+        try {
+          win.setTitleBarOverlay(titleBarOverlay(isDark(), locked));
+        } catch {
+          // The window was created without an overlay.
+        }
+      }
+    },
   };
 }
 
 /**
  * Windows / Linux caption buttons over the 56px top bar: panel color (--p) with muted symbols (--mu).
- * 55px high so the bar's 1px bottom border stays visible under the buttons.
+ * 55px high so the bar's 1px bottom border stays visible under the buttons. While locked they sit
+ * on the lock screen, whose background is --bg.
  */
-export function titleBarOverlay(dark: boolean): { color: string; symbolColor: string; height: number } {
-  return dark ? { color: '#1A1E20', symbolColor: '#7F8B85', height: 55 } : { color: '#F4F6F4', symbolColor: '#5B6B61', height: 55 };
+export function titleBarOverlay(dark: boolean, locked = false): { color: string; symbolColor: string; height: number } {
+  const color = locked ? (dark ? BACKGROUND.dark : BACKGROUND.light) : dark ? '#1A1E20' : '#F4F6F4';
+  return { color, symbolColor: dark ? '#7F8B85' : '#5B6B61', height: 55 };
 }

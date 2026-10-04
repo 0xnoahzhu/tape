@@ -280,9 +280,23 @@ export function formatBytes(n: number | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
+// Privacy & Security
+
+/**
+ * The custom auto-lock duration as typed: digits only, capped at 1440 (as in the design), and the
+ * minutes to save, or null while the field is empty or 0.
+ */
+export function customMinutesInput(raw: string): { text: string; minutes: number | null } {
+  const digits = raw.replace(/\D/g, '').slice(0, 4);
+  if (!digits) return { text: '', minutes: null };
+  const n = Math.min(1440, Number(digits));
+  return { text: Number(digits) > 1440 ? '1440' : digits, minutes: n >= 1 ? n : null };
+}
+
+// ---------------------------------------------------------------------------
 // Shortcuts
 
-export type ShortcutId = 'command' | 'buy' | 'sell' | 'qty' | 'submit' | 'cancelLast' | 'pages' | 'settings' | 'theme';
+export type ShortcutId = 'command' | 'buy' | 'sell' | 'qty' | 'submit' | 'cancelLast' | 'pages' | 'settings' | 'theme' | 'lock';
 
 /** The keys of one combination, modifiers first: ['⌘', '⇧', 'L'] / ['Ctrl', 'Shift', 'L']. */
 export type KeyCombo = string[];
@@ -309,6 +323,7 @@ export function shortcutKeys(platform: string): ShortcutRow[] {
     { id: 'pages', combos: [mod('1'), mod('3')], sep: '–' },
     { id: 'settings', combos: [mod(',')] },
     { id: 'theme', combos: [mod(mac ? '⇧' : 'Shift', 'L')] },
+    { id: 'lock', combos: [mod('L')] },
   ];
 }
 

@@ -34,6 +34,7 @@ import type {
 } from '@shared/types';
 
 import type { Database } from './db/types';
+import type { LockService } from './lock/service';
 
 export type Unsubscribe = () => void;
 // IB callbacks have heterogeneous signatures; listeners annotate their own parameters.
@@ -160,6 +161,8 @@ export interface Appearance {
   isDark(): boolean;
   /** Applies the theme to a window (background color, icon on Windows/Linux). */
   attach(win: BrowserWindow): void;
+  /** Windows / Linux: the caption buttons take the lock screen's background while locked. */
+  setLocked(locked: boolean): void;
 }
 
 export interface MainContext {
@@ -187,4 +190,6 @@ export interface MainContext {
   account: AccountService;
   orders: OrderService;
   appearance: Appearance;
+  /** The lock screen: lock state, PIN and biometrics (see lock/service.ts). */
+  lock: LockService;
 }

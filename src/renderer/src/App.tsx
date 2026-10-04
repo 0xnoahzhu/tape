@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { onCommand } from './state/bridge';
 import { confirmCancel } from './state/orderActions';
-import { useStore } from './state/store';
+import { isCovered, useStore } from './state/store';
 import type { AppCommand } from '@shared/ipc';
 import { useCommon } from './i18n/common';
 import { lastCancellableOrder } from './lib/orders';
@@ -14,6 +14,9 @@ import { SettingsPage } from './features/settings/SettingsPage';
 import { NotificationsPanel } from './features/notifications/NotificationsPanel';
 import { PriceAlertDialog } from './features/alerts/PriceAlertDialog';
 import { ErrorBoundary } from './ui/ErrorBoundary';
+import { requestLock } from './features/lock/actions';
+import { LockScreen } from './features/lock/LockScreen';
+import { PinDialogHost } from './features/lock/PinDialog';
 
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const subscribeDark = (cb: () => void) => {
@@ -55,6 +58,9 @@ function runCommand(command: AppCommand, dark: boolean): void {
       else s.showToast(useCommon.now().noWorkingOrders);
       break;
     }
+    case 'set-pin-and-lock':
+      requestLock();
+      break;
   }
 }
 
@@ -68,6 +74,8 @@ export function App() {
   const page = useStore((s) => s.page);
   const upColor = useStore((s) => s.settings.appearance.upColor);
   const lang = useStore((s) => s.settings.appearance.language);
+  const covered = useStore(isCovered);
+  const lockSeq = useStore((s) => s.lockSeq);
   const dark = useDark();
 
   useEffect(() => {
@@ -81,13 +89,15 @@ export function App() {
   useEffect(() => onCommand((c) => runCommand(c, dark)), [dark]);
 
   // Global shortcuts. Trade-specific keys (B / S / ↑ / ↓ / ⏎) live in the order ticket.
+  // None of them works while the lock screen is up.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+      if (!mod || isCovered(useStore.getState())) return;
       const k = e.key.toLowerCase();
       let cmd: AppCommand | null = null;
-      if (k === 'k' && !e.shiftKey) cmd = 'focus-search';
+      if (k === 'l' && !e.shiftKey && !e.altKey) cmd = 'set-pin-and-lock';
+      else if (k === 'k' && !e.shiftKey) cmd = 'focus-search';
       else if (k === ',') cmd = 'open-settings';
       else if (k === 'l' && e.shiftKey) cmd = 'toggle-theme';
       else if (k === '1') cmd = 'page-portfolio';
@@ -105,7 +115,9 @@ export function App() {
   if (!ready) return <div style={{ height: '100%', background: 'var(--bg)' }} />;
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
+    <div style={{ height: '100%', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
+      {/* While the lock screen covers it, the app can be neither clicked nor tabbed into. */}
+      <div inert={covered} style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
       <ErrorBoundary name="Top bar">
         <TopBar />
       </ErrorBoundary>
@@ -125,7 +137,14 @@ export function App() {
       </ErrorBoundary>
       <ConfirmDialog />
       <OrderConfirmDialog />
+      <PinDialogHost />
       <ToastHost />
+      </div>
+      {covered && (
+        <ErrorBoundary name="Lock screen" style={{ position: 'absolute', inset: 0, zIndex: 40 }}>
+          <LockScreen key={lockSeq} />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }

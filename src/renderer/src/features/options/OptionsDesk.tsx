@@ -5,6 +5,7 @@
 // Development captures can seed data through window.__tape.options (see data.ts).
 
 import { useEffect } from 'react';
+import { useStore } from '../../state/store';
 import { attachDebugHandle } from './data';
 import { DeskFull } from './DeskFull';
 import { useDesk } from './deskStore';
@@ -19,6 +20,10 @@ if (typeof window !== 'undefined') {
     attachDebugHandle(useDesk);
     startRiskWatcher();
   }, 0);
+  // Locking closes the desk's dropdowns (expiry, strategy template) with the app's other popovers.
+  useStore.subscribe((s, prev) => {
+    if (s.lock.locked && !prev.lock.locked) useDesk.setState({ expOpen: false, tmplOpen: false });
+  });
 }
 
 export function OptionsDesk({ mode }: { mode: 'full' | 'alerts' }) {

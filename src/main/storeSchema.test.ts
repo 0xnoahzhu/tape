@@ -102,6 +102,18 @@ describe('loadSettings', () => {
     expect(loadSettings({ connection: { host: '' } }, defaults).connection.host).toBe('127.0.0.1');
     expect(loadSettings({ connection: { host: 'a b' } }, defaults).connection.host).toBe('127.0.0.1');
   });
+
+  it('gives settings saved before the lock screen existed its defaults', () => {
+    const s = loadSettings({ appearance: { theme: 'dark' } }, defaults);
+    expect(s.lock).toEqual({ autoLock: '60', customMinutes: 90, unlockWith: 'biometric', sound: true });
+  });
+
+  it('validates the lock preferences', () => {
+    const s = loadSettings({ lock: { autoLock: 'custom', customMinutes: '5000', unlockWith: 'face', sound: 0, pin: '123456' } }, defaults);
+    expect(s.lock).toEqual({ autoLock: 'custom', customMinutes: 1440, unlockWith: 'biometric', sound: false });
+    expect(loadSettings({ lock: { autoLock: 45, customMinutes: 0 } }, defaults).lock).toMatchObject({ autoLock: '60', customMinutes: 1 });
+    expect(loadSettings({ lock: { autoLock: 'never', unlockWith: 'pin' } }, defaults).lock).toMatchObject({ autoLock: 'never', unlockWith: 'pin' });
+  });
 });
 
 describe('applySettingsPatch', () => {
@@ -124,6 +136,12 @@ describe('applySettingsPatch', () => {
     const before = JSON.stringify(current);
     applySettingsPatch(current, { notifications: { system: { fill: false } } });
     expect(JSON.stringify(current)).toBe(before);
+  });
+
+  it('never takes a PIN through a settings patch', () => {
+    const next = applySettingsPatch(current, { lock: { autoLock: '15', pin: '000000', hash: 'x' } as never });
+    expect(next.lock.autoLock).toBe('15');
+    expect(JSON.stringify(next)).not.toMatch(/000000|hash/);
   });
 
   it('tolerates a non-object patch', () => {

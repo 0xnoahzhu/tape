@@ -5,12 +5,15 @@
 import { useCommon } from '../i18n/common';
 import { modKey } from '../lib/shortcuts';
 import { useStore } from '../state/store';
-import { BellIcon, Dot, LogoMark, SlidersIcon } from '../ui/icons';
+import { BellIcon, Dot, LockIcon, LogoMark, SlidersIcon } from '../ui/icons';
 import { IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
+import { requestLock } from '../features/lock/actions';
+import { useLockMessages } from '../features/lock/messages';
 
 export function TopBar() {
   const m = useCommon();
+  const lm = useLockMessages();
   const page = useStore((s) => s.page);
   const setPage = useStore((s) => s.setPage);
   const bellOpen = useStore((s) => s.bellOpen);
@@ -66,6 +69,9 @@ export function TopBar() {
         <IconButton size={34} title={m.notifications} active={bellOpen} onClick={() => setBell(!bellOpen)}>
           <BellIcon />
           {unread && <Dot top={8} right={8} />}
+        </IconButton>
+        <IconButton size={34} title={lm.lockTitle(modKey(mac, 'L'))} onClick={() => requestLock()}>
+          <LockIcon />
         </IconButton>
         <IconButton size={34} title={m.settingsTitle(modKey(mac, ','))} active={page === 'set'} onClick={() => openSettings()}>
           <SlidersIcon />

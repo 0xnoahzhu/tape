@@ -4,6 +4,8 @@ import './styles/global.css';
 import { App } from './App';
 import { startBridge } from './state/bridge';
 import { useStore } from './state/store';
+import { installLockKeyGuard } from './features/lock/actions';
+import { focusLockInput } from './features/lock/LockScreen';
 
 // Debug handle for scripted screenshots (see src/main/devCapture.ts).
 (window as unknown as { __tape: unknown }).__tape = { store: useStore };
@@ -14,6 +16,9 @@ root.dataset.sk = 'a';
 root.dataset.platform = window.tapePlatform;
 root.dataset.th = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 root.dataset.cv = 'cn';
+
+// Before anything else registers a key listener, so no shortcut runs behind the lock screen.
+installLockKeyGuard(focusLockInput);
 
 void startBridge();
 

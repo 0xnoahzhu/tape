@@ -109,6 +109,12 @@ const SETTINGS_SPEC: Spec<Settings> = {
   features: { depth: bool, options: bool, flow: bool },
   notifications: { system: notificationRules, sound: bool, dnd: bool },
   apiLog: { writeFile: bool, keepDays: nearest(KEEP_DAYS) },
+  lock: {
+    autoLock: oneOf(['15', '30', '60', 'custom', 'never']),
+    customMinutes: int(1, 1440),
+    unlockWith: oneOf(['biometric', 'pin']),
+    sound: bool,
+  },
 };
 
 /** Walks the spec: keys missing from `raw` take the fallback, keys not in the spec are dropped. */

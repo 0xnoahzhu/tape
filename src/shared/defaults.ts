@@ -26,6 +26,7 @@ export function defaultSettings(language: Lang = 'en'): Settings {
       dnd: false,
     },
     apiLog: { writeFile: true, keepDays: 7 },
+    lock: { autoLock: '60', customMinutes: 90, unlockWith: 'biometric', sound: true },
   };
 }
 

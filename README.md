@@ -41,8 +41,11 @@ do-not-disturb switches. Clicking a notification about an instrument opens it.
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
 daily log files, retention and export.
 
-**Appearance** — dark, light or system theme (the dock / window icon follows the theme), red-up / green-down
+**General** — dark, light or system theme (the dock / window icon follows the theme), red-up / green-down
 (CN) or green-up / red-down (US) color convention, English and 中文.
+
+**Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
+idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).
 
 Where IBKR does not provide a value (no market data permission, a competing session, a closed market) Tape
 shows "—" or an explanatory empty state instead of inventing numbers.
@@ -121,6 +124,7 @@ permissions, run with simulated quotes: `TAPE_DEMO=1 pnpm dev`.
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
 | `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
+| `TAPE_FAKE_BIOMETRICS=[touchId:\|windowsHello:]ok\|fail\|cancel\|unavailable` | Development builds only: a fake Touch ID / Windows Hello that never shows a system prompt (ignored when packaged) |
 | `TAPE_LIVE_IB=<host:port>` | Enables `src/main/ib/live.test.ts`, which connects to a logged-in **paper** TWS / IB Gateway (set `TAPE_CLIENT_ID` to an unused id); it places a BUY 1 AAPL limit order at 1.00 and cancels it |
 
 `scripts/capture.ts` wraps the capture variables for a built app:
@@ -138,6 +142,7 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 | `alerts.json` | Price alerts |
 | `notifications.json` | The last 200 notifications |
 | `window.json` | Window position and size |
+| `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
 | `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve and a journal of executions with commissions; its cache tables expire (intraday bars after 30 days, other entries after 180 days) |
 | `nav.json` | Older versions' equity curve data; imported into `tape.db` once, then emptied |
 
@@ -181,10 +186,12 @@ src/
     notifications.ts in-app list + OS notifications
     appearance.ts    theme and theme-matched icons
     menu.ts          localized application menu (menuTemplate.ts)
+    lock/            lock screen: PIN hash and backoff, idle auto-lock, Touch ID / Windows Hello, Forgot-PIN reset
+    ipcDispatch.ts   IPC envelope and the methods refused while locked
   preload/     contextBridge: exposes window.tape
   renderer/    React UI
     src/state/       zustand store, IPC bridge
-    src/features/    portfolio, watchlist, chart, ticket, options, orders, notifications, alerts, search, settings
+    src/features/    portfolio, watchlist, chart, ticket, options, orders, notifications, alerts, search, settings, lock
     src/ui/          design primitives; src/styles: tokens and global CSS
 resources/icons/   icon sources and generated runtime icons
 build/             bundle icons for electron-builder
@@ -201,6 +208,61 @@ design/            design files (source of truth for the UI)
 - The app does not navigate away from its own page; external links open in your default browser (https only).
 - Local files (see *Data on disk*) are plain JSON and log text. API log files contain account ids and order
   details; turn off *Also write to log file* in *Settings › API log* if you do not want them on disk.
+
+## Lock screen
+
+The lock screen is a privacy lock for Tape's window: it hides balances, positions and orders and refuses
+everything a user would do (orders, settings, watchlists, alerts, logs) until the PIN is entered.
+
+- **Lock** with ⌘L / Ctrl+L, the padlock in the top bar or *Tape › Lock Tape*. The first time, Tape asks for
+  a PIN and locks once it is saved. *Settings › Privacy & Security* sets the idle time (15 / 30 / 60 minutes,
+  custom or never; no keyboard or mouse input on the computer, checked every 15 s), the unlock method, the
+  unlock sound, and changes or removes the PIN. Tape starts locked whenever a PIN is set.
+- **PIN**: exactly 6 characters of any kind (letters are case-sensitive; digits, symbols and other scripts
+  work; spaces and control characters do not). It is only stored as a salted scrypt hash in `lock.json`.
+  After 5 wrong PINs in a row Tape waits 30 s before the next attempt, doubling up to 15 minutes; the count
+  survives a restart. If `lock.json` cannot be read (damaged, or blocked by permissions), Tape stays locked
+  and accepts no PIN; *Forgot PIN?* is the way out.
+- **What keeps running**: IB Gateway / TWS stays connected, market data keeps flowing, orders already sent
+  keep working on IB's servers and price alerts keep firing.
+- **What it does not protect**: IB Gateway / TWS stays logged in and accepts any local API client, so anyone
+  at the computer can still use IBKR through another program, and the files in the user data folder are
+  readable by your user account. *Forgot PIN?* needs no PIN either: anyone at the computer can reset Tape
+  (losing its local data) and connect it to the running IB Gateway again. Use the lock as a privacy screen;
+  to prevent trading, lock the computer itself or log out of IB Gateway.
+- **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes all of
+  Tape's local data: settings, watchlists, price alerts, notifications, API logs, the PIN, the database
+  (equity curve history, executions journal, caches) and the window position; only the language and the
+  theme are kept. Tape then restarts like a fresh install, on *Settings › Connection*, without connecting.
+  Your IBKR account, positions and orders on IB's servers are not affected.
+- **Touch ID** (macOS) needs a Mac or Magic Keyboard with Touch ID and an enrolled fingerprint; it is not
+  available while the lid is closed without a Touch ID keyboard. The system sheet may also offer your Mac
+  password. **Windows Hello** needs Windows 11, or Windows 10 where the API is present, with Windows Hello
+  set up (see below). Neither is offered on Linux. The PIN always works as well.
+
+### Windows Hello
+
+Electron has no Windows Hello API, so Tape asks Windows itself (`src/main/lock/windowsHello.ts`):
+
+- It calls `UserConsentVerifier` through `IUserConsentVerifierInterop.RequestVerificationForWindowAsync`
+  with Tape's window handle, so the *Windows Security* dialog belongs to Tape and opens in front of it. Face,
+  fingerprint or the Windows Hello PIN all count; which one is offered is up to Windows.
+- The call runs in a helper process: the in-box Windows PowerShell 5.1
+  (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, never looked up through `PATH`) compiles a
+  small C# class in memory with the in-box .NET Framework compiler and talks to Tape over stdin / stdout. The
+  script is bundled in the app (`windowsHelloScript.ts`); nothing is downloaded or installed, no
+  `-EncodedCommand` or `-ExecutionPolicy` switches are used, and no cmdlets or modules are loaded.
+- The helper starts when Tape locks (so the prompt opens quickly) and ends on unlock and on quit; if Tape
+  dies, the helper sees its stdin close and exits. A helper started only to check availability (Settings)
+  exits after a minute. A prompt nobody answers is closed after two minutes.
+- Requires Windows 11 (build 22000), or Windows 10 where the interop API is present (Microsoft documents it
+  from build 22000), with Windows Hello set up. The availability check activates that API, so a build without
+  it shows Windows Hello as unsupported instead of offering a button that fails. When PowerShell is missing,
+  blocked (including AppLocker / Software Restriction Policy executable rules or Defender), or runs in
+  Constrained Language Mode (AppLocker / WDAC script rules), or antivirus blocks the script, Settings shows
+  Windows Hello as unavailable for the session and the PIN keeps working.
+- As with Touch ID, the OS answers yes or no; it does not unlock a key. The PIN remains the secret, and
+  Windows Hello is a shortcut for entering it. The prompt text is never logged.
 
 ## License
 

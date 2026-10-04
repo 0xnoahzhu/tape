@@ -9,8 +9,9 @@ type Click = (item: never, window: never, event: { triggeredByAccelerator?: bool
 function build(overrides: Partial<MenuOptions> = {}) {
   const command = vi.fn<(c: AppCommand) => void>();
   const openExternal = vi.fn<(url: string) => void>();
-  const template = buildMenuTemplate({ platform: 'darwin', lang: 'en', isDev: false, actions: { command, openExternal }, ...overrides });
-  return { template, command, openExternal };
+  const lock = vi.fn<() => void>();
+  const template = buildMenuTemplate({ platform: 'darwin', lang: 'en', isDev: false, actions: { command, openExternal, lock }, ...overrides });
+  return { template, command, openExternal, lock };
 }
 
 const flatten = (items: Item[]): Item[] => items.flatMap((i) => [i, ...(Array.isArray(i.submenu) ? flatten(i.submenu as Item[]) : [])]);
@@ -29,6 +30,7 @@ describe('buildMenuTemplate', () => {
       expect(template[0].label).toBe('File');
       const file = template[0].submenu as Item[];
       expect(file[0]).toMatchObject({ id: 'open-settings', accelerator: 'CmdOrCtrl+,' });
+      expect(file[1]).toMatchObject({ id: 'lock', label: 'Lock Tape', accelerator: 'CmdOrCtrl+L' });
       expect(file.some((i) => i.role === 'quit')).toBe(true);
       expect(find(template, (i) => i.role === 'services')).toBeUndefined();
     }
@@ -45,6 +47,7 @@ describe('buildMenuTemplate', () => {
     const commands = flatten(template).filter((i) => i.id && !i.role);
     expect(commands.map((i) => [i.id, i.accelerator])).toEqual([
       ['open-settings', 'CmdOrCtrl+,'],
+      ['lock', 'CmdOrCtrl+L'],
       ['page-portfolio', 'CmdOrCtrl+1'],
       ['page-trade', 'CmdOrCtrl+2'],
       ['page-orders', 'CmdOrCtrl+3'],
@@ -62,6 +65,27 @@ describe('buildMenuTemplate', () => {
     expect(command).not.toHaveBeenCalled();
     click(item);
     expect(command).toHaveBeenCalledWith('toggle-theme');
+  });
+
+  it('locks from the Lock item, but not from its accelerator (the renderer handles ⌘L)', () => {
+    const { template, lock } = build();
+    const item = find(template, (i) => i.id === 'lock');
+    click(item, true);
+    expect(lock).not.toHaveBeenCalled();
+    click(item);
+    expect(lock).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables every custom item except Lock while locked, keeping the standard roles', () => {
+    for (const platform of ['darwin', 'win32'] as const) {
+      const items = flatten(build({ platform, locked: true, isDev: true }).template).filter((i) => i.type !== 'separator' && !i.submenu);
+      const enabled = items.filter((i) => i.enabled !== false);
+      expect(enabled.filter((i) => !i.role).map((i) => i.id)).toEqual(['lock']);
+      expect(items.filter((i) => i.role).every((i) => i.enabled !== false)).toBe(true);
+      expect(enabled.map((i) => i.role)).toContain('quit');
+    }
+    const unlocked = flatten(build().template).filter((i) => i.type !== 'separator');
+    expect(unlocked.filter((i) => i.enabled === false)).toEqual([]);
   });
 
   it('shows developer items only in development', () => {

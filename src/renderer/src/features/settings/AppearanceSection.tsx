@@ -1,11 +1,9 @@
-// Settings › Appearance: account id visibility, language, theme, up/down color convention.
+// Settings › General: language, theme, up/down color convention.
 
-import type { ReactNode } from 'react';
 import type { Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
-import { Segmented, type Option } from '../../ui/primitives';
 import { useSettingsMessages } from './messages';
-import { SectionHeader, saveSettings } from './parts';
+import { OptionRow, SectionHeader, saveSettings } from './parts';
 
 export function AppearanceSection() {
   const m = useSettingsMessages();
@@ -26,15 +24,6 @@ export function AppearanceSection() {
     <>
       <SectionHeader title={m.nav.view} />
       {/* As in the design, the rows sit directly in the section column (28px apart). */}
-      <OptionRow<'show' | 'hide'>
-        label={m.accountId}
-        options={[
-          { key: 'show', label: m.show },
-          { key: 'hide', label: m.hide },
-        ]}
-        value={a.showAccountId ? 'show' : 'hide'}
-        onChange={(k) => saveSettings({ appearance: { showAccountId: k === 'show' } })}
-      />
       <OptionRow<Lang>
         label={m.language}
         options={[
@@ -64,15 +53,6 @@ export function AppearanceSection() {
         onChange={(upColor) => saveSettings({ appearance: { upColor } })}
       />
     </>
-  );
-}
-
-function OptionRow<K extends string>({ label, options, value, onChange }: { label: ReactNode; options: Option<K>[]; value: K; onChange: (k: K) => void }) {
-  return (
-    <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-      <div>{label}</div>
-      <Segmented options={options} value={value} onChange={(k) => k !== value && onChange(k)} itemStyle={{ padding: '7px 14px', fontSize: 13, gap: 10 }} />
-    </div>
   );
 }
 

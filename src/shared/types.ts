@@ -492,6 +492,8 @@ export interface AppNotification {
 export type ThemeSetting = 'system' | 'dark' | 'light';
 /** cn = red up / green down, us = green up / red down. */
 export type UpColor = 'cn' | 'us';
+/** Auto-lock after this many idle minutes; 'custom' uses `lock.customMinutes`. */
+export type AutoLock = '15' | '30' | '60' | 'custom' | 'never';
 
 export interface Settings {
   connection: {
@@ -529,6 +531,15 @@ export interface Settings {
     writeFile: boolean;
     keepDays: number;
   };
+  /** Lock screen preferences. The PIN itself is not a setting (main keeps its hash in lock.json). */
+  lock: {
+    autoLock: AutoLock;
+    /** 1–1440, used when autoLock is 'custom'. */
+    customMinutes: number;
+    /** 'biometric' = Touch ID / Windows Hello when available, PIN otherwise. */
+    unlockWith: 'biometric' | 'pin';
+    sound: boolean;
+  };
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -552,4 +563,53 @@ export interface AppSnapshot {
   notifications: AppNotification[];
   nav: NavPoint[];
   logFilePath: string;
+  lock: LockState;
+  /** This launch follows a Forgot-PIN reset (Settings › Connection opens, no auto-connect). */
+  afterReset: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Lock screen
+
+export type BiometricKind = 'touchId' | 'windowsHello';
+
+/** Whether Touch ID / Windows Hello can be used right now (`kind` null: no provider on this platform). */
+export interface LockBiometrics {
+  kind: BiometricKind | null;
+  available: boolean;
+  /**
+   * Why it is unavailable (see src/main/lock/types.ts → BiometricUnavailableReason). 'checking':
+   * not known yet (the first check after launch is still running); not a reason to warn about.
+   */
+  reason?: 'unsupported' | 'noHardware' | 'notEnrolled' | 'disabledByPolicy' | 'error' | 'checking';
+}
+
+/** What the renderer needs to draw the lock; never the PIN hash. Main is the only authority. */
+export interface LockState {
+  hasPin: boolean;
+  locked: boolean;
+  biometrics: LockBiometrics;
+  /** Consecutive wrong PINs. */
+  failures: number;
+  /** Unix ms before which PIN attempts are refused; null when not throttled. */
+  retryAt: number | null;
+}
+
+/** Why a biometric check did not verify the user (never shown as "Incorrect PIN"). */
+export type BiometricFailure = 'canceled' | 'failed' | 'busy' | 'unavailable' | 'timeout' | 'error';
+
+export type PinCheckFailure =
+  | { ok: false; reason: 'wrongPin'; failures: number; retryAt: number | null }
+  | { ok: false; reason: 'throttled'; retryAt: number }
+  | { ok: false; reason: 'noPin' }
+  /** lock.json exists but cannot be read: Tape stays locked; Forgot PIN is the way out. */
+  | { ok: false; reason: 'pinUnreadable' };
+
+/** Result of an unlock attempt. */
+export type UnlockResult = { ok: true } | PinCheckFailure | { ok: false; reason: 'biometric'; failure: BiometricFailure };
+
+/**
+ * Result of re-verifying the user before a PIN change or removal. `token` is single-use and
+ * expires after a few minutes; pass it to setLockPin / removeLockPin.
+ */
+export type VerifyResult = { ok: true; token: string } | PinCheckFailure | { ok: false; reason: 'biometric'; failure: BiometricFailure };

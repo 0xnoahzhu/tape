@@ -31,6 +31,31 @@ export function SlidersIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+/** Padlock of the top bar's Lock button. */
+export function LockIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 18 18" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      <rect x="3.75" y="8" width="10.5" height="7" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path d="M6 8V5.75a3 3 0 0 1 6 0V8" stroke="currentColor" strokeWidth="1.5" fill="none" />
+    </svg>
+  );
+}
+
+/** Fingerprint of the lock screen's Touch ID / Windows Hello button. */
+export function FingerprintIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 18 18" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      <path
+        d="M5 14.5c-1-1.5-1.5-3.2-1.5-5a5.5 5.5 0 0 1 11 0 M9 9.5c0 2.2.6 4 1.6 5.5 M6.6 9.5a2.4 2.4 0 0 1 4.8 0c0 1.2.3 2.3.8 3.3 M7.4 15c-.6-1.3-.8-2.9-.8-4.2"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        fill="none"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 /** Small unread / active marker dot (square, accent). */
 export function Dot({ top, right, size = 6 }: { top: number; right: number; size?: number }) {
   return <div style={{ position: 'absolute', top, right, width: size, height: size, background: 'var(--ac)', boxShadow: '0 0 0 2px var(--p)' }} />;

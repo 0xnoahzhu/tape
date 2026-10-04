@@ -247,6 +247,11 @@ export interface ApiLogOptions {
   streamByDefault?: boolean;
 }
 
+/** The API log folder. Development profiles (TAPE_USER_DATA) keep their logs next to their data. */
+export function apiLogDir(): string {
+  return process.env.TAPE_USER_DATA ? join(app.getPath('userData'), 'logs') : app.getPath('logs');
+}
+
 export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): ApiLog {
   const ring = new FrameRing();
   /** First seq shown (clear() moves it past every recorded frame). */
@@ -265,7 +270,7 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
   let fileOn = false;
   /** Newest seq handed to the log file. */
   let written = 0;
-  const files = createLogFileWriter({ dir: logDir, collect: collectLines, maxPending: RING_SIZE / 2 });
+  const files = createLogFileWriter({ dir: apiLogDir, collect: collectLines, maxPending: RING_SIZE / 2 });
 
   let serverVersion = DEFAULT_SERVER_VERSION;
   /** Set after the handshake is sent: the next received frame is the server version. */
@@ -273,13 +278,8 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
   /** Seq of the last received frame; decoded callbacks fired for that frame may annotate it. */
   let lastIn = 0;
 
-  /** Development profiles (TAPE_USER_DATA) keep their logs next to their data. */
-  function logDir(): string {
-    return process.env.TAPE_USER_DATA ? join(app.getPath('userData'), 'logs') : app.getPath('logs');
-  }
-
   function filePath(): string {
-    return join(logDir(), logFileName(Date.now()));
+    return join(apiLogDir(), logFileName(Date.now()));
   }
 
   // ---------------------------------------------------------------------------
@@ -368,7 +368,7 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
   }
 
   async function prune(keepDays: number): Promise<void> {
-    const dir = logDir();
+    const dir = apiLogDir();
     let names: string[];
     try {
       names = await readdir(dir);

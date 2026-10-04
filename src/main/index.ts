@@ -1,14 +1,15 @@
 // Main process entry: creates the services, the window and the IPC bridge.
 
+import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, screen, shell, type WebContents } from 'electron';
-import { EVENT_CHANNEL, INVOKE_METHODS, invokeChannel, type InvokeResult, type TapeEvent, type TapeHandlers } from '@shared/ipc';
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, screen, session, shell, type WebContents } from 'electron';
+import { EVENT_CHANNEL, INVOKE_METHODS, invokeChannel, LOCKED_MESSAGE, type TapeEvent, type TapeHandlers } from '@shared/ipc';
 import type { AppSnapshot } from '@shared/types';
 import type { MainContext } from './context';
 import { createStore } from './store';
 import { createDatabase } from './db';
-import { createApiLog, createLogViewers } from './ib/apiLog';
+import { apiLogDir, createApiLog, createLogViewers } from './ib/apiLog';
 import { createConnection } from './ib/connection';
 import { createNotifier } from './notifications';
 import { createContractService } from './market/contracts';
@@ -22,6 +23,12 @@ import { createOrderService } from './ib/orders';
 import { createAppearance, titleBarOverlay } from './appearance';
 import { installMenu } from './menu';
 import { setupDevCapture } from './devCapture';
+import { createMessages } from './i18n';
+import { createDispatch } from './ipcDispatch';
+import { createBiometrics } from './lock/biometrics';
+import { createLockFile, LOCK_FILE } from './lock/lockFile';
+import { readResetMarker, removeResetMarker, startReset, wipeTapeData, type WipeResult } from './lock/reset';
+import { createLockService } from './lock/service';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const isDev = !app.isPackaged && !!process.env.VITE_DEV_SERVER_URL;
@@ -32,9 +39,36 @@ if (process.env.TAPE_USER_DATA) app.setPath('userData', process.env.TAPE_USER_DA
 // macOS notifications and the dock need a stable app id on Windows as well.
 if (process.platform === 'win32') app.setAppUserModelId('app.tape.client');
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
+// A second instance quits; it must never touch the files of the one that is running.
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
+
+// Phase 2 of a Forgot-PIN reset (see lock/reset.ts): delete Tape's files before any service opens them.
+const userData = app.getPath('userData');
+const resetMarker = primary ? readResetMarker(fs, userData) : null;
+let resetResult: WipeResult | null = null;
+if (resetMarker) {
+  let logDir: string | null = null;
+  try {
+    logDir = apiLogDir();
+  } catch (err) {
+    console.error('[reset] no log folder:', err);
+  }
+  resetResult = wipeTapeData(fs, { userData, logDir, marker: resetMarker });
 }
+/** This launch follows a reset; the first snapshot tells the renderer (it opens Settings › Connection). */
+let afterReset = resetMarker != null;
+
+const m = createMessages({
+  en: {
+    resetIncompleteTitle: 'Reset incomplete',
+    resetIncompleteBody: (names: string) => `These files of Tape could not be deleted: ${names}. You can delete them yourself.`,
+  },
+  zh: {
+    resetIncompleteTitle: '重置未完成',
+    resetIncompleteBody: (names: string) => `以下 Tape 文件未能删除：${names}。可以手动删除。`,
+  },
+});
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -71,11 +105,54 @@ ctx.alerts = createAlertService(ctx);
 ctx.account = createAccountService(ctx);
 ctx.orders = createOrderService(ctx);
 ctx.appearance = createAppearance(ctx);
+ctx.lock = createLockService({
+  store: createLockFile(join(userData, LOCK_FILE)),
+  biometrics: createBiometrics({ platform: process.platform, isPackaged: app.isPackaged, fake: process.env.TAPE_FAKE_BIOMETRICS }),
+  lockSettings: () => ctx.store.getSettings().lock,
+  lang: () => ctx.store.getSettings().appearance.language,
+  getWindow: () => ctx.getMainWindow(),
+  idleSeconds: () => powerMonitor.getSystemIdleTime(),
+});
 
 const apiLogViewers = createLogViewers(ctx.apiLog);
 
 // Appearance subscribes first (in its factory), so the theme is applied before this broadcast.
 ctx.store.onSettingsChanged((settings) => ctx.emit({ type: 'settings', settings, dark: ctx.appearance.isDark() }));
+// Windows: the caption buttons keep the lock screen's background until its unlock animation has
+// played (lock/LockScreen: at most ~1.1 s after main reports unlocked); locking switches at once.
+const UNLOCK_ANIMATION_MS = 1100;
+let overlayTimer: ReturnType<typeof setTimeout> | null = null;
+ctx.lock.onChange((state, prev) => {
+  if (state.locked !== prev.locked) {
+    if (overlayTimer) clearTimeout(overlayTimer);
+    overlayTimer = null;
+    if (state.locked) ctx.appearance.setLocked(true);
+    else
+      overlayTimer = setTimeout(() => {
+        overlayTimer = null;
+        ctx.appearance.setLocked(false);
+      }, UNLOCK_ANIMATION_MS);
+  }
+  ctx.emit({ type: 'lock', state });
+});
+ctx.appearance.setLocked(ctx.lock.isLocked());
+
+/**
+ * Forgot PIN (phase 1, see lock/reset.ts). Development and capture runs exit without restarting (a
+ * dev restart would load a stopped Vite server; a capture restart would replay the steps); their
+ * next launch finishes the reset.
+ */
+function resetApp(confirmation: string): Promise<void> {
+  return startReset(confirmation, {
+    fs,
+    userData,
+    keep: () => ctx.store.getSettings().appearance,
+    teardown: [() => ctx.ib.disconnect(), () => ctx.db.close()],
+    relaunch: !ctx.isDev && !process.env.TAPE_CAPTURE_DIR,
+    app,
+    argv: process.argv,
+  });
+}
 
 async function snapshot(): Promise<AppSnapshot> {
   // The only async part comes first, so every other field is read in the same tick as the reply.
@@ -96,7 +173,15 @@ async function snapshot(): Promise<AppSnapshot> {
     notifications: ctx.store.getNotifications(),
     nav,
     logFilePath: ctx.apiLog.filePath(),
+    lock: ctx.lock.getState(),
+    afterReset: takeAfterReset(),
   };
+}
+
+function takeAfterReset(): boolean {
+  const value = afterReset;
+  afterReset = false;
+  return value;
 }
 
 const handlers: TapeHandlers = {
@@ -141,6 +226,8 @@ const handlers: TapeHandlers = {
     const options = { defaultPath: `tape-api-${stamp}.log`, filters: [{ name: 'Log', extensions: ['log', 'txt'] }] };
     const res = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
     if (res.canceled || !res.filePath) return null;
+    // Locking cannot close the native dialog: someone may have clicked Save after Tape locked.
+    if (ctx.lock.isLocked()) throw new Error(LOCKED_MESSAGE);
     await ctx.apiLog.exportTo(res.filePath);
     return res.filePath;
   },
@@ -148,18 +235,23 @@ const handlers: TapeHandlers = {
   openExternal: async (url) => {
     if (/^https:\/\//.test(url)) await shell.openExternal(url);
   },
+  getLockState: () => ctx.lock.refreshBiometrics(),
+  lock: async () => {
+    if (!ctx.lock.lock()) throw new Error('Set a PIN first');
+  },
+  unlockWithPin: (pin) => ctx.lock.unlockWithPin(pin),
+  unlockWithBiometrics: () => ctx.lock.unlockWithBiometrics(),
+  verifyLockPin: (pin) => ctx.lock.verifyPin(pin),
+  verifyLockBiometrics: () => ctx.lock.verifyBiometrics(),
+  setLockPin: (pin, token) => ctx.lock.setPin(pin, token),
+  removeLockPin: (token) => ctx.lock.removePin(token),
+  resetApp,
 };
 
+// While locked, only the methods LOCK_POLICY allows reach their handler (ipcDispatch.ts).
 for (const method of INVOKE_METHODS) {
-  const fn = handlers[method] as (...args: unknown[]) => unknown;
-  ipcMain.handle(invokeChannel(method), async (event, ...args: unknown[]): Promise<InvokeResult> => {
-    try {
-      // Handlers that keep per-renderer state read the sender as `this`.
-      return { ok: true, value: await fn.apply(event.sender, args) };
-    } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
-    }
-  });
+  const dispatch = createDispatch(method, handlers, () => ctx.lock.isLocked());
+  ipcMain.handle(invokeChannel(method), (event, ...args: unknown[]) => dispatch(event.sender, args));
 }
 
 /** Saved bounds, or null when they no longer intersect any connected display. */
@@ -187,7 +279,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: 'hidden',
     ...(process.platform === 'darwin'
       ? { trafficLightPosition: { x: 20, y: 22 } }
-      : { titleBarOverlay: titleBarOverlay(ctx.appearance.isDark()) }),
+      : { titleBarOverlay: titleBarOverlay(ctx.appearance.isDark(), ctx.lock.isLocked()) }),
     webPreferences: {
       preload: join(here, '../preload/index.cjs'),
       contextIsolation: true,
@@ -237,12 +329,36 @@ process.on('uncaughtException', (err) => {
   if (app.isPackaged) dialog.showErrorBox('Tape', `${err.message}\n\n${err.stack ?? ''}`);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (resetMarker) {
+    // Renderer storage (localStorage, IndexedDB, caches) of the reset profile; the marker goes last.
+    await session.defaultSession.clearStorageData().catch((err: unknown) => console.error('[reset] clearStorageData failed:', err));
+    await session.defaultSession.clearCache().catch(() => undefined);
+    removeResetMarker(fs, userData);
+    if (resetResult?.failed.length) {
+      const names = resetResult.failed.join(', ');
+      ctx.notifier.notify({ kind: 'sys', title: m.both((t) => t.resetIncompleteTitle), body: m.both((t) => t.resetIncompleteBody(names)) });
+    }
+  }
   installMenu(ctx);
   createWindow();
-  if (ctx.store.getSettings().connection.autoConnect && process.env.TAPE_NO_CONNECT !== '1') {
+  // After a reset Tape starts disconnected (the user reviews Settings › Connection first).
+  if (!resetMarker && ctx.store.getSettings().connection.autoConnect && process.env.TAPE_NO_CONNECT !== '1') {
     ctx.ib.connect().catch(() => undefined);
   }
+  ctx.lock.startAutoLock();
+  // Time asleep counts as idle; Touch ID availability changes with the lid and keyboard. Checked
+  // only when the lock screen may offer it (Windows Hello's check starts a PowerShell helper);
+  // Settings › Privacy & Security checks whenever it opens.
+  const refreshBiometrics = () => {
+    if (ctx.lock.hasPin() && ctx.store.getSettings().lock.unlockWith === 'biometric') void ctx.lock.refreshBiometrics();
+  };
+  powerMonitor.on('suspend', () => ctx.lock.checkIdle());
+  powerMonitor.on('resume', () => {
+    ctx.lock.checkIdle();
+    refreshBiometrics();
+  });
+  refreshBiometrics();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else ctx.showMainWindow();
@@ -254,6 +370,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  ctx.lock.dispose();
   ctx.store.flush();
   void ctx.db.close();
   void ctx.ib.disconnect();

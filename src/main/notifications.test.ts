@@ -34,7 +34,9 @@ function setup(patch: (s: Settings) => Settings = (s) => s) {
   const events: TapeEvent[] = [];
   const showMainWindow = vi.fn();
   const win = { webContents: { isLoading: () => false, once: vi.fn() } };
+  const lock = { locked: false };
   const ctx = {
+    lock: { isLocked: () => lock.locked },
     emit: (e: TapeEvent) => events.push(e),
     showMainWindow,
     getMainWindow: () => win,
@@ -51,6 +53,7 @@ function setup(patch: (s: Settings) => Settings = (s) => s) {
     showMainWindow,
     list: () => list,
     setSettings: (s: Settings) => void (settings = s),
+    lock,
   };
 }
 
@@ -101,6 +104,16 @@ describe('Notifier', () => {
     expect(t.showMainWindow).toHaveBeenCalled();
     expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'opt' });
     expect(t.list().find((x) => x.id === n.id)?.read).toBe(true);
+  });
+
+  it('clicking while Tape is locked only shows the window: nothing behind the lock changes', () => {
+    const t = setup();
+    t.lock.locked = true;
+    t.notifier.notify({ kind: 'opt', title: text('Risk'), body: text('Delta'), contract: aapl });
+    t.events.length = 0;
+    os.shown[0].emitter.emit('click');
+    expect(t.showMainWindow).toHaveBeenCalled();
+    expect(t.events.some((e) => e.type === 'openContract')).toBe(false);
   });
 
   it('clicking a notification without an instrument just shows the window', () => {

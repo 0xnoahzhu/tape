@@ -2,19 +2,23 @@
 
 import { compact, f0 } from '@shared/format';
 import { createMessages } from '../../i18n';
+import type { BiometricKind, LockBiometrics } from '@shared/types';
 import type { ShortcutId } from './logic';
+
+const BIO: Record<BiometricKind, string> = { touchId: 'Touch ID', windowsHello: 'Windows Hello' };
 
 type Pair = { l: string; d: string };
 
 const en = {
   nav: {
+    view: 'General',
     conn: 'Connection',
     data: 'Market data',
     trade: 'Trade',
     notif: 'Notifications',
-    view: 'Appearance',
-    log: 'API log',
+    sec: 'Privacy & Security',
     keys: 'Shortcuts',
+    log: 'API log',
   },
 
   // Connection
@@ -140,7 +144,7 @@ const en = {
   test: 'Send test notification',
   testD: 'The OS asks for permission the first time',
 
-  // Appearance
+  // General
   accountId: 'Account ID',
   show: 'Show',
   hide: 'Hide',
@@ -152,6 +156,43 @@ const en = {
   upColors: 'Up / down colors',
   cn: 'Red up, green down',
   us: 'Green up, red down',
+
+  // Privacy & Security
+  privacy: 'Privacy',
+  lockScreen: 'Lock screen',
+  lockNoPin: 'Set a lock PIN to turn on the lock screen and auto-lock.',
+  autoLock: 'Auto-lock when idle',
+  autoLockD: 'No keyboard or mouse input on this computer',
+  minutes: (n: number) => `${n} min`,
+  custom: 'Custom',
+  never: 'Never',
+  customL: 'Custom duration',
+  customD: '1 – 1440 minutes',
+  minU: 'min',
+  unlockWith: 'Unlock with',
+  bio: (kind: BiometricKind) => BIO[kind],
+  pinOnly: 'PIN only',
+  bioOff: (b: LockBiometrics & { kind: BiometricKind }) =>
+    b.reason === 'checking'
+      ? `Checking whether ${BIO[b.kind]} can be used…`
+      : b.reason === 'disabledByPolicy'
+      ? `${BIO[b.kind]} is turned off by your administrator`
+      : b.reason === 'notEnrolled'
+        ? b.kind === 'touchId'
+          ? 'Touch ID is not set up. Add a fingerprint in System Settings › Touch ID & Password'
+          : 'Windows Hello is not set up. Set it up in Settings › Accounts › Sign-in options'
+        : b.reason === 'noHardware'
+          ? b.kind === 'touchId'
+            ? 'Touch ID is not available on this Mac or not set up (a closed lid also turns it off)'
+            : 'This PC has no Windows Hello camera or fingerprint reader, or it is not set up'
+          : `${BIO[b.kind]} is not available right now`,
+  unlockSound: 'Unlock sound',
+  unlockSoundD: 'Play a soft click when unlocked',
+  pinL: 'Lock PIN',
+  pinD: '6 characters (letters, digits or symbols). Only unlocks Tape; separate from your IBKR login',
+  pinSet: 'Set',
+  pinChange: 'Change',
+  pinRemove: 'Remove',
 
   // API log
   logDesc:
@@ -199,18 +240,20 @@ const en = {
     pages: 'Switch page',
     settings: 'Settings',
     theme: 'Toggle theme',
+    lock: 'Lock',
   } as Record<ShortcutId, string>,
 };
 
 const zh: typeof en = {
   nav: {
+    view: '通用',
     conn: '连接',
     data: '行情',
     trade: '交易',
     notif: '通知',
-    view: '外观',
-    log: 'API 日志',
+    sec: '隐私与安全',
     keys: '快捷键',
+    log: 'API 日志',
   },
 
   connDesc: '通过 TWS 或 IB Gateway 的 API 端口连接。需在 TWS 中启用 “Enable ActiveX and Socket Clients”。',
@@ -341,6 +384,42 @@ const zh: typeof en = {
   cn: '红涨绿跌',
   us: '绿涨红跌',
 
+  privacy: '隐私',
+  lockScreen: '锁屏',
+  lockNoPin: '设置锁屏 PIN 后，锁屏和自动锁定才会生效。',
+  autoLock: '无操作后自动锁定',
+  autoLockD: '这台电脑没有键盘或鼠标操作',
+  minutes: (n: number) => `${n} 分钟`,
+  custom: '自定义',
+  never: '从不',
+  customL: '自定义时长',
+  customD: '1 – 1440 分钟',
+  minU: '分钟',
+  unlockWith: '解锁方式',
+  bio: (kind: BiometricKind) => BIO[kind],
+  pinOnly: '仅 PIN',
+  bioOff: (b: LockBiometrics & { kind: BiometricKind }) =>
+    b.reason === 'checking'
+      ? `正在检查 ${BIO[b.kind]} 是否可用…`
+      : b.reason === 'disabledByPolicy'
+      ? `${BIO[b.kind]} 已被管理员停用`
+      : b.reason === 'notEnrolled'
+        ? b.kind === 'touchId'
+          ? '尚未设置 Touch ID，请在“系统设置 › 触控 ID 与密码”中添加指纹'
+          : '尚未设置 Windows Hello，请在“设置 › 账户 › 登录选项”中设置'
+        : b.reason === 'noHardware'
+          ? b.kind === 'touchId'
+            ? '这台 Mac 无法使用 Touch ID 或尚未设置（合上屏幕时也无法使用）'
+            : '这台电脑没有 Windows Hello 摄像头或指纹识别器，或尚未设置'
+          : `${BIO[b.kind]} 暂时不可用`,
+  unlockSound: '解锁音效',
+  unlockSoundD: '解锁成功时播放一声轻响',
+  pinL: '锁屏 PIN',
+  pinD: '6 位字符（字母、数字、符号均可），只用于解锁 Tape，与 IBKR 登录密码无关',
+  pinSet: '设置',
+  pinChange: '修改',
+  pinRemove: '移除',
+
   logDesc:
     '记录客户端与 TWS / IB Gateway 之间的全部 TCP 消息。“→ 发送”是客户端发给 TWS 的请求，“← 接收”是 TWS 返回的数据和回调。点击任意一行查看完整字段和原始报文。',
   fAll: '全部',
@@ -385,6 +464,7 @@ const zh: typeof en = {
     pages: '切换页面',
     settings: '设置',
     theme: '切换主题',
+    lock: '锁定',
   },
 };
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { isTradable } from '@shared/contract';
-import { useStore } from '../../state/store';
+import { isCovered, useStore } from '../../state/store';
 import { stepQty } from './ticketModel';
 
 function isEditable(t: EventTarget | null): boolean {
@@ -11,7 +11,8 @@ function isEditable(t: EventTarget | null): boolean {
 }
 
 /**
- * Active only on the Trade page with no dialog or notifications panel open and focus outside text fields.
+ * Active only on the Trade page with no dialog or notifications panel open, the lock screen down and
+ * focus outside text fields.
  * `submit` is read through a ref so the listener always sees the latest ticket.
  */
 export function useTicketKeys(submit: () => void): void {
@@ -24,7 +25,7 @@ export function useTicketKeys(submit: () => void): void {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
       if (isEditable(e.target)) return;
       const s = useStore.getState();
-      if (s.page !== 'trade' || s.bellOpen || s.pendingOrder || s.confirm || s.alertForm) return;
+      if (s.page !== 'trade' || s.bellOpen || s.pendingOrder || s.confirm || s.alertForm || s.pinDialog || isCovered(s)) return;
       const tradable = isTradable(s.symbol);
       switch (e.key) {
         case 'b':

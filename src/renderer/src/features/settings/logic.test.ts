@@ -3,6 +3,7 @@ import type { ApiLogEntry, DepthBook, Quote } from '@shared/types';
 import {
   comboLabel,
   countNewSince,
+  customMinutesInput,
   farmList,
   filterLog,
   formatBytes,
@@ -275,12 +276,12 @@ describe('shortcuts', () => {
     shortcutKeys(platform).map((k) => k.combos.map((c) => comboLabel(c, platform === 'darwin')).join(` ${k.sep} `));
 
   it('uses ⌘ glyphs on macOS', () => {
-    expect(labels('darwin')).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 – ⌘3', '⌘,', '⌘⇧L']);
+    expect(labels('darwin')).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 – ⌘3', '⌘,', '⌘⇧L', '⌘L']);
     expect(shortcutKeys('darwin').find((k) => k.id === 'theme')?.combos).toEqual([['⌘', '⇧', 'L']]);
   });
 
   it('spells out Ctrl, Shift, Enter and Backspace elsewhere', () => {
-    expect(labels('win32')).toEqual(['Ctrl+K', 'B', 'S', '↑ / ↓', 'Enter', 'Ctrl+Backspace', 'Ctrl+1 – Ctrl+3', 'Ctrl+,', 'Ctrl+Shift+L']);
+    expect(labels('win32')).toEqual(['Ctrl+K', 'B', 'S', '↑ / ↓', 'Enter', 'Ctrl+Backspace', 'Ctrl+1 – Ctrl+3', 'Ctrl+,', 'Ctrl+Shift+L', 'Ctrl+L']);
     expect(labels('linux')).toEqual(labels('win32'));
   });
 });
@@ -310,3 +311,18 @@ describe('local cache stats', () => {
   });
 });
 
+
+describe('custom auto-lock duration', () => {
+  it('keeps digits and caps the minutes at 1440', () => {
+    expect(customMinutesInput('90')).toEqual({ text: '90', minutes: 90 });
+    expect(customMinutesInput('1a5')).toEqual({ text: '15', minutes: 15 });
+    expect(customMinutesInput('5000')).toEqual({ text: '1440', minutes: 1440 });
+    expect(customMinutesInput('99999')).toEqual({ text: '1440', minutes: 1440 });
+  });
+
+  it('saves nothing while empty or zero', () => {
+    expect(customMinutesInput('')).toEqual({ text: '', minutes: null });
+    expect(customMinutesInput('0')).toEqual({ text: '0', minutes: null });
+    expect(customMinutesInput('007')).toEqual({ text: '007', minutes: 7 });
+  });
+});

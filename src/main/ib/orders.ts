@@ -29,6 +29,7 @@ import { contractLabel } from '@shared/contract';
 import { sessionOf, tifChangeAllowed } from '@shared/orderTiming';
 import { nyClock } from '@shared/session';
 import { isOrderActive, type ContractRef, type Execution, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
+import { LOCKED_MESSAGE } from '@shared/ipc';
 import type { MainContext, OrderService } from '../context';
 import { cleanIbMessage, isErrorCode } from './errorCodes';
 import { num } from './ibContract';
@@ -494,6 +495,15 @@ export function createOrderService(ctx: MainContext): OrderService {
   // ---------------------------------------------------------------------------
   // Requests
 
+  /**
+   * Orders are never sent while Tape is locked. IPC already refuses these calls (LOCK_POLICY);
+   * this is the backstop for any other path.
+   */
+  function requireUnlocked(): void {
+    // The context of some tests has no lock service.
+    if ((ctx.lock as MainContext['lock'] | undefined)?.isLocked()) throw new Error(LOCKED_MESSAGE);
+  }
+
   function requireApi(): IBApi {
     const api = ctx.ib.api;
     if (!api || !ctx.ib.isConnected()) throw new Error(NOT_CONNECTED_MESSAGE);
@@ -506,6 +516,7 @@ export function createOrderService(ctx: MainContext): OrderService {
    * a different order, so nothing is sent then.
    */
   function sameSession(api: IBApi, clientId: number): IBApi {
+    requireUnlocked();
     const now = requireApi();
     if (now !== api || myClientId() !== clientId) throw new Error(CONNECTION_CHANGED_MESSAGE);
     return now;
@@ -573,6 +584,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function place(input: OrderRequest): Promise<PlaceOrderResult> {
+    requireUnlocked();
     const checked = requireApi();
     const clientId = myClientId();
     const { req, conditionConId } = await prepare(input);
@@ -651,6 +663,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function modify(orderId: number, input: OrderRequest): Promise<void> {
+    requireUnlocked();
     const checked = requireApi();
     const clientId = myClientId();
     const current = modifiable(orderId);
@@ -677,6 +690,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function cancel(orderId: number): Promise<void> {
+    requireUnlocked();
     const api = requireApi();
     const existing = ownOrder(orderId, 'cancel');
     if (existing && !isOrderActive(existing.status)) throw new Error(`Order #${orderId} is already ${existing.status}`);
@@ -686,6 +700,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   async function cancelAll(): Promise<void> {
+    requireUnlocked();
     requireApi().reqGlobalCancel();
   }
 

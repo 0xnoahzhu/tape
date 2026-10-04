@@ -19,6 +19,7 @@ import type {
   DepthBook,
   Execution,
   LocalizedName,
+  LockState,
   NavPoint,
   OrderAction,
   OrderRequest,
@@ -35,7 +36,8 @@ import type {
 
 export type Page = 'acct' | 'trade' | 'ord' | 'set';
 export type TradeView = 'chart' | 'opt' | 'depth';
-export type SettingsTab = 'conn' | 'data' | 'trade' | 'notif' | 'view' | 'log' | 'keys';
+/** 'view' is General (language, theme, colors); 'sec' is Privacy & Security. */
+export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log';
 export type BellTab = 'alerts' | 'notifs';
 
 /** Order ticket state shared by the ticket, depth view, command bar and "Modify". */
@@ -110,6 +112,12 @@ export interface AlertFormState {
   repeat: boolean;
 }
 
+/** Set, change or remove the lock PIN. `lockAfter`: lock once a new PIN is saved (lock button, ⌘L). */
+export interface PinDialogRequest {
+  mode: 'set' | 'change' | 'remove';
+  lockAfter?: boolean;
+}
+
 export interface Toast {
   id: number;
   text: string;
@@ -135,6 +143,8 @@ interface DataState {
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
   nav: NavPoint[];
+  /** Mirror of main's lock state (main is the only authority). */
+  lock: LockState;
 }
 
 interface UiState {
@@ -155,6 +165,19 @@ interface UiState {
   toast: Toast | null;
   /** Incremented to ask the symbol search to take focus (⌘K). */
   searchFocus: number;
+  pinDialog: PinDialogRequest | null;
+  /**
+   * The lock screen is playing its unlock animation (or waiting for main's answer): it stays up,
+   * and the app stays inert, although main may already report unlocked.
+   */
+  unlocking: boolean;
+  /** Incremented each time Tape locks: a lock that arrives during the unlock animation starts a fresh lock screen. */
+  lockSeq: number;
+  /**
+   * Touch ID / Windows Hello was available at some point this session. Only then does the lock screen
+   * say it is unavailable (a Mac without Touch ID shows the PIN entry alone).
+   */
+  biometricsSeen: boolean;
 }
 
 interface Actions {
@@ -176,6 +199,8 @@ interface Actions {
   setAlertForm(form: AlertFormState | null): void;
   showToast(text: string, tone?: Toast['tone']): void;
   focusSearch(): void;
+  setPinDialog(req: PinDialogRequest | null): void;
+  setUnlocking(unlocking: boolean): void;
 }
 
 export type StoreState = DataState & UiState & Actions;
@@ -263,13 +288,14 @@ export const useStore = create<StoreState>()((set, get) => ({
   watchlists: [],
   priceAlerts: [],
   nav: [],
+  lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui
   page: 'trade',
   view: 'chart',
   symbol: stock('AAPL'),
   symbolName: 'Apple',
-  settingsTab: 'conn',
+  settingsTab: 'view',
   bellOpen: false,
   bellTab: 'notifs',
   watchlistCollapsed: readCollapsed(),
@@ -279,6 +305,10 @@ export const useStore = create<StoreState>()((set, get) => ({
   alertForm: null,
   toast: null,
   searchFocus: 0,
+  pinDialog: null,
+  unlocking: false,
+  lockSeq: 0,
+  biometricsSeen: false,
 
   // actions
   setPage: (page) => set({ page, bellOpen: false }),
@@ -321,4 +351,9 @@ export const useStore = create<StoreState>()((set, get) => ({
   setAlertForm: (alertForm) => set({ alertForm }),
   showToast: (text, tone = 'info') => set({ toast: { id: toastSeq++, text, tone } }),
   focusSearch: () => set((s) => ({ searchFocus: s.searchFocus + 1 })),
+  setPinDialog: (pinDialog) => set({ pinDialog }),
+  setUnlocking: (unlocking) => set({ unlocking }),
 }));
+
+/** Whether the lock screen covers the app (locked, or still animating the unlock). */
+export const isCovered = (s: Pick<StoreState, 'lock' | 'unlocking'>): boolean => s.lock.locked || s.unlocking;

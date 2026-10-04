@@ -24,7 +24,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function setupDevCapture(win: BrowserWindow): void {
   const dir = process.env.TAPE_CAPTURE_DIR;
-  if (!dir) return;
+  // Never in a packaged app: the steps run arbitrary code in the renderer (e.g. past the lock screen).
+  if (!dir || app.isPackaged) return;
   mkdirSync(dir, { recursive: true });
   const steps: Step[] = process.env.TAPE_CAPTURE_STEPS ? (JSON.parse(process.env.TAPE_CAPTURE_STEPS) as Step[]) : [{ name: 'app' }];
   const initialDelay = Number(process.env.TAPE_CAPTURE_DELAY ?? 3500);

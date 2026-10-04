@@ -2,7 +2,8 @@
 
 import type { TapeEvent } from '@shared/ipc';
 import type { ApiLogEntry, Quote } from '@shared/types';
-import { initialTicket, useStore } from './store';
+import { applyLockState } from './lockActions';
+import { initialTicket, isCovered, useStore } from './store';
 
 const MAX_LOG = 5000;
 
@@ -18,6 +19,7 @@ const SNAPSHOT_EVENTS: ReadonlySet<TapeEvent['type']> = new Set([
   'priceAlerts',
   'notifications',
   'nav',
+  'lock',
 ]);
 
 let started = false;
@@ -53,7 +55,11 @@ export async function startBridge(): Promise<void> {
     priceAlerts: snap.priceAlerts,
     notifications: snap.notifications,
     nav: snap.nav,
+    lock: snap.lock,
+    biometricsSeen: s.biometricsSeen || snap.lock.biometrics.available,
     ticket: { ...initialTicket(snap.settings), side: s.ticket.side },
+    // After a Forgot-PIN reset Tape opens on Settings › Connection, as on a fresh install.
+    ...(snap.afterReset ? { page: 'set' as const, settingsTab: 'conn' as const } : {}),
   }));
   loaded = true;
   early.forEach((e, i) => {
@@ -131,11 +137,15 @@ function apply(e: TapeEvent): void {
     case 'nav':
       set({ nav: e.points });
       break;
+    case 'lock':
+      applyLockState(e.state);
+      break;
+    // Nothing behind the lock screen changes while it is up (main does not send these then either).
     case 'openContract':
-      useStore.getState().openSymbol(e.contract, e.view);
+      if (!isCovered(useStore.getState())) useStore.getState().openSymbol(e.contract, e.view);
       break;
     case 'command':
-      commandListeners.forEach((l) => l(e.command));
+      if (!isCovered(useStore.getState())) commandListeners.forEach((l) => l(e.command));
       break;
   }
 }

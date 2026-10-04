@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { DeepPartial, Settings } from '@shared/types';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
-import { Toggle } from '../../ui/primitives';
+import { Segmented, Toggle, type Option } from '../../ui/primitives';
 import { TAG_LABEL, tagColors, type ObservedTag } from './logic';
 
 /**
@@ -92,6 +92,35 @@ export function ObservedTagBox({ tag, title }: { tag: ObservedTag; title?: strin
       {TAG_LABEL[tag]}
     </div>
   );
+}
+
+/** 60px row: label (and description) on the left, a segmented control on the right. */
+export function OptionRow<K extends string>({
+  label,
+  desc,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: ReactNode;
+  desc?: ReactNode;
+  options: Option<K>[];
+  value: K;
+  onChange: (k: K) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(disabled) }}>
+      <LabelBlock label={label} desc={desc} />
+      <Segmented options={options} value={value} onChange={(k) => k !== value && onChange(k)} itemStyle={{ padding: '7px 14px', fontSize: 13, gap: 10 }} />
+    </div>
+  );
+}
+
+/** A row that cannot be used yet: dimmed and inert to the pointer. */
+export function disabledRow(disabled: boolean | undefined): CSSProperties {
+  return disabled ? { opacity: 0.45, pointerEvents: 'none' } : {};
 }
 
 /** Rows container: stacked rows with their own bottom dividers. */
