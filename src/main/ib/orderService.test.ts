@@ -5,7 +5,7 @@ import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { OrderRequest, Settings } from '@shared/types';
 import type { IbConnection, IbListener, MainContext } from '../context';
-import { createOrderService } from './orders';
+import { CONNECTION_CHANGED_MESSAGE, createOrderService } from './orders';
 
 const CLIENT_ID = 101;
 
@@ -16,16 +16,18 @@ function fakeIb() {
   const closed = new Set<() => void>();
   const reqErrors = new Set<(e: { reqId: number; code: number; message: string }) => void>();
   const calls: Array<[string, ...unknown[]]> = [];
-  const api = new Proxy(
-    {},
-    {
-      get:
-        (_t, name: string) =>
-        (...args: unknown[]) => {
-          calls.push([name, ...args]);
-        },
-    },
-  ) as unknown as IBApi;
+  const newApi = () =>
+    new Proxy(
+      {},
+      {
+        get:
+          (_t, name: string) =>
+          (...args: unknown[]) => {
+            calls.push([name, ...args]);
+          },
+      },
+    ) as unknown as IBApi;
+  let api = newApi();
   let connected = true;
   let clientId = CLIENT_ID;
   let orderId = 50;
@@ -57,6 +59,8 @@ function fakeIb() {
     ready: () => ready.forEach((l) => l(api)),
     setConnected: (v: boolean) => void (connected = v),
     setClientId: (v: number) => void (clientId = v),
+    /** A new IBApi instance, as after a host / port / client id change. */
+    replaceApi: () => void (api = newApi()),
   };
 }
 
@@ -79,17 +83,24 @@ function setup() {
   let settings: Settings = defaultSettings();
   const events: TapeEvent[] = [];
   const notices: NewNotification[] = [];
+  let resolveContract = async (c: unknown) => ({ ...(c as object), conId: 265598 });
   const ctx = {
     emit: (e: TapeEvent) => events.push(e),
     store: { getSettings: () => settings },
     notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
-    contracts: { resolve: async (c: unknown) => ({ ...(c as object), conId: 265598 }), getInfo: async () => null },
+    contracts: { resolve: (c: unknown) => resolveContract(c), getInfo: async () => null },
     account: { getPositions: () => [] },
     ib: f.ib,
   } as unknown as MainContext;
   const svc = createOrderService(ctx);
   const setReadOnly = (v: boolean) => (settings = { ...settings, connection: { ...settings.connection, readOnly: v } });
-  return { ...f, svc, notices, events, setReadOnly };
+  /** Holds contract lookups until the returned function is called (resolves them all). */
+  const holdLookups = () => {
+    const held: Array<() => void> = [];
+    resolveContract = (c: unknown) => new Promise((resolve) => held.push(() => resolve({ ...(c as object), conId: 265598 })));
+    return () => held.splice(0).forEach((release) => release());
+  };
+  return { ...f, svc, notices, events, setReadOnly, holdLookups };
 }
 
 /** Lets the deferred subscriptions and pending promises run. */
@@ -228,6 +239,71 @@ describe('OrderService', () => {
         [0, 7, 'Submitted'],
       ]),
     );
+  });
+
+  describe('when the connection changes while the contract is looked up', () => {
+    const unresolved: OrderRequest = { ...req, contract: stock('AAPL'), limitPrice: 225 };
+
+    it('does not send a modify under another client id', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      const release = t.holdLookups();
+      const m = t.svc.modify(40, unresolved);
+      await tick();
+      t.setClientId(102); // reconnected as another client: #40 would be its order, or a new one
+      release();
+      await expect(m).rejects.toThrow(CONNECTION_CHANGED_MESSAGE);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('does not send a modify on another instance (other Gateway)', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      const release = t.holdLookups();
+      const m = t.svc.modify(40, unresolved);
+      await tick();
+      t.replaceApi();
+      release();
+      await expect(m).rejects.toThrow(CONNECTION_CHANGED_MESSAGE);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('does not modify an order that was filled meanwhile', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      const release = t.holdLookups();
+      const m = t.svc.modify(40, unresolved);
+      await tick();
+      t.emit('orderStatus', 40, 'Filled', 100, 0, 226.95, 9040, 0, 226.95, CLIENT_ID, '');
+      release();
+      await expect(m).rejects.toThrow('Order #40 is Filled and can no longer be modified');
+      expect(t.calls).toEqual([]);
+    });
+
+    it('does not place an order on another session', async () => {
+      const t = await loaded();
+      const release = t.holdLookups();
+      const p = t.svc.place(unresolved);
+      await tick();
+      t.replaceApi();
+      t.setClientId(102);
+      release();
+      await expect(p).rejects.toThrow(CONNECTION_CHANGED_MESSAGE);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('sends once the lookup is done when nothing changed', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      const release = t.holdLookups();
+      const m = t.svc.modify(40, unresolved);
+      await tick();
+      release();
+      await tick();
+      expect(t.calls.map((c) => [c[0], c[1], (c[3] as Order).lmtPrice])).toEqual([['placeOrder', 40, 225]]);
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { lmtPrice: 225 }), { status: 'Submitted' });
+      await expect(m).resolves.toBeUndefined();
+    });
   });
 
   it('refuses unknown order ids and id 0 without sending anything', async () => {

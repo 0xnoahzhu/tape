@@ -5,7 +5,13 @@
 // nextValidId -> 'connected' (onReady listeners issue their requests). With auto-reconnect on,
 // an unexpected close retries every 5 s up to 10 times ('reconnecting'), and so does a failed
 // first attempt of a reconnect that a settings change started (new host, port or client id); a
-// failed first connect() reports the failure. disconnect() never reconnects.
+// failed connect() reports the failure, also one that joined an automatic attempt. disconnect()
+// never reconnects, nor does a settings change after it.
+//
+// A close on purpose (disconnect(), a settings change) ends the session at once: `api` is null
+// from then on, although the status says 'connected' until the socket's close event. Overlapping
+// closes of one socket all finish on that event, and a connect() made meanwhile starts after it
+// (and after the settings change), so it never reuses the instance being closed.
 
 import { EventName, IBApi } from './tws';
 import type { ConnectionState } from '@shared/types';
@@ -30,7 +36,12 @@ const HANDSHAKE_TIMEOUT_MS = 15_000;
 const ACCOUNTS_WAIT_MS = 2_000;
 const HEARTBEAT_MS = 30_000;
 const CLOSE_WAIT_MS = 1_000;
-const FIRST_REQ_ID = 1000;
+/**
+ * Request ids start far above the order ids IB hands out (nextValidId, one more per order), so the
+ * id of an error names a request or an order, never both: an error of a market data line must not
+ * reject or annotate the order with the same number. Both are int32 on the wire.
+ */
+export const FIRST_REQ_ID = 1_000_000_000;
 
 type RequestError = { reqId: number; code: number; message: string; advancedOrderReject?: string };
 
@@ -98,7 +109,8 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let heartbeatSentAt = 0;
-  let onSocketGone: (() => void) | null = null;
+  /** The socket being closed on purpose, until its close event (every close of it waits for that). */
+  let closing: { api: IBApi; done: Promise<void>; resolve: () => void } | null = null;
 
   // ---------------------------------------------------------------------------
   // State
@@ -248,7 +260,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   }
 
   function becomeReady(api: IBApi): void {
-    if (ready || api !== inst || !socketOpen) return;
+    if (ready || api !== inst || !socketOpen || closing?.api === api) return;
     ready = true;
     handshakeTimer = clearTimer(handshakeTimer);
     accountsTimer = clearTimer(accountsTimer);
@@ -276,6 +288,12 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   // Closing and reconnecting
 
   function onSocketClosed(api: IBApi): void {
+    if (closing?.api === api) {
+      // Its waiters continue after this handler, with the state below.
+      const c = closing;
+      closing = null;
+      c.resolve();
+    }
     if (api !== inst || !socketOpen) return;
     socketOpen = false;
     const wasReady = ready;
@@ -285,11 +303,6 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     accountsTimer = clearTimer(accountsTimer);
     stopHeartbeat();
     for (const l of [...closedListeners]) safely(l, 'closed');
-    if (onSocketGone) {
-      const gone = onSocketGone;
-      onSocketGone = null;
-      gone();
-    }
     if (pending) {
       const p = pending;
       pending = null;
@@ -350,22 +363,35 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       p.reject(new Error('Connection cancelled'));
     }
     const api = inst;
-    if (api && socketOpen) {
-      ctx.apiLog.note('out', 'socket close', [['reason', reason]]);
-      const gone = new Promise<void>((resolve) => {
-        onSocketGone = resolve;
-      });
-      try {
-        api.disconnect();
-      } catch {
-        // handled below
-      }
-      await Promise.race([gone, new Promise((r) => setTimeout(r, CLOSE_WAIT_MS))]);
-      // The library reports nothing when the socket was never opened; finish the close here.
-      onSocketClosed(api);
-    }
+    // A close already under way (a settings change, then a disconnect) is waited for, not repeated.
+    if (api && socketOpen) await (closing?.api === api ? closing.done : beginClose(api, reason));
     // While the socket was closing, a newer attempt may have started (wanted again).
     if (!wanted && state.status !== 'disconnected') setState({ status: 'disconnected', reconnectAttempt: undefined, latencyMs: undefined });
+  }
+
+  /** Closes the socket of `api`; settles on its close event, or after CLOSE_WAIT_MS without one. */
+  function beginClose(api: IBApi, reason: string): Promise<void> {
+    ctx.apiLog.note('out', 'socket close', [['reason', reason]]);
+    // The session ends now, not at the close event: the TWS client holds what is sent from here on
+    // and sends it in the next session of this instance (an order whose place() failed, a market
+    // data line its service has already forgotten).
+    ready = false;
+    stopHeartbeat();
+    let resolve!: () => void;
+    const done = new Promise<void>((r) => (resolve = r));
+    const timer = setTimeout(() => {
+      // The library reports nothing when the socket was never opened; finish the close here.
+      onSocketClosed(api);
+      resolve();
+    }, CLOSE_WAIT_MS);
+    void done.then(() => clearTimeout(timer));
+    closing = { api, done, resolve };
+    try {
+      api.disconnect();
+    } catch {
+      // the timer finishes the close
+    }
+    return done;
   }
 
   // ---------------------------------------------------------------------------
@@ -474,7 +500,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   setImmediate(() => {
     ctx.store.onSettingsChanged((next, prev) => {
       const p = connectionParams(next.connection);
-      if (!sameParams(p, params)) void applyParams(p);
+      if (!sameParams(p, params)) void settle(applyParams(p));
       // Turning auto-reconnect off stops a pending retry.
       if (!next.connection.autoReconnect && prev.connection.autoReconnect && retryTimer) {
         retryTimer = clearTimer(retryTimer);
@@ -487,10 +513,23 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     });
   });
 
-  /** Settings changes being applied (only the newest one reconnects) and user disconnects. */
+  /** Settings changes being applied (only the newest one reconnects). */
   let paramsChanges = 0;
-  let userDisconnects = 0;
+  /**
+   * A change interrupted a wanted connection (or a change still closing the socket did): the
+   * newest change reconnects. A user disconnect clears it, also before its socket has closed.
+   */
   let reconnectAfterChange = false;
+  /** Closes on purpose and settings changes under way: connect() starts after them. */
+  const settling = new Set<Promise<void>>();
+  /** User disconnects so far (one cancels a connect() still waiting for `settling`). */
+  let disconnects = 0;
+
+  function settle(work: Promise<void>): Promise<void> {
+    const p: Promise<void> = work.finally(() => settling.delete(p));
+    settling.add(p);
+    return p;
+  }
 
   /**
    * Host, port or client id changed: drop the instance and reconnect if a connection was wanted.
@@ -498,12 +537,14 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
    */
   async function applyParams(p: ConnectionParams): Promise<void> {
     const change = ++paramsChanges;
-    const disconnects = userDisconnects;
-    reconnectAfterChange ||= wanted || state.status !== 'disconnected';
+    reconnectAfterChange ||= wanted;
     if (reconnectAfterChange) await closeSocket('settings changed');
+    // A user disconnect finishes closing the old socket (its close event, the onClosed listeners)
+    // before the instance is dropped.
+    else if (closing) await closing.done;
     // A newer change arrived while the socket was closing: it applies its own parameters.
     if (change !== paramsChanges) return;
-    const reconnect = reconnectAfterChange && disconnects === userDisconnects;
+    const reconnect = reconnectAfterChange;
     reconnectAfterChange = false;
     params = p;
     dropInstance();
@@ -529,22 +570,36 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     },
     getState: () => state,
     connect() {
+      // After a close or settings change under way: the instance being closed must not be reused
+      // (its close event would end the attempt), and a change brings new parameters.
+      if (settling.size > 0) {
+        const seen = disconnects;
+        return Promise.allSettled(settling).then(() => {
+          if (disconnects !== seen) throw new Error('Connection cancelled');
+          return connection.connect();
+        });
+      }
       if (ready) return Promise.resolve();
       wanted = true;
-      if (retryTimer) {
-        // A manual connect while waiting for a retry starts a fresh attempt right away.
-        retryTimer = clearTimer(retryTimer);
-        reconnectAttempt = 0;
-        droppedAt = 0;
-      }
-      if (connecting) return connecting;
-      // A manual attempt reports its failure (see retryFirstAttempt).
+      // A manual attempt reports its failure and is not retried (see retryFirstAttempt). It
+      // replaces a pending retry right away, and an attempt in flight (a retry, or the first
+      // attempt after a settings change) that it joins becomes one, so the caller's promise and
+      // the status agree.
+      retryTimer = clearTimer(retryTimer);
+      reconnectAttempt = 0;
       retryFirstAttempt = false;
+      droppedAt = 0;
+      if (connecting) {
+        if (state.status === 'reconnecting') setState({ status: 'connecting', reconnectAttempt: undefined });
+        return connecting;
+      }
       return start(false);
     },
     disconnect() {
-      userDisconnects++;
-      return closeSocket('user disconnect');
+      // The user no longer wants a connection, also not the one a settings change would make.
+      disconnects++;
+      reconnectAfterChange = false;
+      return settle(closeSocket('user disconnect'));
     },
     isConnected: () => ready,
     nextReqId: () => reqId++,

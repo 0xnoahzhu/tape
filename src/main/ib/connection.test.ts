@@ -1,11 +1,15 @@
 import { EventEmitter } from 'node:events';
 import type { IBApi } from './tws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
-import type { ConnectionState, Settings } from '@shared/types';
+import type { ConnectionState, OrderRequest, Settings } from '@shared/types';
 import type { MainContext } from '../context';
-import { createConnection } from './connection';
+import { createMemoryDatabase } from '../db/memory';
+import { createConnection, FIRST_REQ_ID } from './connection';
+import { createOrderService, NOT_CONNECTED_MESSAGE } from './orders';
+import { FakeTws } from './tws/__fixtures__/fakeTws';
 
 /** Stand-in for IBApi: records calls; tests emit the events IB would send. */
 class FakeApi extends EventEmitter {
@@ -101,8 +105,27 @@ describe('IbConnection', () => {
     expect(t.ib.isConnected()).toBe(true);
     expect(t.ib.nextOrderId()).toBe(4012);
     expect(t.ib.nextOrderId()).toBe(4013);
-    expect(t.ib.nextReqId()).toBe(1000);
-    expect(t.ib.nextReqId()).toBe(1001);
+    expect(t.ib.nextReqId()).toBe(FIRST_REQ_ID);
+    expect(t.ib.nextReqId()).toBe(FIRST_REQ_ID + 1);
+  });
+
+  it('hands out request ids that order ids cannot reach', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake(4012);
+    await p;
+    // A long session: an error of any of these requests must not name order #4012 or #4013.
+    const reqIds = Array.from({ length: 5_000 }, () => t.ib.nextReqId());
+    const orderIds = [t.ib.nextOrderId(), t.ib.nextOrderId()];
+    expect(orderIds).toEqual([4012, 4013]);
+    expect(reqIds.filter((id) => orderIds.includes(id))).toEqual([]);
+    expect(Math.min(...reqIds)).toBe(1_000_000_000);
+    // Request ids keep counting across reconnects (late answers of the old session stay apart).
+    t.api().emit('disconnected');
+    await vi.advanceTimersByTimeAsync(5_000);
+    t.api().handshake(4014);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.ib.nextReqId()).toBe(FIRST_REQ_ID + 5_000);
   });
 
   it('waits for the account list when nextValidId comes first', async () => {
@@ -274,6 +297,68 @@ describe('IbConnection', () => {
     expect(t.api().connects).toHaveLength(1);
   });
 
+  it('ends the session as soon as a disconnect starts closing the socket', async () => {
+    const t = setup();
+    const ready = vi.fn();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    const done = t.ib.disconnect();
+    // The socket is still open (the status says so until its close event), but nothing may be
+    // sent on it any more: the TWS client would hold the request for the next session.
+    expect(t.last().status).toBe('connected');
+    expect(t.ib.api).toBeNull();
+    expect(t.ib.isConnected()).toBe(false);
+    // Nor do services re-issue their subscriptions on it.
+    t.ib.onReady(ready);
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data lost.', 1101);
+    await vi.advanceTimersByTimeAsync(10);
+    await done;
+    expect(ready).not.toHaveBeenCalled();
+    expect(t.last().status).toBe('disconnected');
+  });
+
+  it('starts a connect() made while a disconnect closes the socket once it has closed', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    const done = t.ib.disconnect();
+    const again = t.ib.connect();
+    // Not on the socket being closed: its close event would end the new attempt.
+    expect(t.api().connects).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10);
+    await done;
+    expect(t.api().connects).toHaveLength(2);
+    expect(t.last().status).toBe('connecting');
+    t.api().handshake(4100);
+    await expect(again).resolves.toBeUndefined();
+    expect(t.last().status).toBe('connected');
+    expect(t.ib.api).toBe(t.api());
+    expect(t.notices).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.api().connects).toHaveLength(2);
+  });
+
+  it('cancels a connect() still waiting for a close when the user disconnects again', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    void t.ib.disconnect();
+    const again = t.ib.connect();
+    const cancelled = expect(again).rejects.toThrow('Connection cancelled');
+    const done = t.ib.disconnect();
+    await vi.advanceTimersByTimeAsync(10);
+    await cancelled;
+    await done;
+    expect(t.api().connects).toHaveLength(1);
+    expect(t.api().disconnects).toBe(1);
+    expect(t.last().status).toBe('disconnected');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.api().connects).toHaveLength(1);
+  });
+
   it('recreates the instance when host, port or client id change, keeping listeners', async () => {
     const t = setup();
     const ticks = vi.fn();
@@ -403,6 +488,130 @@ describe('IbConnection', () => {
       expect(t.apis).toHaveLength(1);
       expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
     });
+
+    it('does not reconnect when the change follows a user disconnect whose socket is still closing', async () => {
+      const t = await connected();
+      const closed = vi.fn();
+      t.ib.onClosed(closed);
+      // The status still says 'connected' until the close event.
+      const done = t.ib.disconnect();
+      expect(t.last().status).toBe('connected');
+      t.changeSettings({ port: 7497 });
+      await vi.advanceTimersByTimeAsync(1_500);
+      await done;
+      expect(t.apis).toHaveLength(1);
+      expect(t.apis[0].connects).toHaveLength(1);
+      expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
+      // The old socket's close was seen before the instance was dropped.
+      expect(closed).toHaveBeenCalledTimes(1);
+      expect(t.notes).toEqual([{ name: 'socket close', fields: [['reason', 'user disconnect']] }]);
+      expect(t.notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(t.apis).toHaveLength(1);
+
+      // The next connect() uses the new parameters.
+      const p = t.ib.connect();
+      expect(t.api().opts.port).toBe(7497);
+      t.api().handshake();
+      await p;
+      expect(t.last()).toMatchObject({ status: 'connected', port: 7497 });
+    });
+
+    it('finishes both closes on the close event when the user disconnects while a change closes the socket', async () => {
+      const t = await connected();
+      t.changeSettings({ port: 7497 });
+      const done = t.ib.disconnect();
+      // One close: the disconnect waits for the change's.
+      expect(t.apis[0].disconnects).toBe(1);
+      await vi.advanceTimersByTimeAsync(10);
+      await done;
+      // The change has applied its parameters by the time the status says 'disconnected'.
+      expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
+      expect(t.notes).toEqual([{ name: 'socket close', fields: [['reason', 'settings changed']] }]);
+      // A connect() right away goes to the new port and is not ended by a late close of the old one.
+      const p = t.ib.connect();
+      expect(t.apis.map((a) => [a.opts.port, a.connects.length])).toEqual([
+        [4002, 1],
+        [7497, 1],
+      ]);
+      await vi.advanceTimersByTimeAsync(1_500);
+      t.api().handshake();
+      await expect(p).resolves.toBeUndefined();
+      expect(t.last()).toMatchObject({ status: 'connected', port: 7497 });
+      expect(t.notices).toEqual([]);
+    });
+
+    it('connects once, with the new parameters, when connect() comes while a change closes the socket', async () => {
+      const t = await connected();
+      t.changeSettings({ port: 7497 });
+      const p = t.ib.connect();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.apis.map((a) => [a.opts.port, a.connects.length])).toEqual([
+        [4002, 1],
+        [7497, 1],
+      ]);
+      t.api().handshake();
+      await expect(p).resolves.toBeUndefined();
+      expect(t.last()).toMatchObject({ status: 'connected', port: 7497 });
+    });
+
+    it('does not reconnect when the user disconnects between two changes', async () => {
+      const t = await connected();
+      t.changeSettings({ port: 7497 });
+      const done = t.ib.disconnect();
+      t.changeSettings({ port: 7496 });
+      await vi.advanceTimersByTimeAsync(1_500);
+      await done;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(t.apis).toHaveLength(1);
+      expect(t.last()).toMatchObject({ status: 'disconnected', port: 7496 });
+    });
+
+    it('turns the attempt a manual connect() joins into a manual one: reported, not retried', async () => {
+      const t = await connected();
+      t.changeSettings({ port: 7497 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.last()).toMatchObject({ status: 'connecting', port: 7497 });
+      const manual = t.ib.connect();
+      refuse(t.api());
+      await expect(manual).rejects.toThrow('Connection refused at 127.0.0.1:7497');
+      expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
+      expect(t.last().reconnectAttempt).toBeUndefined();
+      expect(t.notices.map((n) => n.title.en)).toEqual(['Could not connect to IB Gateway']);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(t.api().connects).toHaveLength(1);
+    });
+
+    it('resolves a manual connect() that joined an attempt once it connects', async () => {
+      const t = await connected();
+      t.changeSettings({ port: 7497 });
+      await vi.advanceTimersByTimeAsync(10);
+      const manual = t.ib.connect();
+      t.api().handshake();
+      await expect(manual).resolves.toBeUndefined();
+      expect(t.last()).toMatchObject({ status: 'connected', port: 7497 });
+    });
+  });
+
+  it('turns a retry in flight that a manual connect() joins into a manual attempt', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    t.api().emit('disconnected');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(t.last()).toMatchObject({ status: 'reconnecting', reconnectAttempt: 1 });
+    expect(t.api().connects).toHaveLength(2);
+    const manual = t.ib.connect();
+    expect(t.last().status).toBe('connecting');
+    expect(t.last().reconnectAttempt).toBeUndefined();
+    t.api().emit('error', new Error('connect ECONNREFUSED 127.0.0.1:4002'), 502, -1);
+    t.api().emit('disconnected');
+    await expect(manual).rejects.toThrow('Connection refused at 127.0.0.1:4002');
+    expect(t.last().status).toBe('disconnected');
+    expect(t.notices.map((n) => n.title.en)).toEqual(['Disconnected from IB Gateway', 'Could not connect to IB Gateway']);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.api().connects).toHaveLength(2);
   });
 
   it('handles IB connectivity loss and restore', async () => {
@@ -418,5 +627,48 @@ describe('IbConnection', () => {
     expect(t.last().lastError).toBeUndefined();
     expect(ready).toHaveBeenCalledTimes(2);
     expect(t.notices.map((n) => n.title.en)).toEqual(['IB Gateway lost its connection to IB', 'IB Gateway reconnected to IB']);
+  });
+});
+
+describe('IbConnection with the TWS client', () => {
+  const servers: FakeTws[] = [];
+  afterEach(async () => {
+    for (const s of servers.splice(0)) await s.close();
+  });
+
+  it('sends no order placed while a disconnect closes the socket, also not on the next connect', async () => {
+    const fake = await FakeTws.start({ nextValidId: 500 });
+    servers.push(fake);
+    const base = defaultSettings();
+    const settings: Settings = { ...base, connection: { ...base.connection, host: '127.0.0.1', port: fake.port } };
+    const notices: NewNotification[] = [];
+    const ctx = {
+      emit: () => undefined,
+      store: { getSettings: () => settings, onSettingsChanged: () => () => undefined },
+      notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
+      apiLog: { note: () => undefined },
+      contracts: { resolve: async (c: unknown) => c, getInfo: async () => null },
+      account: { getPositions: () => [] },
+      db: createMemoryDatabase(),
+    } as unknown as MainContext;
+    ctx.ib = createConnection(ctx);
+    ctx.orders = createOrderService(ctx);
+    await new Promise((r) => setTimeout(r, 10)); // deferred subscriptions
+    const order: OrderRequest = { contract: { ...stock('AAPL'), conId: 265598 }, action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'GTC', outsideRth: false };
+    const placeOrders = () => fake.sessions.flatMap((s) => s.frames.filter((f) => f[0] === '3'));
+
+    await ctx.ib.connect();
+    const closed = ctx.ib.disconnect();
+    await expect(ctx.orders.place(order)).rejects.toThrow(NOT_CONNECTED_MESSAGE);
+    await closed;
+    await (await fake.session(1)).waitClosed();
+
+    await ctx.ib.connect();
+    const second = await fake.session(2);
+    // The requests of the new session (reqExecutions last) leave after anything held for it.
+    await vi.waitFor(() => expect(second.frames.some((f) => f[0] === '7')).toBe(true));
+    expect(placeOrders()).toEqual([]);
+    expect(notices.filter((n) => n.kind === 'order')).toEqual([]);
+    await ctx.ib.disconnect();
   });
 });

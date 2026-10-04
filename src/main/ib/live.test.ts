@@ -8,6 +8,13 @@
 // order far below the market (rejected when the API is read-only; otherwise cancelled right
 // away and checked to be gone), and lets a settings change fail its first attempt (closed port)
 // to check that it retries. Use a client id no other program uses.
+//
+// Every order id it uses is recorded. Whatever fails (a cancel without answer, place() throwing
+// after IB took the order, a lost connection), the orders it sent are cancelled again, after a
+// reconnect with the same client id if needed (order ids are per client), and reqAllOpenOrders
+// must then list no working order of this client id. A run killed before that cleanup (Ctrl+C, a
+// crash, a hook timeout) leaves its order working: the next run cancels every working order of
+// this client id that has the test order's shape, before placing its own and after it.
 
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,9 +23,10 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
-import { isOrderActive, type Settings } from '@shared/types';
+import { isOrderActive, type OrderStatus, type Settings } from '@shared/types';
 import type { MainContext } from '../context';
 import { createMemoryDatabase } from '../db/memory';
+import type { Contract, Order, OrderState } from './tws';
 
 const live = process.env.TAPE_LIVE_IB;
 const logDir = mkdtempSync(join(tmpdir(), 'tape-live-'));
@@ -39,9 +47,10 @@ describe.skipIf(!live)('live IB Gateway', async () => {
   const { createAccountService } = await import('./account');
   const { createOrderService } = await import('./orders');
 
-  const [host, port] = (live ?? '127.0.0.1:4002').split(':');
+  const [host, portText] = (live ?? '127.0.0.1:4002').split(':');
+  const port = Number(portText);
   let settings: Settings = defaultSettings();
-  settings = { ...settings, connection: { ...settings.connection, host, port: Number(port) } };
+  settings = { ...settings, connection: { ...settings.connection, host, port } };
   const settingsListeners: Array<(next: Settings, prev: Settings) => void> = [];
   const changeConnection = (patch: Partial<Settings['connection']>) => {
     const prev = settings;
@@ -74,9 +83,105 @@ describe.skipIf(!live)('live IB Gateway', async () => {
   ctx.orders = createOrderService(ctx);
   await sleep(10); // deferred subscriptions
 
+  /** The order the test places: far below the market, so it never fills. */
+  const testOrder = { contract: stock('AAPL'), action: 'BUY' as const, orderType: 'LMT' as const, quantity: 1, limitPrice: 1, tif: 'GTC' as const, outsideRth: false };
+  const hasTestOrderShape = (contract: Contract, order: Order) =>
+    contract?.symbol === testOrder.contract.symbol &&
+    order.action === testOrder.action &&
+    order.orderType === testOrder.orderType &&
+    Number(order.totalQuantity) === testOrder.quantity &&
+    order.lmtPrice === testOrder.limitPrice &&
+    order.tif === testOrder.tif;
+
+  /** Order ids this run used (bracket children included) that are not known to be done. */
+  const sentOrderIds = new Set<number>();
+  const nextOrderId = ctx.ib.nextOrderId;
+  ctx.ib.nextOrderId = () => {
+    const id = nextOrderId();
+    sentOrderIds.add(id);
+    return id;
+  };
+
+  /** A working order of this client id as reqAllOpenOrders lists it. */
+  interface ListedOrder {
+    orderId: number;
+    status: string;
+    /** It has the test order's shape (perhaps left by a killed run). */
+    testShaped: boolean;
+  }
+
+  /** This client's working orders as IB lists them now (reqAllOpenOrders: every client's). */
+  async function workingOrdersOfThisClient(): Promise<ListedOrder[]> {
+    const api = ctx.ib.api;
+    if (!api) throw new Error('Not connected: cannot list the open orders');
+    const me = ctx.ib.getState().clientId;
+    const working = new Map<number, ListedOrder>();
+    const offs = [
+      ctx.ib.on('openOrder', (orderId: number, contract: Contract, order: Order, state: OrderState) => {
+        if (order.clientId !== me) return;
+        const status = String(state?.status ?? '');
+        if (isOrderActive(status as OrderStatus)) working.set(orderId, { orderId, status, testShaped: hasTestOrderShape(contract, order) });
+        else working.delete(orderId);
+      }),
+    ];
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('No openOrderEnd within 5 s')), 5000);
+        offs.push(
+          ctx.ib.on('openOrderEnd', () => {
+            clearTimeout(timer);
+            resolve();
+          }),
+        );
+        api.reqAllOpenOrders();
+      });
+    } finally {
+      for (const off of offs) off();
+    }
+    return [...working.values()];
+  }
+
+  /** Back on the real Gateway with this client id (a failed test may have left it elsewhere). */
+  async function reconnect(): Promise<void> {
+    if (settings.connection.host !== host || settings.connection.port !== port) {
+      changeConnection({ host, port });
+      await sleep(1500); // the change closes the old socket and reconnects if a connection was wanted
+    }
+    if (!ctx.ib.isConnected()) await ctx.ib.connect();
+    await sleep(1000); // the initial order lists
+  }
+
+  /**
+   * Cancels the working orders of this client id that this run sent or that have the test order's
+   * shape (on a paper account), until none is, and returns the working orders of this client id
+   * that are left (none expected: the client id is this test's).
+   */
+  async function cancelTestOrders(): Promise<ListedOrder[]> {
+    if (!ctx.ib.isConnected()) await reconnect();
+    const ours = (o: ListedOrder) => sentOrderIds.has(o.orderId) || (o.testShaped && ctx.ib.getState().isPaper);
+    let working = await workingOrdersOfThisClient();
+    for (let i = 0; i < 3 && working.some(ours); i++) {
+      for (const o of working) if (ours(o)) ctx.ib.api?.cancelOrder(o.orderId);
+      await sleep(2000);
+      working = await workingOrdersOfThisClient();
+    }
+    for (const id of [...sentOrderIds]) if (!working.some((o) => o.orderId === id)) sentOrderIds.delete(id);
+    if (working.length) console.error('still working:', JSON.stringify(working));
+    return working;
+  }
+
   afterAll(async () => {
-    await ctx.ib.disconnect();
-  });
+    try {
+      // Only when an earlier cleanup could not confirm that every order this run sent is done.
+      if (sentOrderIds.size) {
+        console.log('cleaning up orders', [...sentOrderIds].join(', '));
+        const left = await cancelTestOrders();
+        if (left.length) throw new Error(`Orders of client ${ctx.ib.getState().clientId} still working: ${JSON.stringify(left)}`);
+      }
+    } finally {
+      await ctx.ib.disconnect();
+    }
+  }, 60_000);
 
   it('connects and loads the account', async () => {
     await ctx.ib.connect();
@@ -125,12 +230,15 @@ describe.skipIf(!live)('live IB Gateway', async () => {
   });
 
   it('places a far-from-market order (rejected when the API is read-only)', async () => {
-    const req = { contract: stock('AAPL'), action: 'BUY' as const, orderType: 'LMT' as const, quantity: 1, limitPrice: 1, tif: 'GTC' as const, outsideRth: false };
     const mine = () => ctx.orders.getOrders().filter((o) => o.clientId === ctx.ib.getState().clientId);
     // Paper accounts only.
     expect(ctx.ib.getState().isPaper).toBe(true);
+    // What an earlier run could not cancel goes first; any other working order of this client id
+    // means another program uses it.
+    expect(await cancelTestOrders()).toEqual([]);
+    let left: ListedOrder[] = [];
     try {
-      const res = await ctx.orders.place(req);
+      const res = await ctx.orders.place(testOrder);
       console.log('placed', JSON.stringify(res));
       await sleep(1500);
       console.log('order', JSON.stringify(ctx.orders.getOrders().find((o) => o.orderId === res.orderId)));
@@ -140,11 +248,16 @@ describe.skipIf(!live)('live IB Gateway', async () => {
     } catch (err) {
       console.log('place failed:', (err as Error).message);
       expect((err as Error).message).toMatch(/Read-Only|\(\d+\)/);
+    } finally {
+      // Also after a failure above: nothing this run sent may stay working (IB's own list).
+      left = await cancelTestOrders();
     }
+    expect(left).toEqual([]);
+    expect(sentOrderIds.size).toBe(0);
     // Nothing of this client may stay working.
     expect(mine().filter((o) => isOrderActive(o.status)).map((o) => [o.orderId, o.status])).toEqual([]);
     console.log('notices', JSON.stringify(notices.map((n) => [n.kind, n.title.en, n.body.en])));
-  });
+  }, 30_000);
 
   it('refuses to cancel orders of other clients and unknown ids', async () => {
     const me = ctx.ib.getState().clientId;
@@ -160,16 +273,15 @@ describe.skipIf(!live)('live IB Gateway', async () => {
   });
 
   it('retries when the first attempt after a settings change fails', async () => {
-    const realPort = settings.connection.port;
     // Nothing listens on port 1 of the local host: ECONNREFUSED.
     changeConnection({ host: '127.0.0.1', port: 1 });
     await sleep(2500);
     const failed = ctx.ib.getState();
     console.log('after the change', failed.status, failed.reconnectAttempt, JSON.stringify(failed.lastError));
     expect(failed).toMatchObject({ status: 'reconnecting', reconnectAttempt: 1, port: 1, lastError: { code: 502 } });
-    changeConnection({ host, port: realPort });
+    changeConnection({ host, port });
     for (let i = 0; i < 50 && ctx.ib.getState().status !== 'connected'; i++) await sleep(200);
-    expect(ctx.ib.getState()).toMatchObject({ status: 'connected', port: realPort });
+    expect(ctx.ib.getState()).toMatchObject({ status: 'connected', port });
     await sleep(1500);
   });
 

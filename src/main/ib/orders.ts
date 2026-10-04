@@ -45,6 +45,7 @@ const CONTRACT_LOOKUP_TIMEOUT_MS = 10_000;
 
 export const READ_ONLY_MESSAGE = 'Read-only mode is on';
 export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
+export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
 
 interface Waiter {
   ids: Set<number>;
@@ -443,6 +444,17 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (ctx.store.getSettings().connection.readOnly) throw new Error(READ_ONLY_MESSAGE);
   }
 
+  /**
+   * The API instance to send an order on, after an `await`: still the session the order was
+   * checked against. Another client id or Gateway (a new instance) would take the order id for
+   * a different order, so nothing is sent then.
+   */
+  function sameSession(api: IBApi, clientId: number): IBApi {
+    const now = requireApi();
+    if (now !== api || myClientId() !== clientId) throw new Error(CONNECTION_CHANGED_MESSAGE);
+    return now;
+  }
+
   /** Fills in the conId (IB matches orders by it); combos carry their legs' conIds already. */
   async function resolve(c: ContractRef): Promise<ContractRef> {
     if (c.conId || c.secType === 'BAG') return c;
@@ -487,9 +499,11 @@ export function createOrderService(ctx: MainContext): OrderService {
 
   async function place(input: OrderRequest): Promise<PlaceOrderResult> {
     requireWritable();
-    requireApi();
+    const checked = requireApi();
+    const clientId = myClientId();
     const { req, conditionConId } = await prepare(input);
-    const api = requireApi();
+    // A Gateway or client id switched to meanwhile (perhaps another account) does not get it.
+    const api = sameSession(checked, clientId);
     const orderId = ctx.ib.nextOrderId();
     const built = buildOrders(req, {
       orderId,
@@ -501,7 +515,6 @@ export function createOrderService(ctx: MainContext): OrderService {
       built.map((b) => b.orderId),
       ACK_MS,
     );
-    const clientId = myClientId();
     for (const b of built) {
       sentKeys.add(orderKey(clientId, b.orderId, undefined));
       api.placeOrder(b.orderId, b.contract, b.order);
@@ -543,14 +556,24 @@ export function createOrderService(ctx: MainContext): OrderService {
     return `Order #${o.orderId} belongs to ${owner}${hint}`;
   }
 
-  async function modify(orderId: number, input: OrderRequest): Promise<void> {
-    requireWritable();
-    requireApi();
+  /** This client's confirmed, still working order `orderId` (see ownOrder). */
+  function modifiable(orderId: number): WorkingOrder {
     const existing = ownOrder(orderId, 'modify');
     if (!existing) throw new Error(`Order #${orderId} has not been confirmed by IB yet`);
     if (!isOrderActive(existing.status)) throw new Error(`Order #${orderId} is ${existing.status} and can no longer be modified`);
+    return existing;
+  }
+
+  async function modify(orderId: number, input: OrderRequest): Promise<void> {
+    requireWritable();
+    const checked = requireApi();
+    const clientId = myClientId();
+    modifiable(orderId);
     const { req, conditionConId } = await prepare({ ...input, bracket: undefined });
-    const api = requireApi();
+    // While the contract was resolved, the connection may have changed (the order id would name
+    // another client's order, or a new one) and the order may have been filled or cancelled.
+    const api = sameSession(checked, clientId);
+    const existing = modifiable(orderId);
     const [main] = buildOrders(req, {
       orderId,
       nextOrderId: () => {
