@@ -74,7 +74,7 @@ function ResultRow({ match, tag, selected, onPick }: { match: SymbolMatch; tag: 
         fontVariantNumeric: 'tabular-nums',
       }}
     >
-      <div style={{ font: '600 13px/1 var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden' }}>{match.contract.symbol}</div>
+      <div className="ellipsis" style={{ font: '600 13px/1 var(--mono)' }}>{match.contract.symbol}</div>
       <ListingName name={match.description} tag={tag} row={rowRef} />
       <div style={{ font: '13px/1 var(--num)', whiteSpace: 'nowrap', textAlign: 'right' }}>
         {px(last)}
