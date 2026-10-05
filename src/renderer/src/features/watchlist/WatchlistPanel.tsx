@@ -8,7 +8,7 @@ import type { ContractRef, WatchItem, Watchlist } from '@shared/types';
 import { useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
-import { DoubleChevronIcon } from '../../ui/icons';
+import { DoubleChevronIcon, PlusIcon } from '../../ui/icons';
 import { AddSymbol } from './AddSymbol';
 import { GroupList } from './GroupList';
 import { GroupMenu, type GroupMenuTarget } from './GroupMenu';
@@ -191,14 +191,12 @@ function ExpandedPanel({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: 18,
-            lineHeight: 1,
             cursor: 'pointer',
             color: adding ? 'var(--ac)' : 'var(--dm)',
             background: adding ? 'var(--sel)' : 'transparent',
           }}
         >
-          +
+          <PlusIcon size={14} />
         </div>
       </div>
       {adding && list && (

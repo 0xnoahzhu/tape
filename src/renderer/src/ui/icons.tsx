@@ -80,3 +80,12 @@ export function DoubleChevronIcon({ dir, size = 18 }: { dir: 'left' | 'right'; s
     </svg>
   );
 }
+
+/** Plus: add a symbol (drawn, so it centres like the chevrons next to it). */
+export function PlusIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 18 18" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      <path d="M9 3.75 V14.25 M3.75 9 H14.25" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="square" />
+    </svg>
+  );
+}
