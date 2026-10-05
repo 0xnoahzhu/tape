@@ -23,9 +23,9 @@
 // Previous close. IB sends it (tick 9, or 75 delayed) with a request's first ticks and otherwise
 // only when it changes; tickMap.ts never lets a "not available" close erase the close its line
 // sent. A line that streams prices without a close CLOSE_WAIT_MS after its first price (it started
-// without its subscription image, e.g. during a competing session) is requested again, which
-// brings the close: at most once per CLOSE_RETRY_MS per contract (doubling), for instruments that
-// have a close.
+// without its subscription image: seen live on lines opened during a competing session, whose data
+// resumed without tick 9) is requested again, which brings the close: for instruments that have a
+// close, at most once per CLOSE_RETRY_MS per contract, doubling while the requests bring none.
 //
 // Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
 // while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
@@ -96,7 +96,7 @@ const SIDE_BUFFER = 64;
 export const COMPETING_END_MIN_MS = 60_000;
 /** A line whose quote has prices but no previous close this long after the first one is requested again. */
 export const CLOSE_WAIT_MS = 12_000;
-/** The first wait before a contract's line is requested again for its close a second time; it doubles after each. */
+/** The first wait before a contract's line is requested again for its close a second time; it doubles after each until a close comes. */
 export const CLOSE_RETRY_MS = 15 * 60_000;
 /** Instruments that have a previous close (an option may never have traded, a combo has none of its own). */
 const CLOSE_TYPES: ReadonlySet<SecType> = new Set(['STK', 'IND', 'FUT', 'CASH', 'CFD']);
@@ -209,7 +209,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const dirty = new Set<string>();
   /** Pending checks for a priced quote without a previous close (checkClose). */
   const closeChecks = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Lines requested again for their close, per contract: the last time and how often (for the back-off). */
+  /** Lines requested again for their close, per contract, since its last close: the last time and how often (for the back-off). */
   const closeRetries = new Map<string, { at: number; count: number }>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
@@ -742,8 +742,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     const now = Date.now();
     const last = closeRetries.get(key);
     const due = last ? last.at + CLOSE_RETRY_MS * 2 ** (last.count - 1) : now;
-    // Not before the back-off ends, nor while the fallback tests another route (a switch brings a new line).
-    if (due > now || routes.get(key)?.side) {
+    // Not before the back-off ends, nor while the fallback resolves the contract or tests another
+    // route (a switch brings a new line).
+    const r = routes.get(key);
+    if (due > now || r?.side || r?.resolving) {
       armCloseCheck(key, Math.max(due - now, CLOSE_WAIT_MS));
       return;
     }
@@ -751,7 +753,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     if (!w || !liveApi()) return;
     closeRetries.set(key, { at: now, count: (last?.count ?? 0) + 1 });
     cancelLine(line);
-    requestLine(w);
+    // The same contract: one resolved after error 200 keeps its conId (requestLine keeps the primary route).
+    requestLine(w, line.route === 'smart' && line.resolved ? line.contract : w.contract, line.resolved);
   };
 
   // ---------------------------------------------------------------------------
@@ -856,6 +859,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       changed = true;
     }
     if (q.close === undefined) watchClose(line, q);
+    else if (closeRetries.size) closeRetries.delete(line.key); // a close came: the back-off starts over
     if (changed) publish(q);
   };
 

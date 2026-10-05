@@ -787,6 +787,29 @@ describe('primary-exchange fallback', () => {
     expect(svc.getQuote('STK:AAPL')).toMatchObject({ close: 333.69, last: 333.42, source: { kind: 'primary', exchange: 'NASDAQ' } });
   });
 
+  it('does not request a line again for its close while the fallback resolves the contract', async () => {
+    const { fake, ctx, resolved, smartId } = await fallbackSetup();
+    let finish!: () => void;
+    ctx.contracts = {
+      resolve: (c: ContractRef) =>
+        new Promise((done) => {
+          resolved.push(c);
+          finish = () => done({ ...c, conId: 265598, primaryExchange: 'NASDAQ' });
+        }),
+    } as unknown as ContractService;
+    fake.emit('marketDataType', smartId, 3);
+    fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 331.85);
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    // The probe the resolve was for goes ahead.
+    finish();
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    expect(lastReq(fake)[1]).toMatchObject({ conId: 265598, exchange: 'NASDAQ' });
+    expect(resolved).toHaveLength(1);
+  });
+
   it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {
     const { fake, svc, smartId } = await fallbackSetup('PINK');
     fake.emit('marketDataType', smartId, 3);
@@ -962,6 +985,50 @@ describe('a missing previous close', () => {
     expect(requests()).toBe(3);
     vi.advanceTimersByTime(1);
     expect(requests()).toBe(4);
+  });
+
+  it('starts the back-off over once a close comes', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    const watch = (on: boolean) => {
+      svc.setRendererSubscriptions('watchlist', on ? [{ contract: stock('NVDA'), profile: 'basic' }] : []);
+      reconciled();
+    };
+    const requests = () => fake.callsOf('reqMktData').length;
+    /** The line streams without its close: true when it is requested again CLOSE_WAIT_MS later (that request brings it). */
+    const healed = () => {
+      const n = requests();
+      fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.LAST, 236.59);
+      vi.advanceTimersByTime(CLOSE_WAIT_MS);
+      fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.CLOSE, 233.95);
+      return requests() === n + 1;
+    };
+    watch(true);
+    expect(healed()).toBe(true);
+    // Within CLOSE_RETRY_MS the line goes twice (its quote with it) and comes back without its image.
+    for (let i = 0; i < 2; i++) {
+      watch(false);
+      vi.advanceTimersByTime(LINGER_MS);
+      watch(true);
+      expect(healed()).toBe(true);
+    }
+  });
+
+  it('requests a line resolved after error 200 again with its conId', async () => {
+    const { fake, svc, resolved } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('XYZ'), profile: 'basic' }]);
+    reconciled();
+    fake.error(reqIdOf(fake, 'XYZ'), 200, 'No security definition has been found for the request');
+    await vi.advanceTimersByTimeAsync(0);
+    const [id, contract] = fake.callsOf('reqMktData').at(-1)! as [number, { conId?: number }];
+    expect(contract.conId).toBe(4242);
+    fake.emit('tickPrice', id, TICK.LAST, 20);
+    vi.advanceTimersByTime(CLOSE_WAIT_MS);
+    expect(fake.callsOf('cancelMktData')).toEqual([[id]]);
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    expect(fake.callsOf('reqMktData').at(-1)![1]).toMatchObject({ conId: 4242 });
+    expect(resolved).toHaveLength(1);
   });
 
   it('takes the close of a new line that is delayed where the old one was live', async () => {
