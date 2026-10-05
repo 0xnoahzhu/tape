@@ -33,6 +33,22 @@ const ACCOUNT_VALUES = {
 
 type NumericField = (typeof SUMMARY_TAGS)[keyof typeof SUMMARY_TAGS] | (typeof ACCOUNT_VALUES)[keyof typeof ACCOUNT_VALUES];
 
+const LEDGER_PREFIX = '$LEDGER-';
+
+/**
+ * The summary field an updateAccountValue fills, if any. IB sends the market values either as
+ * plain keys per currency (taken in the account currency) or, as paper accounts do, only as
+ * ledger keys ("$LEDGER-StockMarketValue"); of those the "BASE" row is the account-currency total
+ * across ledgers (a currency's own row holds that currency's positions only).
+ */
+export function accountValueField(key: string, currency: string, accountCurrency: string | undefined): NumericField | undefined {
+  const ledger = key.startsWith(LEDGER_PREFIX);
+  const field = (ACCOUNT_VALUES as Record<string, NumericField>)[ledger ? key.slice(LEDGER_PREFIX.length) : key];
+  if (!field) return undefined;
+  if (ledger) return currency === 'BASE' ? field : undefined;
+  return accountCurrency && currency && currency !== accountCurrency ? undefined : field;
+}
+
 const EMIT_MS = 250;
 /** Instruments routed through SMART; positions report their listing exchange instead. */
 const SMART_ROUTED = new Set(['STK', 'OPT', 'WAR', 'BAG']);
@@ -251,9 +267,8 @@ export function createAccountService(ctx: MainContext): AccountService {
     });
 
     ib.on(EventName.updateAccountValue, (key: string, value: string, currency: string, account: string) => {
-      const field = (ACCOUNT_VALUES as Record<string, NumericField>)[key];
+      const field = accountValueField(key, currency, summary?.currency);
       if (!field || !isActive(account)) return;
-      if (summary?.currency && currency && currency !== summary.currency) return;
       patchSummary({ [field]: num(value) });
     });
 
