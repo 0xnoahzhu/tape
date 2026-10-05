@@ -300,6 +300,22 @@ describe('OrderService', () => {
     expect(t.svc.getOrders().find((o) => o.orderId === 40)).toMatchObject({ limitPrice: 225, tif: 'DAY', session: 'overnightDay' });
   });
 
+  it('modifies an overnight-only order with an empty TIF', async () => {
+    const t = await loaded();
+    const ibOvernight: Contract = { ...ibAapl, exchange: 'OVERNIGHT', primaryExch: 'NASDAQ' };
+    // IB reports the order's TIF as "OVERNIGHT" and answers 462 to DAY or 10052 to "OVERNIGHT" on modify.
+    t.emit('openOrder', 42, ibOvernight, lmt(42, CLIENT_ID, { lmtPrice: 1, tif: 'OVERNIGHT' as never }), { status: 'PreSubmitted' });
+    expect(t.svc.getOrders().find((o) => o.orderId === 42)).toMatchObject({ session: 'overnight', tif: 'DAY' });
+    const contract = { ...stock('AAPL'), conId: 265598, primaryExchange: 'NASDAQ' };
+    const m = t.svc.modify(42, { ...req, contract, limitPrice: 1.01, session: 'overnight' });
+    await tick();
+    expect(t.calls[0][0]).toBe('placeOrder');
+    expect(t.calls[0][2]).toMatchObject({ exchange: 'OVERNIGHT', primaryExch: 'NASDAQ' });
+    expect(t.calls[0][3]).toMatchObject({ lmtPrice: 1.01, tif: '' });
+    t.emit('openOrder', 42, ibOvernight, lmt(42, CLIENT_ID, { lmtPrice: 1.01, tif: 'OVERNIGHT' as never }), { status: 'PreSubmitted' });
+    await expect(m).resolves.toBeUndefined();
+  });
+
   it('changes the TIF of a working order only as IB allows', async () => {
     const t = await loaded();
     t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'GTD' as never, goodTillDate: '20261009 16:00:00 US/Eastern' }), { status: 'PreSubmitted' });

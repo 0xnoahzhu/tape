@@ -320,6 +320,8 @@ describe('order mapping', () => {
     expect(gtd).toMatchObject({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
     expect(map(ibAapl, { tif: 'DAY' as never, goodTillDate: '20261009 16:00:00 US/Eastern' })).not.toHaveProperty('goodTillDate');
     expect(ibOrderSession(ibOvernight, order({ includeOvernight: true }))).toBe('overnight');
+    // IB reports an OVERNIGHT-venue order's TIF as "OVERNIGHT" (paper DUP899854, 2026-10-05).
+    expect(map(ibOvernight, { tif: 'OVERNIGHT' as never })).toMatchObject({ session: 'overnight', tif: 'DAY' });
     // Completed orders keep them too.
     expect(mapCompletedOrder(ibAapl, order({ tif: 'OVERNIGHT + DAY' as never }), { status: 'Cancelled' } as OrderState, undefined, 0, symbolOf)).toMatchObject({
       session: 'overnightDay',

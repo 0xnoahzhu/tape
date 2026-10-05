@@ -14,7 +14,9 @@
 //
 // A working order keeps its trading session: IB refuses to move it to the OVERNIGHT venue (105)
 // or to add includeOvernight (462), so modify() refuses a request with another session. Its TIF
-// changes only between DAY and GTC, or to IOC (462 otherwise, see tifChangeAllowed).
+// changes only between DAY and GTC, or to IOC (462 otherwise, see tifChangeAllowed). IB reports an
+// OVERNIGHT-venue order's TIF as "OVERNIGHT" and refuses DAY when it is modified (462), so modify()
+// leaves the TIF empty there, which keeps the order's own.
 //
 // IB rejects some orders after taking them: an Inactive openOrder, then the reason (201). place()
 // and modify() fail with that reason instead of resolving on the Inactive order, and the rejection
@@ -685,7 +687,8 @@ export function createOrderService(ctx: MainContext): OrderService {
     });
     const ack = awaitOrders([orderId], ACK_MS, { failInactive: true });
     orderErrors.delete(orderKey(clientId, orderId, undefined));
-    api.placeOrder(orderId, main.contract, main.order);
+    const order = sessionOf(req) === 'overnight' ? { ...main.order, tif: '' as Order['tif'] } : main.order;
+    api.placeOrder(orderId, main.contract, order);
     await ack;
   }
 

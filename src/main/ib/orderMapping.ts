@@ -56,6 +56,8 @@ function priceCondition(order: Order, symbolOf: SymbolOf): WorkingOrder['conditi
 
 /** IB's TIF of SMART orders with includeOvernight. */
 const OVERNIGHT_DAY_TIF = 'OVERNIGHT + DAY';
+/** IB's TIF of orders on the OVERNIGHT venue (sent as DAY). */
+const OVERNIGHT_TIF = 'OVERNIGHT';
 
 /**
  * The trading session of an IB order: the OVERNIGHT venue, includeOvernight ("OVERNIGHT + DAY"),
@@ -63,7 +65,7 @@ const OVERNIGHT_DAY_TIF = 'OVERNIGHT + DAY';
  */
 export function ibOrderSession(contract: Contract, order: Order): TradingSession {
   const tif = String(order.tif ?? '');
-  if (contract.exchange === 'OVERNIGHT') return 'overnight';
+  if (contract.exchange === 'OVERNIGHT' || tif === OVERNIGHT_TIF) return 'overnight';
   if (order.includeOvernight || tif === OVERNIGHT_DAY_TIF) return 'overnightDay';
   if (tif === 'IOC' || tif === 'FOK' || tif === 'OPG') return 'regular';
   return order.outsideRth ? 'extended' : 'regular';
@@ -92,7 +94,7 @@ function orderFields(contract: Contract, order: Order, symbolOf: SymbolOf) {
     // IB fills these in for other order types too; they only mean something for trailing stops.
     trailingPercent: trailing ? num(order.trailingPercent) || undefined : undefined,
     trailStopPrice: trailing ? num(order.trailStopPrice) || undefined : undefined,
-    tif: tif === OVERNIGHT_DAY_TIF ? 'DAY' : tif,
+    tif: tif === OVERNIGHT_DAY_TIF || tif === OVERNIGHT_TIF ? 'DAY' : tif,
     outsideRth: !!order.outsideRth,
     session,
     goodTillDate: tif === 'GTD' ? order.goodTillDate || undefined : undefined,
