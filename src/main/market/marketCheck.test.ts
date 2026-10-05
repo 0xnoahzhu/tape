@@ -177,7 +177,7 @@ describe('market data check', () => {
 
   it('reuses lines other owners hold and answers from them at once', async () => {
     const { fake, svc, ctx } = await setup({ lines: { 'SPY:SMART': { type: 1, last: 670 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
-    ctx.quotes.setSubscriptions('watchlist', [{ contract: stock('SPY'), profile: 'underlying' }]);
+    ctx.quotes.setRendererSubscriptions('watchlist', [{ contract: stock('SPY'), profile: 'underlying' }]);
     await vi.advanceTimersByTimeAsync(100);
     expect(mktData(fake)).toEqual(['SPY:SMART']);
     const r = await finish(svc.run({ trigger: 'user' }));
@@ -193,7 +193,7 @@ describe('market data check', () => {
   it('uses an option line a view already holds instead of looking one up', async () => {
     const { fake, svc, ctx, chainCalls } = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 4 } } });
     const held: ContractRef = { symbol: 'QQQ', secType: 'OPT', exchange: 'SMART', currency: 'USD', lastTradeDate: '20261016', strike: 600, right: 'P', multiplier: 100 };
-    ctx.quotes.setSubscriptions('options-chain', [{ contract: held, profile: 'option' }]);
+    ctx.quotes.setRendererSubscriptions('options-chain', [{ contract: held, profile: 'option' }]);
     await vi.advanceTimersByTimeAsync(100);
     const r = await finish(svc.run({ trigger: 'user' }));
     expect(item(r, 'opt')).toMatchObject({ status: 'delayed', instrument: 'QQQ 10/16 600 Put', probe: { marketDataType: 4, reused: true } });
@@ -389,11 +389,11 @@ describe('market data check', () => {
     };
     const { fake, ctx, svc } = await setup({ lines });
     ctx.contracts.resolve = async (c: ContractRef) => ({ ...c, conId: c.symbol === 'AAPL' ? 265598 : SPY_CONID, primaryExchange: c.symbol === 'AAPL' ? 'NASDAQ' : 'ARCA' });
-    ctx.quotes.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    ctx.quotes.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     await vi.advanceTimersByTimeAsync(500);
     expect(ctx.quotes.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
     // The user leaves the trade page for Settings: AAPL's exchange line goes after lingering.
-    ctx.quotes.setSubscriptions('watchlist', []);
+    ctx.quotes.setRendererSubscriptions('watchlist', []);
     await vi.advanceTimersByTimeAsync(LINGER_MS + 1_000);
     expect(fake.callsOf('cancelMktData').map((c) => c[0])).toContain(fake.callsOf('reqMktData').find((c) => lineName(c[1] as { conId: number }) === '#265598:NASDAQ')![0]);
     expect(ctx.quotes.wanted().filter((w) => w.contract.symbol === 'AAPL')).toEqual([]);
@@ -401,7 +401,7 @@ describe('market data check', () => {
     expect(item(r, 'stk')).toMatchObject({ status: 'live', fallback: [{ symbol: 'AAPL', exchange: 'NASDAQ' }] });
     // Once AAPL is live on SMART the check no longer lists it.
     lines['AAPL:SMART'] = { type: 1 };
-    ctx.quotes.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    ctx.quotes.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     await vi.advanceTimersByTimeAsync(500);
     await vi.advanceTimersByTimeAsync(60_000);
     const later = await finish(svc.run({ trigger: 'user' }));
@@ -462,7 +462,7 @@ describe('market data check', () => {
 
   it('answers no free line when the primary-exchange probe finds the line budget full', async () => {
     const { fake, svc, ctx } = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
-    ctx.quotes.setSubscriptions(
+    ctx.quotes.setRendererSubscriptions(
       'watchlist',
       Array.from({ length: 95 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })),
     );

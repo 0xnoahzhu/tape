@@ -194,7 +194,8 @@ const handlers: TapeHandlers = {
   updateSettings: async (patch) => ctx.store.updateSettings(patch),
   connect: () => ctx.ib.connect(),
   disconnect: () => ctx.ib.disconnect(),
-  setQuoteSubscriptions: async (owner, subs) => ctx.quotes.setSubscriptions(owner, subs),
+  setQuoteSubscriptions: async (owner, subs) => ctx.quotes.setRendererSubscriptions(owner, subs),
+  resendQuotes: async (keys) => ctx.quotes.resend(keys),
   getHistory: (req) => ctx.history.get(req),
   getOlderBars: (req, before, limit) => ctx.history.getOlder(req, before, limit),
   searchSymbols: (pattern) => ctx.contracts.search(pattern),
@@ -310,7 +311,14 @@ function createWindow(): BrowserWindow {
   win.on('move', saveBounds);
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
+    ctx.quotes.resetRenderer();
   });
+  // A reload (or a crash) replaces the renderer: its quote owners go with it, and the new one, which
+  // starts without quotes, gets whole quotes for what it subscribes.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) ctx.quotes.resetRenderer();
+  });
+  win.webContents.on('render-process-gone', () => ctx.quotes.resetRenderer());
 
   // Links open in the default browser; the app never navigates away from itself.
   win.webContents.setWindowOpenHandler(({ url }) => {

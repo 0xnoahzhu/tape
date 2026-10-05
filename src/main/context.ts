@@ -142,7 +142,20 @@ export type ProbeEvent =
   | { kind: 'error'; code: number; message: string };
 
 export interface QuoteService {
+  /**
+   * Declares a main-process owner's subscriptions (price alerts, the market data check): its quotes
+   * reach getQuote / onQuote, but a contract only main-process owners want is not sent to the renderer.
+   */
   setSubscriptions(owner: string, subs: QuoteSubscription[]): void;
+  /** Declares a renderer owner's subscriptions (IPC setQuoteSubscriptions): their quotes are sent to the renderer too. */
+  setRendererSubscriptions(owner: string, subs: QuoteSubscription[]): void;
+  /**
+   * The renderer was replaced (reload, a new window) or closed: its owners go, and every quote a new
+   * renderer wants is sent whole.
+   */
+  resetRenderer(): void;
+  /** The renderer got changes for quotes it does not hold: they are sent whole with the next batch. */
+  resend(keys: string[]): void;
   getQuote(key: string): Quote | undefined;
   /** Fires for every applied quote change (after merging), before batching to the renderer. */
   onQuote(listener: (q: Quote) => void): Unsubscribe;

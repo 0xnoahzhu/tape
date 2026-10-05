@@ -46,11 +46,11 @@ afterEach(() => {
 describe('quote subscriptions with IB', () => {
   it('waits for the handshake, then requests delayed-frozen data and one line per contract', async () => {
     const { fake, svc } = await setup();
-    svc.setSubscriptions('watchlist', [
+    svc.setRendererSubscriptions('watchlist', [
       { contract: stock('AAPL'), profile: 'basic' },
       { contract: index('SPX', 'CBOE'), profile: 'basic' },
     ]);
-    svc.setSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
+    svc.setRendererSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
     reconciled();
     expect(fake.calls).toEqual([]);
     fake.ready();
@@ -65,9 +65,9 @@ describe('quote subscriptions with IB', () => {
   it('reconciles a burst of owner changes in one pass', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
-    svc.setSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
-    svc.setSubscriptions('chart', [{ contract: stock('NVDA'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('NVDA'), profile: 'basic' }]);
     expect(fake.callsOf('reqMktData')).toHaveLength(0);
     reconciled();
     expect(fake.callsOf('reqMktData').map((c) => (c[1] as { symbol: string }).symbol)).toEqual(['NVDA']);
@@ -77,13 +77,13 @@ describe('quote subscriptions with IB', () => {
   it('keeps a released line for 30 s and reuses it when the contract is wanted again', async () => {
     const { fake, svc, events } = await setup();
     fake.ready();
-    svc.setSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     const id = reqIdOf(fake, 'AAPL');
     fake.emit('tickPrice', id, TICK.LAST, 227.5);
     fake.emit('tickPrice', id, TICK.CLOSE, 224.5);
     vi.advanceTimersByTime(100);
-    svc.setSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
     reconciled();
     expect(fake.callsOf('cancelMktData')).toEqual([]);
     // The lingering line keeps its quote current but no longer publishes it.
@@ -94,7 +94,7 @@ describe('quote subscriptions with IB', () => {
     expect(svc.getQuote('STK:AAPL')?.last).toBe(228);
     // Back to AAPL within the linger time: no request, and the renderer gets the whole quote.
     vi.advanceTimersByTime(10_000);
-    svc.setSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     vi.advanceTimersByTime(100);
@@ -111,15 +111,15 @@ describe('quote subscriptions with IB', () => {
   it('keeps a line whose ticks cover the new profiles and re-requests one that does not', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
-    svc.setSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
+    svc.setRendererSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
     reconciled();
     const first = fake.callsOf('reqMktData')[0][0];
     expect(fake.callsOf('cancelMktData')).toEqual([[first]]);
     expect(fake.callsOf('reqMktData')[1][2]).toBe('100,101,104,106,165,318,456');
     // Dropping the underlying profile keeps the richer line.
-    svc.setSubscriptions('options-underlying', []);
+    svc.setRendererSubscriptions('options-underlying', []);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     expect(fake.callsOf('cancelMktData')).toHaveLength(1);
@@ -130,7 +130,7 @@ describe('quote subscriptions with IB', () => {
     const seen: Quote[] = [];
     cleanup.push(svc.onQuote((q) => seen.push({ ...q })));
     fake.ready();
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     const id = reqIdOf(fake, 'AAPL');
     fake.emit('marketDataType', id, 3);
@@ -158,7 +158,7 @@ describe('quote subscriptions with IB', () => {
   it('keeps the quote on request errors and clears the error when data arrives', async () => {
     const { fake, svc, events } = await setup();
     fake.ready();
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     const id = reqIdOf(fake, 'AAPL');
     fake.error(id, 10197, 'No market data during competing live session');
@@ -176,7 +176,7 @@ describe('quote subscriptions with IB', () => {
     expect('error' in last.quotes['STK:AAPL']).toBe(true);
     expect(last.quotes['STK:AAPL'].error).toBeUndefined();
     // 10197 lines stay open at IB, so they are cancelled normally (after lingering).
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData')).toEqual([[id]]);
@@ -185,7 +185,7 @@ describe('quote subscriptions with IB', () => {
   it('marks dead lines final, does not cancel them and retries an unresolved contract with its conId', async () => {
     const { fake, svc, resolved } = await setup();
     fake.ready();
-    svc.setSubscriptions('watchlist', [{ contract: stock('XYZ'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('XYZ'), profile: 'basic' }]);
     reconciled();
     const id = reqIdOf(fake, 'XYZ');
     fake.error(id, 200, 'No security definition has been found for the request');
@@ -203,7 +203,7 @@ describe('quote subscriptions with IB', () => {
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     expect(svc.getQuote('STK:XYZ')?.error?.final).toBe(true);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData')).toEqual([]);
@@ -215,7 +215,7 @@ describe('quote subscriptions with IB', () => {
     fake.ready();
     const call = option('MSFT', '20261005', 487.5, 'C');
     const put = option('MSFT', '20261005', 487.5, 'P');
-    svc.setSubscriptions('options-chain', [
+    svc.setRendererSubscriptions('options-chain', [
       { contract: call, profile: 'option' },
       { contract: put, profile: 'option' },
     ]);
@@ -229,7 +229,7 @@ describe('quote subscriptions with IB', () => {
     fake.emit('tickPrice', callId, TICK.DELAYED_LAST, 31.7);
     // The put never recovers: it stays dead.
     fake.error(putId, 354, 'Requested market data is not subscribed.');
-    svc.setSubscriptions('options-chain', []);
+    svc.setRendererSubscriptions('options-chain', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData')).toEqual([[callId]]);
@@ -238,7 +238,7 @@ describe('quote subscriptions with IB', () => {
   it('marks 354 final and keeps 10197 transient', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('watchlist', [
+    svc.setRendererSubscriptions('watchlist', [
       { contract: stock('AAPL'), profile: 'basic' },
       { contract: stock('MSFT'), profile: 'basic' },
     ]);
@@ -253,12 +253,12 @@ describe('quote subscriptions with IB', () => {
     const { fake, svc } = await setup();
     fake.ready();
     const many = Array.from({ length: 100 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const }));
-    svc.setSubscriptions('big', many);
+    svc.setRendererSubscriptions('big', many);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(95);
     expect(svc.getQuote('STK:S99')?.error).toEqual({ code: -1, message: 'Market data line limit reached', final: true });
     expect(svc.getQuote('STK:S0')?.error).toBeUndefined();
-    svc.setSubscriptions('big', many.slice(10));
+    svc.setRendererSubscriptions('big', many.slice(10));
     reconciled();
     // The released lines linger, so the overflow takes them over by reclaiming them.
     expect(fake.callsOf('cancelMktData')).toHaveLength(5);
@@ -272,10 +272,10 @@ describe('quote subscriptions with IB', () => {
     const { fake, svc } = await setup();
     fake.ready();
     const background = Array.from({ length: 95 }, (_, i) => ({ contract: stock(`B${i}`), profile: 'basic' as const }));
-    svc.setSubscriptions('portfolio', background);
+    svc.setRendererSubscriptions('portfolio', background);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(95);
-    svc.setSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     // The newest background contract yields its line to the chart.
     expect(fake.callsOf('cancelMktData')).toEqual([[reqIdOf(fake, 'B94')]]);
@@ -287,12 +287,12 @@ describe('quote subscriptions with IB', () => {
   it('reclaims lingering lines first when the cap is reached', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('chart', [{ contract: stock('OLD'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('OLD'), profile: 'basic' }]);
     reconciled();
-    svc.setSubscriptions('chart', []);
+    svc.setRendererSubscriptions('chart', []);
     reconciled();
     vi.advanceTimersByTime(1000);
-    svc.setSubscriptions('portfolio', Array.from({ length: 95 }, (_, i) => ({ contract: stock(`P${i}`), profile: 'basic' as const })));
+    svc.setRendererSubscriptions('portfolio', Array.from({ length: 95 }, (_, i) => ({ contract: stock(`P${i}`), profile: 'basic' as const })));
     reconciled();
     expect(fake.callsOf('cancelMktData')).toEqual([[reqIdOf(fake, 'OLD')]]);
     expect(fake.callsOf('reqMktData')).toHaveLength(96);
@@ -302,14 +302,14 @@ describe('quote subscriptions with IB', () => {
   it('subscribes everything again after a reconnect', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('watchlist', [
+    svc.setRendererSubscriptions('watchlist', [
       { contract: stock('AAPL'), profile: 'basic' },
       { contract: option('AAPL', '20261016', 230, 'C'), profile: 'option' },
     ]);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     fake.close();
-    svc.setSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('MSFT'), profile: 'basic' }]);
     reconciled();
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     fake.ready();
@@ -328,7 +328,7 @@ describe('quote subscriptions with IB', () => {
     const { fake, svc } = await setup();
     fake.ready();
     const call = option('AAPL', '20261016', 230, 'C');
-    svc.setSubscriptions('options-chain', [{ contract: call, profile: 'option' }]);
+    svc.setRendererSubscriptions('options-chain', [{ contract: call, profile: 'option' }]);
     reconciled();
     const id = fake.callsOf('reqMktData')[0][0] as number;
     expect(fake.callsOf('reqMktData')[0][2]).toBe('100,101,106,221');
@@ -341,7 +341,7 @@ describe('quote subscriptions with IB', () => {
   it('does constant work per tick however many lines are open', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('portfolio', Array.from({ length: 95 }, (_, i) => ({ contract: stock(`P${i}`), profile: 'basic' as const })));
+    svc.setRendererSubscriptions('portfolio', Array.from({ length: 95 }, (_, i) => ({ contract: stock(`P${i}`), profile: 'basic' as const })));
     reconciled();
     const ids = fake.callsOf('reqMktData').map((c) => c[0] as number);
     const t0 = performance.now();
@@ -352,7 +352,7 @@ describe('quote subscriptions with IB', () => {
   });
 });
 
-describe('probe lines and quiet owners', () => {
+describe('probe lines and main-process owners', () => {
   it('opens a probe line within the line budget, forwards its answers and cancels it on close', async () => {
     const { fake, svc } = await setup();
     fake.ready();
@@ -378,27 +378,27 @@ describe('probe lines and quiet owners', () => {
   it('counts probes against the cap, does not cancel a dead one and ends them with the session', async () => {
     const { fake, svc } = await setup();
     fake.ready();
-    svc.setSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    svc.setRendererSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
     reconciled();
     const events: unknown[] = [];
     const a = svc.probe(stock('SPY'), '', (e) => events.push(e));
     expect(a).not.toBeNull();
     // 95 lines in use: no second probe, and a new owner contract overflows.
     expect(svc.probe(stock('QQQ'), '', () => undefined)).toBeNull();
-    svc.setSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }]);
     reconciled();
     expect(svc.getQuote('STK:MSFT')?.error).toMatchObject({ message: 'Market data line limit reached' });
     const probeId = fake.callsOf('reqMktData').find((c) => (c[1] as { symbol: string }).symbol === 'SPY')![0] as number;
     fake.error(probeId, 354, 'Requested market data is not subscribed.');
     // The dead probe gives its line back.
-    svc.setSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }, { contract: stock('IBM'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }, { contract: stock('IBM'), profile: 'basic' }]);
     reconciled();
     expect(svc.getQuote('STK:MSFT')?.error).toBeUndefined();
     a!.close();
     expect(fake.callsOf('cancelMktData')).toEqual([]);
     const b = svc.probe(stock('QQQ'), '', (e) => events.push(e));
     expect(b).toBeNull(); // MSFT took the freed line
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     const c = svc.probe(stock('DIA'), '', (e) => events.push(e))!;
     expect(c).not.toBeNull();
@@ -408,7 +408,7 @@ describe('probe lines and quiet owners', () => {
     expect(fake.callsOf('cancelMktData').map((x) => x[0])).not.toContain(fake.callsOf('reqMktData').at(-1)![0]);
   });
 
-  it('keeps quotes only quiet owners want from the renderer and reports line notices', async () => {
+  it('keeps quotes only main-process owners want from the renderer and reports line notices', async () => {
     const { fake, svc, events } = await setup();
     fake.ready();
     const notices: unknown[] = [];
@@ -427,7 +427,7 @@ describe('probe lines and quiet owners', () => {
     expect(quoteEvents(events)).toHaveLength(0);
     expect(svc.wanted().map((w) => [w.contract.symbol, w.quote?.marketDataType])).toEqual([['SPY', 3]]);
     // A renderer owner wanting it too gets the whole quote at once.
-    svc.setSubscriptions('chart', [{ contract: stock('SPY'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('SPY'), profile: 'basic' }]);
     reconciled();
     vi.advanceTimersByTime(100);
     expect(quoteEvents(events).at(-1)!.quotes['STK:SPY']).toMatchObject({ last: 670, marketDataType: 3 });
@@ -435,8 +435,8 @@ describe('probe lines and quiet owners', () => {
   });
 });
 
-describe('quiet owners', () => {
-  it('sends a quote only a quiet owner held once a background renderer owner wants it', async () => {
+describe('main-process owners', () => {
+  it('sends a quote only a main-process owner held once a background renderer owner wants it', async () => {
     const { fake, svc, events } = await setup();
     fake.ready();
     svc.setSubscriptions('md-check', [{ contract: stock('SPY'), profile: 'basic' }]);
@@ -447,7 +447,7 @@ describe('quiet owners', () => {
     fake.emit('tickPrice', id, TICK.CLOSE, 668);
     vi.advanceTimersByTime(200);
     expect(quoteEvents(events)).toHaveLength(0);
-    svc.setSubscriptions('portfolio', [{ contract: stock('SPY'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('SPY'), profile: 'basic' }]);
     reconciled();
     vi.advanceTimersByTime(100);
     expect(quoteEvents(events).at(-1)?.quotes['STK:SPY']).toMatchObject({ last: 670, marketDataType: 2 });
@@ -465,7 +465,7 @@ describe('primary-exchange fallback', () => {
       },
     } as unknown as ContractService;
     env.fake.ready();
-    env.svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    env.svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     return { ...env, smartId: reqIdOf(env.fake, 'AAPL') };
   }
@@ -538,7 +538,7 @@ describe('primary-exchange fallback', () => {
     expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 1, last: 333 });
     expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
     // Released, the SMART line lingers and goes like any other.
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData').at(-1)).toEqual([second]);
@@ -573,14 +573,14 @@ describe('primary-exchange fallback', () => {
     fake.emit('marketDataType', smartId, 3);
     await flushAsync();
     fake.emit('marketDataType', lastReq(fake)[0], 1);
-    svc.setSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
+    svc.setRendererSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
     reconciled();
     const [, contract, ticks] = lastReq(fake) as [number, { exchange: string }, string];
     expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,104,106,165,318,456']);
     expect(svc.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
     // Options, an index and a stock routed to its exchange already are never moved.
     const n = resolved.length;
-    svc.setSubscriptions('chart', [
+    svc.setRendererSubscriptions('chart', [
       { contract: option('AAPL', '20261016', 230, 'C'), profile: 'option' },
       { contract: index('SPX', 'CBOE'), profile: 'basic' },
       { contract: { ...stock('IBM'), exchange: 'NYSE' }, profile: 'basic' },
@@ -648,7 +648,7 @@ describe('primary-exchange fallback', () => {
 
   it('ends a competing session only on a live price of a line that reported it, at most once a minute', async () => {
     const { fake, svc, smartId } = await fallbackSetup();
-    svc.setSubscriptions('chart', [{ contract: stock('NVDA'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('NVDA'), profile: 'basic' }]);
     reconciled();
     const nvda = reqIdOf(fake, 'NVDA');
     fake.emit('marketDataType', smartId, 3);
@@ -673,9 +673,9 @@ describe('primary-exchange fallback', () => {
 
   it('gives a line a side line held back to a contract waiting for one, and never takes a lingering line', async () => {
     const { fake, svc, smartId } = await fallbackSetup();
-    svc.setSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    svc.setRendererSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
     reconciled();
-    svc.setSubscriptions('chart', Array.from({ length: 93 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    svc.setRendererSubscriptions('chart', Array.from({ length: 93 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
     reconciled();
     // 94 lines plus S93 lingering: no free line for a side line, and S93 keeps its line.
     fake.emit('marketDataType', smartId, 3);
@@ -687,7 +687,7 @@ describe('primary-exchange fallback', () => {
     await vi.advanceTimersByTimeAsync(60_000 - LINGER_MS); // the retry after "no free line"
     const sideId = lastReq(fake)[0];
     expect((lastReq(fake)[1] as { exchange: string }).exchange).toBe('NASDAQ');
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }, { contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }, { contract: stock('MSFT'), profile: 'basic' }]);
     reconciled();
     expect(svc.getQuote('STK:MSFT')?.error).toMatchObject({ message: 'Market data line limit reached' });
     fake.emit('marketDataType', sideId, 3);
@@ -703,12 +703,12 @@ describe('primary-exchange fallback', () => {
     fake.emit('marketDataType', lastReq(fake)[0], 3); // the exchange is delayed too: give up
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     // Released and swept (route and quote go), then wanted again: SMART only, no side line.
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData').at(-1)).toEqual([smartId]);
     expect(svc.getQuote('STK:AAPL')).toBeUndefined();
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     const again = lastReq(fake)[0];
     fake.emit('marketDataType', again, 3);
@@ -731,7 +731,7 @@ describe('primary-exchange fallback', () => {
     fake.emit('marketDataType', primaryId, 1);
     expect(svc.fallbacks()).toEqual([{ symbol: 'AAPL', exchange: 'NASDAQ', at: Date.now(), active: true }]);
     // The user leaves the page: the exchange line goes after lingering, the finding stays.
-    svc.setSubscriptions('watchlist', []);
+    svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     vi.advanceTimersByTime(LINGER_MS);
     expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
@@ -741,7 +741,7 @@ describe('primary-exchange fallback', () => {
     fake.ready();
     expect(svc.fallbacks()).toHaveLength(1);
     // SMART answers live: the finding no longer holds.
-    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
     reconciled();
     fake.emit('marketDataType', lastReq(fake)[0], 1);
     expect(svc.fallbacks()).toEqual([]);
@@ -770,6 +770,123 @@ describe('primary-exchange fallback', () => {
   });
 });
 
+describe('the renderer copy', () => {
+  /** A live line's first ticks (its subscription image): type 1, bid / ask / last and the previous close. */
+  const image = (fake: ReturnType<typeof createFakeIb>, symbol: string, last: number, close: number) => {
+    const id = reqIdOf(fake, symbol);
+    fake.emit('marketDataType', id, 1);
+    fake.emit('tickPrice', id, TICK.BID, last - 0.01);
+    fake.emit('tickPrice', id, TICK.ASK, last + 0.01);
+    fake.emit('tickPrice', id, TICK.LAST, last);
+    fake.emit('tickPrice', id, TICK.CLOSE, close);
+  };
+  const basic = (...symbols: string[]) => symbols.map((s) => ({ contract: stock(s), profile: 'basic' as const }));
+
+  it('does not send what only main-process owners want, and sends the whole quote when a renderer owner wants it again', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    // A price alert on NVDA and the watchlist (seen live: the renderer kept a price without a close).
+    svc.setSubscriptions('alerts', basic('NVDA'));
+    svc.setRendererSubscriptions('watchlist', basic('NVDA'));
+    reconciled();
+    const id = reqIdOf(fake, 'NVDA');
+    image(fake, 'NVDA', 236.59, 233.95);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)).toMatchObject({ quotes: { 'STK:NVDA': { close: 233.95, marketDataType: 1 } }, full: ['STK:NVDA'] });
+    // The Orders page: the watchlist releases NVDA and the renderer drops it; the alert keeps the line.
+    svc.setRendererSubscriptions('watchlist', []);
+    reconciled();
+    const seen: Array<number | undefined> = [];
+    cleanup.push(svc.onQuote((q) => seen.push(q.last)));
+    const before = quoteEvents(events).length;
+    fake.emit('tickPrice', id, TICK.LAST, 236.7);
+    vi.advanceTimersByTime(LINGER_MS + 100);
+    expect(seen).toEqual([236.7]);
+    expect(quoteEvents(events)).toHaveLength(before);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    // Back on the Trade page: the whole quote, with its close and data type.
+    svc.setRendererSubscriptions('watchlist', basic('NVDA'));
+    reconciled();
+    vi.advanceTimersByTime(100);
+    const back = quoteEvents(events).at(-1)!;
+    expect(back.full).toEqual(['STK:NVDA']);
+    expect(back.quotes['STK:NVDA']).toMatchObject({ last: 236.7, close: 233.95, marketDataType: 1 });
+    // Then changes only.
+    fake.emit('tickPrice', id, TICK.LAST, 236.8);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.full).toBeUndefined();
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+  });
+
+  it('drops the owners of a replaced or closed renderer and sends the new one whole quotes', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setSubscriptions('alerts', basic('TSLA'));
+    svc.setRendererSubscriptions('watchlist', basic('AAPL', 'TSLA'));
+    svc.setRendererSubscriptions('search', basic('IBM'));
+    reconciled();
+    image(fake, 'AAPL', 333.42, 333.69);
+    image(fake, 'TSLA', 377.59, 370.59);
+    image(fake, 'IBM', 290, 288);
+    vi.advanceTimersByTime(100);
+    // A reload: the old renderer never released its owners; the new one starts empty and declares its own.
+    svc.resetRenderer();
+    svc.setRendererSubscriptions('watchlist', basic('AAPL', 'TSLA'));
+    reconciled();
+    vi.advanceTimersByTime(100);
+    const batch = quoteEvents(events).at(-1)!;
+    expect([...batch.full!].sort()).toEqual(['STK:AAPL', 'STK:TSLA']);
+    expect(batch.quotes['STK:AAPL']).toMatchObject({ last: 333.42, close: 333.69, marketDataType: 1 });
+    expect(batch.quotes['STK:TSLA']).toMatchObject({ close: 370.59 });
+    // The old renderer's search went with it: its line lingers and is cancelled.
+    vi.advanceTimersByTime(LINGER_MS);
+    expect(fake.callsOf('cancelMktData')).toEqual([[reqIdOf(fake, 'IBM')]]);
+    // The window is closed (macOS keeps Tape running): nothing is sent, its lines go, the alert keeps TSLA's.
+    svc.resetRenderer();
+    reconciled();
+    const n = quoteEvents(events).length;
+    fake.emit('tickPrice', reqIdOf(fake, 'TSLA'), TICK.LAST, 380);
+    vi.advanceTimersByTime(LINGER_MS + 100);
+    expect(quoteEvents(events)).toHaveLength(n);
+    expect(fake.callsOf('cancelMktData').map((c) => c[0])).toEqual([reqIdOf(fake, 'IBM'), reqIdOf(fake, 'AAPL')]);
+    expect(svc.getQuote('STK:TSLA')).toMatchObject({ last: 380, close: 370.59 });
+  });
+
+  it('sends a quote whole again when the renderer asks, but only one a renderer owner wants', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', basic('AAPL'));
+    svc.setSubscriptions('alerts', basic('NVDA'));
+    reconciled();
+    image(fake, 'AAPL', 333.42, 333.69);
+    image(fake, 'NVDA', 236.59, 233.95);
+    vi.advanceTimersByTime(100);
+    fake.emit('tickPrice', reqIdOf(fake, 'AAPL'), TICK.LAST, 333.5);
+    svc.resend(['STK:AAPL', 'STK:NVDA', 'STK:NONE']);
+    vi.advanceTimersByTime(100);
+    const batch = quoteEvents(events).at(-1)!;
+    expect(batch.full).toEqual(['STK:AAPL']);
+    expect(Object.keys(batch.quotes)).toEqual(['STK:AAPL']);
+    expect(batch.quotes['STK:AAPL']).toMatchObject({ last: 333.5, close: 333.69, marketDataType: 1 });
+  });
+
+  it('never sends a close IB marks not available', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', basic('NVDA'));
+    reconciled();
+    const id = reqIdOf(fake, 'NVDA');
+    image(fake, 'NVDA', 236.59, 233.95);
+    vi.advanceTimersByTime(100);
+    fake.emit('tickPrice', id, TICK.CLOSE, -1);
+    fake.emit('tickPrice', id, TICK.CLOSE, 0);
+    fake.emit('tickPrice', id, TICK.LAST, 236.7);
+    vi.advanceTimersByTime(100);
+    expect('close' in quoteEvents(events).at(-1)!.quotes['STK:NVDA']).toBe(false);
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(233.95);
+  });
+});
+
 describe('quotePatch', () => {
   it('sends the whole quote first, then changed and cleared fields', () => {
     const q: Quote = { key: 'K', last: 1, bid: 0.9, updatedAt: 1 };
@@ -784,11 +901,11 @@ describe('quote subscriptions in demo mode', () => {
   it('serves simulated quotes without touching IB', async () => {
     const { fake, svc, events } = await setup(true, false);
     fake.ready();
-    svc.setSubscriptions('watchlist', [
+    svc.setRendererSubscriptions('watchlist', [
       { contract: stock('AAPL'), profile: 'basic' },
       { contract: index('VIX', 'CBOE'), profile: 'basic' },
     ]);
-    cleanup.push(() => svc.setSubscriptions('watchlist', []));
+    cleanup.push(() => svc.setRendererSubscriptions('watchlist', []));
     await wait(RECONCILE_MS + 5);
     expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 1 });
     expect(svc.getQuote('STK:AAPL')?.last).toBeGreaterThan(150);

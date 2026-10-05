@@ -11,10 +11,14 @@
 // - lingering lines are the first to go when the line limit is reached, and visible views get
 //   lines before background owners (subscriptions.ts).
 // Renderer batches carry only the fields that changed per key; a key the renderer does not hold
-// (new, or released and pruned there) gets the whole quote. A lingering line keeps its quote
-// current in the main process without sending it, and so does a line only quiet owners (the
-// market data check) want. probe() opens a line outside the owners, within the same line budget.
-// In demo mode the quotes come from the simulator and IB is never asked for market data.
+// (new, or released and pruned there) gets the whole quote, listed in the batch's `full`. The
+// renderer holds exactly the quotes its own owners want, so only those are sent (`sent` mirrors its
+// copies): a lingering line keeps its quote current in the main process without sending it, and so
+// does a line only main-process owners (price alerts, the market data check) want. A renderer that
+// is replaced or closed takes its owners with it (resetRenderer), and one that gets changes for a
+// quote it does not hold asks for the whole quote (resend). probe() opens a line outside the
+// owners, within the same line budget. In demo mode the quotes come from the simulator and IB is
+// never asked for market data.
 //
 // Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
 // while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
@@ -241,18 +245,21 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     flushTimer = null;
     if (!dirty.size) return;
     const out: Record<string, Quote> = {};
+    const full: string[] = [];
     let count = 0;
     for (const key of dirty) {
       const q = quotes.get(key);
       if (!q || !book.published(key)) continue;
-      const patch = quotePatch(sent.get(key), q);
+      const prev = sent.get(key);
+      const patch = quotePatch(prev, q);
       sent.set(key, { ...q });
       if (!patch) continue;
       out[key] = patch;
+      if (!prev) full.push(key);
       count++;
     }
     dirty.clear();
-    if (count) ctx.emit({ type: 'quotes', quotes: out });
+    if (count) ctx.emit(full.length ? { type: 'quotes', quotes: out, full } : { type: 'quotes', quotes: out });
   };
 
   const markDirty = (key: string) => {
@@ -262,7 +269,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
 
   /**
    * A quote changed. Lingering lines (no owner) keep their quote current without publishing it;
-   * a quote only quiet owners want reaches the main-process listeners but not the renderer.
+   * a quote only main-process owners want reaches the main-process listeners but not the renderer.
    */
   const publish = (q: Quote) => {
     q.updatedAt = Date.now();
@@ -914,7 +921,24 @@ export function createQuoteService(ctx: MainContext): QuoteService {
 
   return {
     setSubscriptions(owner: string, subs: QuoteSubscription[]) {
-      if (book.set(String(owner), Array.isArray(subs) ? subs : [])) scheduleReconcile();
+      if (book.set(String(owner), Array.isArray(subs) ? subs : [], 'main')) scheduleReconcile();
+    },
+    setRendererSubscriptions(owner: string, subs: QuoteSubscription[]) {
+      if (book.set(String(owner), Array.isArray(subs) ? subs : [], 'renderer')) scheduleReconcile();
+    },
+    resetRenderer() {
+      // A new renderer holds no quote: everything it wants next is sent whole.
+      sent.clear();
+      if (book.clearRenderer()) scheduleReconcile();
+    },
+    resend(keys: string[]) {
+      if (!Array.isArray(keys)) return;
+      for (const key of keys) {
+        if (typeof key !== 'string' || !book.published(key)) continue;
+        sent.delete(key);
+        const q = quotes.get(key);
+        if (q && hasData(q)) markDirty(key);
+      }
     },
     getQuote: (key) => quotes.get(key),
     onQuote(listener) {

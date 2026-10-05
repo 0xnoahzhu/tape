@@ -25,6 +25,7 @@ describe('IPC dispatch while locked', () => {
       [
         'getSnapshot',
         'setQuoteSubscriptions',
+        'resendQuotes',
         'getHistory',
         'getOlderBars',
         'getContractInfo',

@@ -49,8 +49,12 @@ export type TapeEvent =
   | { type: 'positions'; positions: Position[] }
   | { type: 'orders'; orders: WorkingOrder[] }
   | { type: 'executions'; executions: Execution[] }
-  /** Partial quote updates, keyed by contract key. Batched (~100 ms). */
-  | { type: 'quotes'; quotes: Record<string, Quote> }
+  /**
+   * Quote updates, keyed by contract key. Batched (~100 ms). Each carries the fields that changed
+   * since the last one, except the keys in `full`: those carry the whole quote, which replaces the
+   * renderer's copy.
+   */
+  | { type: 'quotes'; quotes: Record<string, Quote>; full?: string[] }
   | { type: 'depth'; book: DepthBook }
   /** The market data check started or finished (Settings › Market data). */
   | { type: 'marketDataCheck'; state: MarketDataCheckState }
@@ -105,6 +109,11 @@ export interface TapeApi {
    * contracts and cancels the ones no owner wants any more. Pass [] to release.
    */
   setQuoteSubscriptions(owner: string, subs: QuoteSubscription[]): Promise<void>;
+  /**
+   * Asks for these quotes whole with the next `quotes` event: the renderer got changes for quotes it
+   * does not hold (quotes no owner of the renderer wants are ignored).
+   */
+  resendQuotes(keys: string[]): Promise<void>;
   getHistory(req: HistoryRequest): Promise<Bar[]>;
   /**
    * Up to `limit` bars older than `before` (unix seconds) for the same series as `req`, served from
@@ -219,6 +228,7 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   connect: 'deny',
   disconnect: 'deny',
   setQuoteSubscriptions: 'allow',
+  resendQuotes: 'allow',
   getHistory: 'allow',
   getOlderBars: 'allow',
   searchSymbols: 'deny',

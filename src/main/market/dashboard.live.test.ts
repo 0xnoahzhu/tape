@@ -83,7 +83,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
   ctx.ib.onRequestError((e) => errors.push(`${e.reqId} ${e.code} ${e.message}`));
 
   afterAll(async () => {
-    ctx.quotes.setSubscriptions('dashboard-div', []);
+    ctx.quotes.setRendererSubscriptions('dashboard-div', []);
     await ctx.ib.disconnect();
     rmSync(dir, { recursive: true, force: true });
     expect(orderFrames).toEqual([]);
@@ -124,7 +124,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
     const off = ctx.ib.on(EventName.sent, (tokens: unknown) => {
       if (Array.isArray(tokens) && Number(tokens[0]) === OUT_MSG_ID.REQ_MKT_DATA) sent.push(tokens.join('|'));
     });
-    ctx.quotes.setSubscriptions(
+    ctx.quotes.setRendererSubscriptions(
       'dashboard-div',
       symbols.map((s) => ({ contract: stock(s), profile: 'dividends' as const })),
     );

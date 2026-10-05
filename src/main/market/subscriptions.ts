@@ -1,6 +1,7 @@
-// Quote subscription bookkeeping (pure, unit-tested): unions the subscriptions of all UI
-// owners per contract, merges their profiles, keeps a stable priority order (visible views
-// before background owners, then first come) and maps each contract to its IB generic tick list.
+// Quote subscription bookkeeping (pure, unit-tested): unions the subscriptions of all owners
+// (renderer views and main-process services) per contract, merges their profiles, keeps a stable
+// priority order (visible views before background owners, then first come) and maps each contract
+// to its IB generic tick list.
 
 import { contractKey } from '@shared/contract';
 import type { ContractRef, QuoteProfile, QuoteSubscription, SecType } from '@shared/types';
@@ -44,10 +45,11 @@ export const OwnerPriority = { Visible: 0, Background: 1 } as const;
 export const MARKET_CHECK_OWNER = 'md-check';
 
 /**
- * Main-process owners whose quotes the renderer does not need: a contract only they want is not
- * sent to the renderer (no renderer owner would ever release it there).
+ * Where an owner lives. The renderer holds exactly the quotes its own owners want (it drops the
+ * others, state/quoteSubscriptions.ts), so only those are sent to it; a main-process owner (price
+ * alerts, the market data check) reads its quotes in main.
  */
-const QUIET_OWNERS: ReadonlySet<string> = new Set([MARKET_CHECK_OWNER]);
+export type OwnerKind = 'main' | 'renderer';
 
 /** Priority class of an owner ("<owner>-und" companions share their owner's class). */
 export function ownerPriority(owner: string): number {
@@ -103,10 +105,17 @@ function richer(a: ContractRef, b: ContractRef): ContractRef {
   return a;
 }
 
+interface Owner {
+  name: string;
+  kind: OwnerKind;
+  subs: QuoteSubscription[];
+}
+
 export class SubscriptionBook {
-  private readonly owners = new Map<string, QuoteSubscription[]>();
+  /** By kind and name, so a renderer owner never replaces a main-process one of the same name. */
+  private readonly owners = new Map<string, Owner>();
   private readonly seqs = new Map<string, number>();
-  /** Keys some owner outside QUIET_OWNERS wants. */
+  /** Keys some renderer owner wants. */
   private readonly shown = new Set<string>();
   private counter = 0;
 
@@ -114,30 +123,43 @@ export class SubscriptionBook {
    * Replaces one owner's subscriptions. Returns true when the wanted set changed (contracts,
    * their profiles, their priority, or whether the renderer gets their quotes).
    */
-  set(owner: string, subs: QuoteSubscription[]): boolean {
+  set(owner: string, subs: QuoteSubscription[], kind: OwnerKind = 'main'): boolean {
     const before = this.signature();
     const valid = subs.filter((s) => s && s.contract && s.contract.symbol && s.contract.secType);
-    if (valid.length) this.owners.set(owner, valid);
-    else this.owners.delete(owner);
+    const id = `${kind}:${owner}`;
+    if (valid.length) this.owners.set(id, { name: owner, kind, subs: valid });
+    else this.owners.delete(id);
+    this.update();
+    return this.signature() !== before;
+  }
+
+  /** Drops every renderer owner (the renderer was replaced or closed). Returns true when the wanted set changed. */
+  clearRenderer(): boolean {
+    const before = this.signature();
+    for (const [id, o] of [...this.owners]) if (o.kind === 'renderer') this.owners.delete(id);
+    this.update();
+    return this.signature() !== before;
+  }
+
+  private update(): void {
     const wanted = new Set<string>();
     this.shown.clear();
-    for (const [name, list] of this.owners) {
-      for (const s of list) {
+    for (const o of this.owners.values()) {
+      for (const s of o.subs) {
         const key = contractKey(s.contract);
         wanted.add(key);
-        if (!QUIET_OWNERS.has(name)) this.shown.add(key);
+        if (o.kind === 'renderer') this.shown.add(key);
         if (!this.seqs.has(key)) this.seqs.set(key, ++this.counter);
       }
     }
     for (const key of [...this.seqs.keys()]) if (!wanted.has(key)) this.seqs.delete(key);
-    return this.signature() !== before;
   }
 
   /** All wanted contracts in priority order (visible owners first, then first come), with the union of their profiles. */
   wanted(): WantedContract[] {
     const byKey = new Map<string, { contract: ContractRef; profiles: Set<QuoteProfile>; priority: number }>();
-    for (const [owner, list] of this.owners) {
-      const priority = ownerPriority(owner);
+    for (const { name, subs: list } of this.owners.values()) {
+      const priority = ownerPriority(name);
       for (const s of list) {
         const key = contractKey(s.contract);
         const entry = byKey.get(key);
@@ -159,7 +181,7 @@ export class SubscriptionBook {
     return this.seqs.has(key);
   }
 
-  /** True when an owner whose quotes go to the renderer wants the contract (not only quiet owners). */
+  /** True when a renderer owner wants the contract (its quotes go to the renderer). */
   published(key: string): boolean {
     return this.shown.has(key);
   }

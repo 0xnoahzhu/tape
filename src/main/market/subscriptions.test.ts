@@ -95,6 +95,21 @@ describe('owner priority', () => {
     expect(b.wanted().map((w) => w.key)).toEqual(['STK:TSLA', 'STK:NVDA', 'STK:MSFT', 'STK:AAPL']);
   });
 
+  it('publishes only what renderer owners want, keeps owners of the same name apart and drops the renderer\'s at once', () => {
+    const b = new SubscriptionBook();
+    expect(b.set('alerts', [{ contract: stock('NVDA'), profile: 'basic' }])).toBe(true);
+    expect(b.published('STK:NVDA')).toBe(false);
+    expect(b.set('watchlist', [{ contract: stock('NVDA'), profile: 'basic' }], 'renderer')).toBe(true);
+    expect(b.published('STK:NVDA')).toBe(true);
+    // A renderer owner named like a main-process one does not replace it.
+    b.set('alerts', [{ contract: stock('MSFT'), profile: 'basic' }], 'renderer');
+    expect(b.wanted().map((w) => w.key)).toEqual(['STK:NVDA', 'STK:MSFT']);
+    expect(b.clearRenderer()).toBe(true);
+    expect(b.wanted().map((w) => w.key)).toEqual(['STK:NVDA']);
+    expect(b.published('STK:NVDA')).toBe(false);
+    expect(b.clearRenderer()).toBe(false);
+  });
+
   it('classifies owners', () => {
     for (const o of ['chart', 'ticket', 'watchlist', 'search', 'options-chain', 'options-underlying', 'options-legs']) expect(ownerPriority(o)).toBe(OwnerPriority.Visible);
     for (const o of ['alerts', 'options-risk', 'options-term', 'portfolio', 'bell-risk-count', 'bell-alerts']) expect(ownerPriority(o)).toBe(OwnerPriority.Background);
