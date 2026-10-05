@@ -80,6 +80,23 @@ idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock s
 Where IBKR does not provide a value (no market data permission, a competing session, a closed market) Tape
 shows "—" or an explanatory empty state instead of inventing numbers.
 
+**Market data check** — *Settings › Market Data* asks IB what this account actually gets: for a few seconds
+Tape holds streaming quotes for SPY (through SMART and on its own exchange), a near-the-money SPY option and
+SPX, and with *Check now* also a Level 2 book, then releases them. Each market reads Live, Live on one
+exchange only, Delayed, No data or Frozen (market closed), with IB's code, when it was checked, and what to
+do about it (a competing live session, a subscription not enabled for the API or not shared with the paper
+account, a missing depth subscription). The check runs quietly after connecting and again when the section
+opens with a result older than five minutes; the last result is kept across restarts. Lines already open for
+the watchlist, chart or option chain are reused, and regulatory snapshots (which IBKR charges for) are never
+used.
+
+**Exchange quotes when SMART is delayed** — IBKR can send an account a stock's consolidated (SMART) quote
+delayed while the stock's own exchange sends live data (seen on a paper account: AAPL delayed on SMART, live
+on NASDAQ). Tape then quotes that stock from its primary exchange, marked "Live · NASDAQ" on the chart and
+"NASDAQ" in the watchlist: the best bid and ask on that exchange, not the national best bid and offer. It
+tries SMART again every 10 minutes, after a reconnect and when a competing session ends, and goes back to
+the consolidated quote as soon as SMART is live.
+
 ## Requirements
 
 - **Node.js 22.18 or newer** (the build scripts are TypeScript files run directly by Node) and

@@ -53,6 +53,7 @@ through the shared `MainContext` (never inside their factory).
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
 | `market/corporateEvents.ts` | Upcoming earnings of the holdings from Wall Street Horizon (see *Corporate events*) |
+| `market/marketCheck.ts` | The active market data check (see *Market data check*) |
 | `market/alerts.ts` | Price alert evaluation |
 | `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
@@ -278,7 +279,7 @@ or IPC; the main side (`client.ts`) is an async RPC.
   | 30-minute and hour bars (30 mins–8 hours) | 400 days, so a year of them (and a 1M range of 30-minute bars) stays cached; a series left empty (any of these) is removed |
   | Any series (in practice daily and longer) | Evicted with its coverage and head timestamp when not read or written for 90 days |
   | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (seconds, then minutes and hours, then daily; least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
-  | `kv` (contract details, option chains, coverage, head timestamps) | Entries not rewritten for 180 days are deleted |
+  | `kv` (contract details, option chains, coverage, head timestamps, the last market data check) | Entries not rewritten for 180 days are deleted |
   | Executions | Never deleted automatically (the trade journal is the user's record) |
   | NAV | All of it; compacted to one point per day after 10 days by `navHistory.ts` |
 
@@ -402,6 +403,79 @@ only by example and the paper account cannot receive any, so `parseWshEarnings` 
 defensively (an array, `{ events }` or arrays keyed by event type; earnings types `wshe_ed` /
 `earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an answer it cannot read is
 logged once. Dividends do not come from WSH but from the dividend tick above. The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3).
+
+Main-process owners in `subscriptions.ts → QUIET_OWNERS` (the market data check, `md-check`) get lines
+like any other owner, but a contract only they want is never sent to the renderer. `probe()` opens a line
+outside the owners (the check's primary-exchange line); probes and fallback side lines count against the
+95-line budget like owner lines, and a contract that finds no free line while they are open carries the
+line-limit error until they close (closing one reconciles again).
+
+#### Primary-exchange fallback
+
+IB may send an account a stock's SMART (consolidated) quote delayed while the stock's own exchange sends
+live data with the same subscriptions (paper account DUP899854, pre-market: AAPL on SMART type 3 by symbol
+or conId, with or without `primaryExch`, 10168 with type 1 requested; on NASDAQ type 1; NVDA, MSFT, SPY …
+type 1 on SMART). For SMART-routed US dollar stocks `quotes.ts` keeps a route per contract:
+
+```
+smart ──delayed (type 3 / 4, 10167, 354, 10168)──▶ side line on the primary exchange
+  side: type 1 / 2 ──▶ primary: the side line becomes the quote's line, the SMART line is cancelled,
+                       quote.source = { kind: 'primary', exchange }
+  side: type 3 / 4, 10167, an error, nothing in 10 s ──▶ stay on SMART; no probe for 30 min, then one
+                       if the line is still delayed
+primary ──every 10 min; at once when a 10197 episode ends (a real price) or the exchange goes delayed──▶
+                       side line on SMART: type 1 / 2 → back to SMART (exchange line cancelled,
+                       source cleared); otherwise next retry in 10 min
+handshake (reconnect, 1101) ──▶ every line starts on SMART again
+```
+
+The primary exchange comes from contract details (`primaryExch`); IB serves market data directly on the
+codes it reports (checked live: NASDAQ for AAPL, NYSE for IBM, ARCA for SPY, AMEX for IMO, BATS for CBOE;
+`US_PRIMARY_EXCHANGES`). The side line has the line's generic ticks; its ticks are held until it wins and
+then applied. A side line lives at most 10 s, so the steady state holds one line per contract; a line
+re-requested for new profiles stays on the exchange; lingering lines are not probed. The renderer marks
+such quotes: the chart header reads "Live · NASDAQ" and watchlist rows show the exchange, with a tooltip
+that the bid / ask are that exchange's best, not the national best bid and offer.
+
+### Market data check
+
+`market/marketCheck.ts` answers "what does this account get?" by asking IB rather than reading the
+quotes on screen. A check (`checkMarketData`, or `ctx.marketCheck.run`) holds streaming lines
+(`reqMktData` with snapshot and regulatory snapshot off: regulatory snapshots cost money) for a few
+seconds:
+
+| Market | Lines | Result |
+| --- | --- | --- |
+| US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the quotes the fallback serves from their exchange at the time |
+| US options | an option line a view already holds with an answer, else the SPY call of the first expiration after today with the whole strike nearest SPY's price (chain → contract details) | its status |
+| Indices | SPX on CBOE via the owner | its status |
+| Level 2 | only on *Check now*: the depth view's book when it has levels, else one `reqMktDepth` (SPY, SMART depth, 5 rows), cancelled at once | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354 no data |
+
+Contracts another owner holds, or whose line lingers, answer at once from their quote (their type or
+error; nothing is requested). Otherwise a line's answer is its `marketDataType` (1 live, 2 frozen, 3 / 4
+delayed) or its error, watched 1.5 s after the first answer (10197 may follow a type), 4 s after a 354
+(with type 4 set IB often serves delayed data on the same line: SPX answered 354 and half a second later
+type 3 and 10167); no answer in 8 s is no data. 10197 overrides everything (nothing flows). Tape's own
+outcomes carry code −1 and `own`: `timeout`, `lines` (no free line), `closed`, `contract` (no option
+found). A session that closes midway fails the check and keeps the previous result.
+
+The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
+messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
+data cache) and pushed as `marketDataCheck` events (`running` too; snapshot field `marketDataCheck`). A
+check without Level 2 keeps the previous Level 2 answer of the same account. Concurrent calls join the
+running check; a request with Level 2 during one without runs right after it. A quiet check (no Level 2)
+runs 8 s after every handshake unless one ran for the account in the last 5 minutes.
+`checkMarketData` is refused while locked (`LOCK_POLICY`: a user action that sends requests).
+
+Settings › Market data (`MarketDataSection.tsx`, `logic.ts → checkNeeded / checkItems / checkReasons`)
+shows per market the checked status ("Live", "Live · NASDAQ only", "Delayed", "No data", "Frozen (market
+closed)"), the instrument with the SMART / exchange split or IB's code, "checked 2 min ago", the quotes of
+this session as a second line, and one note per reason: a competing session (10197), live data not
+enabled for the API (354 / 10089 / 10090 / 10091 / 10167 / 10168 / 10186 or plain delayed data; for a paper
+account the market data sharing setting, which takes up to a day), SMART delayed but the exchange live, a
+missing or partial depth subscription (2152 lists the exchanges), no free depth line (309), no answer, no
+free line, no option found. Opening the section checks again when the result is older than 5 minutes or
+belongs to another account; *Check now* includes Level 2.
 
 ### API log
 
