@@ -40,6 +40,9 @@ const VISIBLE_OWNERS: ReadonlySet<string> = new Set([
   'symbol-activity',
   'options-alerts',
   'alert-form',
+  // The Last column of the open orders (Portfolio › Orders, the activity panel's Open orders tab).
+  'orders',
+  'symbol-orders',
 ]);
 
 export const OwnerPriority = { Visible: 0, Background: 1 } as const;
