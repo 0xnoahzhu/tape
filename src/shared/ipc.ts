@@ -21,6 +21,8 @@ import type {
   HistoryRequest,
   LocalizedText,
   LockState,
+  MarketDataCheck,
+  MarketDataCheckState,
   NavPoint,
   NotificationKind,
   OptionChainParams,
@@ -50,6 +52,8 @@ export type TapeEvent =
   /** Partial quote updates, keyed by contract key. Batched (~100 ms). */
   | { type: 'quotes'; quotes: Record<string, Quote> }
   | { type: 'depth'; book: DepthBook }
+  /** The market data check started or finished (Settings › Market data). */
+  | { type: 'marketDataCheck'; state: MarketDataCheckState }
   /**
    * New API log entries, batched (only while a view streams them). `reset` means the renderer
    * should drop its copy first. `logFilePath` is the current day's log file (it changes at midnight).
@@ -119,6 +123,13 @@ export interface TapeApi {
    * results are kept per instrument for the New York day.
    */
   getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
+  /**
+   * Checks what IB delivers per market (US stocks on SMART and on the primary exchange, an option,
+   * an index and, with `depth`, Level 2) with streaming lines held for a few seconds, then released.
+   * A check already running is joined. The result is kept, persisted and pushed as a
+   * `marketDataCheck` event. `auto`: started by Settings itself (an old result), not by the user.
+   */
+  checkMarketData(opts?: { depth?: boolean; auto?: boolean }): Promise<MarketDataCheck>;
 
   // Local cache ------------------------------------------------------------
   /** Size and contents of tape.db (bars, series, journaled executions). */
@@ -216,6 +227,8 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   getOptionChainParams: 'allow',
   // The dashboard's events widget keeps its data feed while locked, like quotes and history.
   getEarnings: 'allow',
+  // A user action from Settings that sends requests to IB (the views behind the lock never call it).
+  checkMarketData: 'deny',
   getCacheStats: 'allow',
   clearMarketDataCache: 'deny',
   placeOrder: 'deny',

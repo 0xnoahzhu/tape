@@ -12,12 +12,13 @@
 //   lines before background owners (subscriptions.ts).
 // Renderer batches carry only the fields that changed per key; a key the renderer does not hold
 // (new, or released and pruned there) gets the whole quote. A lingering line keeps its quote
-// current in the main process without sending it. In demo mode the quotes come from the
-// simulator and IB is never asked for market data.
+// current in the main process without sending it, and so does a line only quiet owners (the
+// market data check) want. probe() opens a line outside the owners, within the same line budget.
+// In demo mode the quotes come from the simulator and IB is never asked for market data.
 
 import { EventName } from '../ib/tws';
 import type { ContractRef, MarketDataType, Quote, QuoteSubscription } from '@shared/types';
-import type { MainContext, QuoteService } from '../context';
+import type { MainContext, ProbeEvent, QuoteService } from '../context';
 import { DEMO_TICK_MS, demoMarket } from './demo';
 import { toIbContract } from './ibContract';
 import { afterStartup, isIbConnected, isWarningCode } from './ibRequest';
@@ -55,6 +56,13 @@ interface Line {
   resolved: boolean;
   /** Epoch ms when the last owner released the contract; undefined while it is wanted. */
   releasedAt?: number;
+}
+
+/** A line opened by probe(), outside the owners. */
+interface Probe {
+  listener: (e: ProbeEvent) => void;
+  /** IB ended the request with an error (it no longer holds a line). */
+  dead: boolean;
 }
 
 type QuoteError = NonNullable<Quote['error']>;
@@ -105,6 +113,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   /** The renderer's copy per key (the quote as of the last batch); absent: send the whole quote. */
   const sent = new Map<string, Quote>();
   const listeners = new Set<(q: Quote) => void>();
+  const noticeListeners = new Set<(key: string, code: number, message: string) => void>();
   const dirty = new Set<string>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
@@ -113,6 +122,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   // IB lines, valid only while `ready` (between onReady and onClosed).
   const lines = new Map<string, Line>();
   const byReqId = new Map<number, Line>();
+  const probes = new Map<number, Probe>();
   let ready = false;
 
   // Demo feed.
@@ -144,7 +154,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     let count = 0;
     for (const key of dirty) {
       const q = quotes.get(key);
-      if (!q || !book.has(key)) continue;
+      if (!q || !book.published(key)) continue;
       const patch = quotePatch(sent.get(key), q);
       sent.set(key, { ...q });
       if (!patch) continue;
@@ -160,7 +170,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     flushTimer ??= setTimeout(flush, FLUSH_MS);
   };
 
-  /** A quote changed. Lingering lines (no owner) keep their quote current without publishing it. */
+  /**
+   * A quote changed. Lingering lines (no owner) keep their quote current without publishing it;
+   * a quote only quiet owners want reaches the main-process listeners but not the renderer.
+   */
   const publish = (q: Quote) => {
     q.updatedAt = Date.now();
     if (!book.has(q.key)) return;
@@ -171,7 +184,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         console.error('[quotes] listener failed:', err);
       }
     }
-    markDirty(q.key);
+    if (book.published(q.key)) markDirty(q.key);
   };
 
   /** Sets or clears (undefined) a quote's error. The key is kept so the renderer's merge clears it too. */
@@ -247,10 +260,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
   };
 
-  /** Lines that hold one of IB's market data lines (dead requests do not). */
+  /** Lines that hold one of IB's market data lines (dead requests do not), probes included. */
   const openLineCount = (): number => {
     let n = 0;
     for (const line of lines.values()) if (!line.dead) n++;
+    for (const p of probes.values()) if (!p.dead) n++;
     return n;
   };
 
@@ -301,13 +315,21 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     let open = openLineCount();
     for (const w of active) {
-      if (isLineLimit(quotes.get(w.key)?.error)) setError(w.key, undefined);
-      if (lines.has(w.key)) continue;
+      const limited = isLineLimit(quotes.get(w.key)?.error);
+      if (lines.has(w.key)) {
+        if (limited) setError(w.key, undefined);
+        continue;
+      }
       if (open >= MAX_MARKET_DATA_LINES) {
-        if (!reclaimLingering()) break;
+        // Probe lines hold the rest for a few seconds; closing them reconciles again.
+        if (!reclaimLingering()) {
+          if (!limited) setError(w.key, { ...LINE_LIMIT_ERROR, final: true });
+          continue;
+        }
         open--;
       }
       if (requestLine(w)) open++;
+      else if (limited) setError(w.key, undefined);
     }
     for (const w of overflow) setError(w.key, { ...LINE_LIMIT_ERROR, final: true });
     scheduleSweep();
@@ -360,7 +382,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     if (reconcileTimer) clearTimeout(reconcileTimer);
     reconcileTimer = null;
     // The renderer drops quotes no owner wants: a key wanted again later gets the whole quote.
-    for (const key of sent.keys()) if (!book.has(key)) sent.delete(key);
+    for (const key of sent.keys()) if (!book.published(key)) sent.delete(key);
     pruneQuotes();
     const wanted = book.wanted();
     if (ctx.demo) reconcileDemo(wanted);
@@ -368,7 +390,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     // A reused line already has data the renderer lacks: send it now rather than at the next tick.
     for (const w of wanted) {
       const q = quotes.get(w.key);
-      if (q && !sent.has(w.key) && hasData(q)) markDirty(w.key);
+      if (q && book.published(w.key) && !sent.has(w.key) && hasData(q)) markDirty(w.key);
     }
   };
 
@@ -382,7 +404,23 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     if (quotes.get(line.key)?.error?.final) setError(line.key, undefined);
   };
 
+  /** Calls a probe's listener; false when the request id is not a probe. */
+  const toProbe = (reqId: number, e: ProbeEvent): boolean => {
+    const p = probes.get(reqId);
+    if (!p) return false;
+    try {
+      p.listener(e);
+    } catch (err) {
+      console.error('[quotes] probe listener failed:', err);
+    }
+    return true;
+  };
+
   const onTick = (reqId: number, tick: TickEvent) => {
+    if (probes.has(reqId)) {
+      if (tick.kind !== 'option' && tick.value !== undefined) toProbe(reqId, { kind: 'tick', field: tick.field, value: tick.value });
+      return;
+    }
     const line = byReqId.get(reqId);
     if (!line) return;
     if (line.dead) revive(line);
@@ -396,12 +434,30 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   };
 
   const onLineError = (e: { reqId: number; code: number; message: string }) => {
+    const probe = probes.get(e.reqId);
+    if (probe) {
+      if (DEAD_CODES.has(e.code) && !probe.dead) {
+        probe.dead = true;
+        scheduleReconcile(); // its line is free again
+      } else if (e.code === DELAYED_FALLBACK_CODE) probe.dead = false;
+      toProbe(e.reqId, { kind: 'error', code: e.code, message: e.message });
+      return;
+    }
     const line = byReqId.get(e.reqId);
     if (!line) return;
     // 21xx are notices (farm status, fractional size rules); 10167 (delayed data shown) and
     // 10090 / 10091 (some ticks not subscribed) still deliver data, and marketDataType reports the kind.
     if (isWarningCode(e.code)) {
       if (e.code === DELAYED_FALLBACK_CODE && line.dead) revive(line);
+      if (book.has(line.key)) {
+        for (const l of noticeListeners) {
+          try {
+            l(line.key, e.code, e.message);
+          } catch (err) {
+            console.error('[quotes] notice listener failed:', err);
+          }
+        }
+      }
       return;
     }
     const retry = e.code === 200 && !line.resolved && !line.contract.conId && line.contract.secType !== 'BAG';
@@ -413,6 +469,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const forgetLines = () => {
     lines.clear();
     byReqId.clear();
+    // The session is gone and its probes with it.
+    const open = [...probes.keys()];
+    for (const id of open) toProbe(id, { kind: 'error', code: -1, message: 'Connection closed' });
+    probes.clear();
     if (sweepTimer) clearTimeout(sweepTimer);
     sweepTimer = null;
     pruneQuotes();
@@ -452,8 +512,14 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         onTick(reqId, { kind: 'option', field, iv, delta, gamma, vega, theta, undPrice }),
     );
     ib.on(EventName.marketDataType, (reqId: number, type: number) => {
+      if (type < 1 || type > 4) return;
+      if (probes.has(reqId)) {
+        probes.get(reqId)!.dead = false;
+        toProbe(reqId, { kind: 'type', type: type as MarketDataType });
+        return;
+      }
       const line = byReqId.get(reqId);
-      if (!line || type < 1 || type > 4) return;
+      if (!line) return;
       if (line.dead) revive(line);
       const q = ensureQuote(line.key);
       if (q.marketDataType === type) return;
@@ -474,6 +540,40 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     onQuote(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    onNotice(listener) {
+      noticeListeners.add(listener);
+      return () => void noticeListeners.delete(listener);
+    },
+    wanted: () => book.wanted().map((w) => ({ contract: w.contract, quote: quotes.get(w.key) })),
+    probe(contract, genericTicks, listener) {
+      const api = liveApi();
+      if (!api) return null;
+      if (openLineCount() >= MAX_MARKET_DATA_LINES && !reclaimLingering()) return null;
+      const reqId = ctx.ib.nextReqId();
+      const probe: Probe = { listener, dead: false };
+      probes.set(reqId, probe);
+      try {
+        api.reqMktData(reqId, toIbContract(contract), genericTicks, false, false);
+      } catch (err) {
+        probes.delete(reqId);
+        console.error('[quotes] probe reqMktData failed:', err);
+        return null;
+      }
+      return {
+        close() {
+          if (probes.get(reqId) !== probe) return;
+          probes.delete(reqId);
+          const live = liveApi();
+          if (probe.dead || !live) return;
+          scheduleReconcile(); // a contract may wait for this line
+          try {
+            live.cancelMktData(reqId);
+          } catch (err) {
+            console.error('[quotes] cancelMktData failed:', err);
+          }
+        },
+      };
     },
   };
 }

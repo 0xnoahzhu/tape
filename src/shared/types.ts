@@ -84,6 +84,75 @@ export interface QuoteSubscription {
   profile: QuoteProfile;
 }
 
+/**
+ * What IB answered for one market in an active market data check (see main/market/marketCheck.ts):
+ * live (type 1), frozen (type 2: live entitlement, market closed), delayed (type 3 / 4) or no data
+ * (an error, or no answer in time).
+ */
+export type MarketCheckStatus = 'live' | 'frozen' | 'delayed' | 'nodata';
+
+/** The markets the check covers (the rows of Settings › Market data). */
+export type MarketCheckMarket = 'stk' | 'opt' | 'depth' | 'ind';
+
+/** One line the check opened or reused, and what IB answered on it. */
+export interface MarketCheckProbe {
+  status: MarketCheckStatus;
+  /** Exchange of the line: 'SMART', or a primary exchange such as 'ARCA' / 'NASDAQ'. */
+  exchange: string;
+  marketDataType?: MarketDataType;
+  /** IB's error or notice for the line (354, 10167, 10168, 10197, 309, …); -1 for Tape's own (no answer, no free line). */
+  code?: number;
+  message?: string;
+  /** The line was already open for another owner (nothing new was requested). */
+  reused?: boolean;
+  /**
+   * Why Tape itself reports no data (code -1): IB did not answer in time, no market data line was
+   * free, the session closed, or no contract to test was found.
+   */
+  own?: 'timeout' | 'lines' | 'closed' | 'contract';
+}
+
+export interface MarketCheckItem {
+  market: MarketCheckMarket;
+  /** The market's overall status: the SMART line, or the primary exchange's when only that one is live. */
+  status: MarketCheckStatus;
+  /** What was checked: "SPY", "SPY 10/06 670 Call", "SPX". */
+  instrument: string;
+  /** The line that decides `status` (stocks: SMART). */
+  probe: MarketCheckProbe;
+  /**
+   * Stocks: the same instrument on its primary exchange. When SMART is delayed or has no data and
+   * this line is live, `status` is live with `via` set to its exchange.
+   */
+  primary?: MarketCheckProbe;
+  /**
+   * Live from these exchanges only: stocks whose SMART line is delayed but whose primary exchange is
+   * live ("Live · ARCA only"), Level 2 that IB sends from some exchanges only (2152: "Live · IEX only").
+   */
+  via?: string;
+  /** Stocks: quotes of this session served by their primary exchange because SMART was delayed. */
+  fallback?: string[];
+  /** Epoch ms when this market was checked (depth keeps its time when a later check skips it). */
+  checkedAt: number;
+}
+
+/** The result of the last market data check (kept by main, persisted in tape.db). */
+export interface MarketDataCheck {
+  checkedAt: number;
+  /** The account and client id that were connected. */
+  account?: string;
+  clientId?: number;
+  /** 'auto': after connecting, or when Settings › Market data opened with an old result; 'user': Check now. */
+  trigger: 'auto' | 'user';
+  items: MarketCheckItem[];
+}
+
+/** The last result and whether a check runs now (snapshot field and `marketDataCheck` events). */
+export interface MarketDataCheckState {
+  result: MarketDataCheck | null;
+  running: boolean;
+}
+
 export interface Quote {
   key: string;
   bid?: number;
@@ -852,6 +921,8 @@ export interface AppSnapshot {
   lock: LockState;
   /** This launch follows a Forgot-PIN reset (Settings › Connection opens, no auto-connect). */
   afterReset: boolean;
+  /** The last market data check and whether one runs now. */
+  marketDataCheck: MarketDataCheckState;
 }
 
 // ---------------------------------------------------------------------------

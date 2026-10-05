@@ -18,6 +18,10 @@ import type {
   ContractRef,
   CorporateEarnings,
   DeepPartial,
+  DepthBook,
+  MarketDataCheck,
+  MarketDataCheckState,
+  MarketDataType,
   Execution,
   HistoryPage,
   HistoryRequest,
@@ -122,11 +126,30 @@ export interface ContractService {
   search(pattern: string): Promise<SymbolMatch[]>;
 }
 
+/** What a probe line reports (QuoteService.probe). */
+export type ProbeEvent =
+  | { kind: 'type'; type: MarketDataType }
+  | { kind: 'tick'; field: number; value: number | string }
+  | { kind: 'error'; code: number; message: string };
+
 export interface QuoteService {
   setSubscriptions(owner: string, subs: QuoteSubscription[]): void;
   getQuote(key: string): Quote | undefined;
   /** Fires for every applied quote change (after merging), before batching to the renderer. */
   onQuote(listener: (q: Quote) => void): Unsubscribe;
+  /**
+   * IB's notices for a wanted contract's line that do not end it and are not kept on the quote
+   * (10167 delayed data shown, 10090 / 10091 some ticks not subscribed).
+   */
+  onNotice(listener: (key: string, code: number, message: string) => void): Unsubscribe;
+  /** The contracts owners want now, with their quotes. */
+  wanted(): Array<{ contract: ContractRef; quote?: Quote }>;
+  /**
+   * Opens a market data line outside the owners (the market data check's primary exchange line).
+   * It counts against the line budget like any other: null when no line is free or there is no
+   * IB session. close() cancels it; the session's end closes it as well (an error event, code -1).
+   */
+  probe(contract: ContractRef, genericTicks: string, listener: (e: ProbeEvent) => void): { close(): void } | null;
 }
 
 export interface HistoryService {
@@ -137,6 +160,15 @@ export interface HistoryService {
 
 export interface DepthService {
   set(contract: ContractRef | null): Promise<void>;
+  /** The book of the open depth line (null when none is wanted). */
+  current(): DepthBook | null;
+}
+
+/** The active market data check (market/marketCheck.ts). */
+export interface MarketCheckService {
+  getState(): MarketDataCheckState;
+  /** Runs a check (or joins the one running); `depth` adds Level 2 (only on the user's request). */
+  run(opts: { depth?: boolean; trigger: MarketDataCheck['trigger'] }): Promise<MarketDataCheck>;
 }
 
 export interface OptionsService {
@@ -203,6 +235,7 @@ export interface MainContext {
   depth: DepthService;
   options: OptionsService;
   corporateEvents: CorporateEventsService;
+  marketCheck: MarketCheckService;
   alerts: AlertService;
   account: AccountService;
   orders: OrderService;

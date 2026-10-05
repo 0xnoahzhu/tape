@@ -352,6 +352,89 @@ describe('quote subscriptions with IB', () => {
   });
 });
 
+describe('probe lines and quiet owners', () => {
+  it('opens a probe line within the line budget, forwards its answers and cancels it on close', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    const seen: unknown[] = [];
+    const probe = svc.probe({ ...stock('SPY'), conId: 756733, exchange: 'ARCA' }, '', (e) => seen.push(e))!;
+    const [id, contract, ticks, snapshot, regulatory] = fake.callsOf('reqMktData')[0] as [number, unknown, string, boolean, boolean];
+    expect([contract, ticks, snapshot, regulatory]).toEqual([{ conId: 756733, exchange: 'ARCA', secType: 'STK', currency: 'USD' }, '', false, false]);
+    fake.emit('marketDataType', id, 1);
+    fake.emit('tickPrice', id, TICK.BID, 670.1);
+    fake.error(id, 10167, 'Displaying delayed market data.');
+    expect(seen).toEqual([
+      { kind: 'type', type: 1 },
+      { kind: 'tick', field: TICK.BID, value: 670.1 },
+      { kind: 'error', code: 10167, message: 'Displaying delayed market data.' },
+    ]);
+    // Not a quote of any owner.
+    expect(svc.getQuote('STK:SPY')).toBeUndefined();
+    probe.close();
+    probe.close();
+    expect(fake.callsOf('cancelMktData')).toEqual([[id]]);
+  });
+
+  it('counts probes against the cap, does not cancel a dead one and ends them with the session', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    svc.setSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    reconciled();
+    const events: unknown[] = [];
+    const a = svc.probe(stock('SPY'), '', (e) => events.push(e));
+    expect(a).not.toBeNull();
+    // 95 lines in use: no second probe, and a new owner contract overflows.
+    expect(svc.probe(stock('QQQ'), '', () => undefined)).toBeNull();
+    svc.setSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    reconciled();
+    expect(svc.getQuote('STK:MSFT')?.error).toMatchObject({ message: 'Market data line limit reached' });
+    const probeId = fake.callsOf('reqMktData').find((c) => (c[1] as { symbol: string }).symbol === 'SPY')![0] as number;
+    fake.error(probeId, 354, 'Requested market data is not subscribed.');
+    // The dead probe gives its line back.
+    svc.setSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }, { contract: stock('IBM'), profile: 'basic' }]);
+    reconciled();
+    expect(svc.getQuote('STK:MSFT')?.error).toBeUndefined();
+    a!.close();
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    const b = svc.probe(stock('QQQ'), '', (e) => events.push(e));
+    expect(b).toBeNull(); // MSFT took the freed line
+    svc.setSubscriptions('watchlist', []);
+    reconciled();
+    const c = svc.probe(stock('DIA'), '', (e) => events.push(e))!;
+    expect(c).not.toBeNull();
+    fake.close();
+    expect(events.at(-1)).toEqual({ kind: 'error', code: -1, message: 'Connection closed' });
+    c.close();
+    expect(fake.callsOf('cancelMktData').map((x) => x[0])).not.toContain(fake.callsOf('reqMktData').at(-1)![0]);
+  });
+
+  it('keeps quotes only quiet owners want from the renderer and reports line notices', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    const notices: unknown[] = [];
+    cleanup.push(svc.onNotice((key, code) => notices.push([key, code])));
+    const seen: string[] = [];
+    cleanup.push(svc.onQuote((q) => seen.push(q.key)));
+    svc.setSubscriptions('md-check', [{ contract: stock('SPY'), profile: 'basic' }]);
+    reconciled();
+    const id = reqIdOf(fake, 'SPY');
+    fake.error(id, 10167, 'Displaying delayed market data.');
+    fake.emit('marketDataType', id, 3);
+    fake.emit('tickPrice', id, TICK.DELAYED_LAST, 670);
+    vi.advanceTimersByTime(200);
+    expect(notices).toEqual([['STK:SPY', 10167]]);
+    expect(seen).toContain('STK:SPY');
+    expect(quoteEvents(events)).toHaveLength(0);
+    expect(svc.wanted().map((w) => [w.contract.symbol, w.quote?.marketDataType])).toEqual([['SPY', 3]]);
+    // A renderer owner wanting it too gets the whole quote at once.
+    svc.setSubscriptions('chart', [{ contract: stock('SPY'), profile: 'basic' }]);
+    reconciled();
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:SPY']).toMatchObject({ last: 670, marketDataType: 3 });
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+  });
+});
+
 describe('quotePatch', () => {
   it('sends the whole quote first, then changed and cleared fields', () => {
     const q: Quote = { key: 'K', last: 1, bid: 0.9, updatedAt: 1 };

@@ -40,6 +40,15 @@ const VISIBLE_OWNERS: ReadonlySet<string> = new Set([
 
 export const OwnerPriority = { Visible: 0, Background: 1 } as const;
 
+/** The market data check's owner (market/marketCheck.ts). */
+export const MARKET_CHECK_OWNER = 'md-check';
+
+/**
+ * Main-process owners whose quotes the renderer does not need: a contract only they want is not
+ * sent to the renderer (no renderer owner would ever release it there).
+ */
+const QUIET_OWNERS: ReadonlySet<string> = new Set([MARKET_CHECK_OWNER]);
+
 /** Priority class of an owner ("<owner>-und" companions share their owner's class). */
 export function ownerPriority(owner: string): number {
   const base = owner.endsWith('-und') ? owner.slice(0, -4) : owner;
@@ -97,6 +106,8 @@ function richer(a: ContractRef, b: ContractRef): ContractRef {
 export class SubscriptionBook {
   private readonly owners = new Map<string, QuoteSubscription[]>();
   private readonly seqs = new Map<string, number>();
+  /** Keys some owner outside QUIET_OWNERS wants. */
+  private readonly shown = new Set<string>();
   private counter = 0;
 
   /**
@@ -109,10 +120,12 @@ export class SubscriptionBook {
     if (valid.length) this.owners.set(owner, valid);
     else this.owners.delete(owner);
     const wanted = new Set<string>();
-    for (const list of this.owners.values()) {
+    this.shown.clear();
+    for (const [name, list] of this.owners) {
       for (const s of list) {
         const key = contractKey(s.contract);
         wanted.add(key);
+        if (!QUIET_OWNERS.has(name)) this.shown.add(key);
         if (!this.seqs.has(key)) this.seqs.set(key, ++this.counter);
       }
     }
@@ -144,6 +157,11 @@ export class SubscriptionBook {
 
   has(key: string): boolean {
     return this.seqs.has(key);
+  }
+
+  /** True when an owner whose quotes go to the renderer wants the contract (not only quiet owners). */
+  published(key: string): boolean {
+    return this.shown.has(key);
   }
 
   private signature(): string {

@@ -18,6 +18,7 @@ import { createHistoryService } from './market/history';
 import { createDepthService } from './market/depth';
 import { createOptionsService } from './market/options';
 import { createCorporateEventsService } from './market/corporateEvents';
+import { createMarketCheckService } from './market/marketCheck';
 import { createAlertService } from './market/alerts';
 import { createAccountService } from './ib/account';
 import { createOrderService } from './ib/orders';
@@ -103,6 +104,7 @@ ctx.history = createHistoryService(ctx);
 ctx.depth = createDepthService(ctx);
 ctx.options = createOptionsService(ctx);
 ctx.corporateEvents = createCorporateEventsService(ctx);
+ctx.marketCheck = createMarketCheckService(ctx);
 ctx.alerts = createAlertService(ctx);
 ctx.account = createAccountService(ctx);
 ctx.orders = createOrderService(ctx);
@@ -177,6 +179,7 @@ async function snapshot(): Promise<AppSnapshot> {
     logFilePath: ctx.apiLog.filePath(),
     lock: ctx.lock.getState(),
     afterReset: takeAfterReset(),
+    marketDataCheck: ctx.marketCheck.getState(),
   };
 }
 
@@ -199,6 +202,7 @@ const handlers: TapeHandlers = {
   setDepthSubscription: (c) => ctx.depth.set(c),
   getOptionChainParams: (c) => ctx.options.getChainParams(c),
   getEarnings: (underlyings) => ctx.corporateEvents.getEarnings(underlyings),
+  checkMarketData: (opts) => ctx.marketCheck.run({ depth: !!opts?.depth, trigger: opts?.auto ? 'auto' : 'user' }),
   getCacheStats: () => ctx.db.stats(),
   clearMarketDataCache: () => ctx.db.clearMarketData(),
   placeOrder: (req) => ctx.orders.place(req),
