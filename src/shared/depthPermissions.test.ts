@@ -8,6 +8,12 @@ describe('depthPermissions', () => {
     expect(depthPermissions(msg)).toEqual({ depth: ['IEX'], missing: ['NASDAQ', 'BATS', 'ARCA', 'BEX', 'NYSE'] });
   });
 
+  it('reads the "Unknown market data permissions" form with top-of-book exchanges after it', () => {
+    const msg =
+      'Exchanges - Depth: IEX; Top: EDGEA; Unknown market data permissions - Depth: NASDAQ; BATS; ARCA; BEX; NYSE; Top: BYX; AMEX; PEARL; T24X; MEMX; OVERNIGHT; TXSE; CHX; NYSENAT; IBEOS; PSX; LTSE; ISE; DRCTEDGE; ';
+    expect(depthPermissions(msg)).toEqual({ depth: ['IEX'], missing: ['NASDAQ', 'BATS', 'ARCA', 'BEX', 'NYSE'] });
+  });
+
   it('copes with a part missing and with other messages', () => {
     expect(depthPermissions('Exchanges - Depth: IEX; NASDAQ; Top: ARCA;')).toEqual({ depth: ['IEX', 'NASDAQ'], missing: [] });
     expect(depthPermissions('Need additional market data permissions - Depth: NYSE;')).toEqual({ depth: [], missing: ['NYSE'] });
