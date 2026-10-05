@@ -8,8 +8,8 @@
 // - US options: a near-the-money SPY call of the next expiration (option chain + contract details),
 //   or an option line some view already holds;
 // - indices: SPX on CBOE;
-// - Level 2 (only on the user's request, "Check now"): one reqMktDepth for SPY, or the book the
-//   depth view already has.
+// - Level 2 (only on the user's request, "Check now"): one reqMktDepth for SPY, or the line the
+//   depth view already holds (this client never holds two depth lines).
 // Owners reuse open lines (an instrument already subscribed is not requested again, and its answer
 // is known at once); everything is released afterwards (owner lines linger 30 s like any other).
 // The answer of a line is its marketDataType (1 live, 2 frozen, 3 / 4 delayed) or its error; after
@@ -17,7 +17,10 @@
 // (10197); after 354 it waits up to AFTER_NOT_SUBSCRIBED_MS, since IB then often serves delayed data
 // on the same line (seen live for SPX: 354, half a second later type 3 and 10167). No answer within
 // PROBE_TIMEOUT_MS counts as no data. Level 2 from only some exchanges (IB's 2152 lists them) is
-// live "via" those exchanges.
+// live "via" those exchanges. IB may send 2152 seconds after the first book update (seen live: 12 s
+// after the request), so the depth line's errors are watched up to DEPTH_NOTICE_MS after the
+// request and a late 2152 patches the stored result; until then the last 2152 of the account (the
+// previous result) stands, and it is dropped when none comes.
 //
 // The last result is kept here, persisted in the kv table (namespace MARKET_CHECK_NS) and pushed as
 // `marketDataCheck` events. A quiet check (without depth) runs AUTO_AFTER_READY_MS after each
@@ -57,6 +60,10 @@ export const AUTO_AFTER_READY_MS = 8_000;
 export const AUTO_MIN_INTERVAL_MS = 5 * 60_000;
 /** Levels asked of the depth line (any level proves the subscription). */
 const DEPTH_ROWS = 5;
+/** How long after the depth request a 2152 (partial depth permissions) may still arrive. */
+export const DEPTH_NOTICE_MS = 15_000;
+/** IB's notice that Level 2 comes from some exchanges only. */
+const DEPTH_PARTIAL = 2152;
 
 export const CHECK_STOCK: ContractRef = stock('SPY');
 export const CHECK_INDEX: ContractRef = index('SPX', 'CBOE');
@@ -71,6 +78,21 @@ const NOT_SUBSCRIBED = 354;
 const DEPTH_DEAD_CODES = new Set([200, 309, 321, 354, 10092]);
 /** "Market depth data has been RESET": not an answer. */
 const DEPTH_RESET = 317;
+
+/** Level 2's answer; `late`: a 2152 that came after it (null: none came, see checkDepth). */
+interface DepthAnswer {
+  probe: MarketCheckProbe;
+  instrument: string;
+  late?: Promise<{ code: number; message: string } | null>;
+}
+
+/** The Level 2 item: live from some exchanges only when IB's 2152 says so ("Live · IEX only"). */
+export function depthItem(probe: MarketCheckProbe, instrument: string, checkedAt: number): MarketCheckItem {
+  const item: MarketCheckItem = { market: 'depth', status: probe.status, instrument, probe, checkedAt };
+  const perms = probe.status === 'live' && probe.code === DEPTH_PARTIAL ? depthPermissions(probe.message) : null;
+  if (perms?.depth.length && perms.missing.length) item.via = perms.depth.join(', ');
+  return item;
+}
 
 const statusOfType = (t: MarketDataType): MarketCheckStatus => (t === 1 ? 'live' : t === 2 ? 'frozen' : 'delayed');
 const isLive = (s: MarketCheckStatus | undefined) => s === 'live' || s === 'frozen';
@@ -218,7 +240,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
   /** A result arrived (a check finished) before the persisted one was read: that one is older. */
   let fresh = false;
 
-  const getState = (): MarketDataCheckState => ({ result, running: inflight != null });
+  const getState = (): MarketDataCheckState => ({ result, running: inflight != null, ...(inflight ? { depth: inflight.depth } : {}) });
   const emit = () => ctx.emit({ type: 'marketDataCheck', state: getState() });
 
   const accountNow = (): string | undefined => {
@@ -276,35 +298,75 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     return answer.result.finally(() => handle.close());
   };
 
-  /** One reqMktDepth for a few seconds (or the depth view's book when it already shows one). */
-  const checkDepth = (onClose: (fn: () => void) => void): Promise<{ probe: MarketCheckProbe; instrument: string }> => {
+  /** The last 2152 of this account (from the previous result): Level 2 from some exchanges only. */
+  const lastDepthNotice = (): { code: number; message: string } | undefined => {
+    if (!result || result.account !== accountNow()) return undefined;
+    const p = result.items.find((i) => i.market === 'depth')?.probe;
+    return p?.status === 'live' && p.code === DEPTH_PARTIAL && p.message ? { code: p.code, message: p.message } : undefined;
+  };
+
+  /**
+   * One reqMktDepth for a few seconds, or the depth view's line when this client holds one (its
+   * book, or its first answer). `late` resolves with a 2152 that came after the answer, or null
+   * when none came within DEPTH_NOTICE_MS (the account's last one no longer applies).
+   */
+  const checkDepth = (onClose: (fn: () => void) => void): Promise<DepthAnswer> => {
+    const remembered = lastDepthNotice();
+    const live = (extra: Partial<MarketCheckProbe>, notice?: { code: number; message: string }): MarketCheckProbe => ({
+      status: 'live',
+      exchange: 'SMART',
+      ...extra,
+      ...(notice ? { code: notice.code, message: notice.message } : {}),
+    });
     const book = ctx.depth.current();
-    if (book && !book.error && (book.bids.length || book.asks.length)) {
-      return Promise.resolve({ probe: { status: 'live', exchange: 'SMART', reused: true }, instrument: book.key.split(':')[1] ?? book.key });
+    const viewInstrument = book ? (book.key.split(':')[1] ?? book.key) : undefined;
+    if (book && (!book.error || book.error.code === DEPTH_PARTIAL) && (book.bids.length || book.asks.length || book.error)) {
+      return Promise.resolve({ probe: live({ reused: true }, book.error ?? remembered), instrument: viewInstrument! });
     }
     const instrument = contractLabel(CHECK_STOCK);
-    if (ctx.demo) return Promise.resolve({ probe: { status: 'live', exchange: 'SMART' }, instrument });
+    if (ctx.demo) return Promise.resolve({ probe: live({}), instrument });
     const api = ctx.ib.api;
     if (!api) return Promise.resolve({ probe: { status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: NOT_CONNECTED }, instrument });
+    // The depth view holds a line already: wait for its answer instead of opening a second one.
+    const held = ctx.depth.lineReqId();
+    const own = held == null;
     return new Promise((resolve) => {
-      const reqId = ctx.ib.nextReqId();
+      const reqId = held ?? ctx.ib.nextReqId();
+      const label = own ? instrument : viewInstrument!;
+      const startedAt = Date.now();
       let dead = false;
       let notice: { code: number; message: string } | undefined;
       let finished = false;
+      let lateDone: ((n: { code: number; message: string } | null) => void) | null = null;
+      let lateTimer: ReturnType<typeof setTimeout> | null = null;
       const offs: Unsubscribe[] = [];
+      const offAll = () => {
+        offs.splice(0).forEach((off) => off());
+        if (lateTimer) clearTimeout(lateTimer);
+      };
       const finish = (probe: MarketCheckProbe) => {
         if (finished) return;
         finished = true;
         clearTimeout(timer);
-        offs.forEach((off) => off());
-        if (!dead && ctx.ib.api) {
+        if (own && !dead && ctx.ib.api) {
           try {
             ctx.ib.api.cancelMktDepth(reqId, true);
           } catch (err) {
             console.error('[md-check] cancelMktDepth failed:', err);
           }
         }
-        resolve({ probe, instrument });
+        if (probe.status !== 'live' || notice) {
+          offAll();
+          resolve({ probe, instrument: label });
+          return;
+        }
+        // Live without a 2152 so far: the account's last one stands until one comes or the wait ends.
+        const late = new Promise<{ code: number; message: string } | null>((r) => (lateDone = r));
+        lateTimer = setTimeout(() => {
+          offAll();
+          lateDone?.(null);
+        }, Math.max(0, startedAt + DEPTH_NOTICE_MS - Date.now()));
+        resolve({ probe: live(probe.reused ? { reused: true } : {}, remembered), instrument: label, late });
       };
       const timer = setTimeout(
         () =>
@@ -312,10 +374,11 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
             status: 'nodata',
             exchange: 'SMART',
             ...(notice ?? competing() ?? { code: OWN_CODE, message: `No book from IB within ${PROBE_TIMEOUT_MS / 1000} s`, own: 'timeout' as const }),
+            ...(own ? {} : { reused: true }),
           }),
         PROBE_TIMEOUT_MS,
       );
-      const onUpdate = (id: number) => id === reqId && finish({ status: 'live', exchange: 'SMART', ...(notice ?? {}) });
+      const onUpdate = (id: number) => id === reqId && finish(live(own ? {} : { reused: true }, notice));
       offs.push(ctx.ib.on(EventName.updateMktDepth, onUpdate));
       offs.push(ctx.ib.on(EventName.updateMktDepthL2, onUpdate));
       offs.push(
@@ -323,17 +386,31 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
           if (e.reqId !== reqId || e.code === DEPTH_RESET) return;
           // 2152: the account lacks depth permissions on some exchanges; the others may still answer.
           if (e.code >= 2100 && e.code < 2200) {
+            if (finished) {
+              if (e.code === DEPTH_PARTIAL) {
+                offAll();
+                lateDone?.({ code: e.code, message: e.message });
+              }
+              return;
+            }
             notice ??= { code: e.code, message: e.message };
             return;
           }
+          if (finished) return;
           dead = DEPTH_DEAD_CODES.has(e.code);
-          finish({ status: 'nodata', exchange: 'SMART', code: e.code, message: e.message });
+          finish({ status: 'nodata', exchange: 'SMART', code: e.code, message: e.message, ...(own ? {} : { reused: true }) });
         }),
       );
       onClose(() => {
         dead = true;
+        if (finished) {
+          offAll();
+          lateDone?.(null);
+          return;
+        }
         finish({ status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: 'Connection closed', own: 'closed' });
       });
+      if (!own) return;
       try {
         api.reqMktDepth(reqId, toIbContract(CHECK_STOCK), DEPTH_ROWS, true, []);
       } catch (err) {
@@ -366,7 +443,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
   // ---------------------------------------------------------------------------
   // The check
 
-  const check = async (depth: boolean, trigger: MarketDataCheck['trigger']): Promise<MarketDataCheck> => {
+  const check = async (depth: boolean, trigger: MarketDataCheck['trigger']): Promise<{ result: MarketDataCheck; late?: DepthAnswer['late'] }> => {
     if (!ctx.demo && !isIbConnected(ctx)) throw new Error(NOT_CONNECTED);
     // The session's end answers every line still waiting (and those set up afterwards) at once.
     const closers: Array<() => void> = [];
@@ -452,13 +529,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
               checkedAt: now,
             },
       );
-      if (book) {
-        const depthItem: MarketCheckItem = { market: 'depth', status: book.probe.status, instrument: book.instrument, probe: book.probe, checkedAt: now };
-        // Live from some exchanges only (2152 names them): "Live · IEX only".
-        const perms = book.probe.status === 'live' && book.probe.code === 2152 ? depthPermissions(book.probe.message) : null;
-        if (perms?.depth.length && perms.missing.length) depthItem.via = perms.depth.join(', ');
-        items.push(depthItem);
-      }
+      if (book) items.push(depthItem(book.probe, book.instrument, now));
       else {
         // Level 2 is only checked on request: keep the last answer of this account.
         const prev = result?.account === accountNow() ? result?.items.find((i) => i.market === 'depth') : undefined;
@@ -466,7 +537,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       }
       items.push({ market: 'ind', status: ind.status, instrument: contractLabel(CHECK_INDEX), probe: ind, checkedAt: now });
       const state = ctx.ib.getState();
-      return { checkedAt: now, account: accountNow(), clientId: state.clientId, trigger, items };
+      return { result: { checkedAt: now, account: accountNow(), clientId: state.clientId, trigger, items }, late: book?.late };
     } finally {
       offClosed();
       ctx.quotes.setSubscriptions(MARKET_CHECK_OWNER, []);
@@ -481,12 +552,13 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       return inflight.promise;
     }
     const promise = check(depth, opts.trigger).then(
-      (r) => {
+      ({ result: r, late }) => {
         result = r;
         fresh = true;
         inflight = null;
         void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, r);
         emit();
+        if (late) void late.then((notice) => patchDepth(r, notice));
         return r;
       },
       (err: unknown) => {
@@ -498,6 +570,26 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     inflight = { promise, depth };
     emit();
     return promise;
+  };
+
+  /** A 2152 came after Level 2 answered (or none came): the stored result's depth item follows it. */
+  const patchDepth = (r: MarketDataCheck, notice: { code: number; message: string } | null) => {
+    if (result !== r) return;
+    const i = r.items.findIndex((x) => x.market === 'depth');
+    const prev = r.items[i];
+    if (i < 0 || prev.probe.status !== 'live') return;
+    if (notice ? prev.probe.code === notice.code && prev.probe.message === notice.message : prev.probe.code !== DEPTH_PARTIAL) return;
+    const probe: MarketCheckProbe = { ...prev.probe };
+    if (notice) Object.assign(probe, notice);
+    else {
+      delete probe.code;
+      delete probe.message;
+    }
+    const items = [...r.items];
+    items[i] = depthItem(probe, prev.instrument, prev.checkedAt);
+    result = { ...r, items };
+    void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, result);
+    emit();
   };
 
   const scheduleAuto = () => {

@@ -7,6 +7,7 @@ import { createFakeContext, createFakeIb, settle, type FakeIb } from './fakeIb';
 import {
   AUTO_AFTER_READY_MS,
   createMarketCheckService,
+  DEPTH_NOTICE_MS,
   isMarketDataCheck,
   MARKET_CHECK_NS,
   nearStrikes,
@@ -51,7 +52,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function setup(opts: { lines?: Lines; book?: DepthBook | null; connect?: boolean; chain?: () => Promise<OptionChainParams[]> } = {}) {
+async function setup(opts: { lines?: Lines; book?: DepthBook | null; depthLine?: number; connect?: boolean; chain?: () => Promise<OptionChainParams[]> } = {}) {
   const fake = createFakeIb();
   const { ctx, events } = createFakeContext(fake.ib);
   const infos: ContractRef[] = [];
@@ -69,7 +70,7 @@ async function setup(opts: { lines?: Lines; book?: DepthBook | null; connect?: b
       return opts.chain ? opts.chain() : CHAIN;
     },
   } as OptionsService;
-  ctx.depth = { set: async () => undefined, current: () => opts.book ?? null } as DepthService;
+  ctx.depth = { set: async () => undefined, current: () => opts.book ?? null, lineReqId: () => opts.depthLine ?? null } as DepthService;
   ctx.quotes = createQuoteService(ctx);
   const svc = createMarketCheckService(ctx);
   ctx.marketCheck = svc;
@@ -279,6 +280,54 @@ describe('market data check', () => {
     })(fake.onCall);
     const r = await finish(svc.run({ depth: true, trigger: 'user' }));
     expect(item(r, 'depth')).toMatchObject({ status: 'live', via: 'IEX', probe: { code: 2152, message: notice } });
+  });
+
+  it('patches Level 2 with a 2152 that comes after the first book update, and keeps it for later checks', async () => {
+    const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
+    const { fake, svc, events } = await setup({ lines: all });
+    const notice = 'Exchanges - Depth: IEX; Top: BYX; Need additional market data permissions - Depth: NASDAQ; ARCA; NYSE; ';
+    let late = true;
+    fake.onCall = ((prev) => (name: string, args: unknown[]) => {
+      prev?.(name, args);
+      if (name !== 'reqMktDepth') return;
+      setTimeout(() => fake.emit('updateMktDepthL2', args[0], 0, 'IEX', 0, 1, 670.1, 100), 50);
+      if (late) setTimeout(() => fake.error(args[0] as number, 2152, notice), 9_000);
+    })(fake.onCall);
+    const r = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'live' });
+    expect(item(r, 'depth')!.via).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(DEPTH_NOTICE_MS);
+    const patched = svc.getState().result!;
+    expect(item(patched, 'depth')).toMatchObject({ status: 'live', via: 'IEX', probe: { code: 2152 } });
+    expect(checkEvents(events).at(-1)!.state.result).toEqual(patched);
+    // The next Level 2 check starts from that 2152; when none comes it is dropped.
+    late = false;
+    const again = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(again, 'depth')).toMatchObject({ via: 'IEX', probe: { code: 2152 } });
+    await vi.advanceTimersByTimeAsync(DEPTH_NOTICE_MS);
+    expect(item(svc.getState().result!, 'depth')!.via).toBeUndefined();
+    expect(item(svc.getState().result!, 'depth')!.probe.code).toBeUndefined();
+  });
+
+  it('waits for the depth view’s open line instead of opening a second depth line', async () => {
+    const { fake, svc } = await setup({
+      depthLine: 77,
+      book: { key: 'STK:NVDA', bids: [], asks: [], updatedAt: NOW },
+      lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } },
+    });
+    setTimeout(() => fake.emit('updateMktDepth', 77, 0, 0, 1, 180, 10), 500);
+    const r = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'live', instrument: 'NVDA', probe: { reused: true } });
+    expect(fake.callsOf('reqMktDepth')).toEqual([]);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([]);
+  });
+
+  it('says whether the running check tests Level 2', async () => {
+    const { svc } = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
+    const p = svc.run({ trigger: 'auto' });
+    expect(svc.getState()).toMatchObject({ running: true, depth: false });
+    await finish(p);
+    expect(svc.getState().depth).toBeUndefined();
   });
 
   it('reports a full depth allowance (309) without cancelling, and reuses the depth view’s book', async () => {

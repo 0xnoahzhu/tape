@@ -162,6 +162,8 @@ export interface DepthService {
   set(contract: ContractRef | null): Promise<void>;
   /** The book of the open depth line (null when none is wanted). */
   current(): DepthBook | null;
+  /** The request id of the depth line this client holds at IB (null: none, or IB ended it). */
+  lineReqId(): number | null;
 }
 
 /** The active market data check (market/marketCheck.ts). */

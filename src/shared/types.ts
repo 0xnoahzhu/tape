@@ -151,6 +151,8 @@ export interface MarketDataCheck {
 export interface MarketDataCheckState {
   result: MarketDataCheck | null;
   running: boolean;
+  /** While running: whether this check tests Level 2 (only "Check now" does). */
+  depth?: boolean;
 }
 
 export interface Quote {

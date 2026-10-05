@@ -167,6 +167,7 @@ export function createDepthService(ctx: MainContext): DepthService {
 
   return {
     current: () => book,
+    lineReqId: () => (ready && !ctx.demo && reqId != null && !dead ? reqId : null),
     async set(next: ContractRef | null): Promise<void> {
       if (next && contract && sameContract(next, contract) && !dead) return;
       cancel();
