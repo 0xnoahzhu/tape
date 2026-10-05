@@ -4,7 +4,7 @@ import type { TapeEvent } from '@shared/ipc';
 import type { ContractRef, Quote } from '@shared/types';
 import type { ContractService } from '../context';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
-import { LINGER_MS, createQuoteService, quotePatch, RECONCILE_MS } from './quotes';
+import { LINGER_MS, createQuoteService, PRIMARY_GIVE_UP_MS, quotePatch, RECONCILE_MS, SIDE_TIMEOUT_MS, SMART_RETRY_MS } from './quotes';
 import { TICK } from './tickMap';
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -432,6 +432,153 @@ describe('probe lines and quiet owners', () => {
     vi.advanceTimersByTime(100);
     expect(quoteEvents(events).at(-1)!.quotes['STK:SPY']).toMatchObject({ last: 670, marketDataType: 3 });
     expect(fake.callsOf('reqMktData')).toHaveLength(1);
+  });
+});
+
+describe('primary-exchange fallback', () => {
+  /** A quote service whose contracts resolve to `primary` (NASDAQ by default), with AAPL wanted by the watchlist. */
+  async function fallbackSetup(primary = 'NASDAQ') {
+    const env = await setup();
+    env.ctx.contracts = {
+      resolve: async (c: ContractRef) => {
+        env.resolved.push(c);
+        return { ...c, conId: 265598, primaryExchange: primary };
+      },
+    } as unknown as ContractService;
+    env.fake.ready();
+    env.svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    reconciled();
+    return { ...env, smartId: reqIdOf(env.fake, 'AAPL') };
+  }
+  const flushAsync = () => vi.advanceTimersByTimeAsync(0);
+  const lastReq = (fake: ReturnType<typeof createFakeIb>) => fake.callsOf('reqMktData').at(-1)! as [number, ...unknown[]];
+
+  it('moves a delayed SMART stock to its primary exchange when that one is live', async () => {
+    const { fake, svc, events, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 331.85);
+    await flushAsync();
+    const [sideId, contract, ticks, snapshot] = lastReq(fake) as [number, unknown, string, boolean];
+    expect([contract, ticks, snapshot]).toEqual([{ conId: 265598, exchange: 'NASDAQ', secType: 'STK', currency: 'USD' }, '318', false]);
+    // The side line's ticks wait for its data type; the quote stays SMART's meanwhile.
+    fake.emit('tickPrice', sideId, TICK.BID, 332.41);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 3, last: 331.85 });
+    expect(svc.getQuote('STK:AAPL')?.bid).toBeUndefined();
+    fake.emit('marketDataType', sideId, 1);
+    expect(fake.callsOf('cancelMktData')).toEqual([[smartId]]);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 1, bid: 332.41, source: { kind: 'primary', exchange: 'NASDAQ' } });
+    fake.emit('tickPrice', sideId, TICK.LAST, 332.2);
+    expect(svc.getQuote('STK:AAPL')?.last).toBe(332.2);
+    // Ticks of the old line no longer count.
+    fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 330);
+    expect(svc.getQuote('STK:AAPL')?.last).toBe(332.2);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:AAPL']).toMatchObject({ source: { kind: 'primary', exchange: 'NASDAQ' }, marketDataType: 1 });
+    // One line per contract in the steady state.
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+  });
+
+  it('keeps SMART and does not probe again for a while when the exchange is delayed too', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.error(smartId, 10167, 'Requested market data is not subscribed. Displaying delayed market data.');
+    await flushAsync();
+    const sideId = lastReq(fake)[0];
+    fake.error(sideId, 10167, 'Displaying delayed market data.');
+    expect(fake.callsOf('cancelMktData')).toEqual([[sideId]]);
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+    // After the give-up time the still delayed line is probed once more; a silent side line times out.
+    await vi.advanceTimersByTimeAsync(PRIMARY_GIVE_UP_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    const again = lastReq(fake)[0];
+    await vi.advanceTimersByTimeAsync(SIDE_TIMEOUT_MS);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([again]);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+  });
+
+  it('tries SMART again every 10 minutes and goes back to it once it is live', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 4);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    await vi.advanceTimersByTimeAsync(SMART_RETRY_MS);
+    const [retryId, retryContract] = lastReq(fake) as [number, { exchange: string; symbol: string }];
+    expect([retryContract.symbol, retryContract.exchange]).toEqual(['AAPL', 'SMART']);
+    fake.emit('marketDataType', retryId, 3);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([retryId]);
+    expect(svc.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
+    await vi.advanceTimersByTimeAsync(SMART_RETRY_MS);
+    const second = lastReq(fake)[0];
+    expect(second).not.toBe(retryId);
+    fake.emit('marketDataType', second, 1);
+    fake.emit('tickPrice', second, TICK.LAST, 333);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 1, last: 333 });
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+    // Released, the SMART line lingers and goes like any other.
+    svc.setSubscriptions('watchlist', []);
+    reconciled();
+    vi.advanceTimersByTime(LINGER_MS);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([second]);
+  });
+
+  it('starts on SMART again after a reconnect, and tries SMART when a competing session ends', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    fake.emit('marketDataType', lastReq(fake)[0], 1);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeDefined();
+    fake.close();
+    fake.ready();
+    const fresh = lastReq(fake) as [number, { exchange: string }];
+    expect(fresh[1].exchange).toBe('SMART');
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+    // On the exchange again; then 10197 comes and goes.
+    fake.emit('marketDataType', fresh[0], 3);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    const before = fake.callsOf('reqMktData').length;
+    fake.error(primaryId, 10197, 'No market data during competing live session');
+    fake.emit('tickPrice', primaryId, TICK.LAST, 332);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.callsOf('reqMktData')).toHaveLength(before + 1);
+    expect((lastReq(fake)[1] as { exchange: string }).exchange).toBe('SMART');
+  });
+
+  it('keeps the exchange line when the profiles change, and leaves other instruments alone', async () => {
+    const { fake, svc, smartId, resolved } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    fake.emit('marketDataType', lastReq(fake)[0], 1);
+    svc.setSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
+    reconciled();
+    const [, contract, ticks] = lastReq(fake) as [number, { exchange: string }, string];
+    expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,104,106,165,318']);
+    expect(svc.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
+    // Options, an index and a stock routed to its exchange already are never moved.
+    const n = resolved.length;
+    svc.setSubscriptions('chart', [
+      { contract: option('AAPL', '20261016', 230, 'C'), profile: 'option' },
+      { contract: index('SPX', 'CBOE'), profile: 'basic' },
+      { contract: { ...stock('IBM'), exchange: 'NYSE' }, profile: 'basic' },
+    ]);
+    reconciled();
+    for (const sym of ['SPX', 'IBM']) fake.emit('marketDataType', reqIdOf(fake, sym), 3);
+    fake.emit('marketDataType', fake.callsOf('reqMktData').find((c) => (c[1] as { secType: string }).secType === 'OPT')![0], 3);
+    await flushAsync();
+    expect(resolved).toHaveLength(n);
+  });
+
+  it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {
+    const { fake, svc, smartId } = await fallbackSetup('PINK');
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
   });
 });
 

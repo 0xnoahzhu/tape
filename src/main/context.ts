@@ -142,7 +142,7 @@ export interface QuoteService {
    * (10167 delayed data shown, 10090 / 10091 some ticks not subscribed).
    */
   onNotice(listener: (key: string, code: number, message: string) => void): Unsubscribe;
-  /** The contracts owners want now, with their quotes. */
+  /** The contracts owners want now and those whose line still lingers, with their quotes. */
   wanted(): Array<{ contract: ContractRef; quote?: Quote }>;
   /**
    * Opens a market data line outside the owners (the market data check's primary exchange line).

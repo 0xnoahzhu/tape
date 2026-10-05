@@ -15,6 +15,19 @@
 // current in the main process without sending it, and so does a line only quiet owners (the
 // market data check) want. probe() opens a line outside the owners, within the same line budget.
 // In demo mode the quotes come from the simulator and IB is never asked for market data.
+//
+// Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
+// while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
+// type 3, on NASDAQ type 1, with the same subscriptions). For a SMART-routed US dollar stock whose
+// line reports delayed data (marketDataType 3 / 4, or 10167 / 354 / 10168) a side line opens on its
+// primary exchange (NASDAQ, NYSE, ARCA, AMEX, BATS: the codes contract details report, all served
+// directly) with the same generic ticks:
+//   smart --delayed--> probing primary --type 1 / 2--> primary (SMART line cancelled, quote.source set)
+//                                      --delayed, error, SIDE_TIMEOUT_MS--> smart, no probe for PRIMARY_GIVE_UP_MS
+//   primary --every SMART_RETRY_MS, when 10197 ends--> probing SMART --type 1 / 2--> smart (primary line cancelled)
+//                                                                  --otherwise--> primary, next retry later
+// A handshake (reconnect, 1101) starts every line on SMART again. Side lines count against the
+// line budget and live at most SIDE_TIMEOUT_MS, so the steady state keeps one line per contract.
 
 import { EventName } from '../ib/tws';
 import type { ContractRef, MarketDataType, Quote, QuoteSubscription } from '@shared/types';
@@ -42,6 +55,22 @@ const DEMO_ACTIVITY = 0.65;
 const DEAD_CODES = new Set([200, 321, 322, 354, 10168, 10186]);
 /** "Requested market data is not subscribed. Displaying delayed market data." */
 const DELAYED_FALLBACK_CODE = 10167;
+/** Answers on a SMART line that mean delayed data (or none) for want of a live subscription. */
+const DELAYED_SIGNALS = new Set([DELAYED_FALLBACK_CODE, 354, 10168]);
+/** "No market data during competing live session". */
+const COMPETING_SESSION = 10197;
+/** Primary exchanges IB serves market data on directly (checked live for NASDAQ, NYSE, ARCA, AMEX, BATS). */
+export const US_PRIMARY_EXCHANGES: ReadonlySet<string> = new Set(['NASDAQ', 'NYSE', 'ARCA', 'AMEX', 'BATS', 'IEX']);
+/** A side line without a data type by then has failed. */
+export const SIDE_TIMEOUT_MS = 10_000;
+/** No new primary-exchange probe for this long after one was not live. */
+export const PRIMARY_GIVE_UP_MS = 30 * 60_000;
+/** How often a quote served by its primary exchange tries SMART again. */
+export const SMART_RETRY_MS = 10 * 60_000;
+/** Retry after a side line found no free market data line. */
+const NO_LINE_RETRY_MS = 60_000;
+/** Ticks a side line keeps until it becomes the quote's line. */
+const SIDE_BUFFER = 64;
 
 interface Line {
   key: string;
@@ -56,6 +85,40 @@ interface Line {
   resolved: boolean;
   /** Epoch ms when the last owner released the contract; undefined while it is wanted. */
   releasedAt?: number;
+  /** SMART, or the primary exchange (fallback). */
+  route: 'smart' | 'primary';
+}
+
+/** A line testing the other route of a contract (primary exchange while on SMART, or SMART again). */
+interface Side {
+  key: string;
+  reqId: number;
+  target: 'smart' | 'primary';
+  contract: ContractRef;
+  dead: boolean;
+  timer: ReturnType<typeof setTimeout>;
+  /** Ticks received before the switch, applied when it happens. */
+  buffer: TickEvent[];
+}
+
+/** Fallback state of a contract (see the header). */
+interface Route {
+  /** The primary exchange the line uses now; undefined while on SMART. */
+  primary?: string;
+  primaryContract?: ContractRef;
+  /** The SMART contract to go back to. */
+  smart?: ContractRef;
+  side?: Side;
+  /** No primary-exchange probe before this time. */
+  quietUntil?: number;
+  /** The next SMART retry (on primary) or primary probe (after a give-up). */
+  timer?: ReturnType<typeof setTimeout>;
+  resolving?: boolean;
+}
+
+/** A SMART-routed US dollar stock (the only lines the fallback applies to). */
+export function fallbackEligible(c: ContractRef): boolean {
+  return c.secType === 'STK' && (c.currency || 'USD') === 'USD' && (c.exchange || 'SMART') === 'SMART';
 }
 
 /** A line opened by probe(), outside the owners. */
@@ -123,6 +186,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const lines = new Map<string, Line>();
   const byReqId = new Map<number, Line>();
   const probes = new Map<number, Probe>();
+  const routes = new Map<string, Route>();
+  const sides = new Map<number, Side>();
+  /** A 10197 was seen; the next real price ends it (then SMART is tried again). */
+  let competing = false;
   let ready = false;
 
   // Demo feed.
@@ -142,6 +209,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   };
 
   const deleteQuote = (key: string) => {
+    forgetRoute(key);
     quotes.delete(key);
     sent.delete(key);
     dirty.delete(key);
@@ -201,6 +269,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const liveApi = () => (ready && !ctx.demo ? ctx.ib.api : null);
 
   const cancelLine = (line: Line) => {
+    const side = routes.get(line.key)?.side;
+    if (side) closeSide(side);
     lines.delete(line.key);
     byReqId.delete(line.reqId);
     const api = liveApi();
@@ -216,12 +286,16 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const dropLine = (line: Line) => {
     cancelLine(line);
     if (!book.has(line.key)) deleteQuote(line.key);
+    else forgetRoute(line.key);
   };
 
-  /** Requests a line; false when there is no session. */
-  const requestLine = (w: WantedContract, contract: ContractRef = w.contract, resolved = false): boolean => {
+  /** Requests a line (on the primary exchange while the contract's fallback is active); false when there is no session. */
+  const requestLine = (w: WantedContract, wantedContract: ContractRef = w.contract, resolved = false): boolean => {
     const api = liveApi();
     if (!api) return false;
+    const r = routes.get(w.key);
+    const onPrimary = !!r?.primary && !!r.primaryContract && wantedContract === w.contract;
+    const contract = onPrimary ? r!.primaryContract! : wantedContract;
     const isOption = contract.secType === 'OPT' || contract.secType === 'FOP';
     const line: Line = {
       key: w.key,
@@ -231,12 +305,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       tickContext: { isOption, right: contract.right, isCombo: contract.secType === 'BAG' },
       dead: false,
       resolved,
+      route: onPrimary ? 'primary' : 'smart',
     };
     lines.set(line.key, line);
     byReqId.set(line.reqId, line);
     // A fresh request starts without the previous line's error; IB repeats it if it still applies.
     if (quotes.get(w.key)?.error) setError(w.key, undefined);
     else ensureQuote(w.key);
+    const q = quotes.get(w.key)!;
+    if (!onPrimary && q.source) {
+      q.source = undefined; // back on SMART (a new session, or the fallback was dropped)
+      publish(q);
+    }
     try {
       api.reqMktData(line.reqId, toIbContract(contract), line.ticks, false, false);
     } catch (err) {
@@ -260,11 +340,12 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
   };
 
-  /** Lines that hold one of IB's market data lines (dead requests do not), probes included. */
+  /** Lines that hold one of IB's market data lines (dead requests do not), probes and side lines included. */
   const openLineCount = (): number => {
     let n = 0;
     for (const line of lines.values()) if (!line.dead) n++;
     for (const p of probes.values()) if (!p.dead) n++;
+    for (const side of sides.values()) if (!side.dead) n++;
     return n;
   };
 
@@ -295,6 +376,179 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     for (const line of lines.values()) if (line.releasedAt !== undefined) due = Math.min(due, line.releasedAt + LINGER_MS);
     if (sweepTimer) clearTimeout(sweepTimer);
     sweepTimer = Number.isFinite(due) ? setTimeout(sweep, Math.max(0, due - Date.now())) : null;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Primary-exchange fallback (see the header)
+
+  const routeOf = (key: string): Route => {
+    let r = routes.get(key);
+    if (!r) routes.set(key, (r = {}));
+    return r;
+  };
+
+  const clearRouteTimer = (r: Route) => {
+    if (r.timer) clearTimeout(r.timer);
+    r.timer = undefined;
+  };
+
+  /** Cancels a side line (at IB too, unless IB ended it). */
+  const closeSide = (side: Side) => {
+    clearTimeout(side.timer);
+    sides.delete(side.reqId);
+    const r = routes.get(side.key);
+    if (r?.side === side) r.side = undefined;
+    const api = liveApi();
+    if (side.dead || !api) return;
+    try {
+      api.cancelMktData(side.reqId);
+    } catch (err) {
+      console.error('[quotes] cancelMktData failed:', err);
+    }
+  };
+
+  /** Drops a contract's fallback state (its line went for good). */
+  const forgetRoute = (key: string) => {
+    const r = routes.get(key);
+    if (!r) return;
+    if (r.side) closeSide(r.side);
+    clearRouteTimer(r);
+    routes.delete(key);
+  };
+
+  /** Opens a side line with the line's generic ticks; false when no line is free or there is no session. */
+  const openSide = (line: Line, target: Side['target'], contract: ContractRef): boolean => {
+    const api = liveApi();
+    if (!api) return false;
+    if (openLineCount() >= MAX_MARKET_DATA_LINES && !reclaimLingering()) return false;
+    const side: Side = { key: line.key, reqId: ctx.ib.nextReqId(), target, contract, dead: false, buffer: [], timer: undefined! };
+    side.timer = setTimeout(() => sideAnswered(side), SIDE_TIMEOUT_MS);
+    sides.set(side.reqId, side);
+    routeOf(line.key).side = side;
+    try {
+      api.reqMktData(side.reqId, toIbContract(contract), line.ticks, false, false);
+    } catch (err) {
+      console.error('[quotes] side reqMktData failed:', err);
+      side.dead = true;
+      closeSide(side);
+      return false;
+    }
+    return true;
+  };
+
+  /** A SMART line answered delayed: probes its primary exchange unless one was tried lately. */
+  const probePrimary = async (line: Line) => {
+    if (line.route !== 'smart' || !fallbackEligible(line.contract) || line.releasedAt !== undefined) return;
+    const r = routeOf(line.key);
+    if (r.side || r.resolving || r.primary || (r.quietUntil ?? 0) > Date.now()) return;
+    let c = line.contract;
+    if (!c.primaryExchange || !c.conId) {
+      r.resolving = true;
+      try {
+        c = { ...c, ...(await ctx.contracts.resolve(c)) };
+      } catch {
+        r.resolving = false;
+        quiet(line.key, PRIMARY_GIVE_UP_MS);
+        return;
+      }
+      r.resolving = false;
+      if (lines.get(line.key) !== line || routes.get(line.key) !== r || r.side || r.primary) return;
+    }
+    const exchange = c.primaryExchange?.toUpperCase();
+    if (!exchange || !US_PRIMARY_EXCHANGES.has(exchange)) {
+      r.quietUntil = Infinity; // not a US listing IB serves directly
+      return;
+    }
+    r.smart = line.contract;
+    if (!openSide(line, 'primary', { ...c, exchange })) quiet(line.key, NO_LINE_RETRY_MS);
+  };
+
+  /** No primary probe for `ms`; then one, if the SMART line is still delayed. */
+  const quiet = (key: string, ms: number) => {
+    const r = routeOf(key);
+    r.quietUntil = Date.now() + ms;
+    clearRouteTimer(r);
+    r.timer = setTimeout(() => {
+      r.timer = undefined;
+      r.quietUntil = undefined;
+      const line = lines.get(key);
+      if (line && isDelayed(quotes.get(key))) void probePrimary(line);
+    }, ms);
+  };
+
+  const isDelayed = (q: Quote | undefined): boolean =>
+    !!q && (q.marketDataType === 3 || q.marketDataType === 4 || (q.error != null && DELAYED_SIGNALS.has(q.error.code)));
+
+  /** Tries SMART again for a quote served by its primary exchange (now, or after `ms`). */
+  const scheduleSmartRetry = (key: string, ms: number) => {
+    const r = routeOf(key);
+    clearRouteTimer(r);
+    r.timer = setTimeout(() => {
+      r.timer = undefined;
+      const line = lines.get(key);
+      if (!line || line.route !== 'primary' || !r.smart || r.side) return;
+      // A lingering line is not worth a second line; it tries again if it is wanted by then.
+      if (line.releasedAt !== undefined || !openSide(line, 'smart', r.smart)) scheduleSmartRetry(key, NO_LINE_RETRY_MS);
+    }, ms);
+  };
+
+  /** A side line answered (type 1 / 2: switch to it), failed or timed out. */
+  const sideAnswered = (side: Side, type?: MarketDataType) => {
+    if (sides.get(side.reqId) !== side) return;
+    const line = lines.get(side.key);
+    if (line && (type === 1 || type === 2)) {
+      switchTo(line, side, type);
+      return;
+    }
+    closeSide(side);
+    if (!line) return;
+    if (side.target === 'primary') quiet(side.key, PRIMARY_GIVE_UP_MS);
+    else scheduleSmartRetry(side.key, SMART_RETRY_MS);
+  };
+
+  /** The side line becomes the contract's line; the old one is cancelled. */
+  const switchTo = (line: Line, side: Side, type: MarketDataType) => {
+    clearTimeout(side.timer);
+    sides.delete(side.reqId);
+    const r = routeOf(line.key);
+    r.side = undefined;
+    byReqId.delete(line.reqId);
+    const api = liveApi();
+    if (!line.dead && api) {
+      try {
+        api.cancelMktData(line.reqId);
+      } catch (err) {
+        console.error('[quotes] cancelMktData failed:', err);
+      }
+    }
+    const next: Line = { ...line, reqId: side.reqId, contract: side.contract, dead: false, resolved: true, route: side.target };
+    lines.set(next.key, next);
+    byReqId.set(next.reqId, next);
+    const q = ensureQuote(next.key);
+    if (side.target === 'primary') {
+      r.primary = side.contract.exchange;
+      r.primaryContract = side.contract;
+      q.source = { kind: 'primary', exchange: side.contract.exchange };
+      scheduleSmartRetry(next.key, SMART_RETRY_MS);
+    } else {
+      r.primary = undefined;
+      r.quietUntil = undefined;
+      clearRouteTimer(r);
+      q.source = undefined;
+    }
+    q.marketDataType = type;
+    q.error = undefined;
+    for (const t of side.buffer) applyTick(q, t, next.tickContext);
+    publish(q);
+  };
+
+  /** 10197 ended (a real price arrived): SMART gets another chance everywhere. */
+  const competingEnded = () => {
+    competing = false;
+    for (const [key, r] of routes) {
+      if (r.primary) scheduleSmartRetry(key, 0);
+      else if (r.quietUntil !== undefined && r.quietUntil !== Infinity) quiet(key, 0);
+    }
   };
 
   const reconcileLive = (wanted: WantedContract[]) => {
@@ -421,9 +675,15 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       if (tick.kind !== 'option' && tick.value !== undefined) toProbe(reqId, { kind: 'tick', field: tick.field, value: tick.value });
       return;
     }
+    const side = sides.get(reqId);
+    if (side) {
+      if (side.buffer.length < SIDE_BUFFER) side.buffer.push(tick);
+      return;
+    }
     const line = byReqId.get(reqId);
     if (!line) return;
     if (line.dead) revive(line);
+    if (competing && tick.kind === 'price' && (tick.value ?? 0) > 0) competingEnded();
     const q = quotes.get(line.key) ?? ensureQuote(line.key);
     let changed = applyTick(q, tick, line.tickContext);
     if (q.error) {
@@ -443,8 +703,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       toProbe(e.reqId, { kind: 'error', code: e.code, message: e.message });
       return;
     }
+    if (e.code === COMPETING_SESSION) competing = true;
+    const side = sides.get(e.reqId);
+    if (side) {
+      // 10167: delayed on this route too. Other notices do not end the line; errors do.
+      if (isWarningCode(e.code) && e.code !== DELAYED_FALLBACK_CODE) return;
+      if (DEAD_CODES.has(e.code)) side.dead = true;
+      sideAnswered(side);
+      return;
+    }
     const line = byReqId.get(e.reqId);
     if (!line) return;
+    if (DELAYED_SIGNALS.has(e.code) && line.route === 'smart') void probePrimary(line);
     // 21xx are notices (farm status, fractional size rules); 10167 (delayed data shown) and
     // 10090 / 10091 (some ticks not subscribed) still deliver data, and marketDataType reports the kind.
     if (isWarningCode(e.code)) {
@@ -469,6 +739,12 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const forgetLines = () => {
     lines.clear();
     byReqId.clear();
+    // Every line starts on SMART again (a reconnect is a reason to try it).
+    for (const r of routes.values()) clearRouteTimer(r);
+    for (const side of sides.values()) clearTimeout(side.timer);
+    routes.clear();
+    sides.clear();
+    competing = false;
     // The session is gone and its probes with it.
     const open = [...probes.keys()];
     for (const id of open) toProbe(id, { kind: 'error', code: -1, message: 'Connection closed' });
@@ -518,9 +794,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         toProbe(reqId, { kind: 'type', type: type as MarketDataType });
         return;
       }
+      const side = sides.get(reqId);
+      if (side) {
+        sideAnswered(side, type as MarketDataType);
+        return;
+      }
       const line = byReqId.get(reqId);
       if (!line) return;
       if (line.dead) revive(line);
+      if (type === 3 || type === 4) {
+        if (line.route === 'smart') void probePrimary(line);
+        else scheduleSmartRetry(line.key, 0); // the exchange went delayed: back to SMART if it is live
+      }
       const q = ensureQuote(line.key);
       if (q.marketDataType === type) return;
       q.marketDataType = type as MarketDataType;
@@ -545,7 +830,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       noticeListeners.add(listener);
       return () => void noticeListeners.delete(listener);
     },
-    wanted: () => book.wanted().map((w) => ({ contract: w.contract, quote: quotes.get(w.key) })),
+    wanted() {
+      const out = book.wanted().map((w) => ({ contract: w.contract, quote: quotes.get(w.key) }));
+      for (const line of lines.values()) if (line.releasedAt !== undefined && !line.dead) out.push({ contract: line.contract, quote: quotes.get(line.key) });
+      return out;
+    },
     probe(contract, genericTicks, listener) {
       const api = liveApi();
       if (!api) return null;

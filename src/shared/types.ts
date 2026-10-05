@@ -130,8 +130,8 @@ export interface MarketCheckItem {
    * live ("Live · ARCA only"), Level 2 that IB sends from some exchanges only (2152: "Live · IEX only").
    */
   via?: string;
-  /** Stocks: quotes of this session served by their primary exchange because SMART was delayed. */
-  fallback?: string[];
+  /** Stocks: quotes served by their primary exchange at the time of the check because SMART was delayed. */
+  fallback?: Array<{ symbol: string; exchange: string }>;
   /** Epoch ms when this market was checked (depth keeps its time when a later check skips it). */
   checkedAt: number;
 }
@@ -199,6 +199,12 @@ export interface Quote {
    */
   dividends?: QuoteDividends;
   marketDataType?: MarketDataType;
+  /**
+   * Where the quote comes from when not from SMART: the stock's primary exchange, used while IB
+   * sends this account SMART (consolidated) data delayed but that exchange's own data live. Its
+   * bid / ask are that exchange's best, not the consolidated quote (see market/quotes.ts).
+   */
+  source?: { kind: 'primary'; exchange: string };
   /**
    * Last error for this subscription (e.g. 10197 competing live session, 354 not subscribed).
    * `final`: the line is dead (no data will arrive until the subscription changes), e.g. 200,

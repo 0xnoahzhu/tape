@@ -160,6 +160,8 @@ describe('market data check', () => {
       probe: { status: 'delayed', marketDataType: 3, code: 10167 },
       primary: { status: 'live', exchange: 'ARCA', marketDataType: 1 },
     });
+    // The quotes service moved SPY to ARCA meanwhile (its fallback): SMART still reads delayed, and the item names it.
+    expect(item(r, 'stk')!.fallback).toEqual([{ symbol: 'SPY', exchange: 'ARCA' }]);
   });
 
   it('reuses lines other owners hold and answers from them at once', async () => {

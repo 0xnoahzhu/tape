@@ -115,6 +115,15 @@ class LineAnswer {
     this.answered();
   }
 
+  /**
+   * The quotes service moved the quote to its primary exchange (the SMART line was delayed): the
+   * SMART answer stays the type seen before, or delayed.
+   */
+  onFallback(): void {
+    if (!this.type) this.type = 3;
+    this.answered();
+  }
+
   /** A notice that does not end the line (10167 delayed data shown, 10090 part of the ticks). */
   onNotice(code: number, message: string): void {
     this.notice ??= { code, message };
@@ -232,7 +241,8 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     const look = (q: Quote | undefined) => {
       if (!q) return;
       if (q.error) answer.onError(q.error.code, q.error.message);
-      if (q.marketDataType) answer.onType(q.marketDataType);
+      if (q.source?.kind === 'primary') answer.onFallback();
+      else if (q.marketDataType) answer.onType(q.marketDataType);
     };
     offs.push(ctx.quotes.onQuote((q) => q.key === key && look(q)));
     offs.push(ctx.quotes.onNotice((k, code, message) => k === key && answer.onNotice(code, message)));
@@ -425,6 +435,11 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
           stockItem.via = primary.exchange;
         }
       }
+      const fallback = ctx.quotes
+        .wanted()
+        .filter((w) => w.quote?.source?.kind === 'primary')
+        .map((w) => ({ symbol: contractLabel(w.contract), exchange: w.quote!.source!.exchange }));
+      if (fallback.length) stockItem.fallback = fallback;
       items.push(stockItem);
       items.push(
         opt
