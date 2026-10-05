@@ -439,7 +439,7 @@ Main is the only authority on whether Tape is locked; the renderer draws `LockSt
   keep running in main.
 * Renderer: `features/lock/LockScreen.tsx` sits above everything (z-index 40) while the app under it is
   `inert`; `state/lockActions.ts` closes dialogs, the bell, popovers and drops a pending order review when
-  locking; a capture key listener (`features/lock/actions.ts → installLockKeyGuard`) keeps every shortcut
+  locking, and collapses floating panels to their bars (they stay collapsed after the unlock); a capture key listener (`features/lock/actions.ts → installLockKeyGuard`) keeps every shortcut
   from running and sends typed keys to the PIN input. The store's `unlocking` keeps the screen up while the
   unlock animation plays after main has already unlocked.
 
@@ -490,6 +490,11 @@ collapsed "Advanced" section. Everything else is one step away:
   `orderRules.ts → ALGOS`), routing & OCA, good-after time and note. The toggle line lists what is
   on ("Advanced · Extended hours · TP/SL · AON · Adaptive").
 
+The ticket's state, rules and submit flow are one controller (`useTicket.ts`); `parts.tsx` holds its
+parts (quote boxes, side, order types with the More menu, quantity, price, TIF, Advanced, totals, submit)
+with a size scale. The docked ticket (`OrderTicket.tsx`, `DOCKED_SCALE`: the design's column exactly) and
+the floating ticket (`features/panels/TicketFloat.tsx`) lay out the same parts.
+
 `buildOrder.ts → composeOrder` turns the ticket into a request (always, noting the first problem);
 `buildOrderRequest` refuses a problem and then runs `orderProblems`. The same composed request
 decides what is greyed out: `choiceProblem(input, patch, field)` composes the ticket with the choice
@@ -512,6 +517,78 @@ the lists, the cancel dialog and the CSV) and, for new single-instrument orders 
 IB's estimate from `previewOrder`: asking, then commission, initial and maintenance margin change
 (before → after), equity with loan and IB's notice, or IB's refusal in red. Sending never waits for
 it.
+
+### Floating panels (`features/panels`)
+
+The order ticket (Trade › Chart and Depth, 340px column) and the options strategy builder (Trade ›
+Options, 384px) have a pop-out icon at the top right of their header. It turns the panel into a
+floating panel inside the main window; the column goes and the chart, depth or chain takes the full
+width. The panel's dock-back icon puts it back in its column with the same state (the state lives in
+the stores; nothing is copied). There is no separate OS window and no setting.
+
+**Layer.** `FloatingPanels.tsx` (mounted by `App` over the content area under the top bar, inside the
+`inert` app root) is an absolutely positioned layer that passes clicks through; its z-index (1) puts the
+panels above the page content and below menus and popovers (4+), the top bar and its dropdowns, the
+notifications panel, dialogs, toasts and the lock screen. The panels are non-modal: everything around
+them stays usable. The ticket shows where the docked ticket would (Trade › Chart, Depth), the strategy
+builder in Trade › Options (`actions.ts → panelShown`).
+
+**Frame** (`FloatingPanel.tsx`, geometry in `model.ts`, pure and tested). The popovers' elevation (1px
+`--ln` ring, popover shadow). A 36px header is the drag handle, with the title (ticket: "Order · AAPL",
+name and primary exchange, last price and change, the session; strategy: "Strategy · AAPL", the
+strategy and its expiry) and two controls: collapse ▾ and dock back. Eight handles resize it from every
+edge and corner (pointer capture; the opposite edges stay put), between a minimum (about the docked
+width × 420px; shorter content scrolls) and the content area less an 8px margin. The first time it
+opens at 1000 × 625 (16:10) over the right part of the content area under the view tabs, smaller in a
+small window. Pressing in the panel focuses it (`tabIndex=-1`), so its keys work: Esc in a field leaves
+the field (focus goes to the panel), the next Esc collapses the panel (dialogs and menus take their Esc
+first; `panelKeyAction`). With nothing focused, Esc still collapses the panel the user last worked in
+— pressed in, or expanded by B / S, Modify or a quote — until they press somewhere else
+(`shortcuts.ts → escapePanel`). The ticket's ⏎ / ↑ / ↓ / B / S work as docked (`useTicketKeys` treats
+the focused panel like the page); ⏎ does nothing while the last order still waits for IB.
+
+**Persistence** (`panelStore.ts`, localStorage `tape.floatingPanels`, read and written in try/catch):
+per panel `floating`, `collapsed`, the expanded rectangle and the bar's position, relative to the content
+area. They are fitted into the area whenever it is drawn (`panelRect`, `barRect`), so a smaller window
+moves a panel inside without forgetting where the user left it; a panel floating at quit floats at
+launch.
+
+**Layout.** The content lays itself out for the panel's own width (never the window's,
+`layout.ts`): below 900px the docked panel's single column (the same component with the panel header
+and the status strip); from 900px three columns that scale up a little from 1240px (narrower, the
+ticket's ask box and More, and the strategy's leg descriptions, would be cut). Ticket
+(`TicketFloat.tsx`): market (bid / ask boxes, a click fills the limit price; 5 levels a side of the book
+when the depth feature is on and IB sends one, sharing the single depth line with the depth view through
+`state/depthSubscription.ts`; the position valued as on the Portfolio page; the instrument's working
+orders with Modify / Cancel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position,
+price ± one tick with Bid / Mid / Ask on the tick — the mid rounds to the passive side, `quickActions.ts`
+—, TIF, the trading session; "Modifying #1234 · Cancel modify" on top while modifying), confirm (the
+Advanced sections as one-line rows that scroll, then fixed: the status strip, totals, IBKR's what-if
+margin and commission — asked 600 ms after the ticket changes, not on price ticks — and the submit
+button). Strategy (`StrategyFloat.tsx`, its own model and quote owners in
+`options/strategyPanelModel.ts`): legs (template, the legs, "+ Add from the chain", net greeks), a
+large expiry P&L chart with the statistics, and the order (net price ± a cent, `deskStore.netPrice`,
+dropped when the legs change; type, TIF, condition, estimated cost, strip, send).
+
+**After a submit.** An order sent from a floating panel carries its `origin` (`PendingOrder.origin`)
+and reports through `state/orderFeedback.ts` instead of toasts: the button reads "Submitting…" and is
+disabled until IB answers; the review dialog (when enabled) works as before. The status strip
+(`OrderStrip.tsx`, `stripModel.ts`) shows "Submitted #1234" / "Modified #1234", the order line and IB's
+live status: pre-submitted / working → partially filled with progress → filled with the average price,
+the position change and the commission; cancelled; or IB's rejection in red (also the late Inactive /
+201 case) with "Fix and resubmit" — the form keeps its values. Inline Modify / Cancel while it works;
+× dismisses it; the next order replaces it. The new order flashes at the top of the working orders. An
+accepted order (placed or modified) always collapses the panel to its bar; a rejection keeps it
+expanded, and a late rejection expands a panel its order collapsed. The docked panels keep their
+toasts.
+
+**Collapsed bar** (`CollapsedBar.tsx`): about 420 × 40 with the drag handle (symbol and last price;
+strategy: name and net price), the latest order's status ("Buy 100 · 60/100", "Filled"), Buy / Sell
+(ticket) and ▴. A click on the bar (without dragging) or the chevron expands it, as do ⏎ on the bar, B /
+S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the strip), a depth level and a
+chain quote (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
+from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
+own remembered position (first: the bottom-right corner of the content area).
 
 ### Watchlists
 

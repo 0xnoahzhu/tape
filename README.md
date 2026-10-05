@@ -38,6 +38,17 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
   groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
   the reason. Optional confirmation before every order, with IBKR's **margin and commission estimate**
   (what-if); keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
+- **Floating order ticket and strategy builder**: the pop-out icon at the top right of the order ticket
+  or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart,
+  depth or option chain then uses the full width. Drag it by its header, resize it from any edge or
+  corner. It is laid out for its size: from about 900 px wide in three columns (market: bid / ask, 5
+  depth levels, the position and working orders; entry: side, type, quantity and price with quick chips
+  100 / 500 / 1K / Position and Bid / Mid / Ask, ± one tick; confirm: the advanced sections, the totals
+  with IBKR's what-if, the submit button), narrower as the docked panel. After a submit a status strip
+  follows the order (submitted, partial fills with progress, filled with average price, position change
+  and commission, or IBKR's rejection). The chevron (or Esc) collapses it to a slim bar with the latest
+  order's status and Buy / Sell; an accepted order does this by itself. The dock-back icon puts it back
+  in the right column. Tape remembers per device which panels float, where, and whether collapsed.
 - **Symbol search** (⌘K / Ctrl+K): find a ticker or company and open it on the Trade page; orders are
   entered in the order ticket.
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type, ATM IV and
