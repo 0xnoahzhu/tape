@@ -387,10 +387,11 @@ key listed in the event's `full` (one the renderer does not hold yet), which rep
 main process keeps the renderer's copy of every quote it sends (`sent`), so the two must hold the same
 keys: the renderer holds exactly the quotes its owners want (every owner goes through
 `state/quoteSubscriptions.ts`, the options risk watcher included), and main sends only those. A reload or
-a closed window drops the renderer's owners and copies in main (`QuoteService.resetRenderer`, from
-`did-start-navigation`, `render-process-gone` and `closed`). Should the renderer still get changes for a
-quote it does not hold, it never makes a quote of them (that quote would lack its previous close and data
-type): it asks for the whole quote (`resendQuotes`).
+a closed window drops the renderer's owners and copies in main (`QuoteService.resetRenderer`, on
+`did-navigate`, `render-process-gone` and `closed`: `rendererReset.ts`; not on `did-start-navigation`,
+which also fires for a navigation that `will-navigate` cancels while the same document keeps running).
+Should the renderer still get changes for a quote it does not hold, it never makes a quote of them (that
+quote would lack its previous close and data type): it asks for the whole quote (`resendQuotes`).
 
 The `dividends` profile adds generic tick 456 to stocks: IB answers with tick 59
 ("past 12 months, next 12 months, next ex-date, next amount", e.g. `3.64,3.92,20261119,0.98`),
@@ -421,14 +422,17 @@ free lines, never a lingering one. A contract that changes from "main-process ow
 "published" (a renderer owner joins) is reconciled, which sends its whole quote to the renderer at once.
 
 The previous close (tick 9, delayed 75) is every change's reference, and IB sends it with a request's
-first ticks and afterwards only when it changes. `tickMap.ts` therefore never lets IB's "not available"
-markers (-1, 0, Double.MAX) erase a known close (a new session's close replaces it), and a delayed close
-does not replace the close of a quote that reports live data. A line whose quote streams prices without a
-close 12 s after the first one (`CLOSE_WAIT_MS`; e.g. a line opened during a competing session, whose data
-resumes without the subscription image) is cancelled and requested again, which brings the close: only for
-quotes the renderer shows of instruments that have a close (stocks, indices, futures, FX, CFDs; not options
-or combos), at most once per contract in 15 min (`CLOSE_RETRY_MS`), doubling after each, and on the
-exchange line while the primary-exchange fallback serves the quote.
+first ticks (sometimes before the line's `marketDataType`) and afterwards only when it changes.
+`tickMap.ts` takes each line's close, live or delayed (both are the same number, and the quote's data type
+may still be the previous line's), and never lets IB's "not available" markers (-1, 0, Double.MAX) erase
+the close the same line sent; on a new line they do, so a close a session old is not kept. A line whose
+quote streams prices without a close 12 s after the first one (`CLOSE_WAIT_MS`) is cancelled and
+requested again with the same contract, which brings the close. Seen live: when a competing live session
+(10197) ended, some lines requested during it resumed with prices but never got tick 9. This applies only
+to quotes the renderer shows of instruments that have a close (stocks, indices, futures, FX, CFDs; not
+options or combos), at most once per contract in 15 min (`CLOSE_RETRY_MS`), doubling while the requests
+bring no close (a close starts it over), not while the primary-exchange fallback resolves the contract or
+tests another route, and on the exchange line while the fallback serves the quote.
 
 #### Primary-exchange fallback
 
