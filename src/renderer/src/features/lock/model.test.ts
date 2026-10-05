@@ -56,8 +56,9 @@ describe('clock and countdown', () => {
   it('shows the remaining wait, rounded up', () => {
     expect(waitLeft(null, 0)).toBeNull();
     expect(waitLeft(1000, 1000)).toBeNull();
-    expect(waitLeft(30_000, 0)).toBe('0:30');
-    expect(waitLeft(30_000, 29_100)).toBe('0:01');
+    expect(waitLeft(30_000, 0)).toBe('00:30');
+    expect(waitLeft(30_000, 29_100)).toBe('00:01');
+    expect(waitLeft(65_000, 0)).toBe('01:05');
     expect(waitLeft(15 * 60_000, 0)).toBe('15:00');
   });
 });

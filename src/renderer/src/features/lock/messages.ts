@@ -12,7 +12,7 @@ const en = {
   charHint: 'Spaces and control characters can’t be used',
   capsLock: 'Caps Lock is on',
   pinUnreadable: 'Tape can’t read its saved PIN. Try again, or use Forgot PIN to reset Tape.',
-  /** "Too many attempts. Try again in 0:30" */
+  /** "Too many attempts. Try again in 00:30" */
   throttled: (wait: string) => `Too many attempts. Try again in ${wait}`,
   unlockWith: (kind: BiometricKind) => `Unlock with ${BIO[kind]}`,
   bioUnavailable: (kind: BiometricKind) => `${BIO[kind]} is not available. Enter your PIN.`,

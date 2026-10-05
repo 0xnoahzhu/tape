@@ -18,12 +18,13 @@ export interface LockClock {
 
 /**
  * The large clock "08:37", split at the colon so the screen can put the colon on the centre line
- * (hours right of it, minutes left of it). The hour always has two digits, also on the 12-hour clock.
+ * (hours right of it, minutes left of it). The hour has two digits in both formats, as every clock
+ * reading does (clockParts).
  */
 export function lockTime(d: Date, clock: Clock): LockClock {
   const p = clock.parts(d);
   const [hours = '', minutes = ''] = p.time.split(':');
-  return { hours: hours.padStart(2, '0'), minutes, period: p.period, periodFirst: p.periodFirst };
+  return { hours, minutes, period: p.period, periodFirst: p.periodFirst };
 }
 
 const WEEKDAYS: Record<Lang, string[]> = {
@@ -39,11 +40,11 @@ export function lockDate(d: Date, lang: Lang): string {
     : `${WEEKDAYS.en[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 
-/** Remaining wait as "m:ss" (rounded up, so it never shows 0:00 while still waiting), or null when over. */
+/** Remaining wait as "mm:ss" (rounded up, so it never shows 00:00 while still waiting), or null when over. */
 export function waitLeft(retryAt: number | null, now: number): string | null {
   if (retryAt == null || retryAt <= now) return null;
   const s = Math.ceil((retryAt - now) / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
 // ---------------------------------------------------------------------------
