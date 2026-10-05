@@ -257,7 +257,12 @@ export function ChartView() {
             : sq.refs.length
               ? undefined
               : m.noQuote;
-  const dataType = quote?.marketDataType && quote.marketDataType !== 1 ? m.dataType[quote.marketDataType] : undefined;
+  const via = quote?.source?.kind === 'primary' ? quote.source.exchange : undefined;
+  const dataType = via
+    ? m.via(via, quote?.marketDataType === 2)
+    : quote?.marketDataType && quote.marketDataType !== 1
+      ? m.dataType[quote.marketDataType]
+      : undefined;
   // Seconds bars do not move with delayed quotes: only the reloads bring them.
   const delayedSeconds = isSecondsTimeframe(timeframe) && (quote?.marketDataType === 3 || quote?.marketDataType === 4);
   const live = session === 'regular';
@@ -355,7 +360,13 @@ export function ChartView() {
           </div>
         )}
         {dataType && (
-          <div style={{ padding: '3px 6px', font: '600 11px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}>{dataType}</div>
+          <div
+            data-chart="data-type"
+            title={via ? m.viaTip(via) : undefined}
+            style={{ padding: '3px 6px', font: '600 11px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}
+          >
+            {dataType}
+          </div>
         )}
         {delayedSeconds && (
           <div data-chart="delayed-note" style={{ whiteSpace: 'nowrap' }}>

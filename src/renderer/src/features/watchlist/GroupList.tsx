@@ -321,6 +321,12 @@ const WatchRow = memo(function WatchRow({
           <div style={{ fontWeight: 600 }}>{contractLabel(item.contract)}</div>
           {/* Non-USD listings look like the US one otherwise ("IBM" on IBIS is quoted in EUR). */}
           {currency && currency !== 'USD' && <div style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>{currency}</div>}
+          {/* Served by its primary exchange because SMART is delayed for this account. */}
+          {q?.source && (
+            <div data-wl="via" title={m.viaTip(q.source.exchange)} style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>
+              {q.source.exchange}
+            </div>
+          )}
         </div>
         <div className="ellipsis" title={name || undefined} style={{ fontSize: 12, color: 'var(--dm)' }}>
           {name || ' '}
@@ -328,7 +334,7 @@ const WatchRow = memo(function WatchRow({
       </div>
       <div
         className="num"
-        title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined}
+        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange) : undefined}
         style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', flexShrink: 0, paddingLeft: 8 }}
       >
         <div>{px(last)}</div>

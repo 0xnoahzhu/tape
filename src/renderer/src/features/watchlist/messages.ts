@@ -43,6 +43,7 @@ export const useWatchlistMessages = createMessages({
     movedTo: (sym: string, group: string) => `${sym} moved to ${group}`,
     copiedTo: (sym: string, list: string) => `${sym} added to ${list}`,
     saveFailed: (msg: string) => `Could not save watchlists: ${msg}`,
+    viaTip: (x: string) => `Live · ${x}: ${x}'s own best bid and ask, not the consolidated quote (IB sends this account SMART data delayed).`,
   },
   zh: {
     collapse: '收起自选',
@@ -85,6 +86,7 @@ export const useWatchlistMessages = createMessages({
     movedTo: (sym: string, group: string) => `${sym} 已移到 ${group}`,
     copiedTo: (sym: string, list: string) => `${sym} 已添加到 ${list}`,
     saveFailed: (msg: string) => `自选保存失败：${msg}`,
+    viaTip: (x: string) => `实时 · ${x}：${x} 自己的最优买卖价，不是全市场合并报价（IB 向本账户推送的 SMART 行情是延迟的）。`,
   },
 });
 
