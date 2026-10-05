@@ -8,9 +8,11 @@
 //   icon-<theme>-256.png    full-bleed window / taskbar / notification icon (Windows, Linux)
 //   icon-<theme>-512.png    full-bleed, larger
 // build/ (electron-builder)
-//   icon.png                1024 px, dark, macOS style
+//   icon.png                1024 px, light, macOS style
 //   icon.icns               macOS bundle icon via iconutil (macOS only)
-//   icon.ico                Windows icon, full-bleed dark, 16–256 px PNG entries
+//   icon.ico                Windows icon, full-bleed light, 16–256 px PNG entries
+// The bundle icons (Finder, Launchpad, the DMG, the taskbar before the app runs) are the light ones,
+// like the Light theme that Settings lists first; at run time the icon follows the resolved theme.
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,6 +22,9 @@ import { fileURLToPath } from 'node:url';
 import { Resvg } from '@resvg/resvg-js';
 
 type Theme = 'dark' | 'light';
+
+/** Theme of the icons electron-builder puts into the app bundle and installers. */
+const BUNDLE_THEME: Theme = 'light';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const iconsDir = join(root, 'resources', 'icons');
@@ -119,11 +124,11 @@ for (const theme of ['dark', 'light'] as const) {
   for (const size of [256, 512]) write(join(iconsDir, `icon-${theme}-${size}.png`), render(source(theme), size));
 }
 
-write(join(buildDir, 'icon.png'), render(macSvg('dark'), CANVAS));
-icns('dark', join(buildDir, 'icon.icns'));
+write(join(buildDir, 'icon.png'), render(macSvg(BUNDLE_THEME), CANVAS));
+icns(BUNDLE_THEME, join(buildDir, 'icon.icns'));
 write(
   join(buildDir, 'icon.ico'),
-  ico([16, 24, 32, 48, 64, 128, 256].map((size) => ({ size, png: render(source('dark'), size) }))),
+  ico([16, 24, 32, 48, 64, 128, 256].map((size) => ({ size, png: render(source(BUNDLE_THEME), size) }))),
 );
 
 console.log(`icons: wrote\n  ${written.join('\n  ')}`);
