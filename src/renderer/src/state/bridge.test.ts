@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ApiLogEntry } from '@shared/types';
-import { appendLog, withLoadedLog } from './bridge';
+import type { ApiLogEntry, Quote } from '@shared/types';
+import { appendLog, mergeQuotes, withLoadedLog } from './bridge';
 
 const entry = (seq: number): ApiLogEntry => ({ seq, t: seq, dir: 'in', msgId: '1', name: 'x', fields: [], bytes: 0, err: false, raw: '' });
 const seqs = (log: ApiLogEntry[]) => log.map((e) => e.seq);
@@ -38,5 +38,34 @@ describe('withLoadedLog', () => {
 
   it('keeps the newest entries up to the limit', () => {
     expect(seqs(withLoadedLog([6, 7].map(entry), [1, 2, 3, 4, 5].map(entry), 4))).toEqual([4, 5, 6, 7]);
+  });
+});
+
+describe('mergeQuotes', () => {
+  const held: Record<string, Quote> = {
+    'STK:NVDA': { key: 'STK:NVDA', last: 236.59, close: 233.95, marketDataType: 1, updatedAt: 1 },
+    'STK:AAPL': { key: 'STK:AAPL', last: 333.42, close: 333.69, open: 334, updatedAt: 1 },
+  };
+
+  it('merges changes into the quotes it holds and replaces those sent whole', () => {
+    const { quotes, missing } = mergeQuotes(
+      held,
+      {
+        'STK:NVDA': { key: 'STK:NVDA', last: 236.7, bid: undefined, updatedAt: 2 },
+        'STK:AAPL': { key: 'STK:AAPL', last: 333.5, close: 333.69, updatedAt: 2 },
+        'STK:MSFT': { key: 'STK:MSFT', last: 526.46, close: 517.53, updatedAt: 2 },
+      },
+      ['STK:AAPL', 'STK:MSFT'],
+    );
+    expect(missing).toEqual([]);
+    expect(quotes['STK:NVDA']).toEqual({ key: 'STK:NVDA', last: 236.7, bid: undefined, close: 233.95, marketDataType: 1, updatedAt: 2 });
+    expect(quotes['STK:AAPL']).toEqual({ key: 'STK:AAPL', last: 333.5, close: 333.69, updatedAt: 2 });
+    expect(quotes['STK:MSFT'].close).toBe(517.53);
+  });
+
+  it('does not make a quote of changes alone, and reports it missing', () => {
+    const { quotes, missing } = mergeQuotes(held, { 'STK:META': { key: 'STK:META', last: 745.7, bid: 745.69, updatedAt: 2 } });
+    expect(quotes).toBe(held);
+    expect(missing).toEqual(['STK:META']);
   });
 });

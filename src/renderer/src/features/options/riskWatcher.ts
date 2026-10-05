@@ -6,6 +6,7 @@
 import { contractKey, contractLabel } from '@shared/contract';
 import { ymd } from '@shared/format';
 import type { QuoteSubscription } from '@shared/types';
+import { setQuoteSubscriptions } from '../../state/quoteSubscriptions';
 import { useStore } from '../../state/store';
 import { useM } from './messages';
 import { computeRiskAlerts, isOptionPosition, quotableContract, underlyingFor, type RiskAlert } from './risk';
@@ -83,7 +84,8 @@ export function startRiskWatcher(): void {
     const sig = subs.map((x) => contractKey(x.contract) + '|' + x.profile).join(',');
     if (sig !== signature) {
       signature = sig;
-      void window.tape.setQuoteSubscriptions(OWNER, subs).catch(() => undefined);
+      // Through the renderer's owner list, so the quotes it reads are kept while it wants them.
+      void setQuoteSubscriptions(OWNER, subs).catch(() => undefined);
     }
     if (!options.length) return;
     notifyNew(computeRiskAlerts(options, s.quotes, (p) => s.quotes[contractKey(underlyingFor(p.contract.symbol, s.watchlists))]));

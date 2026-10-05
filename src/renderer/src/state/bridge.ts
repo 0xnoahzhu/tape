@@ -70,10 +70,42 @@ export async function startBridge(): Promise<void> {
   });
 }
 
-function mergeQuotes(prev: Record<string, Quote>, patch: Record<string, Quote>): Record<string, Quote> {
+/**
+ * Applies a `quotes` batch: a whole quote (its key is in `full`) replaces the copy, changes merge
+ * into it. Changes for a quote the store does not hold cannot be applied (they would make a quote of
+ * the changed fields alone, without its previous close or data type): they are skipped and listed
+ * in `missing`, so the main process can send those quotes whole.
+ */
+export function mergeQuotes(
+  prev: Record<string, Quote>,
+  patch: Record<string, Quote>,
+  full: readonly string[] = [],
+): { quotes: Record<string, Quote>; missing: string[] } {
+  const whole = new Set(full);
   const next = { ...prev };
-  for (const [k, q] of Object.entries(patch)) next[k] = prev[k] ? { ...prev[k], ...q } : q;
-  return next;
+  const missing: string[] = [];
+  for (const [k, q] of Object.entries(patch)) {
+    if (whole.has(k)) next[k] = q;
+    else if (prev[k]) next[k] = { ...prev[k], ...q };
+    else missing.push(k);
+  }
+  return { quotes: missing.length === Object.keys(patch).length ? prev : next, missing };
+}
+
+/** A quote asked for whole is asked again after this long if it has not come (main ignores quotes the renderer does not want). */
+const RESEND_RETRY_MS = 2_000;
+const resendAsked = new Map<string, number>();
+
+function applyQuotes(e: Extract<TapeEvent, { type: 'quotes' }>): void {
+  const r = mergeQuotes(useStore.getState().quotes, e.quotes, e.full);
+  if (r.quotes !== useStore.getState().quotes) useStore.setState({ quotes: r.quotes });
+  const missing = r.missing;
+  for (const k of e.full ?? []) resendAsked.delete(k);
+  const now = Date.now();
+  const due = missing.filter((k) => now - (resendAsked.get(k) ?? -Infinity) >= RESEND_RETRY_MS);
+  if (!due.length) return;
+  for (const k of due) resendAsked.set(k, now);
+  void window.tape.resendQuotes(due).catch(() => undefined);
 }
 
 const lastSeq = (log: ApiLogEntry[]) => (log.length ? log[log.length - 1].seq : 0);
@@ -119,7 +151,7 @@ function apply(e: TapeEvent): void {
       set({ executions: e.executions });
       break;
     case 'quotes':
-      set((s) => ({ quotes: mergeQuotes(s.quotes, e.quotes) }));
+      applyQuotes(e);
       break;
     case 'depth':
       set({ depth: e.book });
