@@ -3,10 +3,11 @@
 //
 //   12-hour: en "09:41 AM", "09:41:07 PM"; zh "上午 09:41", "下午 02:35" (the period comes first,
 //            as Chinese writes it). Hours have two digits like minutes, so times line up in a
-//            column and keep their width as the hour changes. Midnight is "12:00 AM" / "上午 12:00", noon "12:00 PM" / "下午 12:00":
-//            上午 / 下午 are CLDR's am / pm markers for Chinese (what Intl's zh-CN hour12 output and
-//            the Windows / macOS 12-hour clocks use); the finer day periods (凌晨, 中午, 晚上 …) would
-//            give one clock reading several names and make the period's width jump.
+//            column and keep their width as the hour changes. Midnight is "12:00 AM" /
+//            "上午 12:00", noon "12:00 PM" / "下午 12:00". 上午 / 下午 are CLDR's am / pm markers
+//            for Chinese (what Intl's zh-CN hour12 output and the Windows / macOS 12-hour clocks
+//            use); the finer day periods (凌晨, 中午, 晚上 …) would give one clock reading several
+//            names and make the period's width jump.
 //   24-hour: "09:41", "14:35:07" in both languages.
 //
 // Only what a person reads goes through here. The API log (milliseconds) and everything sent to
