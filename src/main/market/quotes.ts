@@ -26,8 +26,13 @@
 //                                      --delayed, error, SIDE_TIMEOUT_MS--> smart, no probe for PRIMARY_GIVE_UP_MS
 //   primary --every SMART_RETRY_MS, when 10197 ends--> probing SMART --type 1 / 2--> smart (primary line cancelled)
 //                                                                  --otherwise--> primary, next retry later
+//   primary --the exchange line turns delayed--> probing SMART --live--> smart
+//                                                              --otherwise--> smart anyway (a delayed consolidated
+//                                                                 quote beats one exchange's), no probe for PRIMARY_GIVE_UP_MS
 // A handshake (reconnect, 1101) starts every line on SMART again. Side lines count against the
-// line budget and live at most SIDE_TIMEOUT_MS, so the steady state keeps one line per contract.
+// line budget (they only take free lines, never a lingering one) and live at most SIDE_TIMEOUT_MS,
+// so the steady state keeps one line per contract. A 10197 episode ends with a live price on an
+// owner line that reported it (side lines never start one), at most once per COMPETING_END_MIN_MS.
 
 import { EventName } from '../ib/tws';
 import type { ContractRef, MarketDataType, Quote, QuoteSubscription } from '@shared/types';
@@ -71,6 +76,8 @@ export const SMART_RETRY_MS = 10 * 60_000;
 const NO_LINE_RETRY_MS = 60_000;
 /** Ticks a side line keeps until it becomes the quote's line. */
 const SIDE_BUFFER = 64;
+/** The end of a 10197 episode re-probes routes at most this often. */
+export const COMPETING_END_MIN_MS = 60_000;
 
 interface Line {
   key: string;
@@ -188,8 +195,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const probes = new Map<number, Probe>();
   const routes = new Map<string, Route>();
   const sides = new Map<number, Side>();
-  /** A 10197 was seen; the next real price ends it (then SMART is tried again). */
+  /** A 10197 was seen; the next live price on a line that reported it ends it (then SMART is tried again). */
   let competing = false;
+  /** Owner lines that reported 10197 in this episode. */
+  const competingIds = new Set<number>();
+  let competingEndedAt = -Infinity;
   let ready = false;
 
   // Demo feed.
@@ -398,6 +408,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     sides.delete(side.reqId);
     const r = routes.get(side.key);
     if (r?.side === side) r.side = undefined;
+    // A contract may wait for the line this side line held.
+    if (ready) scheduleReconcile();
     const api = liveApi();
     if (side.dead || !api) return;
     try {
@@ -416,11 +428,14 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     routes.delete(key);
   };
 
-  /** Opens a side line with the line's generic ticks; false when no line is free or there is no session. */
+  /**
+   * Opens a side line with the line's generic ticks; false when no line is free or there is no
+   * session. A background probe never takes a lingering line (the user may come back to it).
+   */
   const openSide = (line: Line, target: Side['target'], contract: ContractRef): boolean => {
     const api = liveApi();
     if (!api) return false;
-    if (openLineCount() >= MAX_MARKET_DATA_LINES && !reclaimLingering()) return false;
+    if (openLineCount() >= MAX_MARKET_DATA_LINES) return false;
     const side: Side = { key: line.key, reqId: ctx.ib.nextReqId(), target, contract, dead: false, buffer: [], timer: undefined! };
     side.timer = setTimeout(() => sideAnswered(side), SIDE_TIMEOUT_MS);
     sides.set(side.reqId, side);
@@ -500,6 +515,13 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       switchTo(line, side, type);
       return;
     }
+    // The exchange line turned delayed and SMART is not live either: back to the consolidated quote.
+    if (line && side.target === 'smart' && line.route === 'primary' && isDelayed(quotes.get(side.key))) {
+      if (!side.dead && (type === 3 || type === 4)) switchTo(line, side, type);
+      else backToSmart(line, side);
+      if (lines.has(side.key)) quiet(side.key, PRIMARY_GIVE_UP_MS);
+      return;
+    }
     closeSide(side);
     if (!line) return;
     if (side.target === 'primary') quiet(side.key, PRIMARY_GIVE_UP_MS);
@@ -542,9 +564,29 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     publish(q);
   };
 
-  /** 10197 ended (a real price arrived): SMART gets another chance everywhere. */
+  /** Leaves the primary exchange without a usable side line: the exchange line is replaced by a new SMART one. */
+  const backToSmart = (line: Line, side: Side) => {
+    closeSide(side);
+    const r = routeOf(line.key);
+    r.primary = undefined;
+    r.primaryContract = undefined;
+    clearRouteTimer(r);
+    const w = line.releasedAt === undefined ? book.wanted().find((x) => x.key === line.key) : undefined;
+    if (!w) {
+      dropLine(line);
+      return;
+    }
+    cancelLine(line);
+    requestLine(w); // on SMART: clears quote.source
+  };
+
+  /** 10197 ended (a live price arrived on a line that reported it): SMART gets another chance everywhere. */
   const competingEnded = () => {
+    const now = Date.now();
+    if (now - competingEndedAt < COMPETING_END_MIN_MS) return;
+    competingEndedAt = now;
     competing = false;
+    competingIds.clear();
     for (const [key, r] of routes) {
       if (r.primary) scheduleSmartRetry(key, 0);
       else if (r.quietUntil !== undefined && r.quietUntil !== Infinity) quiet(key, 0);
@@ -683,8 +725,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     const line = byReqId.get(reqId);
     if (!line) return;
     if (line.dead) revive(line);
-    if (competing && tick.kind === 'price' && (tick.value ?? 0) > 0) competingEnded();
     const q = quotes.get(line.key) ?? ensureQuote(line.key);
+    if (competing && competingIds.has(reqId) && tick.kind === 'price' && (tick.value ?? 0) > 0 && q.marketDataType !== 3 && q.marketDataType !== 4) competingEnded();
     let changed = applyTick(q, tick, line.tickContext);
     if (q.error) {
       q.error = undefined; // data is flowing again
@@ -703,7 +745,6 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       toProbe(e.reqId, { kind: 'error', code: e.code, message: e.message });
       return;
     }
-    if (e.code === COMPETING_SESSION) competing = true;
     const side = sides.get(e.reqId);
     if (side) {
       // 10167: delayed on this route too. Other notices do not end the line; errors do.
@@ -714,6 +755,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     const line = byReqId.get(e.reqId);
     if (!line) return;
+    if (e.code === COMPETING_SESSION) {
+      competing = true;
+      competingIds.add(line.reqId);
+    }
     if (DELAYED_SIGNALS.has(e.code) && line.route === 'smart') void probePrimary(line);
     // 21xx are notices (farm status, fractional size rules); 10167 (delayed data shown) and
     // 10090 / 10091 (some ticks not subscribed) still deliver data, and marketDataType reports the kind.
@@ -745,6 +790,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     routes.clear();
     sides.clear();
     competing = false;
+    competingIds.clear();
     // The session is gone and its probes with it.
     const open = [...probes.keys()];
     for (const id of open) toProbe(id, { kind: 'error', code: -1, message: 'Connection closed' });

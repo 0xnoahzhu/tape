@@ -435,6 +435,25 @@ describe('probe lines and quiet owners', () => {
   });
 });
 
+describe('quiet owners', () => {
+  it('sends a quote only a quiet owner held once a background renderer owner wants it', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setSubscriptions('md-check', [{ contract: stock('SPY'), profile: 'basic' }]);
+    reconciled();
+    const id = reqIdOf(fake, 'SPY');
+    fake.emit('marketDataType', id, 2);
+    fake.emit('tickPrice', id, TICK.LAST, 670);
+    fake.emit('tickPrice', id, TICK.CLOSE, 668);
+    vi.advanceTimersByTime(200);
+    expect(quoteEvents(events)).toHaveLength(0);
+    svc.setSubscriptions('portfolio', [{ contract: stock('SPY'), profile: 'basic' }]);
+    reconciled();
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)?.quotes['STK:SPY']).toMatchObject({ last: 670, marketDataType: 2 });
+  });
+});
+
 describe('primary-exchange fallback', () => {
   /** A quote service whose contracts resolve to `primary` (NASDAQ by default), with AAPL wanted by the watchlist. */
   async function fallbackSetup(primary = 'NASDAQ') {
@@ -571,6 +590,109 @@ describe('primary-exchange fallback', () => {
     fake.emit('marketDataType', fake.callsOf('reqMktData').find((c) => (c[1] as { secType: string }).secType === 'OPT')![0], 3);
     await flushAsync();
     expect(resolved).toHaveLength(n);
+  });
+
+  it('goes back to SMART when the exchange line turns delayed and SMART is delayed too', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeDefined();
+    // The exchange goes delayed: SMART is tried at once and answers delayed as well.
+    fake.emit('marketDataType', primaryId, 3);
+    await flushAsync();
+    const [retryId, retry] = lastReq(fake) as [number, { exchange: string }];
+    expect(retry.exchange).toBe('SMART');
+    fake.emit('marketDataType', retryId, 3);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 3 });
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+    // No new exchange probe until the give-up time has passed.
+    const n = fake.callsOf('reqMktData').length;
+    fake.emit('marketDataType', retryId, 3);
+    await vi.advanceTimersByTimeAsync(SMART_RETRY_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(n);
+  });
+
+  it('requests SMART again when the exchange line is delayed and the SMART side line fails', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    fake.emit('marketDataType', primaryId, 4);
+    await flushAsync();
+    const retryId = lastReq(fake)[0];
+    fake.error(retryId, 10168, 'Requested market data is not subscribed. Delayed market data is not enabled.');
+    const [freshId, fresh] = lastReq(fake) as [number, { exchange: string }];
+    expect(freshId).not.toBe(retryId);
+    expect(fresh.exchange).toBe('SMART');
+    expect(fake.callsOf('cancelMktData')).toContainEqual([primaryId]);
+    expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+  });
+
+  it('does not churn side lines when a side line answers 10197 while delayed prices flow', async () => {
+    const { fake, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    for (let i = 0; i < 20; i++) {
+      const side = lastReq(fake)[0];
+      if (side !== smartId) fake.error(side, 10197, 'No market data during competing live session');
+      fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 331 + i / 100);
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+  });
+
+  it('ends a competing session only on a live price of a line that reported it, at most once a minute', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    svc.setSubscriptions('chart', [{ contract: stock('NVDA'), profile: 'basic' }]);
+    reconciled();
+    const nvda = reqIdOf(fake, 'NVDA');
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    fake.error(lastReq(fake)[0], 10168, 'not subscribed'); // the exchange is not live either: give up
+    const n = fake.callsOf('reqMktData').length;
+    fake.error(nvda, 10197, 'No market data during competing live session');
+    // Delayed AAPL prices do not end it.
+    fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 331);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(n);
+    fake.emit('marketDataType', nvda, 1);
+    fake.emit('tickPrice', nvda, TICK.LAST, 180);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(n + 1); // AAPL's exchange probed again
+    fake.error(lastReq(fake)[0], 10168, 'not subscribed');
+    fake.error(nvda, 10197, 'No market data during competing live session');
+    fake.emit('tickPrice', nvda, TICK.LAST, 181);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(n + 1);
+  });
+
+  it('gives a line a side line held back to a contract waiting for one, and never takes a lingering line', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    svc.setSubscriptions('chart', Array.from({ length: 94 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    reconciled();
+    svc.setSubscriptions('chart', Array.from({ length: 93 }, (_, i) => ({ contract: stock(`S${i}`), profile: 'basic' as const })));
+    reconciled();
+    // 94 lines plus S93 lingering: no free line for a side line, and S93 keeps its line.
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(95);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    // S93 goes; the next probe takes the free line, and MSFT arrives meanwhile.
+    vi.advanceTimersByTime(LINGER_MS);
+    await vi.advanceTimersByTimeAsync(60_000 - LINGER_MS); // the retry after "no free line"
+    const sideId = lastReq(fake)[0];
+    expect((lastReq(fake)[1] as { exchange: string }).exchange).toBe('NASDAQ');
+    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }, { contract: stock('MSFT'), profile: 'basic' }]);
+    reconciled();
+    expect(svc.getQuote('STK:MSFT')?.error).toMatchObject({ message: 'Market data line limit reached' });
+    fake.emit('marketDataType', sideId, 3);
+    reconciled();
+    expect(fake.callsOf('reqMktData').some((c) => (c[1] as { symbol: string }).symbol === 'MSFT')).toBe(true);
+    expect(svc.getQuote('STK:MSFT')?.error).toBeUndefined();
   });
 
   it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {

@@ -112,7 +112,7 @@ export class SubscriptionBook {
 
   /**
    * Replaces one owner's subscriptions. Returns true when the wanted set changed (contracts,
-   * their profiles or their priority).
+   * their profiles, their priority, or whether the renderer gets their quotes).
    */
   set(owner: string, subs: QuoteSubscription[]): boolean {
     const before = this.signature();
@@ -166,7 +166,7 @@ export class SubscriptionBook {
 
   private signature(): string {
     return this.wanted()
-      .map((w) => `${w.key}|${w.profiles.join('+')}|${w.priority}`)
+      .map((w) => `${w.key}|${w.profiles.join('+')}|${w.priority}|${this.shown.has(w.key) ? 'p' : 'q'}`)
       .join(',');
   }
 }
