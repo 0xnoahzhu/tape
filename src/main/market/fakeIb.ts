@@ -2,9 +2,11 @@
 
 import { OUT_MSG_ID, type IBApi } from '../ib/tws';
 import type { TapeEvent } from '@shared/ipc';
-import type { PriceAlert } from '@shared/types';
+import { defaultSettings } from '@shared/defaults';
+import type { DeepPartial, PriceAlert, Settings } from '@shared/types';
 import type { IbConnection, IbListener, MainContext } from '../context';
 import { createMemoryDatabase } from '../db/memory';
+import { applySettingsPatch } from '../storeSchema';
 
 export interface FakeIb {
   ib: IbConnection;
@@ -103,14 +105,14 @@ export interface FakeContext {
   ctx: MainContext;
   events: TapeEvent[];
   notifications: Array<Parameters<MainContext['notifier']['notify']>[0]>;
-  stored: { alerts: PriceAlert[] };
+  stored: { alerts: PriceAlert[]; settings: Settings };
 }
 
 /** A MainContext with an in-memory store and database, a recording notifier and the given IB double. */
 export function createFakeContext(ib: IbConnection, demo = false): FakeContext {
   const events: TapeEvent[] = [];
   const notifications: FakeContext['notifications'] = [];
-  const stored = { alerts: [] as PriceAlert[] };
+  const stored = { alerts: [] as PriceAlert[], settings: defaultSettings() };
   const ctx = {
     demo,
     isDev: false,
@@ -122,6 +124,8 @@ export function createFakeContext(ib: IbConnection, demo = false): FakeContext {
     store: {
       getPriceAlerts: () => stored.alerts,
       setPriceAlerts: (a: PriceAlert[]) => void (stored.alerts = a),
+      getSettings: () => stored.settings,
+      updateSettings: (patch: DeepPartial<Settings>) => (stored.settings = applySettingsPatch(stored.settings, patch)),
     },
     notifier: {
       notify: (n: Parameters<MainContext['notifier']['notify']>[0]) => {

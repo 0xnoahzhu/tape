@@ -500,6 +500,81 @@ describe('market data check', () => {
   });
 });
 
+describe('the Level 2 switch', () => {
+  const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
+  const IEX_ONLY = 'Exchanges - Depth: IEX; Top: BYX; Need additional market data permissions - Depth: NASDAQ; ARCA; NYSE; ';
+
+  /** The check's depth line gets a book update 50 ms after the request and, with `notice`, a 2152 `notice` ms after it. */
+  async function depthSetup(opts: { notice?: number; features?: { depth: boolean; depthSetByUser: boolean } } = {}) {
+    const s = await setup({ lines: all });
+    if (opts.features) s.ctx.store.updateSettings({ features: opts.features });
+    s.fake.onCall = ((prev) => (name: string, args: unknown[]) => {
+      prev?.(name, args);
+      if (name !== 'reqMktDepth') return;
+      setTimeout(() => s.fake.emit('updateMktDepthL2', args[0], 0, 'IEX', 0, 1, 670.1, 100), 50);
+      if (opts.notice !== undefined) setTimeout(() => s.fake.error(args[0] as number, 2152, IEX_ONLY), opts.notice);
+    })(s.fake.onCall);
+    return { ...s, features: () => s.ctx.store.getSettings().features };
+  }
+
+  it('turns on with a full book from IB, once no 2152 can come any more', async () => {
+    const { svc, features } = await depthSetup();
+    const r = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'live' });
+    // The first answer is live, but a 2152 may still follow: nothing changes yet.
+    expect(features()).toEqual({ depth: false, depthSetByUser: false });
+    await vi.advanceTimersByTimeAsync(DEPTH_NOTICE_MS);
+    expect(features()).toEqual({ depth: true, depthSetByUser: false });
+  });
+
+  it('stays off when IB sends some exchanges only (2152), also when the 2152 comes after the first book update', async () => {
+    const early = await depthSetup({ notice: 40 });
+    const r = await finish(early.svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'live', via: 'IEX' });
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(early.features()).toEqual({ depth: false, depthSetByUser: false });
+
+    // First reported live without a 2152, which arrives 9 s later: never switched on in between.
+    const late = await depthSetup({ notice: 9_000 });
+    const first = await finish(late.svc.run({ depth: true, trigger: 'user' }));
+    expect(item(first, 'depth')!.via).toBeUndefined();
+    for (let t = 0; t < DEPTH_NOTICE_MS + 5_000; t += 500) {
+      await vi.advanceTimersByTimeAsync(500);
+      expect(late.features().depth).toBe(false);
+    }
+    expect(item(late.svc.getState().result!, 'depth')).toMatchObject({ via: 'IEX' });
+  });
+
+  it('leaves the switch alone once the user has set it, and never turns it off', async () => {
+    const off = await depthSetup({ features: { depth: false, depthSetByUser: true } });
+    await finish(off.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(off.features()).toEqual({ depth: false, depthSetByUser: true });
+
+    // Turned on by an earlier check, and now IB sends IEX only: it stays on.
+    const auto = await depthSetup({ notice: 40, features: { depth: true, depthSetByUser: false } });
+    await finish(auto.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(auto.features()).toEqual({ depth: true, depthSetByUser: false });
+  });
+
+  it('does not decide when the session closes before the 2152 window ends', async () => {
+    const { fake, svc, features } = await depthSetup();
+    await finish(svc.run({ depth: true, trigger: 'user' }));
+    fake.close();
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(features()).toEqual({ depth: false, depthSetByUser: false });
+  });
+
+  it('switches nothing on from the depth view’s book (its 2152 is gone after its next update)', async () => {
+    const book: DepthBook = { key: 'STK:NVDA', bids: [{ price: 1, size: 1 }], asks: [], updatedAt: NOW };
+    const view = await setup({ book, lines: all });
+    await finish(view.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(view.ctx.store.getSettings().features.depth).toBe(false);
+  });
+});
+
 describe('market data check helpers', () => {
   it('picks whole strikes nearest the price', () => {
     expect(nearStrikes([669, 669.5, 670, 671, 672], 670.4)).toEqual([670, 671, 669]);
