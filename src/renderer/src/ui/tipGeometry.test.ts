@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isTruncated, overflows, placeTip } from './tipGeometry';
+import { contentEdges, isTruncated, overflows, placeTip } from './tipGeometry';
 
 describe('overflows', () => {
   it('tells cut text from text that fits, ignoring rounding below a layout unit', () => {
@@ -11,14 +11,14 @@ describe('overflows', () => {
   });
 });
 
-describe('isTruncated', () => {
+describe('isTruncated and contentEdges', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  /** A box `width` wide (with `padding` on both sides) holding text `text` wide. */
+  /** A box `width` wide at x = 40 (with `padding` on both sides) holding text `text` wide. */
   const box = (width: number, text: number, padding = 0) => {
     vi.stubGlobal('document', { createRange: () => ({ selectNodeContents: () => {}, getBoundingClientRect: () => ({ width: text }) }) });
     vi.stubGlobal('getComputedStyle', () => ({ paddingLeft: `${padding}px`, paddingRight: `${padding}px`, borderLeftWidth: '0px', borderRightWidth: '' }));
-    return { getBoundingClientRect: () => ({ width }) } as unknown as HTMLElement;
+    return { getBoundingClientRect: () => ({ left: 40, right: 40 + width, width }) } as unknown as HTMLElement;
   };
 
   it('compares the natural width of the text with the content box', () => {
@@ -26,6 +26,11 @@ describe('isTruncated', () => {
     expect(isTruncated(box(300, 61.38))).toBe(false);
     expect(isTruncated(box(100, 90, 8))).toBe(true);
     expect(isTruncated(box(100, 84, 8))).toBe(false);
+  });
+
+  it('gives the edges inside the padding and border', () => {
+    expect(contentEdges(box(100, 0))).toEqual({ left: 40, right: 140 });
+    expect(contentEdges(box(100, 0, 12))).toEqual({ left: 52, right: 128 });
   });
 });
 
