@@ -215,16 +215,16 @@ describe('orders sent from a floating panel', () => {
   });
 
   it('writes the order line', () => {
-    expect(orderLine(pending)).toBe('Buy 100 AAPL · LMT 227.56 · DAY');
-    expect(orderLine({ ...pending, request: { ...request, orderType: 'MKT', limitPrice: undefined } })).toBe('Buy 100 AAPL · MKT · DAY');
-    expect(orderLine({ ...pending, request: { ...request, orderType: 'STP', limitPrice: undefined, stopPrice: 220 } })).toBe('Buy 100 AAPL · STP 220.00 · DAY');
+    expect(orderLine(pending)).toBe('Buy 100 AAPL · Limit 227.56 · DAY');
+    expect(orderLine({ ...pending, request: { ...request, orderType: 'MKT', limitPrice: undefined } })).toBe('Buy 100 AAPL · Market · DAY');
+    expect(orderLine({ ...pending, request: { ...request, orderType: 'STP', limitPrice: undefined, stopPrice: 220 } })).toBe('Buy 100 AAPL · Stop 220.00 · DAY');
   });
 
   it('is “Submitting…” until IB answers, then the strip follows it (no toast) and the panel collapses to its bar', async () => {
     let resolve!: (v: { orderId: number; childOrderIds: number[] }) => void;
     placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
     const sent = sendOrder(pending);
-    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'sending', summary: 'Buy 100 AAPL · LMT 227.56 · DAY', side: 'BUY', quantity: 100 });
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'sending', summary: 'Buy 100 AAPL · Limit 227.56 · DAY', side: 'BUY', quantity: 100 });
     expect(ticketPanel().collapsed).toBe(false);
     resolve({ orderId: 31, childOrderIds: [] });
     await expect(sent).resolves.toBe(true);

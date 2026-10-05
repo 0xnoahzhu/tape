@@ -12,7 +12,7 @@ const sent = (patch: Partial<SentOrder> = {}): SentOrder => ({
   seq: 1,
   kind: 'place',
   phase: 'sent',
-  summary: 'Buy 100 AAPL · LMT 227.56 · DAY',
+  summary: 'Buy 100 AAPL · Limit 227.56 · DAY',
   side: 'BUY',
   quantity: 100,
   contractKey: 'STK:AAPL',

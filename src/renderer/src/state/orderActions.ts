@@ -89,11 +89,11 @@ export function submitOrder(p: PendingOrder): void {
   void sendOrder(p);
 }
 
-/** The status strip's line: "Buy 100 AAPL · LMT 227.56 · DAY". */
+/** The status strip's line: "Buy 100 AAPL · Limit 227.56 · DAY" / "买入 100 股 AAPL · 限价 227.56 · DAY". */
 export function orderLine(p: Pick<PendingOrder, 'summary' | 'request'>): string {
   const r = p.request;
   const price = r.orderType === 'MKT' ? '' : r.limitPrice != null ? ` ${px(r.limitPrice)}` : r.stopPrice != null ? ` ${px(r.stopPrice)}` : '';
-  return `${p.summary} · ${r.orderType}${price} · ${r.tif}`;
+  return `${p.summary} · ${orderTypeLabel(r.orderType, useOrdersMessages.now())}${price} · ${r.tif}`;
 }
 
 /** Whether floating panel `id` is on screen now (floating, on its page and view), so its strip and bar can report. */
