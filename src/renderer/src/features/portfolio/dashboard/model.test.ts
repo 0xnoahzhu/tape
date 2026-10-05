@@ -11,9 +11,13 @@ import {
   contributions,
   expirations,
   holdingUnderlyings,
+  intradayCovers,
+  intradayTimeframe,
   marginCushion,
   portfolioGreeks,
+  priceAt,
   recentFills,
+  startPrice,
   upcomingEvents,
 } from './model';
 
@@ -156,15 +160,35 @@ describe('expirations', () => {
     expect(expirations(rows, quotes, NOW, 1)).toHaveLength(1);
     expect(expirations([row(stock('AAPL'), 1)], {}, NOW)).toEqual([]);
   });
+
+  it('never takes a futures option’s premium for its underlying price', () => {
+    const fop: ContractRef = { secType: 'FOP', symbol: 'ES', lastTradeDate: '20261218', strike: 6000, right: 'C', multiplier: 50, exchange: 'CME', currency: 'USD' };
+    const k = contractKey(fop);
+    const rows = [row(fop, 1, { multiplier: 50 }, 120)];
+    expect(expirations(rows, { [k]: q(k, { last: 120 }) }, NOW)[0].moneyness).toBeUndefined();
+    expect(expirations(rows, { [k]: q(k, { last: 120, undPrice: 6100 }) }, NOW)[0].moneyness?.itm).toBe(true);
+    // Dollar delta needs the underlying price: unknown with only the premium.
+    const greeks = { delta: 0.5, gamma: 0.001, theta: -2, vega: 5 };
+    expect(portfolioGreeks(rows, { [k]: q(k, { last: 120, ...greeks }) }).dollarDelta).toBeUndefined();
+    expect(portfolioGreeks(rows, { [k]: q(k, { last: 120, undPrice: 6100, ...greeks }) }).dollarDelta).toBeCloseTo(0.5 * 50 * 6100);
+  });
 });
 
 describe('recent fills', () => {
   it('lists the newest five and counts all', () => {
     const fill = (id: string, time: number): Execution => ({ execId: id, orderId: 1, key: 'STK:AAPL', contract: stock('AAPL'), side: 'BUY', shares: 1, price: 1, time });
     const fills = [1, 5, 3, 2, 6, 4].map((t) => fill(String(t), t));
-    const r = recentFills(fills);
+    const r = recentFills(fills, 0);
     expect(r.count).toBe(6);
     expect(r.items.map((e) => e.time)).toEqual([6, 5, 4, 3, 2]);
+  });
+
+  it('leaves out fills before the New York day', () => {
+    const fill = (id: string, time: number): Execution => ({ execId: id, orderId: 1, key: 'STK:AAPL', contract: stock('AAPL'), side: 'BUY', shares: 1, price: 1, time });
+    const r = recentFills([fill('a', 99), fill('b', 100), fill('c', 150)], 100);
+    expect(r.count).toBe(2);
+    expect(r.items.map((e) => e.execId)).toEqual(['c', 'b']);
+    expect(recentFills([fill('a', 99)], 100)).toEqual({ count: 0, items: [] });
   });
 });
 
@@ -220,12 +244,58 @@ describe('benchmark', () => {
     expect(barsCover(bars, Date.UTC(2025, 11, 30, 12))).toBe(false);
   });
 
+  it('counts a summer close at 16:00 New York (20:00 UTC)', () => {
+    const fri = [day(2026, 10, 1, 760), day(2026, 10, 2, 769.64)];
+    expect(closeAtOrBefore(fri, Date.UTC(2026, 9, 2, 20, 30))).toBe(769.64);
+    expect(closeAtOrBefore(fri, Date.UTC(2026, 9, 2, 19, 59))).toBe(760);
+    expect(barsCover(fri, Date.UTC(2026, 9, 1, 20))).toBe(true);
+  });
+
   it('measures the live price against that close', () => {
-    expect(benchmarkReturn(bars, Date.UTC(2026, 0, 1, 3), 671)).toBeCloseTo(10);
+    const daily = { daily: bars };
+    expect(benchmarkReturn(daily, Date.UTC(2026, 0, 1, 3), 671)).toBeCloseTo(10);
     // Without a live price: the newest close.
-    expect(benchmarkReturn(bars, Date.UTC(2026, 0, 1, 3), undefined)).toBeCloseTo(10);
-    expect(benchmarkReturn(bars, undefined, 671)).toBeUndefined();
-    expect(benchmarkReturn([], 1, 1)).toBeUndefined();
+    expect(benchmarkReturn(daily, Date.UTC(2026, 0, 1, 3), undefined)).toBeCloseTo(10);
+    expect(benchmarkReturn(daily, undefined, 671)).toBeUndefined();
+    expect(benchmarkReturn({ daily: [] }, 1, 1)).toBeUndefined();
+  });
+
+  // Monday 2026-10-05, 5-minute bars from 09:30 New York (13:30 UTC), open = 700 + i, close = open + 0.5.
+  const mon = (h: number, m: number) => Date.UTC(2026, 9, 5, h, m);
+  const fiveMin = Array.from({ length: 78 }, (_, i): Bar => {
+    const open = 700 + i;
+    return { time: mon(13, 30) / 1000 + i * 300, open, high: open + 1, low: open, close: open + 0.5, volume: 1 };
+  });
+
+  it('prices a moment from intraday bars', () => {
+    // 09:48:35 lies in the 09:45 bar: its open.
+    expect(priceAt(fiveMin, 300, mon(13, 48) + 35_000)).toBe(703);
+    // At a bar's end: that bar's close.
+    expect(priceAt(fiveMin, 300, mon(13, 50))).toBe(704);
+    // After the session: the last bar's close; before the first bar: unknown.
+    expect(priceAt(fiveMin, 300, mon(23, 0))).toBe(777.5);
+    expect(priceAt(fiveMin, 300, mon(13, 0))).toBeUndefined();
+    expect(intradayCovers(fiveMin, mon(13, 30))).toBe(true);
+    expect(intradayCovers(fiveMin, mon(13, 29))).toBe(false);
+  });
+
+  it('starts a benchmark at the first NAV sample, not at the close before it', () => {
+    const daily = [day(2026, 10, 2, 690)];
+    const start = mon(13, 48) + 35_000;
+    // Intraday bars reach the start: priced at 09:45 (703), not Friday's close (690).
+    expect(startPrice({ daily, intraday: { bars: fiveMin, barSec: 300 } }, start)).toBe(703);
+    expect(benchmarkReturn({ daily, intraday: { bars: fiveMin, barSec: 300 } }, start, 703)).toBeCloseTo(0);
+    // Intraday bars that do not reach back: the daily close.
+    expect(startPrice({ daily, intraday: { bars: fiveMin.slice(10), barSec: 300 } }, start)).toBe(690);
+    expect(startPrice({ daily }, start)).toBe(690);
+  });
+
+  it('picks intraday bars by the age of the start', () => {
+    const now = mon(18, 0);
+    expect(intradayTimeframe(now - 3 * 86_400_000, now)).toBe('5m');
+    expect(intradayTimeframe(now - 9 * 86_400_000, now)).toBe('5m');
+    expect(intradayTimeframe(now - 20 * 86_400_000, now)).toBe('1h');
+    expect(intradayTimeframe(now - 40 * 86_400_000, now)).toBeUndefined();
   });
 
   it('builds the three rows and the difference to SPY', () => {

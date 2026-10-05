@@ -13,7 +13,7 @@ import { useOrdersMessages } from '../../orders/messages';
 import type { PositionRow } from '../calc';
 import { spanLabel } from '../EquityCard';
 import { usePortfolioMessages } from '../messages';
-import { useBenchmark, useEarnings, useHoldingDividends, useHoldingUnderlyings } from './data';
+import { useBenchmark, useEarnings, useHoldingDividends, useHoldingUnderlyings, useNyDayStart } from './data';
 import { useDashboardMessages } from './messages';
 import { recentFills, upcomingEvents, type CorporateEvent } from './model';
 import { EmptyLine, List, Note, WidgetCard } from './WidgetCard';
@@ -30,7 +30,8 @@ export function FillsWidget() {
   const clock = useClock();
   const connected = useStore((s) => s.connection.status === 'connected');
   const executions = useStore((s) => s.executions);
-  const { count, items } = useMemo(() => recentFills(executions), [executions]);
+  const dayStart = useNyDayStart();
+  const { count, items } = useMemo(() => recentFills(executions, dayStart), [executions, dayStart]);
 
   return (
     <WidgetCard

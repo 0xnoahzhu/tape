@@ -5,20 +5,36 @@
 //   dashboard-und    option underlyings (moneyness, dollar delta) — basic
 //   dashboard-div    the holdings' stocks — 'dividends' (generic tick 456, live lines only)
 //   dashboard-bench  SPY and QQQ — basic
+// The benchmark bars are 5-minute or hourly ones for a recent start, else daily.
 
 import { useEffect, useMemo, useState } from 'react';
 import { contractKey, stock } from '@shared/contract';
+import { nyDayStart } from '@shared/session';
+import { barSeconds } from '@shared/timeframes';
 import type { Bar, ContractRef, CorporateEarnings, HistoryRequest, NavPoint, Quote, QuoteDividends } from '@shared/types';
 import { lastPrice, useMarketDataAvailable, useQuoteSubscriptions, useQuotesByKey } from '../../../hooks/useQuotes';
 import { useStore } from '../../../state/store';
 import { rangeReturn, sliceRange, underlyingOf, type PositionRow, type RangeKey } from '../calc';
 import { useNavSeries } from '../EquityCard';
 import { usePortfolioUi } from '../uiState';
-import { barsCover, benchmarkReturn, benchmarkRows, holdingUnderlyings, type BenchmarkRow } from './model';
+import { barsCover, benchmarkReturn, benchmarkRows, holdingUnderlyings, intradayCovers, intradayTimeframe, type BenchmarkBars, type BenchmarkRow } from './model';
 
 const NONE: ContractRef[] = [];
 const HOUR = 3_600_000;
 const UNAVAILABLE: CorporateEarnings = { status: 'unavailable', events: [] };
+
+/**
+ * New York midnight of the current New York day (unix ms), re-checked every minute so the
+ * "today" of the fills follows the day while the app runs.
+ */
+export function useNyDayStart(): number {
+  const [start, setStart] = useState(() => nyDayStart(Date.now()));
+  useEffect(() => {
+    const timer = setInterval(() => setStart(nyDayStart(Date.now())), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return start;
+}
 
 const isOptionRow = (r: PositionRow) => r.position.contract.secType === 'OPT' || r.position.contract.secType === 'FOP';
 
@@ -39,9 +55,12 @@ export function useOptionQuotes(rows: readonly PositionRow[], active = true): Re
     const k = new Set<string>();
     for (const r of rows) {
       if (!isOptionRow(r)) continue;
-      k.add(contractKey(r.position.contract));
+      const own = contractKey(r.position.contract);
+      k.add(own);
       const u = underlyingOf(r.position.contract);
       const uk = contractKey(u);
+      // A futures option has no underlying of its own here (underlyingOf returns it).
+      if (uk === own) continue;
       k.add(uk);
       und.set(uk, u);
     }
@@ -107,13 +126,19 @@ export const BENCHMARKS = ['SPY', 'QQQ'] as const;
 export type Benchmark = (typeof BENCHMARKS)[number];
 
 const BENCH_CONTRACTS: ContractRef[] = BENCHMARKS.map((s) => stock(s));
-/** Daily bars are reloaded after this long (today's bar grows; the live price is used meanwhile). */
+/** Bars are reloaded after this long (the newest bar grows; the live price is used meanwhile). */
 const BARS_TTL_MS = HOUR;
 /** Older pages asked for an ALL range beyond the first window (2 years of daily bars). */
 const MAX_OLDER_PAGES = 4;
 const OLDER_PAGE_BARS = 1000;
 
-const benchRequest = (sym: Benchmark): HistoryRequest => ({ contract: stock(sym), timeframe: '1D', slot: `dash-bench-${sym}` });
+type BenchTimeframe = '1D' | NonNullable<ReturnType<typeof intradayTimeframe>>;
+
+const benchRequest = (sym: Benchmark, timeframe: BenchTimeframe): HistoryRequest => ({
+  contract: stock(sym),
+  timeframe,
+  slot: `dash-bench-${sym}-${timeframe}`,
+});
 
 interface BarsEntry {
   bars: Bar[];
@@ -122,35 +147,54 @@ interface BarsEntry {
   done: boolean;
 }
 
-/** Daily bars per benchmark, shared by every mounted widget for the session. */
-const barsCache = new Map<Benchmark, BarsEntry>();
-const loading = new Map<Benchmark, Promise<void>>();
+/** Bars per benchmark and interval, shared by every mounted widget for the session. */
+const barsCache = new Map<string, BarsEntry>();
+const loading = new Map<string, Promise<void>>();
+const cacheKey = (sym: Benchmark, tf: BenchTimeframe) => `${sym}|${tf}`;
 
-/** Loads (or extends back to `start`) the daily bars of a benchmark. */
-function loadBars(sym: Benchmark, start: number | undefined): Promise<void> {
-  const pending = loading.get(sym);
+/** The newest bars of one interval, reloaded after BARS_TTL_MS (older daily pages are kept). */
+async function loadNewest(sym: Benchmark, tf: BenchTimeframe): Promise<BarsEntry> {
+  const key = cacheKey(sym, tf);
+  const prev = barsCache.get(key);
+  if (prev && Date.now() - prev.at <= BARS_TTL_MS) return prev;
+  const bars = await window.tape.getHistory(benchRequest(sym, tf));
+  let entry: BarsEntry = { bars, at: Date.now(), done: false };
+  if (prev && bars.length && prev.bars.length && prev.bars[0].time < bars[0].time) {
+    entry = { ...entry, bars: [...prev.bars.filter((b) => b.time < bars[0].time), ...bars], done: prev.done };
+  }
+  barsCache.set(key, entry);
+  return entry;
+}
+
+/**
+ * Loads the bars that price a benchmark at `start`: intraday ones for a recent start, and the
+ * daily bars (extended back to `start`) when those do not reach it.
+ */
+function loadBars(sym: Benchmark, start: number): Promise<void> {
+  const tf = intradayTimeframe(start, Date.now());
+  const key = `${sym}|${tf ?? '1D'}`;
+  const pending = loading.get(key);
   if (pending) return pending;
   const run = async () => {
-    let entry = barsCache.get(sym);
-    if (!entry || Date.now() - entry.at > BARS_TTL_MS) {
-      const bars = await window.tape.getHistory(benchRequest(sym));
-      entry = { bars, at: Date.now(), done: false };
-      // Keep older pages loaded before.
-      const prev = barsCache.get(sym);
-      if (prev && bars.length && prev.bars.length && prev.bars[0].time < bars[0].time) {
-        entry = { ...entry, bars: [...prev.bars.filter((b) => b.time < bars[0].time), ...bars], done: prev.done };
-      }
-      barsCache.set(sym, entry);
-    }
-    for (let i = 0; i < MAX_OLDER_PAGES && start !== undefined && entry.bars.length && !entry.done && !barsCover(entry.bars, start); i++) {
-      const page = await window.tape.getOlderBars(benchRequest(sym), entry.bars[0].time, OLDER_PAGE_BARS);
+    if (tf && intradayCovers((await loadNewest(sym, tf)).bars, start)) return;
+    let entry = await loadNewest(sym, '1D');
+    for (let i = 0; i < MAX_OLDER_PAGES && entry.bars.length && !entry.done && !barsCover(entry.bars, start); i++) {
+      const page = await window.tape.getOlderBars(benchRequest(sym, '1D'), entry.bars[0].time, OLDER_PAGE_BARS);
       entry = { ...entry, bars: [...page.bars, ...entry.bars], done: page.done || !page.bars.length };
-      barsCache.set(sym, entry);
+      barsCache.set(cacheKey(sym, '1D'), entry);
     }
   };
-  const p = run().finally(() => loading.delete(sym));
-  loading.set(sym, p);
+  const p = run().finally(() => loading.delete(key));
+  loading.set(key, p);
   return p;
+}
+
+/** The cached bars that price a benchmark at `start` (see loadBars). */
+function benchmarkBars(sym: Benchmark, start: number | undefined): BenchmarkBars {
+  const daily = barsCache.get(cacheKey(sym, '1D'))?.bars ?? [];
+  const tf = start !== undefined ? intradayTimeframe(start, Date.now()) : undefined;
+  const intraday = tf ? barsCache.get(cacheKey(sym, tf))?.bars : undefined;
+  return { daily, intraday: tf && intraday ? { bars: intraday, barSec: barSeconds(tf)! } : undefined };
 }
 
 export interface BenchmarkView {
@@ -166,8 +210,9 @@ export interface BenchmarkView {
 
 /**
  * The portfolio's return over the equity chart's range (the same figure as the equity card)
- * against SPY and QQQ over the same span: live price (else the newest close) against the daily
- * close at or before the range's first NAV sample.
+ * against SPY and QQQ over the same span: live price (else the newest close) against their price
+ * at the range's first NAV sample (intraday bars for a recent start, else the daily close at or
+ * before it).
  */
 export function useBenchmark(active = true): BenchmarkView {
   const range = usePortfolioUi((s) => s.range);
@@ -176,6 +221,8 @@ export function useBenchmark(active = true): BenchmarkView {
   const connected = useStore((s) => s.connection.status === 'connected');
   const slice = useMemo(() => sliceRange(series, range, Date.now()), [series, range]);
   const start = slice.points[0]?.t;
+  // The bars an aging start needs change (5-minute, hourly, daily); re-checked on every render.
+  const tf = start !== undefined ? intradayTimeframe(start, Date.now()) : undefined;
   const [version, setVersion] = useState(0);
 
   useQuoteSubscriptions('dashboard-bench', active ? BENCH_CONTRACTS : NONE, 'basic');
@@ -193,16 +240,13 @@ export function useBenchmark(active = true): BenchmarkView {
     return () => {
       live = false;
     };
-  }, [active, available, connected, start]);
+  }, [active, available, connected, start, tf]);
 
   return useMemo(() => {
-    const ret = (sym: Benchmark) => {
-      const bars = barsCache.get(sym)?.bars ?? [];
-      return benchmarkReturn(bars, start, lastPrice(quotes[contractKey(stock(sym))]));
-    };
+    const ret = (sym: Benchmark) => benchmarkReturn(benchmarkBars(sym, start), start, lastPrice(quotes[contractKey(stock(sym))]));
     const portfolio = rangeReturn(slice.points)?.pct;
     const { rows, vsSpy } = benchmarkRows(portfolio, ret('SPY'), ret('QQQ'));
     return { range, points: slice.points, covered: slice.covered, rows, vsSpy };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, slice, start, quotes, version]);
+  }, [range, slice, start, tf, quotes, version]);
 }

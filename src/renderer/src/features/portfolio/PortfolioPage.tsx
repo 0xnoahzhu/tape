@@ -8,8 +8,9 @@ import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
-import { accountTotals, type AccountTotals } from './calc';
+import { accountTotals, todaysExecutions, type AccountTotals } from './calc';
 import { Dashboard, DashboardControls } from './dashboard/Dashboard';
+import { useNyDayStart } from './dashboard/data';
 import { useNavSeries } from './EquityCard';
 import { usePortfolioMessages } from './messages';
 import { PerformanceView } from './PerformanceView';
@@ -91,7 +92,8 @@ export function PortfolioPage() {
   const account = useStore((s) => s.account);
   const rows = usePositionRows();
   const executions = useStore((s) => s.executions);
-  const totals = useMemo(() => accountTotals(account, rows, executions), [account, rows, executions]);
+  const dayStart = useNyDayStart();
+  const totals = useMemo(() => accountTotals(account, rows, todaysExecutions(executions, dayStart)), [account, rows, executions, dayStart]);
   const series = useNavSeries();
   const symbol = !account?.currency || account.currency === 'USD' ? '$' : '';
 

@@ -5,9 +5,10 @@
 // quotes, executions and IB's corporate events.
 
 import { contractKey, daysToExpiry, multiplierOf } from '@shared/contract';
+import { NEW_YORK, zonedToUtc } from '@shared/orderTiming';
 import type { Bar, ContractRef, CorporateEarnings, Execution, NavPoint, Quote, QuoteDividends } from '@shared/types';
 import { newestExecutions } from '../../orders/model';
-import { underlyingOf, type PositionRow } from '../calc';
+import { todaysExecutions, underlyingOf, type PositionRow } from '../calc';
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const isOption = (r: PositionRow) => r.position.contract.secType === 'OPT' || r.position.contract.secType === 'FOP';
@@ -26,14 +27,18 @@ export const underlyingKey = (c: ContractRef): string => contractKey(underlyingO
 
 /**
  * Price of a position's underlying: the option's own model underlying price, else the
- * underlying's quote, else a stock row of it.
+ * underlying's quote, else a stock row of it. A futures option is not tied to its future
+ * (underlyingOf returns the option itself), so only its model underlying price counts: its own
+ * quote is the premium.
  */
 export function underlyingPrice(row: PositionRow, quotes: Readonly<Record<string, Quote>>, rows: readonly PositionRow[]): number | undefined {
   const c = row.position.contract;
   if (c.secType === 'STK') return row.last;
-  const own = quotes[contractKey(c)]?.undPrice;
+  const self = contractKey(c);
+  const own = quotes[self]?.undPrice;
   if (finite(own) && own > 0) return own;
   const key = underlyingKey(c);
+  if (key === self) return undefined;
   const quoted = quotePrice(quotes[key]);
   if (quoted !== undefined) return quoted;
   const held = rows.find((r) => r.position.contract.secType === 'STK' && contractKey(r.position.contract) === key);
@@ -73,7 +78,10 @@ export interface MarginCushion {
   warn: boolean;
 }
 
-/** IB's "Cushion" tag arrives rounded ("1"), so it is computed from excess liquidity and net liquidation. */
+/**
+ * Excess liquidity / net liquidation: the same fraction as IB's "Cushion" (an account-updates
+ * value), computed from the summary values the dashboard already has.
+ */
 export function marginCushion(excessLiquidity: number | undefined, netLiq: number | undefined): MarginCushion | null {
   if (!finite(excessLiquidity) || !finite(netLiq) || netLiq <= 0) return null;
   const pct = (excessLiquidity / netLiq) * 100;
@@ -248,9 +256,10 @@ export function expirations(rows: readonly PositionRow[], quotes: Readonly<Recor
 // ---------------------------------------------------------------------------
 // Today's fills
 
-/** The newest fills of today, and how many there were. */
-export function recentFills(executions: readonly Execution[], limit = 5): { count: number; items: Execution[] } {
-  return { count: executions.length, items: newestExecutions([...executions]).slice(0, limit) };
+/** The newest fills of today (since `dayStart`, New York midnight), and how many there were. */
+export function recentFills(executions: readonly Execution[], dayStart: number, limit = 5): { count: number; items: Execution[] } {
+  const today = todaysExecutions(executions, dayStart);
+  return { count: today.length, items: newestExecutions(today).slice(0, limit) };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,40 +309,106 @@ export function upcomingEvents(
   return out.sort((a, b) => a.days - b.days || a.symbol.localeCompare(b.symbol) || a.kind.localeCompare(b.kind)).slice(0, limit);
 }
 
+/**
+ * What the widget can say about earnings: 'ok' (listed, or still loading), 'unsubscribed' (no
+ * Wall Street Horizon subscription) or 'unavailable' (IB did not answer while connected). Not
+ * connected counts as 'ok': the widget then says so itself.
+ */
+export function earningsState(earnings: CorporateEarnings | undefined, connected: boolean): CorporateEarnings['status'] {
+  if (earnings?.status === 'unsubscribed') return 'unsubscribed';
+  if (earnings?.status === 'unavailable' && connected) return 'unavailable';
+  return 'ok';
+}
+
 // ---------------------------------------------------------------------------
 // Benchmark
 
 /**
- * Daily bars are stamped with their day at 00:00 UTC; their close (16:00 New York) is counted at
- * 21:00 UTC, which is after it in summer and winter time.
+ * Close of a daily bar, unix ms: 16:00 New York of its day (daily bars are stamped with their day
+ * at 00:00 UTC). Half days close earlier; counting them at 16:00 only matters for a start in
+ * those three hours.
  */
-const CLOSE_AFTER_SEC = 21 * 3600;
+export function dailyCloseTime(b: Bar): number {
+  const d = new Date(b.time * 1000);
+  const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+  return zonedToUtc(ymd, '16:00', NEW_YORK);
+}
 
 /** The last daily close at or before `t` (unix ms); bars ascending. */
 export function closeAtOrBefore(bars: readonly Bar[], t: number): number | undefined {
-  const sec = t / 1000;
-  let found: Bar | undefined;
-  for (const b of bars) {
-    if (b.time + CLOSE_AFTER_SEC <= sec) found = b;
-    else break;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (dailyCloseTime(bars[i]) > t) continue;
+    const close = bars[i].close;
+    return finite(close) && close > 0 ? close : undefined;
   }
-  return found && finite(found.close) && found.close > 0 ? found.close : undefined;
+  return undefined;
+}
+
+/**
+ * Price at `t` (unix ms) from intraday bars of `barSec` seconds (ascending, regular hours): the
+ * close of the last bar that began at or before `t` when it had ended by then (between sessions:
+ * the last close), else its open. Undefined before the first bar.
+ */
+export function priceAt(bars: readonly Bar[], barSec: number, t: number): number | undefined {
+  const sec = t / 1000;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    if (b.time > sec) continue;
+    const p = b.time + barSec <= sec ? b.close : b.open;
+    return finite(p) && p > 0 ? p : undefined;
+  }
+  return undefined;
+}
+
+/** True when intraday bars (ascending) reach back to `t` (unix ms). */
+export const intradayCovers = (bars: readonly Bar[], t: number): boolean => bars.length > 0 && bars[0].time * 1000 <= t;
+
+/** True when the daily bars (ascending) hold a close at or before `start`. */
+export const barsCover = (bars: readonly Bar[], start: number): boolean => bars.length > 0 && dailyCloseTime(bars[0]) <= start;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Intraday bars that reach back to a start this old (calendar days): IB's windows are 10 sessions
+ * of 5-minute bars and 20 of hourly ones (main/market/historyParams.ts), with room for weekends
+ * and holidays. An older start is priced at a daily close.
+ */
+export function intradayTimeframe(start: number, now: number): '5m' | '1h' | undefined {
+  const age = now - start;
+  if (age <= 9 * DAY_MS) return '5m';
+  if (age <= 25 * DAY_MS) return '1h';
+  return undefined;
+}
+
+/** A benchmark's bars: daily, and intraday ones when the start is recent enough for them. */
+export interface BenchmarkBars {
+  daily: readonly Bar[];
+  intraday?: { bars: readonly Bar[]; barSec: number };
+}
+
+/**
+ * The benchmark's price at the comparison's start (unix ms): from the intraday bars when they
+ * reach back to it, so a start during a session is priced at that moment (as the portfolio's
+ * first NAV sample is), else the daily close at or before it.
+ */
+export function startPrice(bars: BenchmarkBars, start: number): number | undefined {
+  const i = bars.intraday;
+  if (i && intradayCovers(i.bars, start)) return priceAt(i.bars, i.barSec, start);
+  return closeAtOrBefore(bars.daily, start);
 }
 
 /**
  * Return of a benchmark over the equity chart's range, in percent: the live price (else the
- * newest bar's close) against the daily close at or before the range's first NAV sample.
+ * newest bar's close) against its price at the range's first NAV sample (`startPrice`).
  * Undefined when the bars do not reach back that far.
  */
-export function benchmarkReturn(bars: readonly Bar[], start: number | undefined, live: number | undefined): number | undefined {
-  if (!finite(start) || !bars.length) return undefined;
-  const base = closeAtOrBefore(bars, start);
-  const last = finite(live) && live > 0 ? live : bars[bars.length - 1].close;
+export function benchmarkReturn(bars: BenchmarkBars, start: number | undefined, live: number | undefined): number | undefined {
+  if (!finite(start)) return undefined;
+  const base = startPrice(bars, start);
+  const newest = bars.intraday?.bars.at(-1)?.close ?? bars.daily.at(-1)?.close;
+  const last = finite(live) && live > 0 ? live : newest;
   return base !== undefined && finite(last) ? (last / base - 1) * 100 : undefined;
 }
-
-/** True when the daily bars (ascending) hold a close at or before `start`. */
-export const barsCover = (bars: readonly Bar[], start: number): boolean => bars.length > 0 && (bars[0].time + CLOSE_AFTER_SEC) * 1000 <= start;
 
 export interface BenchmarkRow {
   key: 'portfolio' | 'SPY' | 'QQQ';
