@@ -232,25 +232,28 @@ export function LockScreen() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
           <LogoMark size={64} />
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-            {/* Only the digits are centered: the period hangs beside them, so neither it nor the
-                language moves the clock (tabular digits keep the width while minutes change). */}
-            <div style={{ position: 'relative', font: '600 64px/1 var(--num)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
-              {time.time}
-              {time.period && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: 6,
-                    [time.periodFirst ? 'right' : 'left']: 'calc(100% + 10px)',
-                    font: '500 20px/1 var(--sans)',
-                    letterSpacing: 0,
-                    color: 'var(--mu)',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {time.period}
-                </div>
-              )}
+            {/* The colon sits on the centre line: two equal outer columns (hours right-aligned,
+                minutes left-aligned) around it, the period hanging off the outer edge so neither it
+                nor the language moves the clock; tabular digits keep the width as minutes change. */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr auto 1fr',
+                alignItems: 'baseline',
+                font: '600 64px/1 var(--num)',
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              <div style={{ position: 'relative', justifySelf: 'end' }}>
+                {time.period && time.periodFirst && <ClockPeriod side="left">{time.period}</ClockPeriod>}
+                {time.hours}
+              </div>
+              <div>:</div>
+              <div style={{ position: 'relative', justifySelf: 'start' }}>
+                {time.minutes}
+                {time.period && !time.periodFirst && <ClockPeriod side="right">{time.period}</ClockPeriod>}
+              </div>
             </div>
             <div style={{ fontSize: 14, color: 'var(--mu)' }}>{lockDate(date, lang)}</div>
           </div>
@@ -320,6 +323,25 @@ export function LockScreen() {
       </div>
       <div style={{ height: 48, flexShrink: 0 }} />
       {resetOpen && <ResetDialog onClose={() => setResetOpen(false)} />}
+    </div>
+  );
+}
+
+/** "AM" / "上午" beside the large clock, outside its columns so the colon stays centred. */
+function ClockPeriod({ side, children }: { side: 'left' | 'right'; children: string }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 6,
+        [side === 'left' ? 'right' : 'left']: 'calc(100% + 10px)',
+        font: '500 20px/1 var(--sans)',
+        letterSpacing: 0,
+        color: 'var(--mu)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
     </div>
   );
 }

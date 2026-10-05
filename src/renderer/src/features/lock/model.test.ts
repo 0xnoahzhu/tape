@@ -39,17 +39,18 @@ describe('PIN entry', () => {
 describe('clock and countdown', () => {
   const d = new Date(2026, 9, 4, 9, 5);
   it('formats the time and date like the design', () => {
-    expect(lockTime(d, createClock('24h', 'en'))).toEqual({ time: '09:05', period: null, periodFirst: false });
+    expect(lockTime(d, createClock('24h', 'en'))).toEqual({ hours: '09', minutes: '05', period: null, periodFirst: false });
     expect(lockDate(d, 'en')).toBe('Sun, Oct 4');
     expect(lockDate(d, 'zh')).toBe('10 月 4 日 星期日');
   });
 
-  it('splits the 12-hour clock into digits and a period (after them in English, before in Chinese)', () => {
-    expect(lockTime(d, createClock('12h', 'en'))).toEqual({ time: '9:05', period: 'AM', periodFirst: false });
-    expect(lockTime(d, createClock('12h', 'zh'))).toEqual({ time: '9:05', period: '上午', periodFirst: true });
-    expect(lockTime(new Date(2026, 9, 4, 0, 0), createClock('12h', 'en'))).toEqual({ time: '12:00', period: 'AM', periodFirst: false });
-    expect(lockTime(new Date(2026, 9, 4, 12, 0), createClock('12h', 'zh'))).toEqual({ time: '12:00', period: '下午', periodFirst: true });
-    expect(lockTime(new Date(2026, 9, 4, 23, 59), createClock('24h', 'zh')).time).toBe('23:59');
+  it('pads the hour on the 12-hour clock too and keeps the period apart (after in English, before in Chinese)', () => {
+    expect(lockTime(d, createClock('12h', 'en'))).toEqual({ hours: '09', minutes: '05', period: 'AM', periodFirst: false });
+    expect(lockTime(d, createClock('12h', 'zh'))).toEqual({ hours: '09', minutes: '05', period: '上午', periodFirst: true });
+    expect(lockTime(new Date(2026, 9, 4, 8, 37), createClock('12h', 'en'))).toMatchObject({ hours: '08', minutes: '37' });
+    expect(lockTime(new Date(2026, 9, 4, 0, 0), createClock('12h', 'en'))).toEqual({ hours: '12', minutes: '00', period: 'AM', periodFirst: false });
+    expect(lockTime(new Date(2026, 9, 4, 12, 0), createClock('12h', 'zh'))).toEqual({ hours: '12', minutes: '00', period: '下午', periodFirst: true });
+    expect(lockTime(new Date(2026, 9, 4, 23, 59), createClock('24h', 'zh'))).toMatchObject({ hours: '23', minutes: '59' });
   });
 
   it('shows the remaining wait, rounded up', () => {
