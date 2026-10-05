@@ -444,6 +444,15 @@ export function livePrice(secType: SecType, q: Quote | undefined, last: number |
   return undefined;
 }
 
+/**
+ * Difference between the value a row shows and the value IB's P&L engine used for its daily P&L
+ * (reqPnLSingle marks at its own price, which outside regular hours differs from the last price and
+ * from the portfolio update). Adding it to IB's daily or unrealized P&L re-marks them to the row.
+ */
+export function remark(p: Position, value: number | undefined): number {
+  return finite(value) && finite(p.pnlValue) ? value - p.pnlValue : 0;
+}
+
 export function positionRow(p: Position, livePx: number | undefined, netLiq: number | undefined, sector: string): PositionRow {
   const mult = p.multiplier || multiplierOf(p.contract);
   const live = pos(livePx);
@@ -466,7 +475,7 @@ export function positionRow(p: Position, livePx: number | undefined, netLiq: num
     value,
     unrealized,
     unrealizedPct: finite(unrealized) && cost !== 0 ? (unrealized / Math.abs(cost)) * 100 : undefined,
-    dayPnl: finite(p.dailyPnL) ? p.dailyPnL : undefined,
+    dayPnl: finite(p.dailyPnL) ? p.dailyPnL + remark(p, value) : undefined,
     weight: finite(value) && finite(netLiq) && netLiq !== 0 ? (value / netLiq) * 100 : undefined,
   };
 }
@@ -516,10 +525,12 @@ export interface AccountTotals {
 export function accountTotals(a: AccountSummary | null, rows: readonly PositionRow[]): AccountTotals {
   if (!a) return {};
   const ofType = (t: SecType) => (r: PositionRow) => r.position.contract.secType === t;
+  // IB's account P&L is computed at the P&L engine's marks; re-mark it to the prices the rows show.
+  const adjust = rows.reduce((sum, r) => sum + remark(r.position, r.value), 0);
   return {
     // Positions closed today only show up in the account figure, so there is no fallback without positions.
-    dayPnl: a.dailyPnL ?? (rows.length ? sumRows(rows, 'dayPnl') : undefined),
-    unrealized: a.unrealizedPnL ?? sumRows(rows, 'unrealized'),
+    dayPnl: finite(a.dailyPnL) ? a.dailyPnL + adjust : rows.length ? sumRows(rows, 'dayPnl') : undefined,
+    unrealized: finite(a.unrealizedPnL) ? a.unrealizedPnL + adjust : sumRows(rows, 'unrealized'),
     stockValue: a.stockMarketValue ?? sumRows(rows, 'value', ofType('STK')),
     optionValue: a.optionMarketValue ?? sumRows(rows, 'value', ofType('OPT')),
     gross: a.grossPositionValue ?? grossValue(rows),

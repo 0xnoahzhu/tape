@@ -275,8 +275,13 @@ export interface Position {
   marketValue?: number;
   unrealizedPnL?: number;
   realizedPnL?: number;
-  /** From reqPnLSingle. */
+  /**
+   * From reqPnLSingle. IB's P&L engine values the position at its own mark (`pnlValue`), which outside
+   * regular hours can differ from the portfolio update's `marketPrice`; the portfolio view re-marks it.
+   */
   dailyPnL?: number;
+  /** reqPnLSingle's market value: the mark `dailyPnL` was computed at. */
+  pnlValue?: number;
   /** Industry from contract details; used for the sector allocation chart. */
   industry?: string;
   category?: string;

@@ -2,15 +2,17 @@
 // (the stock and its derivatives), with Modify / Cancel for this app's working orders.
 
 import { useMemo } from 'react';
-import { contractLabel, sameContract } from '@shared/contract';
+import { contractKey, contractLabel, sameContract } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type Position, type WorkingOrder } from '@shared/types';
+import { lastPrice } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
+import { livePrice, positionRow } from '../portfolio/calc';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
 import { canModifyInTicket, orderPriceText, orderStatusText, ticketPatchFromOrder } from './orderModel';
@@ -34,7 +36,10 @@ function byInstrument(a: Position, b: Position): number {
 }
 
 function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined }) {
-  const mv = p.marketValue;
+  // Valued like the Portfolio page: one price for value and P&L (the live quote, else IB's mark).
+  const quote = useStore((s) => s.quotes[contractKey(p.contract)]);
+  const r = positionRow(p, livePrice(p.contract.secType, quote, lastPrice(quote)), netLiq, '');
+  const mv = r.value;
   const weight = mv != null && netLiq ? `${mv < 0 ? MINUS : ''}${((Math.abs(mv) / netLiq) * 100).toFixed(1)}%` : '—';
   return (
     <div
@@ -57,8 +62,8 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
       <NumCell text={px(p.avgPrice)} color="var(--mu)" />
       <NumCell text={f0(mv)} />
       <NumCell text={weight} color="var(--mu)" />
-      <NumCell text={signed0(p.unrealizedPnL)} color={signColor(p.unrealizedPnL)} />
-      <NumCell text={signed0(p.dailyPnL)} color={signColor(p.dailyPnL)} />
+      <NumCell text={signed0(r.unrealized)} color={signColor(r.unrealized)} />
+      <NumCell text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} />
     </div>
   );
 }

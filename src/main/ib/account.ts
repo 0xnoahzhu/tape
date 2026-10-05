@@ -137,6 +137,7 @@ export function createAccountService(ctx: MainContext): AccountService {
       unrealizedPnL: market ? market.unrealizedPnL : prev?.unrealizedPnL,
       realizedPnL: market ? market.realizedPnL : prev?.realizedPnL,
       dailyPnL: prev?.dailyPnL,
+      pnlValue: prev?.pnlValue,
       industry: info?.industry ?? prev?.industry,
       category: info?.category ?? prev?.category,
       stockType: info?.stockType ?? prev?.stockType,
@@ -291,22 +292,23 @@ export function createAccountService(ctx: MainContext): AccountService {
       patchSummary({ dailyPnL: num(dailyPnL), unrealizedPnL: num(unrealizedPnL), realizedPnL: num(realizedPnL) });
     });
 
-    ib.on(EventName.pnlSingle, (reqId: number, _pos: number, dailyPnL: number, unrealizedPnL?: number, _realized?: number, value?: number) => {
+    // The P&L engine marks positions at its own price, which outside regular hours differs from the
+    // portfolio update's marketPrice: its value is kept apart (pnlValue) so a row's price, value and
+    // unrealized P&L stay from one source and the daily P&L can be re-marked to it.
+    ib.on(EventName.pnlSingle, (reqId: number, _pos: number, dailyPnL: number, _unrealized?: number, _realized?: number, value?: number) => {
       const conId = conIdByPnlReq.get(reqId);
       if (conId == null) return;
       const id = String(conId);
       const cur = positions.get(id);
       if (!cur) return;
       const daily = num(dailyPnL);
-      const unrealized = num(unrealizedPnL);
-      const marketValue = num(value);
+      const pnlValue = num(value);
       positions.set(
         id,
         stripUndefined({
           ...cur,
           dailyPnL: daily ?? cur.dailyPnL,
-          unrealizedPnL: unrealized ?? cur.unrealizedPnL,
-          marketValue: marketValue ?? cur.marketValue,
+          pnlValue: pnlValue ?? cur.pnlValue,
           updatedAt: Date.now(),
         }),
       );

@@ -371,6 +371,40 @@ describe('positionRow', () => {
     expect(r.weight).toBeCloseTo((22_748 / 1_284_530) * 100);
   });
 
+  // Paper DUP899854, AAPL overnight 2026-10-05: the portfolio update marks at 333.50, IB's P&L engine
+  // (reqPnLSingle) at about 332.86. The row keeps one price and re-marks IB's daily P&L to it.
+  const overnight = position({
+    avgPrice: 332.952003,
+    marketPrice: 333.5,
+    marketValue: 33_350,
+    unrealizedPnL: 54.8,
+    dailyPnL: -9.20156484375184,
+    pnlValue: 33_285.99853515625,
+  });
+
+  it('re-marks the daily P&L to the price the row shows', () => {
+    const ib = positionRow(overnight, undefined, 1e6, 'Technology');
+    expect(ib.last).toBe(333.5);
+    expect(ib.value).toBe(33_350);
+    expect(ib.unrealized).toBe(54.8);
+    // Bought today: the day's P&L equals the unrealized P&L at the same price.
+    expect(ib.dayPnl).toBeCloseTo(54.8, 2);
+    const live = positionRow(overnight, 334, 1e6, 'Technology');
+    expect(live.value).toBeCloseTo(33_400);
+    expect(live.unrealized).toBeCloseTo(104.8, 2);
+    expect(live.dayPnl).toBeCloseTo(104.8, 2);
+    // Without the P&L engine's value IB's figure is shown as it is.
+    expect(positionRow({ ...overnight, pnlValue: undefined }, undefined, 1e6, 'x').dayPnl).toBeCloseTo(-9.2, 2);
+  });
+
+  it('re-marks the account P&L to the rows', () => {
+    const row = positionRow(overnight, undefined, 1e6, 'Technology');
+    const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, updatedAt: 0, dailyPnL: -9.20156484375184, unrealizedPnL: -9.201764843746787 };
+    const t = accountTotals(account, [row]);
+    expect(t.dayPnl).toBeCloseTo(54.8, 2);
+    expect(t.unrealized).toBeCloseTo(54.8, 2);
+  });
+
   it('falls back to IB portfolio values without a quote', () => {
     const r = positionRow(position({ marketPrice: 220, marketValue: 22_000, unrealizedPnL: 2_000 }), undefined, undefined, 'Technology');
     expect(r.last).toBe(220);
