@@ -49,7 +49,8 @@ export function ownerPriority(owner: string): number {
 /**
  * Generic ticks per instrument type and profile:
  * - stocks/ETFs: 318 = last RTH trade; underlying adds option volume (100), open interest (101),
- *   historical (104) and implied volatility (106) and 52-week statistics (165)
+ *   historical (104) and implied volatility (106), 52-week statistics (165) and the dividends
+ *   tick (456), so it covers the dividends profile
  * - options: option volume / open interest, implied volatility and the mark price (221 -> tick
  *   37; model greeks always arrive)
  * - indices: no generic ticks for plain quotes; the underlying profile adds the option statistics
@@ -59,7 +60,9 @@ export function ownerPriority(owner: string): number {
 function ticksFor(secType: SecType, profile: QuoteProfile): number[] {
   switch (secType) {
     case 'STK':
-      if (profile === 'underlying') return [100, 101, 104, 106, 165, 318];
+      // The stock lists nest (basic ⊂ dividends ⊂ underlying), so a line switched between the
+      // options view and the dashboard is requested again at most once and then kept.
+      if (profile === 'underlying') return [100, 101, 104, 106, 165, 318, 456];
       return profile === 'dividends' ? [318, 456] : [318];
     case 'OPT':
     case 'FOP':

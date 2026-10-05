@@ -57,7 +57,7 @@ describe('quote subscriptions with IB', () => {
     expect(fake.callsOf('reqMarketDataType')).toEqual([[4]]);
     const reqs = fake.callsOf('reqMktData');
     expect(reqs.map((r) => [(r[1] as { symbol: string }).symbol, r[2], r[3], r[4]])).toEqual([
-      ['AAPL', '100,101,104,106,165,318', false, false],
+      ['AAPL', '100,101,104,106,165,318,456', false, false],
       ['SPX', '', false, false],
     ]);
   });
@@ -117,7 +117,7 @@ describe('quote subscriptions with IB', () => {
     reconciled();
     const first = fake.callsOf('reqMktData')[0][0];
     expect(fake.callsOf('cancelMktData')).toEqual([[first]]);
-    expect(fake.callsOf('reqMktData')[1][2]).toBe('100,101,104,106,165,318');
+    expect(fake.callsOf('reqMktData')[1][2]).toBe('100,101,104,106,165,318,456');
     // Dropping the underlying profile keeps the richer line.
     svc.setSubscriptions('options-underlying', []);
     reconciled();

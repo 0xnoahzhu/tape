@@ -5,7 +5,7 @@ import { allocateLines, coversTicks, genericTicksFor, ownerPriority, OwnerPriori
 describe('genericTicksFor', () => {
   it('uses the profile tick lists per instrument type', () => {
     expect(genericTicksFor(stock('AAPL'), ['basic'])).toBe('318');
-    expect(genericTicksFor(stock('AAPL'), ['underlying'])).toBe('100,101,104,106,165,318');
+    expect(genericTicksFor(stock('AAPL'), ['underlying'])).toBe('100,101,104,106,165,318,456');
     expect(genericTicksFor(option('AAPL', '20261016', 230, 'C'), ['option'])).toBe('100,101,106,221');
     expect(genericTicksFor(index('SPX', 'CBOE'), ['basic'])).toBe('');
     expect(genericTicksFor(index('SPX', 'CBOE'), ['underlying'])).toBe('100,101,104,106,165');
@@ -19,7 +19,14 @@ describe('genericTicksFor', () => {
   });
 
   it('unions the ticks of several profiles', () => {
-    expect(genericTicksFor(stock('AAPL'), ['basic', 'underlying'])).toBe('100,101,104,106,165,318');
+    expect(genericTicksFor(stock('AAPL'), ['basic', 'underlying'])).toBe('100,101,104,106,165,318,456');
+  });
+
+  it('nests the stock profiles, so a line covers every narrower one', () => {
+    const t = (p: 'basic' | 'dividends' | 'underlying') => genericTicksFor(stock('AAPL'), [p]);
+    expect(coversTicks(t('underlying'), t('dividends'))).toBe(true);
+    expect(coversTicks(t('dividends'), t('basic'))).toBe(true);
+    expect(coversTicks(t('dividends'), t('underlying'))).toBe(false);
   });
 });
 

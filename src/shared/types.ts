@@ -72,7 +72,8 @@ export type MarketDataType = 1 | 2 | 3 | 4; // live, frozen, delayed, delayed-fr
 /**
  * Generic tick profiles. The main process maps each profile to a genericTickList:
  * - basic:      quotes for watchlists, positions, ticket (318 = last RTH trade on stocks)
- * - underlying: basic + option volume/OI, historical and implied volatility, 52w stats
+ * - underlying: dividends + option volume/OI, historical and implied volatility, 52w stats
+ *               (indices: without 318 and 456)
  * - option:     option contract quotes with model greeks, volume and open interest
  * - dividends:  basic + IB's dividend summary (generic tick 456, stocks only; live data only)
  */

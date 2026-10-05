@@ -382,7 +382,8 @@ export class DemoMarket {
       });
       if (c.secType !== 'IND') q.avgVolume = inst.avgVolume;
     }
-    if (profiles.includes('dividends') && c.secType === 'STK') q.dividends = this.dividends(c.symbol);
+    // Stock underlying lines carry tick 456 too (subscriptions.ts).
+    if ((profiles.includes('dividends') || profiles.includes('underlying')) && c.secType === 'STK') q.dividends = this.dividends(c.symbol);
     return q;
   }
 
