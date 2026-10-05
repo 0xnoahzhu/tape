@@ -70,6 +70,52 @@ describe('applyTick prices', () => {
     expect(q.ask).toBe(0);
   });
 
+  it('keeps a known close when IB marks it not available, and takes a new one', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 233.95 }, stock);
+    for (const value of [-1, 0, Number.MAX_VALUE, undefined]) {
+      expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value }, stock)).toBe(false);
+      expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value }, stock)).toBe(false);
+      expect(q.close).toBe(233.95);
+    }
+    // A new session's close replaces it.
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 236.59 }, stock)).toBe(true);
+    expect(q.close).toBe(236.59);
+    // Without a close, a "not available" one leaves the quote as it was.
+    const none = q0();
+    expect(applyTick(none, { kind: 'price', field: TICK.CLOSE, value: -1 }, stock)).toBe(false);
+    expect(none).toEqual(q0());
+  });
+
+  it('keeps a combo close of zero or below but not the -1 marker', () => {
+    const combo = { isOption: false, isCombo: true };
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: -0.35 }, combo);
+    expect(q.close).toBe(-0.35);
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: -1 }, combo)).toBe(false);
+    expect(q.close).toBe(-0.35);
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 0 }, combo);
+    expect(q.close).toBe(0);
+  });
+
+  it('does not let a delayed close replace the close of a live quote', () => {
+    const q: Quote = { ...q0(), marketDataType: 1 };
+    // A live quote without a close takes the delayed one.
+    applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 333.6 }, stock);
+    expect(q.close).toBe(333.6);
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 333.69 }, stock);
+    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(false);
+    expect(q.close).toBe(333.69);
+    q.marketDataType = 2; // frozen is live data too
+    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(false);
+    // The line turned delayed: its delayed close is the quote's now; a live one still applies.
+    q.marketDataType = 3;
+    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(true);
+    expect(q.close).toBe(330);
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 333.69 }, stock)).toBe(true);
+    expect(q.close).toBe(333.69);
+  });
+
   it('reports no change for repeated values and unknown fields', () => {
     const q = q0();
     expect(applyTick(q, { kind: 'price', field: TICK.LAST, value: 5 }, stock)).toBe(true);

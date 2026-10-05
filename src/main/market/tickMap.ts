@@ -143,7 +143,23 @@ function timestampMs(s: string | undefined): number | undefined {
 function applyPrice(q: Quote, field: number, value: number | undefined, ctx: TickContext): boolean {
   const key = PRICE_FIELDS[field];
   if (!key) return false;
-  return set(q, key, priceValue(key, value, ctx));
+  const v = priceValue(key, value, ctx);
+  return key === 'close' ? applyClose(q, field, v) : set(q, key, v);
+}
+
+const isLive = (q: Quote): boolean => q.marketDataType === 1 || q.marketDataType === 2;
+
+/**
+ * The previous close, the reference of every change. IB sends it with a request's first ticks and
+ * then only when it changes (a new session's close replaces it). Its "not available" markers (-1,
+ * 0, Double.MAX) do not mean the instrument has no close, so they never erase a known one (IB does
+ * not send it again). A delayed close (75) lags the live one, so it does not replace the close of a
+ * quote that reports live data (type 1 / 2); a delayed quote takes it.
+ */
+function applyClose(q: Quote, field: number, v: number | undefined): boolean {
+  if (v === undefined) return false;
+  if (field === TICK.DELAYED_CLOSE && q.close !== undefined && isLive(q)) return false;
+  return set(q, 'close', v);
 }
 
 function applySize(q: Quote, field: number, value: number | undefined, ctx: TickContext): boolean {
