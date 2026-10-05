@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ApiLogEntry, DepthBook, Quote } from '@shared/types';
+import type { ApiLogEntry, DepthBook, MarketCheckItem, MarketDataCheck, Quote } from '@shared/types';
 import {
+  checkAge,
+  checkItems,
+  checkNeeded,
+  checkReasons,
+  STALE_CHECK_MS,
   hasSoundChoice,
   soundCategoryOff,
   soundChoices,
@@ -185,6 +190,83 @@ const entry = (dir: 'out' | 'in', name: string, fields: Array<[string, string]>,
   err: false,
   raw: '[38] 1␀11',
   ...extra,
+});
+
+describe('market data check', () => {
+  const at = 1_000_000_000_000;
+  const stk = (over: Partial<MarketCheckItem> = {}): MarketCheckItem => ({
+    market: 'stk',
+    status: 'live',
+    instrument: 'SPY',
+    probe: { status: 'live', exchange: 'SMART', marketDataType: 1 },
+    checkedAt: at,
+    ...over,
+  });
+  const result = (items: MarketCheckItem[], account = 'DU1'): MarketDataCheck => ({ checkedAt: at, account, trigger: 'user', items });
+
+  it('checks when connected and the result is missing, old or of another account', () => {
+    const conn = { status: 'connected' as const, account: 'DU1' };
+    expect(checkNeeded({ result: null, running: false }, conn, at)).toBe(true);
+    expect(checkNeeded({ result: null, running: true }, conn, at)).toBe(false);
+    expect(checkNeeded({ result: null, running: false }, { ...conn, status: 'disconnected' }, at)).toBe(false);
+    const r = result([stk()]);
+    expect(checkNeeded({ result: r, running: false }, conn, at + STALE_CHECK_MS - 1)).toBe(false);
+    expect(checkNeeded({ result: r, running: false }, conn, at + STALE_CHECK_MS)).toBe(true);
+    expect(checkNeeded({ result: r, running: false }, { ...conn, account: 'DU2' }, at + 1)).toBe(true);
+  });
+
+  it('maps items to rows only for the connected account', () => {
+    const r = result([stk(), { ...stk(), market: 'ind', instrument: 'SPX' }]);
+    expect(Object.keys(checkItems(r, 'DU1'))).toEqual(['stk', 'ind']);
+    expect(checkItems(r, 'DU2')).toEqual({});
+    expect(Object.keys(checkItems(r, undefined))).toEqual(['stk', 'ind']);
+    expect(checkItems(null, 'DU1')).toEqual({});
+  });
+
+  it('explains delayed and no-data markets once per reason, competing session first', () => {
+    expect(checkReasons(result([stk()]))).toEqual([]);
+    const r = result([
+      stk({
+        status: 'live',
+        via: 'NASDAQ',
+        probe: { status: 'delayed', exchange: 'SMART', marketDataType: 3, code: 10167 },
+        primary: { status: 'live', exchange: 'NASDAQ', marketDataType: 1 },
+      }),
+      { market: 'opt', status: 'nodata', instrument: 'SPY 10/06 670 Call', probe: { status: 'nodata', exchange: 'SMART', code: 354, message: 'x' }, checkedAt: at },
+      { market: 'ind', status: 'delayed', instrument: 'SPX', probe: { status: 'delayed', exchange: 'CBOE', marketDataType: 3 }, checkedAt: at },
+      { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }, checkedAt: at },
+    ]);
+    // The SMART line's 10167 belongs to the fallback note, not to the subscription one.
+    expect(checkReasons(r)).toEqual([{ kind: 'notSubscribed', codes: [354] }, { kind: 'fallback', exchange: 'NASDAQ' }, { kind: 'depthPerm' }]);
+    const competing = result([
+      stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: 10197, message: 'x' } }),
+      { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 309, message: 'x' }, checkedAt: at },
+      { market: 'ind', status: 'nodata', instrument: 'SPX', probe: { status: 'nodata', exchange: 'CBOE', code: -1, own: 'timeout', message: 'x' }, checkedAt: at },
+      { market: 'opt', status: 'nodata', instrument: 'SPY option', probe: { status: 'nodata', exchange: 'SMART', code: -1, own: 'contract', message: 'x' }, checkedAt: at },
+    ]);
+    expect(checkReasons(competing).map((x) => x.kind)).toEqual(['competing', 'depthLimit', 'noAnswer', 'noOption']);
+    const partial = result([
+      {
+        market: 'depth',
+        status: 'live',
+        via: 'IEX',
+        instrument: 'SPY',
+        probe: { status: 'live', exchange: 'SMART', code: 2152, message: 'Exchanges - Depth: IEX; Top: BYX; Need additional market data permissions - Depth: NASDAQ; NYSE; ' },
+        checkedAt: at,
+      },
+    ]);
+    expect(checkReasons(partial)).toEqual([{ kind: 'depthPartial', depth: ['IEX'], missing: ['NASDAQ', 'NYSE'] }]);
+    const lines = result([stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: -1, own: 'lines', message: 'x' } })]);
+    expect(checkReasons(lines)).toEqual([{ kind: 'lines' }]);
+  });
+
+  it('says how long ago a check ran', () => {
+    expect(checkAge(at, at + 59_000)).toEqual({ unit: 'now', n: 0 });
+    expect(checkAge(at, at + 2 * 60_000 + 5)).toEqual({ unit: 'min', n: 2 });
+    expect(checkAge(at, at + 3 * 3_600_000)).toEqual({ unit: 'h', n: 3 });
+    expect(checkAge(at, at + 2 * 86_400_000)).toBeNull();
+    expect(checkAge(at + 5, at)).toEqual({ unit: 'now', n: 0 });
+  });
 });
 
 describe('api log', () => {

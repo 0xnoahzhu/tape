@@ -84,12 +84,18 @@ export function LabelBlock({ label, desc }: { label: ReactNode; desc?: ReactNode
   );
 }
 
-/** Outlined mono tag showing what was observed (LIVE / DELAYED / FROZEN / NO DATA / —). */
-export function ObservedTagBox({ tag, title }: { tag: ObservedTag; title?: string }) {
+/**
+ * Outlined mono tag showing what was observed (LIVE / DELAYED / FROZEN / NO DATA / —). `via`: live
+ * only on that exchange ("LIVE · NASDAQ"), drawn with the plain ring.
+ */
+export function ObservedTagBox({ tag, title, via }: { tag: ObservedTag; title?: string; via?: string }) {
   const { fg, bd } = tagColors(tag);
   return (
-    <div title={title} style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: fg, boxShadow: `inset 0 0 0 1px ${bd}`, whiteSpace: 'nowrap' }}>
-      {TAG_LABEL[tag]}
+    <div
+      title={title}
+      style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: fg, boxShadow: `inset 0 0 0 1px ${via ? 'var(--ln)' : bd}`, whiteSpace: 'nowrap' }}
+    >
+      {via ? `${TAG_LABEL[tag]} · ${via}` : TAG_LABEL[tag]}
     </div>
   );
 }

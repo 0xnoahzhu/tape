@@ -3,12 +3,14 @@
 import { compact, f0 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
 import { createMessages } from '../../i18n';
-import type { BiometricKind, LockBiometrics } from '@shared/types';
+import type { BiometricKind, LockBiometrics, MarketCheckStatus } from '@shared/types';
 import type { ShortcutId } from './logic';
 
 const BIO: Record<BiometricKind, string> = { touchId: 'Touch ID', windowsHello: 'Windows Hello' };
 
 type Pair = { l: string; d: string };
+type Age = { unit: 'now' | 'min' | 'h'; n: number } | null;
+type ReasonText = { t: string; d: string };
 
 const en = {
   nav: {
@@ -63,8 +65,56 @@ const en = {
   reqL: 'Request type: automatic (reqMarketDataType 4)',
   reqD: 'Subscribed markets return live data; others fall back to 15–20 min delayed data, and a closed market shows its last values (frozen). The actual type comes from TWS marketDataType callbacks, so there is nothing to switch manually.',
   hSrc: 'Market',
-  hObs: 'Observed',
+  hObs: 'Checked',
   hNow: 'Now',
+  checkNow: 'Check now',
+  checking: 'Checking…',
+  checkDesc: 'Tape asks IB for SPY (through SMART and on its own exchange), an SPY option and SPX for a few seconds and shows what comes back. Check now also tests Level 2.',
+  /** "Checked 2 min ago" (`at`: the date and time, for older results). */
+  checkedAgo: (age: Age, at: string) =>
+    !age ? `Checked ${at}` : age.unit === 'now' ? 'Checked just now' : age.unit === 'min' ? `Checked ${age.n} min ago` : `Checked ${age.n} h ago`,
+  checkedAt: (at: string) => `Checked ${at}`,
+  notCheckedYet: 'Not checked yet',
+  checkFailed: (msg: string) => `Market data check failed: ${msg}`,
+  st: { live: 'Live', frozen: 'Frozen (market closed)', delayed: 'Delayed', nodata: 'No data' } as Record<MarketCheckStatus, string>,
+  stWord: { live: 'live', frozen: 'frozen', delayed: 'delayed', nodata: 'no data' } as Record<MarketCheckStatus, string>,
+  /** Only the primary exchange is live: "Live · NASDAQ only". */
+  via: (x: string, frozen: boolean) => `${frozen ? 'Frozen' : 'Live'} · ${x} only`,
+  viaTip: (x: string) =>
+    `Live from ${x} only: these are ${x}'s own best bid and ask, not the consolidated quote. IB sends this account SMART (consolidated) data delayed.`,
+  split: (smart: string, x: string, prim: string) => `SMART ${smart} · ${x} ${prim}`,
+  ibCode: (code: number) => `IB ${code}`,
+  rowNotChecked: 'Not checked',
+  depthNotChecked: 'Not checked · Check now tests it',
+  inSession: (text: string) => `This session: ${text}`,
+  reasons: {
+    competing: {
+      t: 'Another session has the market data (10197)',
+      d: 'This IB user is logged in to a live session elsewhere (TWS, IBKR Mobile or Client Portal), and IB sends market data to one session at a time. Log out of that session and check again; Tape’s quotes come back by themselves. Account, positions and orders keep working meanwhile.',
+    },
+    depthPerm: {
+      t: 'No Level 2 subscription',
+      d: 'Level 2 needs its own subscription, such as NASDAQ TotalView or NYSE OpenBook, enabled for the API as well.',
+    },
+    depthLimit: {
+      t: 'No free depth line (309)',
+      d: 'IB allows 3 depth lines per user, and TWS or other API clients use them all. Close a depth window there and check again.',
+    },
+    noAnswer: { t: 'No answer from IB', d: 'IB did not answer within 8 seconds. Look at the data farms in Settings › Connection and check again.' },
+    lines: { t: 'No free market data line', d: 'All of Tape’s market data lines are in use (IB allows 100). Close some watchlists or option chains and check again.' },
+    noOption: { t: 'No option tested', d: 'The SPY option chain could not be loaded, so no option was tested. Check again in a moment.' },
+  } as Record<'competing' | 'depthPerm' | 'depthLimit' | 'noAnswer' | 'lines' | 'noOption', ReasonText>,
+  notSubscribedTitle: 'Live data not enabled for the API',
+  notSubscribedText: (codes: number[], paper: boolean) =>
+    `IB answered ${codes.length ? codes.join(' / ') : 'with delayed data'}: this account may not use live data for these markets through the API. In Client Portal › Settings › Market Data Subscriptions, check that the subscription is active and that the market data API acknowledgement and your non-professional status are confirmed.` +
+    (paper ? ' For a paper account, also turn on sharing of the live account’s market data with the paper account (Settings › Paper Trading Account); it can take up to a day to apply.' : ''),
+  depthViaTip: (x: string) => `Level 2 arrives from ${x} only; the other exchanges' books need their own subscriptions.`,
+  depthPartialTitle: (x: string) => `Level 2 from ${x} only`,
+  depthPartialText: (missing: string) =>
+    `IB sends no book from ${missing} (2152): those need depth subscriptions such as NASDAQ TotalView (NASDAQ), NYSE OpenBook (NYSE) or NYSE ArcaBook (ARCA), enabled for the API.`,
+  fallbackTitle: (x: string) => `SMART delayed, ${x} live`,
+  fallbackText: (x: string) =>
+    `IB sends this account SMART (consolidated) quotes delayed but ${x}’s own quotes live. Quotes marked “Live · ${x}” are the best bid and ask on ${x}, not the consolidated quote across all exchanges.`,
   markets: {
     stk: { l: 'US equities NASDAQ / NYSE', d: 'Network A/B/C · incl. extended hours' },
     opt: { l: 'US options OPRA', d: 'Option quotes and trades' },
@@ -318,8 +368,46 @@ const zh: typeof en = {
   reqL: '请求类型：自动（reqMarketDataType 4）',
   reqD: '已订阅的市场返回实时数据，未订阅的自动退回 15–20 分钟延迟数据；休市时显示最后的数值（冻结）。实际类型以 TWS 的 marketDataType 回报为准，不需要手动切换。',
   hSrc: '市场',
-  hObs: '观测',
+  hObs: '检测结果',
   hNow: '当前',
+  checkNow: '立即检测',
+  checking: '检测中…',
+  checkDesc: 'Tape 向 IB 请求几秒钟 SPY（经 SMART 和在其本交易所）、一个 SPY 期权和 SPX 的行情，显示 IB 实际返回的结果。点“立即检测”时还会检测深度行情。',
+  checkedAgo: (age: Age, at: string) =>
+    !age ? `${at} 检测` : age.unit === 'now' ? '刚刚检测' : age.unit === 'min' ? `${age.n} 分钟前检测` : `${age.n} 小时前检测`,
+  checkedAt: (at: string) => `${at} 检测`,
+  notCheckedYet: '尚未检测',
+  checkFailed: (msg: string) => `行情检测失败：${msg}`,
+  st: { live: '实时', frozen: '冻结（休市）', delayed: '延迟', nodata: '无数据' },
+  stWord: { live: '实时', frozen: '冻结', delayed: '延迟', nodata: '无数据' },
+  via: (x: string, frozen: boolean) => `${frozen ? '冻结' : '实时'} · 仅 ${x}`,
+  viaTip: (x: string) => `仅 ${x} 有实时数据：这是 ${x} 自己的最优买卖价，不是全市场合并报价。IB 向本账户推送的 SMART（合并）行情是延迟的。`,
+  split: (smart: string, x: string, prim: string) => `SMART ${smart} · ${x} ${prim}`,
+  ibCode: (code: number) => `IB ${code}`,
+  rowNotChecked: '未检测',
+  depthNotChecked: '未检测 · 点“立即检测”检测',
+  inSession: (text: string) => `本次会话：${text}`,
+  reasons: {
+    competing: {
+      t: '其他会话占用了行情（10197）',
+      d: '此 IB 用户在其他地方登录了实盘会话（TWS、IBKR Mobile 或 Client Portal），IB 同一时间只向一个会话推送行情。退出那个会话后再检测，Tape 的报价会自动恢复；期间账户、持仓和订单不受影响。',
+    },
+    depthPerm: { t: '未订阅深度行情', d: '深度行情需要单独订阅，例如 NASDAQ TotalView 或 NYSE OpenBook，并同样为 API 开通。' },
+    depthLimit: { t: '没有空闲的深度线路（309）', d: 'IB 每个用户最多 3 条深度线路，已被 TWS 或其他 API 程序占满。关闭那边的深度窗口后再检测。' },
+    noAnswer: { t: 'IB 没有回应', d: 'IB 在 8 秒内没有回应。请在 设置 › 连接 查看数据农场状态后再检测。' },
+    lines: { t: '没有空闲的行情线路', d: 'Tape 的行情线路已全部占用（IB 上限 100 条）。关闭部分自选或期权链后再检测。' },
+    noOption: { t: '未检测期权', d: '无法加载 SPY 期权链，未能检测期权。请稍后再检测。' },
+  },
+  notSubscribedTitle: '未为 API 开通实时行情',
+  notSubscribedText: (codes: number[], paper: boolean) =>
+    `IB 回复${codes.length ? ` ${codes.join(' / ')}` : '延迟行情'}：此账户不能通过 API 使用这些市场的实时行情。请在 Client Portal › 设置 › 市场数据订阅 中确认订阅已生效，并已完成行情 API 确认和非专业用户身份声明。` +
+    (paper ? '模拟账户还需在 设置 › 模拟交易账户 中打开“与模拟账户共享实盘账户的市场数据”，生效最长需要一天。' : ''),
+  depthViaTip: (x: string) => `仅 ${x} 提供深度行情；其他交易所的盘口需要另外订阅。`,
+  depthPartialTitle: (x: string) => `深度行情仅来自 ${x}`,
+  depthPartialText: (missing: string) =>
+    `IB 不提供 ${missing} 的盘口（2152）：需要相应的深度订阅，例如 NASDAQ TotalView（NASDAQ）、NYSE OpenBook（NYSE）或 NYSE ArcaBook（ARCA），并为 API 开通。`,
+  fallbackTitle: (x: string) => `SMART 延迟，${x} 实时`,
+  fallbackText: (x: string) => `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但 ${x} 自己的报价是实时的。标为“实时 · ${x}”的报价是 ${x} 上的最优买卖价，不是全市场合并报价。`,
   markets: {
     stk: { l: '美股 NASDAQ / NYSE', d: 'Network A/B/C · 含盘前盘后' },
     opt: { l: '美股期权 OPRA', d: '期权报价与成交' },

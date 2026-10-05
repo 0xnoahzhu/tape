@@ -23,6 +23,7 @@ import type {
   Execution,
   LocalizedName,
   LockState,
+  MarketDataCheckState,
   NavPoint,
   OcaType,
   OrderAction,
@@ -231,6 +232,8 @@ interface DataState {
   executions: Execution[];
   quotes: Record<string, Quote>;
   depth: DepthBook | null;
+  /** The last market data check (main keeps and persists it) and whether one runs now. */
+  marketDataCheck: MarketDataCheckState;
   apiLog: ApiLogEntry[];
   notifications: AppNotification[];
   watchlists: Watchlist[];
@@ -409,6 +412,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   executions: [],
   quotes: {},
   depth: null,
+  marketDataCheck: { result: null, running: false },
   apiLog: [],
   notifications: [],
   watchlists: [],

@@ -20,6 +20,7 @@ const SNAPSHOT_EVENTS: ReadonlySet<TapeEvent['type']> = new Set([
   'notifications',
   'nav',
   'lock',
+  'marketDataCheck',
 ]);
 
 let started = false;
@@ -56,6 +57,7 @@ export async function startBridge(): Promise<void> {
     notifications: snap.notifications,
     nav: snap.nav,
     lock: snap.lock,
+    marketDataCheck: snap.marketDataCheck,
     biometricsSeen: s.biometricsSeen || snap.lock.biometrics.available,
     ticket: { ...initialTicket(snap.settings), side: s.ticket.side },
     // After a Forgot-PIN reset Tape opens on Settings › Connection, as on a fresh install.
@@ -121,6 +123,9 @@ function apply(e: TapeEvent): void {
       break;
     case 'depth':
       set({ depth: e.book });
+      break;
+    case 'marketDataCheck':
+      set({ marketDataCheck: e.state });
       break;
     case 'apiLog':
       set((s) => ({ apiLog: e.reset ? e.entries : appendLog(s.apiLog, e.entries), logFilePath: e.logFilePath || s.logFilePath }));

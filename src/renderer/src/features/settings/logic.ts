@@ -2,9 +2,21 @@
 // market data observation, API log filtering/formatting and shortcut labels.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
+import { depthPermissions } from '@shared/depthPermissions';
 import { DASH, hmsMs } from '@shared/format';
 import { CATEGORY_KINDS, NO_SOUND, PLATFORM_SOUNDS, soundPlatform, type SoundCategory } from '@shared/notificationSounds';
-import type { ApiLogEntry, ConnectionState, DepthBook, MarketDataType, Quote, Settings } from '@shared/types';
+import type {
+  ApiLogEntry,
+  ConnectionState,
+  DepthBook,
+  MarketCheckItem,
+  MarketCheckProbe,
+  MarketDataCheck,
+  MarketDataCheckState,
+  MarketDataType,
+  Quote,
+  Settings,
+} from '@shared/types';
 
 // ---------------------------------------------------------------------------
 // Notification sounds
@@ -244,6 +256,112 @@ export function tagColors(tag: ObservedTag): { fg: string; bd: string } {
   if (tag === 'nodata') return { fg: 'var(--r)', bd: 'var(--r)' };
   if (tag === 'none') return { fg: 'var(--dm)', bd: 'var(--ln)' };
   return { fg: 'var(--mu)', bd: 'var(--ln)' };
+}
+
+// ---------------------------------------------------------------------------
+// Active market data check (main/market/marketCheck.ts)
+
+/** Settings › Market data checks again when it opens and the last result is older than this. */
+export const STALE_CHECK_MS = 5 * 60_000;
+
+/** True when Settings › Market data should start a (quiet) check: connected, none running, and none recent for this account. */
+export function checkNeeded(state: MarketDataCheckState, connection: Pick<ConnectionState, 'status' | 'account'>, now: number): boolean {
+  if (connection.status !== 'connected' || state.running) return false;
+  const r = state.result;
+  if (!r) return true;
+  if (connection.account && r.account && r.account !== connection.account) return true;
+  return now - r.checkedAt >= STALE_CHECK_MS;
+}
+
+/** The check's item per row, when the result belongs to the connected account (or no account is known). */
+export function checkItems(result: MarketDataCheck | null, account: string | undefined): Partial<Record<MarketRow, MarketCheckItem>> {
+  const out: Partial<Record<MarketRow, MarketCheckItem>> = {};
+  if (!result || (account && result.account && result.account !== account)) return out;
+  for (const item of result.items) out[item.market] = item;
+  return out;
+}
+
+/** The tag of a checked market: its status (a primary-exchange-only market reads live). */
+export function checkTag(item: MarketCheckItem): ObservedTag {
+  return item.status;
+}
+
+/** Why a market has no live data, and what to do about it (one note per reason). */
+export type CheckReason =
+  | { kind: 'competing' }
+  | { kind: 'notSubscribed'; codes: number[] }
+  | { kind: 'fallback'; exchange: string }
+  | { kind: 'depthPerm' }
+  | { kind: 'depthPartial'; depth: string[]; missing: string[] }
+  | { kind: 'depthLimit' }
+  | { kind: 'noAnswer' }
+  | { kind: 'lines' }
+  | { kind: 'noOption' };
+
+/** IB's answers that mean the account has no live entitlement for the API. */
+const NOT_SUBSCRIBED = new Set([354, 10089, 10090, 10091, 10167, 10168, 10186]);
+const COMPETING = 10197;
+
+function probesOf(item: MarketCheckItem): MarketCheckProbe[] {
+  return item.primary ? [item.probe, item.primary] : [item.probe];
+}
+
+/**
+ * The reasons behind the delayed / no-data markets of a check, in the order they should be read:
+ * a competing session first (it hides everything else), then subscriptions, then the fallback and
+ * Level 2 specifics, then Tape's own outcomes (no answer, no free line, no option to test).
+ */
+export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
+  if (!result) return [];
+  const has = new Set<CheckReason['kind']>();
+  const codes = new Set<number>();
+  let fallback: string | undefined;
+  let partial: { depth: string[]; missing: string[] } | null = null;
+  for (const item of result.items) {
+    if (item.via && item.market !== 'depth') fallback ??= item.via;
+    for (const p of probesOf(item)) {
+      if (p.code === COMPETING) has.add('competing');
+      if (p.own === 'timeout') has.add('noAnswer');
+      if (p.own === 'lines') has.add('lines');
+      if (p.own === 'contract' && item.market === 'opt') has.add('noOption');
+    }
+    const p = item.probe;
+    if (item.market === 'depth') {
+      if (item.via) partial = depthPermissions(p.message);
+      if (p.code === 309) has.add('depthLimit');
+      else if (item.status === 'nodata' && p.code !== undefined && p.code !== COMPETING && !p.own) has.add('depthPerm');
+      continue;
+    }
+    // SMART delayed with the primary exchange live is the fallback's note, not a subscription problem;
+    // a delayed primary-exchange line next to a live SMART one needs nothing either.
+    if (item.via || p.status === 'live' || p.status === 'frozen') continue;
+    if (p.code !== undefined && NOT_SUBSCRIBED.has(p.code)) {
+      has.add('notSubscribed');
+      codes.add(p.code);
+    } else if (p.status === 'delayed' && p.code !== COMPETING) {
+      has.add('notSubscribed');
+    }
+  }
+  const out: CheckReason[] = [];
+  if (has.has('competing')) out.push({ kind: 'competing' });
+  if (has.has('notSubscribed')) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b) });
+  if (fallback) out.push({ kind: 'fallback', exchange: fallback });
+  if (has.has('depthPerm')) out.push({ kind: 'depthPerm' });
+  if (partial?.missing.length) out.push({ kind: 'depthPartial', ...partial });
+  if (has.has('depthLimit')) out.push({ kind: 'depthLimit' });
+  if (has.has('noAnswer')) out.push({ kind: 'noAnswer' });
+  if (has.has('lines')) out.push({ kind: 'lines' });
+  if (has.has('noOption')) out.push({ kind: 'noOption' });
+  return out;
+}
+
+/** How long ago a check ran, for "checked 2 min ago" (null: show the date and time instead). */
+export function checkAge(checkedAt: number, now: number): { unit: 'now' | 'min' | 'h'; n: number } | null {
+  const ms = Math.max(0, now - checkedAt);
+  if (ms < 60_000) return { unit: 'now', n: 0 };
+  if (ms < 3_600_000) return { unit: 'min', n: Math.floor(ms / 60_000) };
+  if (ms < 86_400_000) return { unit: 'h', n: Math.floor(ms / 3_600_000) };
+  return null;
 }
 
 // ---------------------------------------------------------------------------
