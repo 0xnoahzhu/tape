@@ -5,7 +5,7 @@ import { shortExpiry, daysToExpiry } from '@shared/contract';
 import { useLang } from '../../i18n';
 import { TabItems } from '../../ui/primitives';
 import { expiryKind, groupByMonth, visibleExpiries, type ChainExpiry, type ExpiryKind } from './chain';
-import { useDesk, type DeskTab } from './deskStore';
+import { DESK_TABS, useDesk } from './deskStore';
 import { useM } from './messages';
 
 const kindColor = (k: ExpiryKind) => (k === 'W' ? 'var(--dm)' : k === 'L' ? 'var(--ac)' : 'var(--mu)');
@@ -13,14 +13,14 @@ const kindColor = (k: ExpiryKind) => (k === 'W' ? 'var(--dm)' : k === 'L' ? 'var
 const FIRST_CHIPS = 6;
 const CHIP_GAP = 4;
 
-export function DeskTabs({ tabs, expiries, selected, posCount }: { tabs: DeskTab[]; expiries: ChainExpiry[]; selected?: string; posCount: number }) {
+export function DeskTabs({ expiries, selected, posCount }: { expiries: ChainExpiry[]; selected?: string; posCount: number }) {
   const m = useM();
   const tab = useDesk((s) => s.tab);
   const patch = useDesk((s) => s.patch);
   return (
     <div style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 26, padding: '0 24px', background: 'var(--p)', boxShadow: 'inset 0 -1px 0 var(--ln2)', flexShrink: 0 }}>
       <TabItems
-        tabs={tabs.map((k) => ({ key: k, label: m.tabs[k], count: k === 'pos' && posCount ? posCount : undefined }))}
+        tabs={DESK_TABS.map((k) => ({ key: k, label: m.tabs[k], count: k === 'pos' && posCount ? posCount : undefined }))}
         value={tab}
         onChange={(k) => patch({ tab: k })}
       />

@@ -2,13 +2,12 @@
 // builder floating (features/panels) the chain takes the full width.
 
 import { useState } from 'react';
-import { useStore } from '../../state/store';
 import { PopOutButton } from '../panels/chrome';
 import { isFloating, usePanels } from '../panels/panelStore';
 import { ChainPanel } from './ChainPanel';
 import { DeskHeader } from './DeskHeader';
 import { DeskTabs } from './DeskTabs';
-import { useDesk, type DeskTab } from './deskStore';
+import { useDesk } from './deskStore';
 import { FlowTab } from './FlowTab';
 import { useM } from './messages';
 import { useDeskModel, type DeskModel } from './model';
@@ -20,13 +19,9 @@ export function DeskFull() {
   const m = useM();
   const [visible, setVisible] = useState<{ from: number; to: number } | null>(null);
   const model = useDeskModel(visible);
-  const flow = useStore((s) => s.settings.features.flow);
-  const rawTab = useDesk((s) => s.tab);
+  const tab = useDesk((s) => s.tab);
   const posCount = useOptionPositions(model.symbol).length;
   const strategyFloating = usePanels(isFloating('strategy'));
-
-  const tabs: DeskTab[] = ['chain', 'vol', ...(flow ? (['flow'] as const) : []), 'pos'];
-  const tab = tabs.includes(rawTab) ? rawTab : 'chain';
 
   if (!model.underlying) {
     return <div style={{ flex: 1, background: 'var(--p)', padding: '20px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.notOptionable}</div>;
@@ -35,7 +30,7 @@ export function DeskFull() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', fontSize: 14, color: 'var(--tx)', fontFamily: 'var(--sans)' }}>
       <DeskHeader model={model} />
-      <DeskTabs tabs={tabs} expiries={model.chain.expiries} selected={model.exp?.expiry} posCount={posCount} />
+      <DeskTabs expiries={model.chain.expiries} selected={model.exp?.expiry} posCount={posCount} />
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {tab === 'chain' && (
           <div

@@ -14,9 +14,9 @@ import { usePanels } from './panelStore';
  * Whether panel `id` is on screen with the page as it is (docked or floating): the ticket in
  * Trade › Chart and Depth, the strategy builder in Trade › Options.
  */
-export function panelShown(id: PanelId, s: Pick<StoreState, 'page' | 'view' | 'settings'>): boolean {
+export function panelShown(id: PanelId, s: Pick<StoreState, 'page' | 'view'>): boolean {
   if (s.page !== 'trade') return false;
-  const options = s.view === 'opt' && s.settings.features.options;
+  const options = s.view === 'opt';
   return id === 'strategy' ? options : !options;
 }
 

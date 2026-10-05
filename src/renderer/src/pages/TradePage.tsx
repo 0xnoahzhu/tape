@@ -21,6 +21,7 @@ import { Splitter, useSplitHeight } from '../ui/Splitter';
 import { loadFlag, saveFlag } from '../ui/splitGeometry';
 import { PopOutButton } from '../features/panels/chrome';
 import { isFloating, usePanels } from '../features/panels/panelStore';
+import { shownView, tradeViews } from './tradeViews';
 
 const useM = createMessages({
   en: { chart: 'Chart', options: 'Options', depth: 'Depth' },
@@ -38,7 +39,7 @@ const COLLAPSE_SLACK = 36;
 export function TradePage() {
   const m = useM();
   const collapsed = useStore((s) => s.watchlistCollapsed);
-  const features = useStore((s) => s.settings.features);
+  const depth = useStore((s) => s.settings.features.depth);
   const rawView = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
   const ticketFloating = usePanels(isFloating('ticket'));
@@ -61,13 +62,9 @@ export function TradePage() {
     split.set(h, persist);
   };
 
-  // Views whose feature is switched off fall back to the chart.
-  const view: TradeView = (rawView === 'opt' && !features.options) || (rawView === 'depth' && !features.depth) ? 'chart' : rawView;
-  const tabs: Array<{ key: TradeView; label: string }> = [
-    { key: 'chart', label: m.chart },
-    ...(features.options ? [{ key: 'opt' as const, label: m.options }] : []),
-    ...(features.depth ? [{ key: 'depth' as const, label: m.depth }] : []),
-  ];
+  const view = shownView(rawView, depth);
+  const labels: Record<TradeView, string> = { chart: m.chart, opt: m.options, depth: m.depth };
+  const tabs = tradeViews(depth).map((key) => ({ key, label: labels[key] }));
 
   return (
     <div

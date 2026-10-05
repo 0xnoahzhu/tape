@@ -11,7 +11,7 @@ const panel = (id: 'ticket' | 'strategy') => usePanels.getState().panels[id];
 
 beforeEach(() => {
   useStore.setState(initial, true);
-  useStore.setState((s) => ({ page: 'trade', view: 'chart', symbol: stock('AAPL'), settings: { ...s.settings, features: { ...s.settings.features, options: true, depth: true } } }));
+  useStore.setState((s) => ({ page: 'trade', view: 'chart', symbol: stock('AAPL'), settings: { ...s.settings, features: { ...s.settings.features, depth: true } } }));
   for (const id of ['ticket', 'strategy'] as const) dockBack(id);
 });
 
@@ -24,10 +24,6 @@ describe('where the panels show', () => {
     expect(panelShown('strategy', { ...s, view: 'opt' })).toBe(true);
     expect(panelShown('strategy', s)).toBe(false);
     expect(panelShown('ticket', { ...s, page: 'ord' })).toBe(false);
-    // The options view switched off falls back to the chart: the ticket shows there.
-    const noOptions = { ...s, view: 'opt' as const, settings: { ...s.settings, features: { ...s.settings.features, options: false } } };
-    expect(panelShown('ticket', noOptions)).toBe(true);
-    expect(panelShown('strategy', noOptions)).toBe(false);
   });
 });
 
