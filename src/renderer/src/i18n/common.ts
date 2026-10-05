@@ -115,7 +115,7 @@ export const useCommon = createMessages({
     cancelOrderTitle: '确认撤单',
     orderAttributes: '属性',
     cancelOrderLabel: '撤单',
-    noWorkingOrders: '没有未成交订单',
+    noWorkingOrders: '没有挂单',
     notConnected: '未连接 TWS / IB Gateway',
     readOnlyApiHint: (path: string) => `如需交易，请在 ${path} 中关闭 “Read-Only API”。`,
     directRouteHint: (path: string) => `仅夜盘订单会直接发往 IBKR 的 OVERNIGHT 场所：如需发送，请在 ${path} 中勾选 “Bypass Redirect Order warning for Stock API orders”。`,
