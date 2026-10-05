@@ -175,6 +175,9 @@ with `electron-builder --linux` after `pnpm build`.
   (`icon.png`, `icon.icns` via `iconutil` on macOS, `icon.ico`). The PNGs ship in the app's `resources/icons`;
   at runtime Tape switches the dock icon (macOS) or window icon (Windows, Linux) when the theme changes. The
   bundle icon shown by Finder and installers is the dark one.
+- **Electron fuses.** The packaged binary has `runAsNode`, `NODE_OPTIONS` and `--inspect` turned off and only
+  loads the `app.asar` it was built with (embedded asar integrity), so it cannot be used as a plain Node
+  runtime or started with modified app code. Check with `npx @electron/fuses read --app release/mac-arm64/Tape.app`.
 - **Signing.** electron-builder signs with a code signing identity from your keychain when it finds one and
   skips signing otherwise. Hardened runtime and notarization are off for local builds; to distribute, use a
   Developer ID certificate (`CSC_NAME` / `CSC_LINK`), enable `hardenedRuntime` and configure notarization.

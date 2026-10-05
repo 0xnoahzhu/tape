@@ -23,6 +23,16 @@ extraResources:
 
 asar: true
 
+# Electron fuses, flipped in the packaged binary so they cannot be turned back on at run time:
+# the app cannot be started as plain Node (ELECTRON_RUN_AS_NODE), take code through NODE_OPTIONS
+# or open a debugger port (--inspect), and it only runs the app.asar whose hash it was built with.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
 # Only installers are kept: a DMG for macOS and an NSIS setup for Windows (scripts/clean-release.ts
 # removes the intermediate unpacked apps afterwards). No update metadata or block maps.
 publish: null
