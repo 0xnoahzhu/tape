@@ -137,7 +137,7 @@ const en = {
       ? `IB sends this account SMART (consolidated) quotes delayed but the exchanges’ own quotes live (${pairsEn(r.pairs)}).`
       : `IB sends this account the consolidated (SMART) quote of ${r.pairs.map((p) => p.symbol).join(', ')} delayed but the exchange’s own quote live (${pairsEn(r.pairs)})${r.liveOnSmart ? `; other stocks such as ${r.liveOnSmart} are live on SMART` : ''}.`) +
     ` Tape then shows the exchange’s quote, marked “Live · <exchange>” (e.g. “Live · ${r.pairs[0].exchange}”): the bid, ask and last on that exchange, not the consolidated quote across all exchanges. Every 10 minutes it tries SMART again.`,
-  fallbackInUse: (pairs: ExchangePair[]) => `Exchange quotes in use: ${pairs.map((p) => `${p.symbol} (${p.exchange})`).join(', ')}`,
+  fallbackInUse: (pairs: ExchangePair[]) => `Exchange quotes this session: ${pairs.map((p) => `${p.symbol} (${p.exchange})`).join(', ')}`,
   markets: {
     stk: { l: 'US equities NASDAQ / NYSE', d: 'Network A/B/C · incl. extended hours' },
     opt: { l: 'US options OPRA', d: 'Option quotes and trades' },
@@ -447,7 +447,7 @@ const zh: typeof en = {
       ? `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但交易所自己的报价是实时的（${pairsZh(r.pairs)}）。`
       : `IB 向本账户推送的 ${r.pairs.map((p) => p.symbol).join('、')} SMART（全市场合并）报价是延迟的，但交易所自己的报价是实时的（${pairsZh(r.pairs)}）${r.liveOnSmart ? `；${r.liveOnSmart} 等其他股票的 SMART 报价是实时的` : ''}。`) +
     `Tape 此时改用该交易所的报价，标为“实时 · <交易所>”（如“实时 · ${r.pairs[0].exchange}”）：这是该交易所上的买卖价和最新价，不是全市场合并报价。每 10 分钟会重新尝试 SMART。`,
-  fallbackInUse: (pairs: ExchangePair[]) => `正在使用交易所报价：${pairs.map((p) => `${p.symbol}（${p.exchange}）`).join('、')}`,
+  fallbackInUse: (pairs: ExchangePair[]) => `本次会话的交易所报价：${pairs.map((p) => `${p.symbol}（${p.exchange}）`).join('、')}`,
   markets: {
     stk: { l: '美股 NASDAQ / NYSE', d: 'Network A/B/C · 含盘前盘后' },
     opt: { l: '美股期权 OPRA', d: '期权报价与成交' },
