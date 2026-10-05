@@ -391,7 +391,7 @@ const zh: typeof en = {
   reqL: '请求类型：自动（reqMarketDataType 4）',
   reqD: '已订阅的市场返回实时数据，未订阅的自动退回 15–20 分钟延迟数据；休市时显示最后的数值（冻结）。实际类型以 TWS 的 marketDataType 回报为准，不需要手动切换。',
   hSrc: '市场',
-  hObs: '检测结果',
+  hObs: '检测',
   hNow: '结果',
   checkNow: '立即检测',
   checking: '检测中…',
