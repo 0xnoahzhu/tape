@@ -162,10 +162,12 @@ and recreated. API log files (`api-YYYYMMDD.log`) go to the system log folder (m
 
 ```bash
 pnpm icons      # only after changing resources/icons/*.svg
-pnpm dist       # macOS: dmg + zip, Windows: NSIS installer, Linux: AppImage
+pnpm dist       # macOS .dmg + Windows x64 NSIS setup .exe (pnpm dist:mac / dist:win for one platform)
 ```
 
-Configuration is in [`electron-builder.yml`](electron-builder.yml); output goes to `release/`.
+Configuration is in [`electron-builder.yml`](electron-builder.yml); output goes to `release/`, and
+`scripts/clean-release.ts` leaves only the `.dmg` and the `-setup.exe` there. A Linux AppImage can be built
+with `electron-builder --linux` after `pnpm build`.
 
 - **Icons.** `resources/icons/icon-dark.svg` and `icon-light.svg` are the source artwork. `pnpm icons`
   renders the macOS dock icons (`icon-<theme>.png`, 1024 px on Apple's icon grid with a drop shadow), the
