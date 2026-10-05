@@ -57,10 +57,10 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
   positions with risk alerts. Always available: without OPRA the quotes are delayed, and the flow is
   computed from the chain quotes on screen.
 - **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the
-  switch in *Settings › Market Data* (off by default: it holds one of the account's 3 depth lines, shared
-  with TWS and IBKR Mobile). A market data check that finds a full book from IB turns it on unless you have
-  set the switch yourself; a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
-  note on what a full book needs.
+  switch in *Settings › Market Data* (off by default: an open book uses one of the depth lines IB allows per
+  user, 3 by default, shared with TWS and other API clients). A market data check that finds a full book from
+  IB (no 2152 within a minute) turns it on unless you have set the switch yourself; a book from some
+  exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a note under the switch.
 
 **Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions, CSV export.
 

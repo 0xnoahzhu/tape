@@ -480,17 +480,24 @@ is dropped. The check's own depth line is released when it answers; the depth se
 IB has started it (see Quote subscriptions), so a slow start never leaves it streaming.
 
 The Level 2 switch (`settings.features.depth`: the Trade page's Depth tab and the floating ticket's
-book) is off by default, since it holds one of the account's 3 depth lines and an exchange-limited book
-(IEX only) can mislead. `features.depthSetByUser` records that the user set it in Settings › Market data;
-until then the final Level 2 answer of a check turns it on when it is a full book (live with no 2152,
-`shared/depthPermissions.ts → isFullBook`, `marketCheck.ts → turnsDepthOn`). Final means once the line is
-no longer watched (`DepthAnswer.settled`, after the 2152 window above), so an IEX-only account whose 2152
-follows the first book update is never switched on by the preliminary answer; a session that closes
-during the window, the depth view's book (whose 2152 its next update clears) and demo decide nothing.
-Nothing turns the switch off by itself. Settings saved before `depthSetByUser` existed count Level 2 on
-as the user's choice (`storeSchema.ts → loadSettings`; it was off by default) and lose the removed
-`features.options` / `features.flow`: the Options view and the desk's Flow tab are always there (option
-quotes work delayed without OPRA, and the flow comes from the chain quotes on screen).
+book) is off by default, since an open book uses one of the depth lines IB allows per user (3 by default,
+shared with TWS and other API clients; 309 when none is free) and an exchange-limited book (IEX only) can
+mislead. `features.depthSetByUser` records that the user set it in Settings › Market Data
+(`logic.ts → depthSwitchPatch`); until then the final Level 2 answer of a check turns it on when it is a
+full book (live with no code at all, `shared/depthPermissions.ts → isFullBook`,
+`marketCheck.ts → turnsDepthOn`). Since nothing turns the switch off by itself, the answer has to be
+final: a book without a 2152 is watched on for one until 60 s after the request and at least 30 s after
+the first update (`DEPTH_FINAL_MS`, `DEPTH_FINAL_AFTER_UPDATE_MS`, well past the window above) and is
+stored `unconfirmed` meanwhile; a 2152 then still patches the result and keeps the switch off. Only a
+2152 counts as a partial book: other 21xx notices on the line neither end the watch nor stand for a full
+book. When the watch is over (`DepthAnswer.settled`) the switch follows only the latest Level 2 check, and
+only while its answer is still the one shown (a check without Level 2 keeps it; a newer Level 2 check
+replaces it). A session that closes, or IB dropping the market data requests (1101: the connection fires
+ready again), before the watch is over decides nothing and leaves the answer `unconfirmed`, as do the depth
+view's book (whose 2152 its next update clears) and demo. Settings saved before `depthSetByUser` existed
+count Level 2 on as the user's choice (`storeSchema.ts → loadSettings`; it was off by default) and lose
+the removed `features.options` / `features.flow`: the Options view and the desk's Flow tab are always
+there (option quotes work delayed without OPRA, and the flow comes from the chain quotes on screen).
 
 The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
 messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
@@ -511,9 +518,11 @@ live), SMART delayed but the exchange live (per stock and exchange; "in general"
 SPY was delayed on SMART), a missing or partial depth subscription (2152 lists the exchanges), no free
 depth line (309), no answer, no free line, no option found. Opening the section checks again when the
 result is older than 5 minutes or belongs to another account; *Check now* includes Level 2. While not
-connected the last result stays, muted, with "not connected". Under the Level 2 switch, next to the
-check's tag, `logic.ts → depthNote` says what the check found: the book of some exchanges only (with what
-a full book needs), turned on by a check, a full book, or (not checked, no data) the subscription it needs.
+connected the last result stays, muted, with "not connected". Under the Level 2 switch (sub-section
+"Market Depth"), next to the check's tag, `logic.ts → depthNote` says what the check found: the books of
+some exchanges only (the subscriptions they need are in the 2152 note above), no free depth line, no book
+(a subscription answer, or none at all), a book not confirmed yet, turned on by this check or an earlier
+one, a full book, or, not checked, the subscription Level 2 needs.
 
 ### Corporate events
 
