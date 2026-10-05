@@ -830,7 +830,9 @@ formatter, pure and used by both processes:
 * No border radius anywhere; borders are `box-shadow: inset 0 0 0 1px var(--ln)`.
 * Prefer the `.ellipsis` class (`styles/global.css`) for one-line truncation over inline
   `overflow: hidden`: it clips with a small `overflow-clip-margin`, so descenders (g, p, y) and CJK
-  glyphs stay whole with tight line-heights such as `font: 13px/1`.
+  glyphs stay whole with tight line-heights such as `font: 13px/1`. Keep some padding between it
+  and the inner edge of a scrolling box (the margin can make that box scroll by about 0.2em), and
+  do not test it for truncation with `scrollWidth` (see the comment on the class).
 * No npm runtime dependencies: `dependencies` stays empty; renderer libraries are devDependencies
   bundled by Vite.
 
