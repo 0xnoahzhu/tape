@@ -381,10 +381,10 @@ export const useTicketM = createMessages({
       triggerAbove: 'A sell if-touched trigger must be above the last price, or it triggers at once',
       cond: 'Enter a valid trigger condition price',
       ice: 'Display size must be between 1 and the order quantity',
-      gat: 'Enter the activation time, e.g. 9:35 AM or 09:35',
+      gat: 'Enter the activation time, e.g. 09:35 AM or 09:35',
     },
     /** The good-after error in the 12-hour format, where "3:55" without AM / PM is not accepted. */
-    gat12h: 'Enter the activation time with AM or PM (3:55 PM), or in 24-hour time (15:55)',
+    gat12h: 'Enter the activation time with AM or PM (03:55 PM), or in 24-hour time (15:55)',
   },
   zh: {
     title: (label: string) => `下单 · ${label}`,
@@ -737,9 +737,9 @@ export const useTicketM = createMessages({
       triggerAbove: '卖出触及单的触发价须高于最新价，否则会立即触发',
       cond: '请输入有效的触发条件价格',
       ice: '显示数量须在 1 到下单数量之间',
-      gat: '请输入生效时间，如 上午 9:35 或 09:35',
+      gat: '请输入生效时间，如 上午 09:35 或 09:35',
     },
-    gat12h: '请输入生效时间并注明上午或下午（如 下午 3:55），或用 24 小时制（15:55）',
+    gat12h: '请输入生效时间并注明上午或下午（如 下午 03:55），或用 24 小时制（15:55）',
   },
 });
 
