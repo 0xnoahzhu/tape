@@ -31,7 +31,10 @@ export function depthPermissions(message: string | undefined): DepthPermissions 
   return { depth: list(depth), missing: list(missing) };
 }
 
-/** A Level 2 answer of the market data check that is a full book: live, and no 2152 limiting it to some exchanges. */
+/**
+ * A Level 2 answer of the market data check that is a full book: live, with no 2152 limiting it to
+ * some exchanges (nor any other code, so an answer Tape cannot read never counts).
+ */
 export function isFullBook(probe: Pick<MarketCheckProbe, 'status' | 'code'>): boolean {
-  return probe.status === 'live' && probe.code !== DEPTH_PARTIAL;
+  return probe.status === 'live' && probe.code === undefined;
 }

@@ -25,8 +25,11 @@
 // after the request), so the depth line is watched on (DEPTH_NOTICE_MS, DEPTH_LATE_NOTICE_MS; a
 // book after the timeout up to CANCEL_CAP_MS) and a later answer patches the stored result; until
 // then the last 2152 of the account (the previous result) stands, and it is dropped when none comes.
-// Once that watch is over, a full book (no 2152) turns the Level 2 switch on unless the user has set
-// it (settings.features.depthSetByUser); a preliminary answer never does, and nothing turns it off.
+// A book without a 2152 stays `unconfirmed` while the line is watched on for one (DEPTH_FINAL_MS,
+// DEPTH_FINAL_AFTER_UPDATE_MS): once that watch is over it is IB's final answer, and a full book
+// turns the Level 2 switch on unless the user has set it (settings.features.depthSetByUser). The
+// switch stays on, so only the latest Level 2 check decides, and nothing does when the session
+// closes or IB drops the market data (1101) first.
 //
 // The last result is kept here, persisted in the kv table (namespace MARKET_CHECK_NS) and pushed as
 // `marketDataCheck` events. A quiet check (without depth) runs AUTO_AFTER_READY_MS after each
@@ -76,6 +79,13 @@ export const DEPTH_TIMEOUT_MS = 20_000;
 export const DEPTH_NOTICE_MS = 15_000;
 /** ... and at least this long after the first book update (seen live: 9 s after it). */
 export const DEPTH_LATE_NOTICE_MS = 10_000;
+/**
+ * A full book turns the Level 2 switch on, which then stays on: before that the line is watched
+ * for a 2152 well past the window above, up to this long after the request ...
+ */
+export const DEPTH_FINAL_MS = 60_000;
+/** ... and at least this long after the first book update. */
+export const DEPTH_FINAL_AFTER_UPDATE_MS = 30_000;
 
 export const CHECK_STOCK: ContractRef = stock('SPY');
 export const CHECK_INDEX: ContractRef = index('SPX', 'CBOE');
@@ -95,10 +105,12 @@ const DEPTH_RESET = 317;
 interface DepthAnswer {
   probe: MarketCheckProbe;
   instrument: string;
+  /** The line is still watched: IB may still change the answer (a 2152). */
+  open: boolean;
   /**
    * The final answer once the check's own or the depth view's line is no longer watched; null for
    * the others (the view's book, whose 2152 its next update clears; demo; no line) and when the
-   * session closed first.
+   * session closed or IB dropped the market data (1101) first.
    */
   settled: Promise<MarketCheckProbe | null>;
 }
@@ -111,13 +123,20 @@ export function turnsDepthOn(probe: MarketCheckProbe, features: Settings['featur
   return isFullBook(probe) && !features.depth && !features.depthSetByUser;
 }
 
-/** The Level 2 item: live from some exchanges only when IB's 2152 says so ("Live · IEX only"). */
-export function depthItem(probe: MarketCheckProbe, instrument: string, checkedAt: number): MarketCheckItem {
+/**
+ * The Level 2 item: live from some exchanges only when IB's 2152 says so ("Live · IEX only");
+ * `open`: the line is still watched, so a full book is not confirmed yet.
+ */
+export function depthItem(probe: MarketCheckProbe, instrument: string, checkedAt: number, open = false): MarketCheckItem {
   const item: MarketCheckItem = { market: 'depth', status: probe.status, instrument, probe, checkedAt };
   const perms = probe.status === 'live' && probe.code === DEPTH_PARTIAL ? depthPermissions(probe.message) : null;
   if (perms?.depth.length && perms.missing.length) item.via = perms.depth.join(', ');
+  if (open && isFullBook(probe)) item.unconfirmed = true;
   return item;
 }
+
+/** Receives Level 2's later answers; `open`: the line is still watched (see DepthAnswer). */
+type DepthSink = (probe: MarketCheckProbe, open: boolean) => void;
 
 const statusOfType = (t: MarketDataType): MarketCheckStatus => (t === 1 ? 'live' : t === 2 ? 'frozen' : 'delayed');
 const isLive = (s: MarketCheckStatus | undefined) => s === 'live' || s === 'frozen';
@@ -264,6 +283,8 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
   let autoTimer: ReturnType<typeof setTimeout> | null = null;
   /** A result arrived (a check finished) before the persisted one was read: that one is older. */
   let fresh = false;
+  /** Level 2 checks started so far (only the latest one's final answer turns the switch on). */
+  let depthChecks = 0;
 
   const getState = (): MarketDataCheckState => ({ result, running: inflight != null, ...(inflight ? { depth: inflight.depth } : {}) });
   const emit = () => ctx.emit({ type: 'marketDataCheck', state: getState() });
@@ -336,9 +357,11 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
    * book update (live), an error, or no data after DEPTH_TIMEOUT_MS. The line is watched longer:
    * a 2152 up to DEPTH_NOTICE_MS after the request (and DEPTH_LATE_NOTICE_MS after the first
    * update), and after a timeout a first update or an error up to CANCEL_CAP_MS after the request;
-   * `late` gets each changed answer (the stored result follows it, see patchDepth), `settled` the last.
+   * a book without one until DEPTH_FINAL_MS (and DEPTH_FINAL_AFTER_UPDATE_MS after its first update).
+   * `late` gets each later answer, and the last one again with `open` false once the watch is over
+   * (the stored result follows it, see patchDepth); `settled` that last one.
    */
-  const checkDepth = (onClose: (fn: () => void) => void, late: (probe: MarketCheckProbe) => void): Promise<DepthAnswer> => {
+  const checkDepth = (onClose: (fn: () => void) => void, late: DepthSink): Promise<DepthAnswer> => {
     const remembered = lastDepthNotice();
     const live = (extra: Partial<MarketCheckProbe>, notice?: { code: number; message: string }): MarketCheckProbe => ({
       status: 'live',
@@ -350,11 +373,13 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     const viewInstrument = book ? (book.key.split(':')[1] ?? book.key) : undefined;
     const unsettled = Promise.resolve(null);
     if (book && (!book.error || book.error.code === DEPTH_PARTIAL) && (book.bids.length || book.asks.length || book.error)) {
-      return Promise.resolve({ probe: live({ reused: true }, book.error ?? remembered), instrument: viewInstrument!, settled: unsettled });
+      return Promise.resolve({ probe: live({ reused: true }, book.error ?? remembered), instrument: viewInstrument!, open: false, settled: unsettled });
     }
     const instrument = contractLabel(CHECK_STOCK);
-    if (ctx.demo) return Promise.resolve({ probe: live({}), instrument, settled: unsettled });
-    if (!ctx.ib.api) return Promise.resolve({ probe: { status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: NOT_CONNECTED }, instrument, settled: unsettled });
+    if (ctx.demo) return Promise.resolve({ probe: live({}), instrument, open: false, settled: unsettled });
+    if (!ctx.ib.api) {
+      return Promise.resolve({ probe: { status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: NOT_CONNECTED }, instrument, open: false, settled: unsettled });
+    }
     // The depth view holds a line already: wait for its answer instead of opening a second one.
     const view = ctx.depth.lineReqId();
     const own = view == null;
@@ -366,6 +391,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
         return Promise.resolve({
           probe: { status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: err instanceof Error ? err.message : String(err) },
           instrument,
+          open: false,
           settled: unsettled,
         });
       }
@@ -376,7 +402,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     let settle!: (probe: MarketCheckProbe | null) => void;
     const settled = new Promise<MarketCheckProbe | null>((r) => (settle = r));
     return new Promise((resolve) => {
-      /** The first 21xx notice on the line (2152: Level 2 from some exchanges only). */
+      /** IB's 2152 on the line: Level 2 from some exchanges only (other notices change nothing). */
       let notice: { code: number; message: string } | undefined;
       /** The answer given so far (null until the first one). */
       let answer: MarketCheckProbe | null = null;
@@ -384,13 +410,17 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       let answerTimer: ReturnType<typeof setTimeout> | undefined;
       let watchTimer: ReturnType<typeof setTimeout> | null = null;
       const offs: Unsubscribe[] = [];
-      /** Stops watching; `final`: the watch ran its course, so the last answer is IB's final one. */
+      /**
+       * Stops watching; `final`: the watch ran its course, so the last answer is IB's final one (and
+       * no longer open). Otherwise (the session closed, 1101) a book stays unconfirmed.
+       */
       const end = (final = true) => {
         if (ended) return;
         ended = true;
         clearTimeout(answerTimer);
         if (watchTimer) clearTimeout(watchTimer);
         offs.splice(0).forEach((off) => off());
+        if (final && answer) late(answer, false);
         settle(final ? answer : null);
       };
       /** Watches the line until `at` (epoch ms), then calls `then`. */
@@ -408,16 +438,20 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
           clearTimeout(answerTimer);
           // Released at once: the depth service cancels it once IB has started it.
           if (own) ctx.depth.closeLine(reqId);
-          resolve({ probe, instrument: label, settled });
-        } else late(probe);
+          resolve({ probe, instrument: label, open: true, settled });
+        } else late(probe, true);
       };
-      /** Live: a 2152 may still follow; without one the account's last one no longer applies. */
+      /**
+       * Live: a 2152 may still follow; without one the account's last one no longer applies, and
+       * the line is watched on before the book counts as full.
+       */
       const goLive = () => {
         report(live(reused, notice ?? remembered));
         if (notice) return end();
-        watchUntil(Math.max(startedAt + DEPTH_NOTICE_MS, Date.now() + DEPTH_LATE_NOTICE_MS), () => {
+        const firstUpdate = Date.now();
+        watchUntil(Math.max(startedAt + DEPTH_NOTICE_MS, firstUpdate + DEPTH_LATE_NOTICE_MS), () => {
           if (remembered) report(live(reused));
-          end();
+          watchUntil(Math.max(startedAt + DEPTH_FINAL_MS, firstUpdate + DEPTH_FINAL_AFTER_UPDATE_MS), end);
         });
       };
       answerTimer = setTimeout(() => {
@@ -440,10 +474,11 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
         ctx.ib.onRequestError((e) => {
           if (e.reqId !== reqId || ended || e.code === DEPTH_RESET) return;
           // 2152: the account lacks depth permissions on some exchanges; the others may still answer.
+          // Other notices (2100–2199) say nothing about the book.
           if (e.code >= 2100 && e.code < 2200) {
-            if (notice) return;
+            if (e.code !== DEPTH_PARTIAL || notice) return;
             notice = { code: e.code, message: e.message };
-            if (answer?.status === 'live' && e.code === DEPTH_PARTIAL) {
+            if (answer?.status === 'live') {
               report(live(reused, notice));
               end();
             }
@@ -457,13 +492,14 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
           else watchUntil(startedAt + CANCEL_CAP_MS, end); // the line may still start
         }),
       );
-      // The session may also close after the check has returned, while the line is still watched:
-      // a 2152 can no longer come, so the last answer is not final.
+      // The session may also close after the check has returned, while the line is still watched,
+      // or IB drop its market data requests (1101: the connection fires ready again): a 2152 can no
+      // longer come, so the last answer is not final.
       const closed = () => {
         if (!answer) report({ status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: 'Connection closed', own: 'closed' });
         end(false);
       };
-      offs.push(ctx.ib.onClosed(closed));
+      offs.push(ctx.ib.onClosed(closed), ctx.ib.onReady(closed));
       onClose(closed);
     });
   };
@@ -498,7 +534,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
   const check = async (
     depth: boolean,
     trigger: MarketDataCheck['trigger'],
-  ): Promise<{ result: MarketDataCheck; late?: (fn: (probe: MarketCheckProbe) => void) => void; settled?: Promise<MarketCheckProbe | null> }> => {
+  ): Promise<{ result: MarketDataCheck; late?: (fn: DepthSink) => void; settled?: Promise<MarketCheckProbe | null> }> => {
     if (!ctx.demo && !isIbConnected(ctx)) throw new Error(NOT_CONNECTED);
     // The session's end answers every line still waiting (and those set up afterwards) at once.
     const closers: Array<() => void> = [];
@@ -530,9 +566,9 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
             .resolve(CHECK_STOCK)
             .then((resolved) => (resolved.primaryExchange ? watchProbe({ ...resolved, exchange: resolved.primaryExchange }, onClose) : undefined))
             .catch(() => undefined);
-      let lateSink: ((probe: MarketCheckProbe) => void) | null = null;
-      let lateBefore: MarketCheckProbe | null = null;
-      const depthP = depth ? checkDepth(onClose, (p) => (lateSink ? lateSink(p) : (lateBefore = p))) : Promise.resolve(null);
+      let lateSink: DepthSink | null = null;
+      let lateBefore: [MarketCheckProbe, boolean] | null = null;
+      const depthP = depth ? checkDepth(onClose, (p, open) => (lateSink ? lateSink(p, open) : (lateBefore = [p, open]))) : Promise.resolve(null);
 
       // The option: a line a view holds, else SPY's chain (fetched while the stock line answers).
       let optionP: Promise<{ probe: MarketCheckProbe; instrument: string } | null>;
@@ -585,7 +621,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
               checkedAt: now,
             },
       );
-      if (book) items.push(depthItem(book.probe, book.instrument, now));
+      if (book) items.push(depthItem(book.probe, book.instrument, now, book.open));
       else {
         // Level 2 is only checked on request: keep the last answer of this account.
         const prev = result?.account === accountNow() ? result?.items.find((i) => i.market === 'depth') : undefined;
@@ -593,9 +629,9 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       }
       items.push({ market: 'ind', status: ind.status, instrument: contractLabel(CHECK_INDEX), probe: ind, checkedAt: now });
       const state = ctx.ib.getState();
-      const late = (fn: (probe: MarketCheckProbe) => void) => {
+      const late = (fn: DepthSink) => {
         lateSink = fn;
-        if (lateBefore) fn(lateBefore);
+        if (lateBefore) fn(...lateBefore);
       };
       return { result: { checkedAt: now, account: accountNow(), clientId: state.clientId, trigger, items }, ...(book ? { late, settled: book.settled } : {}) };
     } finally {
@@ -611,6 +647,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       if (depth && !inflight.depth) return inflight.promise.catch(() => undefined).then(() => run(opts));
       return inflight.promise;
     }
+    const gen = depth ? ++depthChecks : depthChecks;
     const promise = check(depth, opts.trigger).then(
       ({ result: r, late, settled }) => {
         result = r;
@@ -618,11 +655,10 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
         inflight = null;
         void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, r);
         emit();
-        if (late) {
-          let base = r;
-          late((probe) => (base = patchDepth(base, probe)));
-        }
-        void settled?.then((probe) => probe && switchDepthOn(probe));
+        let shown = r.items.find((i) => i.market === 'depth');
+        if (late) late((probe, open) => (shown = shown && patchDepth(shown, probe, open)));
+        // Only the latest Level 2 check decides, while its answer is still the one shown.
+        void settled?.then((probe) => probe && gen === depthChecks && shown && result?.items.includes(shown) && switchDepthOn(probe));
         return r;
       },
       (err: unknown) => {
@@ -638,22 +674,22 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
 
   /**
    * Level 2 answered again (a 2152 after the first book update, none after all, a book after the
-   * timeout): the stored result `r`, while it is still the current one, follows. Returns the result
-   * to patch next time.
+   * timeout, the watch is over): the stored result follows while it still shows `prev`, this
+   * check's Level 2 item (a check without Level 2 keeps it; a newer Level 2 check replaces it).
+   * Returns the item to patch next time.
    */
-  const patchDepth = (r: MarketDataCheck, probe: MarketCheckProbe): MarketDataCheck => {
-    if (result !== r) return r;
-    const i = r.items.findIndex((x) => x.market === 'depth');
-    if (i < 0) return r;
-    const prev = r.items[i];
-    const same = (a: MarketCheckProbe, b: MarketCheckProbe) => a.status === b.status && a.code === b.code && a.message === b.message && a.own === b.own;
-    if (same(prev.probe, probe)) return r;
-    const items = [...r.items];
-    items[i] = depthItem(probe, prev.instrument, prev.checkedAt);
-    result = { ...r, items };
+  const patchDepth = (prev: MarketCheckItem, probe: MarketCheckProbe, open: boolean): MarketCheckItem => {
+    const i = result ? result.items.indexOf(prev) : -1;
+    if (!result || i < 0) return prev;
+    const next = depthItem(probe, prev.instrument, prev.checkedAt, open);
+    const a = prev.probe;
+    if (a.status === probe.status && a.code === probe.code && a.message === probe.message && a.own === probe.own && !prev.unconfirmed === !next.unconfirmed) return prev;
+    const items = [...result.items];
+    items[i] = next;
+    result = { ...result, items };
     void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, result);
     emit();
-    return result;
+    return next;
   };
 
   /** Level 2's final answer: a full book turns the switch on (turnsDepthOn); the settings event tells the renderer. */

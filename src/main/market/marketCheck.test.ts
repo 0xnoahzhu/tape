@@ -7,6 +7,8 @@ import { createFakeContext, createFakeIb, settle, type FakeIb } from './fakeIb';
 import {
   AUTO_AFTER_READY_MS,
   createMarketCheckService,
+  DEPTH_FINAL_AFTER_UPDATE_MS,
+  DEPTH_FINAL_MS,
   DEPTH_NOTICE_MS,
   DEPTH_TIMEOUT_MS,
   isMarketDataCheck,
@@ -268,10 +270,12 @@ describe('market data check', () => {
     const [[reqId, contract, rows, smart]] = fake.callsOf('reqMktDepth') as Array<[number, { symbol: string }, number, boolean]>;
     expect([contract.symbol, rows, smart]).toEqual(['SPY', 5, true]);
     expect(fake.callsOf('cancelMktDepth')).toEqual([[reqId, true]]);
-    // A later quiet check keeps the Level 2 answer with its own time.
+    // A later quiet check keeps the Level 2 answer (confirmed by then) with its own time.
+    const { unconfirmed, ...confirmed } = item(r, 'depth')!;
+    expect(unconfirmed).toBe(true);
     await vi.advanceTimersByTimeAsync(60_000);
     const later = await finish(svc.run({ trigger: 'auto' }));
-    expect(item(later, 'depth')).toEqual(item(r, 'depth'));
+    expect(item(later, 'depth')).toEqual(confirmed);
     expect(fake.callsOf('reqMktDepth')).toHaveLength(1);
   });
 
@@ -504,73 +508,166 @@ describe('the Level 2 switch', () => {
   const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
   const IEX_ONLY = 'Exchanges - Depth: IEX; Top: BYX; Need additional market data permissions - Depth: NASDAQ; ARCA; NYSE; ';
 
-  /** The check's depth line gets a book update 50 ms after the request and, with `notice`, a 2152 `notice` ms after it. */
-  async function depthSetup(opts: { notice?: number; features?: { depth: boolean; depthSetByUser: boolean } } = {}) {
+  /**
+   * The check's depth line gets its first book update `book` ms after the request and each notice
+   * of `notices` ([ms, code]; `notice`: a 2152 then) after it. Tests may change `plan` between checks.
+   */
+  async function depthSetup(opts: { book?: number; notice?: number; notices?: Array<[number, number]>; features?: { depth: boolean; depthSetByUser: boolean } } = {}) {
     const s = await setup({ lines: all });
     if (opts.features) s.ctx.store.updateSettings({ features: opts.features });
+    const plan = { book: opts.book ?? 50, notices: opts.notices ?? (opts.notice !== undefined ? [[opts.notice, 2152]] : []) };
     s.fake.onCall = ((prev) => (name: string, args: unknown[]) => {
       prev?.(name, args);
       if (name !== 'reqMktDepth') return;
-      setTimeout(() => s.fake.emit('updateMktDepthL2', args[0], 0, 'IEX', 0, 1, 670.1, 100), 50);
-      if (opts.notice !== undefined) setTimeout(() => s.fake.error(args[0] as number, 2152, IEX_ONLY), opts.notice);
+      const id = args[0] as number;
+      setTimeout(() => s.fake.emit('updateMktDepthL2', id, 0, 'IEX', 0, 1, 670.1, 100), plan.book);
+      for (const [at, code] of plan.notices) setTimeout(() => s.fake.error(id, code, code === 2152 ? IEX_ONLY : 'Market data farm is connecting:usfarm'), at);
     })(s.fake.onCall);
-    return { ...s, features: () => s.ctx.store.getSettings().features };
+    return { ...s, plan, features: () => s.ctx.store.getSettings().features, depthNow: () => item(s.svc.getState().result!, 'depth') };
   }
 
   it('turns on with a full book from IB, once no 2152 can come any more', async () => {
-    const { svc, features } = await depthSetup();
+    const { svc, features, depthNow } = await depthSetup();
+    const startedAt = Date.now();
     const r = await finish(svc.run({ depth: true, trigger: 'user' }));
-    expect(item(r, 'depth')).toMatchObject({ status: 'live' });
-    // The first answer is live, but a 2152 may still follow: nothing changes yet.
+    // The first answer is live, but a 2152 may still follow: not confirmed, and nothing changes yet.
+    expect(item(r, 'depth')).toMatchObject({ status: 'live', unconfirmed: true });
     expect(features()).toEqual({ depth: false, depthSetByUser: false });
-    await vi.advanceTimersByTimeAsync(DEPTH_NOTICE_MS);
+    await vi.advanceTimersByTimeAsync(startedAt + DEPTH_FINAL_MS - 100 - Date.now());
+    expect(features().depth).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
     expect(features()).toEqual({ depth: true, depthSetByUser: false });
+    expect(depthNow()).toMatchObject({ status: 'live' });
+    expect(depthNow()!.unconfirmed).toBeUndefined();
   });
 
   it('stays off when IB sends some exchanges only (2152), also when the 2152 comes after the first book update', async () => {
     const early = await depthSetup({ notice: 40 });
     const r = await finish(early.svc.run({ depth: true, trigger: 'user' }));
     expect(item(r, 'depth')).toMatchObject({ status: 'live', via: 'IEX' });
-    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(item(r, 'depth')!.unconfirmed).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
     expect(early.features()).toEqual({ depth: false, depthSetByUser: false });
 
     // First reported live without a 2152, which arrives 9 s later: never switched on in between.
     const late = await depthSetup({ notice: 9_000 });
     const first = await finish(late.svc.run({ depth: true, trigger: 'user' }));
     expect(item(first, 'depth')!.via).toBeUndefined();
-    for (let t = 0; t < DEPTH_NOTICE_MS + 5_000; t += 500) {
+    for (let t = 0; t < DEPTH_FINAL_MS; t += 500) {
       await vi.advanceTimersByTimeAsync(500);
       expect(late.features().depth).toBe(false);
     }
-    expect(item(late.svc.getState().result!, 'depth')).toMatchObject({ via: 'IEX' });
+    expect(late.depthNow()).toMatchObject({ via: 'IEX' });
+    expect(late.depthNow()!.unconfirmed).toBeUndefined();
+  });
+
+  it('watches for a 2152 well past the window of the shown result before it turns on', async () => {
+    // Just past the shown result's window (15 s after the request): the result follows, the switch stays off.
+    const past = await depthSetup({ notice: DEPTH_NOTICE_MS + 500 });
+    await finish(past.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(DEPTH_NOTICE_MS);
+    expect(past.depthNow()).toMatchObject({ via: 'IEX' });
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(past.features().depth).toBe(false);
+
+    // Just before the end of the long watch.
+    const last = await depthSetup({ notice: DEPTH_FINAL_MS - 100 });
+    await finish(last.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(last.depthNow()).toMatchObject({ via: 'IEX' });
+    expect(last.features().depth).toBe(false);
+
+    // A late first update (after the 20 s timeout) is watched DEPTH_FINAL_AFTER_UPDATE_MS on.
+    const slow = await depthSetup({ book: 40_000, notice: 40_000 + DEPTH_FINAL_AFTER_UPDATE_MS - 500 });
+    await finish(slow.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(40_000 + DEPTH_FINAL_AFTER_UPDATE_MS);
+    expect(slow.depthNow()).toMatchObject({ via: 'IEX' });
+    expect(slow.features().depth).toBe(false);
+    const quiet = await depthSetup({ book: 40_000 });
+    const startedAt = Date.now();
+    await finish(quiet.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(startedAt + 40_000 + DEPTH_FINAL_AFTER_UPDATE_MS - 100 - Date.now());
+    expect(quiet.features().depth).toBe(false);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(quiet.features().depth).toBe(true);
+  });
+
+  it('counts only a 2152 as a partial book: another notice neither ends the watch nor stands for a full book', async () => {
+    const s = await depthSetup({ notices: [[10, 2119], [5_000, 2152]] });
+    const r = await finish(s.svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')!.probe.code).toBeUndefined();
+    expect(s.features().depth).toBe(false);
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(s.depthNow()).toMatchObject({ via: 'IEX', probe: { code: 2152 } });
+    expect(s.features().depth).toBe(false);
+
+    const other = await depthSetup({ notices: [[10, 2119]] });
+    await finish(other.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(other.depthNow()!.probe.code).toBeUndefined();
+    expect(other.features().depth).toBe(true);
   });
 
   it('leaves the switch alone once the user has set it, and never turns it off', async () => {
     const off = await depthSetup({ features: { depth: false, depthSetByUser: true } });
     await finish(off.svc.run({ depth: true, trigger: 'user' }));
-    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
     expect(off.features()).toEqual({ depth: false, depthSetByUser: true });
 
     // Turned on by an earlier check, and now IB sends IEX only: it stays on.
     const auto = await depthSetup({ notice: 40, features: { depth: true, depthSetByUser: false } });
     await finish(auto.svc.run({ depth: true, trigger: 'user' }));
-    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
     expect(auto.features()).toEqual({ depth: true, depthSetByUser: false });
   });
 
-  it('does not decide when the session closes before the 2152 window ends', async () => {
-    const { fake, svc, features } = await depthSetup();
-    await finish(svc.run({ depth: true, trigger: 'user' }));
-    fake.close();
-    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
-    expect(features()).toEqual({ depth: false, depthSetByUser: false });
+  it('lets only the latest Level 2 check decide', async () => {
+    // A newer check (IEX only) is running when the first one's watch ends: the first one no longer counts.
+    const s = await depthSetup();
+    const startedAt = Date.now();
+    await finish(s.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(startedAt + DEPTH_FINAL_MS - 1_000 - Date.now());
+    s.plan.notices = [[40, 2152]];
+    const newer = await finish(s.svc.run({ depth: true, trigger: 'user' }));
+    expect(item(newer, 'depth')).toMatchObject({ via: 'IEX' });
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(s.features().depth).toBe(false);
+    expect(s.depthNow()).toMatchObject({ via: 'IEX' });
+
+    // A check without Level 2 in between keeps the answer, which still decides (and is still patched).
+    const kept = await depthSetup();
+    await finish(kept.svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const quiet = await finish(kept.svc.run({ trigger: 'user' }));
+    expect(item(quiet, 'depth')).toMatchObject({ status: 'live', unconfirmed: true });
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(kept.features().depth).toBe(true);
+    expect(kept.depthNow()!.unconfirmed).toBeUndefined();
+  });
+
+  it('does not decide when the session closes or IB drops the market data (1101) before the watch ends', async () => {
+    const closed = await depthSetup();
+    await finish(closed.svc.run({ depth: true, trigger: 'user' }));
+    closed.fake.close();
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(closed.features()).toEqual({ depth: false, depthSetByUser: false });
+    // Never confirmed: the result keeps saying so.
+    expect(closed.depthNow()).toMatchObject({ status: 'live', unconfirmed: true });
+
+    // 1101: the session stays, IB's requests are gone (the connection fires ready again).
+    const lost = await depthSetup();
+    await finish(lost.svc.run({ depth: true, trigger: 'user' }));
+    lost.fake.ready();
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
+    expect(lost.features()).toEqual({ depth: false, depthSetByUser: false });
+    expect(lost.depthNow()).toMatchObject({ status: 'live', unconfirmed: true });
   });
 
   it('switches nothing on from the depth view’s book (its 2152 is gone after its next update)', async () => {
     const book: DepthBook = { key: 'STK:NVDA', bids: [{ price: 1, size: 1 }], asks: [], updatedAt: NOW };
     const view = await setup({ book, lines: all });
     await finish(view.svc.run({ depth: true, trigger: 'user' }));
-    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    await vi.advanceTimersByTimeAsync(DEPTH_FINAL_MS);
     expect(view.ctx.store.getSettings().features.depth).toBe(false);
   });
 });

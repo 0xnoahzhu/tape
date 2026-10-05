@@ -135,6 +135,12 @@ export interface MarketCheckItem {
    * app session (served from the exchange then, whether or not their line is still open).
    */
   fallback?: Array<{ symbol: string; exchange: string }>;
+  /**
+   * Level 2: a book without a 2152 that is not confirmed as the full book, since IB can still send
+   * one (the line is watched on for a while, main/market/marketCheck.ts); stays when the session
+   * closed or IB dropped the market data before the watch was over.
+   */
+  unconfirmed?: true;
   /** Epoch ms when this market was checked (depth keeps its time when a later check skips it). */
   checkedAt: number;
 }
@@ -880,7 +886,7 @@ export interface Settings {
   };
   /** Features that depend on extra market data subscriptions. */
   features: {
-    /** Level 2: the Trade page's Depth tab and the ticket's book; holds one of the account's 3 depth lines. */
+    /** Level 2: the Trade page's Depth tab and the floating ticket's book (each open book uses one of IB's depth lines). */
     depth: boolean;
     /**
      * The user has set `depth` in Settings. Until then a market data check that finds a full book
