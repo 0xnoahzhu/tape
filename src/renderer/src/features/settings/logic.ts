@@ -44,23 +44,48 @@ export function hasSoundChoice(platform: string): boolean {
 export const SOUND_ROW_H = 30;
 /** The list's vertical padding (top + bottom). */
 export const SOUND_LIST_PAD = 12;
-export const SOUND_LIST_MAX_H = 296;
-export const SOUND_LIST_MIN_H = 180;
+/** Most rows the list shows (odd, so the current sound can sit in the middle). */
+export const SOUND_LIST_MAX_ROWS = 9;
+/** Fewest rows it shows, even with less room (the window has a minimum size). */
+export const SOUND_LIST_MIN_ROWS = 5;
 /** Space kept between the list and the edge of the visible area (includes the 4 px gap to the button). */
 export const SOUND_LIST_MARGIN = 12;
+
+/** Whole rows that fit in `height` px of list. */
+const soundRowsIn = (height: number) => Math.floor((height - SOUND_LIST_PAD) / SOUND_ROW_H);
 
 /**
  * Where the sound list opens: below the button when it fits in the visible area (`bounds`, the
  * scrolling pane within the window), else on the side with more room, with its height capped
- * to that room, so opening it never scrolls or overflows the pane.
+ * to that room, so opening it never scrolls or overflows the pane. The height is whole rows,
+ * so with the scroll on a row boundary (soundListScroll, soundListReveal) no name shows cut at
+ * the list's edges.
  */
 export function soundListPlace(button: { top: number; bottom: number }, bounds: { top: number; bottom: number }, count: number): { up: boolean; maxH: number } {
-  const want = Math.min(SOUND_LIST_MAX_H, count * SOUND_ROW_H + SOUND_LIST_PAD);
-  const below = bounds.bottom - button.bottom - SOUND_LIST_MARGIN;
-  const above = button.top - bounds.top - SOUND_LIST_MARGIN;
-  if (below >= want) return { up: false, maxH: want };
-  if (above > below) return { up: true, maxH: Math.max(Math.min(SOUND_LIST_MIN_H, want), Math.min(want, above)) };
-  return { up: false, maxH: Math.max(Math.min(SOUND_LIST_MIN_H, want), below) };
+  const want = Math.min(SOUND_LIST_MAX_ROWS, count);
+  const least = Math.min(SOUND_LIST_MIN_ROWS, want);
+  const below = soundRowsIn(bounds.bottom - button.bottom - SOUND_LIST_MARGIN);
+  const above = soundRowsIn(button.top - bounds.top - SOUND_LIST_MARGIN);
+  const rows = below >= want ? want : above > below ? Math.max(least, Math.min(want, above)) : Math.max(least, below);
+  return { up: below < want && above > below, maxH: rows * SOUND_ROW_H + SOUND_LIST_PAD };
+}
+
+/**
+ * The list's scrollTop on open: row `index` (of `count`) in the middle of the rows that fit in
+ * `height`, on a row boundary.
+ */
+export function soundListScroll(index: number, count: number, height: number): number {
+  const rows = Math.max(1, soundRowsIn(height));
+  return Math.max(0, Math.min(count - rows, index - Math.floor((rows - 1) / 2))) * SOUND_ROW_H;
+}
+
+/**
+ * The list's scrollTop that brings row `index` into view from `scrollTop` with the least scroll,
+ * the list's padding kept around the row, so a list on a row boundary stays on one.
+ */
+export function soundListReveal(index: number, scrollTop: number, height: number): number {
+  const top = index * SOUND_ROW_H;
+  return Math.min(top, Math.max(top + SOUND_ROW_H + SOUND_LIST_PAD - height, scrollTop));
 }
 
 export type SoundListKey = { kind: 'focus'; index: number } | { kind: 'select' } | { kind: 'close' };

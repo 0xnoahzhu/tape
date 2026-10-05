@@ -12,6 +12,8 @@ import {
   soundLabel,
   soundListKey,
   soundListPlace,
+  soundListReveal,
+  soundListScroll,
   comboLabel,
   countNewSince,
   customMinutesInput,
@@ -470,18 +472,56 @@ describe('notification sound helpers', () => {
 
   it('soundListPlace opens below when it fits, else on the roomier side, capped to the room', () => {
     const pane = { top: 60, bottom: 900 };
-    // 15 choices want 296 px.
-    expect(soundListPlace({ top: 200, bottom: 230 }, pane, 15)).toEqual({ up: false, maxH: 296 });
+    // 15 choices want 9 rows: 282 px with the padding.
+    expect(soundListPlace({ top: 200, bottom: 230 }, pane, 15)).toEqual({ up: false, maxH: 282 });
     // Near the bottom (the default window, the Other row): upward, full height.
-    expect(soundListPlace({ top: 700, bottom: 730 }, pane, 15)).toEqual({ up: true, maxH: 296 });
-    // Little room either way: the roomier side, capped to it.
-    expect(soundListPlace({ top: 300, bottom: 330 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: false, maxH: 258 });
-    expect(soundListPlace({ top: 330, bottom: 360 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: true, maxH: 258 });
-    // Never smaller than the minimum (the window has a minimum size).
-    expect(soundListPlace({ top: 100, bottom: 130 }, { top: 60, bottom: 200 }, 15)).toEqual({ up: false, maxH: 180 });
+    expect(soundListPlace({ top: 700, bottom: 730 }, pane, 15)).toEqual({ up: true, maxH: 282 });
+    // Little room either way (258 px below, 228 above): the roomier side, capped to its whole rows.
+    expect(soundListPlace({ top: 300, bottom: 330 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: false, maxH: 252 });
+    expect(soundListPlace({ top: 330, bottom: 360 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: true, maxH: 252 });
+    // Never fewer than 5 rows (the window has a minimum size).
+    expect(soundListPlace({ top: 100, bottom: 130 }, { top: 60, bottom: 200 }, 15)).toEqual({ up: false, maxH: 162 });
     // A short list (Windows: 5 choices) is only as tall as its rows.
     expect(soundListPlace({ top: 600, bottom: 630 }, pane, 5)).toEqual({ up: false, maxH: 162 });
     expect(soundListPlace({ top: 730, bottom: 760 }, pane, 5)).toEqual({ up: true, maxH: 162 });
+  });
+
+  it('soundListPlace: always whole rows, so no name shows cut at the edges', () => {
+    // 281 px below is 1 px short of 9 rows: 8 rows, not 8.97.
+    expect(soundListPlace({ top: 200, bottom: 230 }, { top: 60, bottom: 523 }, 15)).toEqual({ up: false, maxH: 252 });
+    for (let bottom = 300; bottom <= 1000; bottom += 7) {
+      for (const top of [80, 240, 420]) {
+        const { maxH } = soundListPlace({ top, bottom: top + 30 }, { top: 60, bottom }, 15);
+        expect((maxH - 12) % 30).toBe(0);
+      }
+    }
+  });
+
+  it('soundListScroll opens with the current row in the middle, on a row boundary', () => {
+    // 15 choices, 9 rows shown (282 px): Ping (9) in the middle, Funk (5) to Submarine (13).
+    expect(soundListScroll(9, 15, 282)).toBe(150);
+    // Near either end: as far as the list goes.
+    expect(soundListScroll(0, 15, 282)).toBe(0);
+    expect(soundListScroll(2, 15, 282)).toBe(0);
+    expect(soundListScroll(12, 15, 282)).toBe(180);
+    expect(soundListScroll(14, 15, 282)).toBe(180);
+    // An even number of rows (8): one more row below the current one than above.
+    expect(soundListScroll(9, 15, 252)).toBe(180);
+    // A list that fits does not scroll.
+    expect(soundListScroll(4, 5, 162)).toBe(0);
+  });
+
+  it('soundListReveal scrolls a row into view by whole rows, the padding kept around it', () => {
+    // Rows 5-13 shown (scrollTop 150, 9 rows).
+    expect(soundListReveal(9, 150, 282)).toBe(150);
+    expect(soundListReveal(5, 150, 282)).toBe(150);
+    expect(soundListReveal(13, 150, 282)).toBe(150);
+    // One past either end: one row up or down.
+    expect(soundListReveal(4, 150, 282)).toBe(120);
+    expect(soundListReveal(14, 150, 282)).toBe(180);
+    // Home / End.
+    expect(soundListReveal(0, 180, 282)).toBe(0);
+    expect(soundListReveal(14, 0, 282)).toBe(180);
   });
 
   it('soundListKey: arrows, Home / End, Enter / Space, Escape / Tab', () => {

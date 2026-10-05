@@ -2,8 +2,9 @@
 // Linux), do-not-disturb, test.
 //
 // Sound picker: a listbox under (or, near the bottom of the pane, over) the button, sized to the
-// visible part of the settings pane so opening it never scrolls the page. ↑ ↓ Home End move,
-// Enter / Space pick, Escape / Tab close; the focus then returns to the button.
+// visible part of the settings pane so opening it never scrolls the page, in whole rows so no
+// name shows cut at its edges. ↑ ↓ Home End move, Enter / Space pick, Escape / Tab close; the
+// focus then returns to the button.
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { NOTIFICATION_KINDS } from '@shared/defaults';
@@ -11,7 +12,7 @@ import { NO_SOUND, SOUND_CATEGORIES, resolveSound, type SoundCategory } from '@s
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { Toggle } from '../../ui/primitives';
-import { hasSoundChoice, SOUND_ROW_H, soundCategoryOff, soundChoices, soundLabel, soundListKey, soundListPlace } from './logic';
+import { hasSoundChoice, SOUND_ROW_H, soundCategoryOff, soundChoices, soundLabel, soundListKey, soundListPlace, soundListReveal, soundListScroll } from './logic';
 import { useSettingsMessages } from './messages';
 import { LabelBlock, SectionHeader, SettingToggle, saveSettings } from './parts';
 
@@ -138,18 +139,9 @@ function SoundRow({ category }: { category: SoundCategory }) {
     const list = listRef.current;
     if (!open || !list) return;
     list.focus({ preventScroll: true });
-    const row = list.querySelector<HTMLElement>(`[data-row="${focus}"]`);
-    if (row) list.scrollTop = Math.max(0, row.offsetTop - (list.clientHeight - row.offsetHeight) / 2);
+    list.scrollTop = soundListScroll(focus, choices.length, list.clientHeight);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  // Keep the focused row in view (scrolling the list only).
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const row = list?.querySelector<HTMLElement>(`[data-row="${focus}"]`);
-    if (!open || !list || !row) return;
-    if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
-    else if (row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
-  }, [open, focus]);
   // A press outside the list and the button closes it (the press itself goes on).
   useEffect(() => {
     if (!open) return;
@@ -167,9 +159,15 @@ function SoundRow({ category }: { category: SoundCategory }) {
     if (!action) return;
     e.preventDefault();
     e.stopPropagation();
-    if (action.kind === 'focus') setFocus(action.index);
-    else if (action.kind === 'select') pick(choices[focus]);
-    else close(true);
+    if (action.kind === 'select') pick(choices[focus]);
+    else if (action.kind === 'close') close(true);
+    else {
+      setFocus(action.index);
+      // Keep the row in view, scrolling the list only. Not for a row the pointer enters: that one
+      // shows already, and scrolling to it would move the list off whole rows.
+      const list = listRef.current;
+      if (list) list.scrollTop = soundListReveal(action.index, list.scrollTop, list.clientHeight);
+    }
   };
 
   return (
