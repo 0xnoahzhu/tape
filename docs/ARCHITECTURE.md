@@ -52,6 +52,7 @@ through the shared `MainContext` (never inside their factory).
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
+| `market/corporateEvents.ts` | Upcoming earnings of the holdings from Wall Street Horizon (see *Corporate events*) |
 | `market/alerts.ts` | Price alert evaluation |
 | `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
@@ -240,6 +241,9 @@ names and listener arguments), built on `node:net` and `node:events` only.
   50), a burst of 10 and then spread evenly, halved for 10 s after IB's error 100. Lanes: orders,
   then control / account, then market data (FIFO per lane; market data that waited 1 s goes ahead
   of younger control frames). A cancel whose request is still unsent removes both.
+* Wall Street Horizon: `reqWshMetaData` / `reqWshEventData` (conId or JSON filter, fill flags,
+  date range and limit, always sent: every supported server version has them) and their
+  cancels; the answers are `wshMetaData` / `wshEventData` (104 / 105) with IB's JSON as text.
 * `pacing.ts` — per-request rules checked when a frame is written (the moment IB counts it):
   `reqMatchingSymbols` at most 1 per second; `reqHistoricalData` no identical request within
   15 s, at most 5 per contract + exchange + tick type within 2 s, at most 60 per 10 minutes
@@ -371,13 +375,31 @@ Components call `useQuoteSubscriptions(owner, contracts, profile)`, which sends 
 with `setQuoteSubscriptions(owner, subs)` (an empty set releases it; the renderer drops quotes no
 owner wants any more). `market/quotes.ts` unions the owners per contract (`subscriptions.ts`), keeps
 one `reqMktData` line per contract whose generic tick list is the union of the owners' profiles
-(`basic`, `underlying`, `option`), and cancels lines nobody wants. At most 95 lines are open (IB's
+(`basic`, `underlying`, `option`, `dividends`), and cancels lines nobody wants. At most 95 lines are open (IB's
 default limit is 100), in the order the contracts were first wanted; the rest carry a "line limit"
 error on their quote. Price alerts are an owner too. After every handshake and after 1101, market
 data type 4 (delayed-frozen fallback) is set and all lines are requested again.
 Errors after which IB dropped a line end it; 10197 (competing live session) keeps it open and is
 shown on the quote and the connection. Quote changes reach the renderer as `quotes` events batched
-every 100 ms. The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3).
+every 100 ms. The `dividends` profile adds generic tick 456 to stocks: IB answers with tick 59
+("past 12 months, next 12 months, next ex-date, next amount", e.g. `3.64,3.92,20261119,0.98`),
+kept as `Quote.dividends` (an empty object for IB's `,,,`: no dividend). IB sends it only on live
+lines; a delayed line (market data type 3 / 4) never gets it. A line already open for a stock is
+requested again once with the wider tick list.
+
+### Corporate events
+
+`getEarnings(underlyings)` (`market/corporateEvents.ts`) asks Wall Street Horizon for the
+holdings' earnings from today to 90 days ahead: `reqWshMetaData` once per connection (IB wants it
+first), then one `reqWshEventData` per conId, one at a time, cached per conId for the New York
+day. Option-only underlyings are resolved to their conId first. The answer has a status: `ok`,
+`unsubscribed` (IB refused with 10276 "News feed is not allowed" or 10277: the account has no WSH
+subscription, as on the paper account; remembered until the next handshake, so IB is not asked
+again) or `unavailable` (not connected, a timeout or another error). IB documents the event JSON
+only by example and the paper account cannot receive any, so `parseWshEarnings` reads it
+defensively (an array, `{ events }` or arrays keyed by event type; earnings types `wshe_ed` /
+`earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an answer it cannot read is
+logged once. Dividends do not come from WSH but from the dividend tick above. The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3).
 
 ### API log
 
@@ -430,7 +452,7 @@ Main is the only authority on whether Tape is locked; the renderer draws `LockSt
 * While locked: `ipcDispatch.ts` refuses every method whose `LOCK_POLICY` (`src/shared/ipc.ts`, one entry
   per method, so new methods must be classified) is `deny` with `LOCKED_MESSAGE`. Allowed: the snapshot,
   data feeds that mounted views keep using (quotes, depth, history, contract info, option chains,
-  executions refresh), the cache size poll, API log streaming, `notify` (the option risk watcher) and the lock methods. The order
+  earnings, executions refresh), the cache size poll, API log streaming, `notify` (the option risk watcher) and the lock methods. The order
   service checks the lock again before sending (also after its contract lookup). The menu disables its
   custom items except *Lock Tape*; notification clicks only show the window; on Windows / Linux the
   caption buttons take the lock screen's background (`Appearance.setLocked`; restored ~1.1 s after the
@@ -589,6 +611,36 @@ S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the str
 chain quote (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
 from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
 own remembered position (first: the bottom-right corner of the content area).
+
+### Portfolio dashboard (`features/portfolio/dashboard`)
+
+The Dashboard tab is a 3-column grid of widgets the user arranges in edit mode.
+`layout.ts` is the catalog (ten widgets with their default spans; the default layout shows all of
+them) and the pure edits (move before the drop target, S / M / L span, remove, add at the default
+span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
+`{ id, span }`, read and written in try/catch; unknown ids dropped, a missing or invalid value is
+the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
+locking ends them (`state/lockActions.ts`).
+
+Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
+
+| Widget / header | Source |
+| --- | --- |
+| Market Value | The position rows' values of stocks and options (the one-price rule), IB's stock + option market values when a row has none (`calc.ts → accountTotals`) |
+| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L |
+| Excess Liquidity, margin cushion | `ExcessLiquidity` / `NetLiquidation` (IB's own `Cushion` tag is rounded to "1"); red below 10 %; leverage = gross position value / net liquidation |
+| Portfolio greeks | IB's per-share model greeks (tick 13) of each option × quantity × multiplier, stocks count their shares; totals are "—" while an option still waits for its greeks; dollar delta at the option's model underlying price, else the underlying's quote |
+| Concentration | Σ \|value\| per underlying (stock and options) / net liquidation, flagged from 20 % |
+| P&L contributions | The rows' re-marked day P&L, largest first |
+| Option expirations | Days to expiry (local calendar) and moneyness from the underlying price |
+| Today's trades | `executions` (today, journaled) |
+| Earnings & dividends | `getEarnings` (Wall Street Horizon, needs IB's subscription) and `Quote.dividends` (tick 456, live lines only) |
+| vs. benchmark | The equity card's range return against SPY / QQQ: live price over the daily close at or before the range's first NAV sample (daily bars through `getHistory`, older pages for long ALL ranges) |
+
+The hooks subscribe only while their widget is on the layout, under their own quote owners:
+`dashboard-und` (option underlyings, basic), `dashboard-div` (the holdings' stocks, `dividends`)
+and `dashboard-bench` (SPY, QQQ). Option greeks need no line of their own (the `portfolio` owner
+subscribes every position).
 
 ### Watchlists
 
