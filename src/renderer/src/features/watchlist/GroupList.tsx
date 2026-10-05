@@ -326,7 +326,7 @@ const WatchRow = memo(function WatchRow({
             <div
               data-wl="via"
               className="ellipsis"
-              title={m.viaTip(q.source.exchange, contractLabel(item.contract))}
+              title={m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType)}
               style={{ fontSize: 11, lineHeight: 1, color: 'var(--dm)', minWidth: 0 }}
             >
               {m.via(q.source.exchange, q.marketDataType)}
@@ -339,7 +339,7 @@ const WatchRow = memo(function WatchRow({
       </div>
       <div
         className="num"
-        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange, contractLabel(item.contract)) : undefined}
+        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType) : undefined}
         style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', flexShrink: 0, paddingLeft: 8 }}
       >
         <div>{px(last)}</div>

@@ -362,7 +362,7 @@ export function ChartView() {
         {dataType && (
           <div
             data-chart="data-type"
-            title={via ? m.viaTip(via, contractLabel(symbol)) : undefined}
+            title={via ? m.viaTip(via, contractLabel(symbol), quote?.marketDataType) : undefined}
             style={{ padding: '3px 6px', font: '600 11px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}
           >
             {dataType}

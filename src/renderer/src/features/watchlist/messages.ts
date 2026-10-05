@@ -45,8 +45,11 @@ export const useWatchlistMessages = createMessages({
     saveFailed: (msg: string) => `Could not save watchlists: ${msg}`,
     /** The quote comes from the primary exchange (SMART is delayed for this stock): "Live · NASDAQ". */
     via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}`,
-    viaTip: (x: string, symbol: string) =>
-      `${x}’s own quotes and trades (last and change, bid/ask), not the consolidated quote. For this account IB sends ${symbol}’s SMART data delayed and ${x}’s live. Tape tries SMART again every 10 minutes.`,
+    /** `type`: the line's market data type; 3/4 is the short moment before Tape goes back to SMART. */
+    viaTip: (x: string, symbol: string, type?: number) =>
+      type === 3 || type === 4
+        ? `${x}’s own quotes, delayed as well right now. Tape goes back to SMART for ${symbol}.`
+        : `${x}’s own quotes and trades (last and change, bid/ask), not the consolidated quote. For this account IB sends ${symbol}’s SMART data delayed and ${x}’s live. Tape tries SMART again every 10 minutes.`,
   },
   zh: {
     collapse: '收起自选',
@@ -90,8 +93,10 @@ export const useWatchlistMessages = createMessages({
     copiedTo: (sym: string, list: string) => `${sym} 已添加到 ${list}`,
     saveFailed: (msg: string) => `自选保存失败：${msg}`,
     via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}`,
-    viaTip: (x: string, symbol: string) =>
-      `${x} 自己的报价和成交（最新价、涨跌、买卖价），不是全市场合并行情：IB 向本账户推送的 ${symbol} SMART 行情是延迟的，${x} 的是实时的。Tape 每 10 分钟重新尝试 SMART。`,
+    viaTip: (x: string, symbol: string, type?: number) =>
+      type === 3 || type === 4
+        ? `${x} 自己的报价，目前也是延迟的。Tape 正在把 ${symbol} 切回 SMART。`
+        : `${x} 自己的报价和成交（最新价、涨跌、买卖价），不是全市场合并行情：IB 向本账户推送的 ${symbol} SMART 行情是延迟的，${x} 的是实时的。Tape 每 10 分钟重新尝试 SMART。`,
   },
 });
 
