@@ -479,6 +479,19 @@ result (persisted and pushed again). Until then the account's previous 2152 stan
 is dropped. The check's own depth line is released when it answers; the depth service cancels it once
 IB has started it (see Quote subscriptions), so a slow start never leaves it streaming.
 
+The Level 2 switch (`settings.features.depth`: the Trade page's Depth tab and the floating ticket's
+book) is off by default, since it holds one of the account's 3 depth lines and an exchange-limited book
+(IEX only) can mislead. `features.depthSetByUser` records that the user set it in Settings › Market data;
+until then the final Level 2 answer of a check turns it on when it is a full book (live with no 2152,
+`shared/depthPermissions.ts → isFullBook`, `marketCheck.ts → turnsDepthOn`). Final means once the line is
+no longer watched (`DepthAnswer.settled`, after the 2152 window above), so an IEX-only account whose 2152
+follows the first book update is never switched on by the preliminary answer; a session that closes
+during the window, the depth view's book (whose 2152 its next update clears) and demo decide nothing.
+Nothing turns the switch off by itself. Settings saved before `depthSetByUser` existed count Level 2 on
+as the user's choice (`storeSchema.ts → loadSettings`; it was off by default) and lose the removed
+`features.options` / `features.flow`: the Options view and the desk's Flow tab are always there (option
+quotes work delayed without OPRA, and the flow comes from the chain quotes on screen).
+
 The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
 messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
 data cache) and pushed as `marketDataCheck` events (`running`, and `depth` while a check with Level 2
@@ -498,7 +511,9 @@ live), SMART delayed but the exchange live (per stock and exchange; "in general"
 SPY was delayed on SMART), a missing or partial depth subscription (2152 lists the exchanges), no free
 depth line (309), no answer, no free line, no option found. Opening the section checks again when the
 result is older than 5 minutes or belongs to another account; *Check now* includes Level 2. While not
-connected the last result stays, muted, with "not connected".
+connected the last result stays, muted, with "not connected". Under the Level 2 switch, next to the
+check's tag, `logic.ts → depthNote` says what the check found: the book of some exchanges only (with what
+a full book needs), turned on by a check, a full book, or (not checked, no data) the subscription it needs.
 
 ### Corporate events
 

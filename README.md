@@ -54,8 +54,13 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type, ATM IV and
   expected move; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
   non-guaranteed; volatility view; unusual options flow; option
-  positions with risk alerts.
-- **Depth**: 10-level book (Level 2) when enabled and subscribed.
+  positions with risk alerts. Always available: without OPRA the quotes are delayed, and the flow is
+  computed from the chain quotes on screen.
+- **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the
+  switch in *Settings › Market Data* (off by default: it holds one of the account's 3 depth lines, shared
+  with TWS and IBKR Mobile). A market data check that finds a full book from IB turns it on unless you have
+  set the switch yourself; a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
+  note on what a full book needs.
 
 **Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions, CSV export.
 
@@ -85,7 +90,7 @@ Tape holds streaming quotes for SPY (through SMART and on its own exchange), a n
 SPX, and with *Check now* also a Level 2 book, then releases them. Each market reads Live, Live on one
 exchange only, Delayed, No data or Frozen (market closed), with IB's code, when it was checked, and what to
 do about it (a competing live session, a subscription not enabled for the API or not shared with the paper
-account, a missing depth subscription). The check runs quietly after connecting and again when the section
+account, a missing or partial depth subscription). The check runs quietly after connecting and again when the section
 opens with a result older than five minutes; the last result is kept across restarts. Lines already open for
 the watchlist, chart or option chain are reused, and regulatory snapshots (which IBKR charges for) are never
 used.
