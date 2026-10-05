@@ -8,6 +8,7 @@ import {
   AUTO_AFTER_READY_MS,
   createMarketCheckService,
   DEPTH_NOTICE_MS,
+  DEPTH_TIMEOUT_MS,
   isMarketDataCheck,
   MARKET_CHECK_NS,
   nearStrikes,
@@ -15,6 +16,7 @@ import {
   PROBE_TIMEOUT_MS,
   SETTLE_MS,
 } from './marketCheck';
+import { CANCEL_CAP_MS, createDepthService } from './depth';
 import { createQuoteService, LINGER_MS } from './quotes';
 import { TICK } from './tickMap';
 
@@ -70,7 +72,13 @@ async function setup(opts: { lines?: Lines; book?: DepthBook | null; depthLine?:
       return opts.chain ? opts.chain() : CHAIN;
     },
   } as OptionsService;
-  ctx.depth = { set: async () => undefined, current: () => opts.book ?? null, lineReqId: () => opts.depthLine ?? null } as DepthService;
+  // The real depth service (it holds the check's depth line); a test may stand in for the view's book and line.
+  const depth = createDepthService(ctx);
+  ctx.depth = {
+    ...depth,
+    current: () => (opts.book !== undefined ? opts.book : depth.current()),
+    lineReqId: () => opts.depthLine ?? depth.lineReqId(),
+  } as DepthService;
   ctx.quotes = createQuoteService(ctx);
   const svc = createMarketCheckService(ctx);
   ctx.marketCheck = svc;
@@ -320,6 +328,80 @@ describe('market data check', () => {
     expect(item(r, 'depth')).toMatchObject({ status: 'live', instrument: 'NVDA', probe: { reused: true } });
     expect(fake.callsOf('reqMktDepth')).toEqual([]);
     expect(fake.callsOf('cancelMktDepth')).toEqual([]);
+  });
+
+  it('never cancels a depth line IB has not started: no book in time is no data, a late book cancels it and patches the result', async () => {
+    const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
+    const { fake, svc } = await setup({ lines: all });
+    const r = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'nodata', probe: { own: 'timeout', message: `No book from IB within ${DEPTH_TIMEOUT_MS / 1000} s` } });
+    // A cancel now would be ignored by IB and leave the stream running: none is sent.
+    const [[reqId]] = fake.callsOf('reqMktDepth') as Array<[number]>;
+    expect(fake.callsOf('cancelMktDepth')).toEqual([]);
+    // IB starts the stream after all: cancelled once, and Level 2 reads live.
+    fake.emit('updateMktDepthL2', reqId, 0, 'IEX', 0, 1, 670.1, 100);
+    fake.emit('updateMktDepthL2', reqId, 1, 'IEX', 0, 1, 670.0, 100);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([[reqId, true]]);
+    expect(item(svc.getState().result!, 'depth')).toMatchObject({ status: 'live', probe: { status: 'live' } });
+    // A 2152 that follows still counts.
+    const notice = 'Exchanges - Depth: IEX; Top: BYX; Need additional market data permissions - Depth: NASDAQ; ARCA; NYSE; ';
+    fake.error(reqId, 2152, notice);
+    expect(item(svc.getState().result!, 'depth')).toMatchObject({ status: 'live', via: 'IEX' });
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(fake.callsOf('cancelMktDepth')).toHaveLength(1);
+  });
+
+  it('cancels a depth line that never starts at the cap, and none that IB ended', async () => {
+    const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
+    const { fake, svc } = await setup({ lines: all });
+    await finish(svc.run({ depth: true, trigger: 'user' }));
+    const [[reqId]] = fake.callsOf('reqMktDepth') as Array<[number]>;
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS - DEPTH_TIMEOUT_MS - 2_000);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([[reqId, true]]);
+    expect(item(svc.getState().result!, 'depth')).toMatchObject({ status: 'nodata', probe: { own: 'timeout' } });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    const next = finish(svc.run({ depth: true, trigger: 'user' }));
+    await vi.advanceTimersByTimeAsync(DEPTH_TIMEOUT_MS + 1_000);
+    const second = fake.callsOf('reqMktDepth')[1][0] as number;
+    // A late error that ended the line: the result says so, and nothing is cancelled.
+    fake.error(second, 10092, 'Deep market data is not supported for this combination of security/exchange');
+    await next;
+    expect(item(svc.getState().result!, 'depth')).toMatchObject({ status: 'nodata', probe: { code: 10092 } });
+    await vi.advanceTimersByTimeAsync(CANCEL_CAP_MS);
+    expect(fake.callsOf('cancelMktDepth')).toHaveLength(1);
+  });
+
+  it('lists the stocks the fallback served from their exchange even after their line went', async () => {
+    const lines: Record<string, Answer> = {
+      'SPY:SMART': { type: 1 },
+      'SPY:ARCA': { type: 1 },
+      'SPX:CBOE': { type: 1 },
+      OPT: { type: 1 },
+      'AAPL:SMART': { type: 3 },
+      '#265598:NASDAQ': { type: 1 }, // by conId once resolved
+    };
+    const { fake, ctx, svc } = await setup({ lines });
+    ctx.contracts.resolve = async (c: ContractRef) => ({ ...c, conId: c.symbol === 'AAPL' ? 265598 : SPY_CONID, primaryExchange: c.symbol === 'AAPL' ? 'NASDAQ' : 'ARCA' });
+    ctx.quotes.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ctx.quotes.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
+    // The user leaves the trade page for Settings: AAPL's exchange line goes after lingering.
+    ctx.quotes.setSubscriptions('watchlist', []);
+    await vi.advanceTimersByTimeAsync(LINGER_MS + 1_000);
+    expect(fake.callsOf('cancelMktData').map((c) => c[0])).toContain(fake.callsOf('reqMktData').find((c) => lineName(c[1] as { conId: number }) === '#265598:NASDAQ')![0]);
+    expect(ctx.quotes.wanted().filter((w) => w.contract.symbol === 'AAPL')).toEqual([]);
+    const r = await finish(svc.run({ trigger: 'user' }));
+    expect(item(r, 'stk')).toMatchObject({ status: 'live', fallback: [{ symbol: 'AAPL', exchange: 'NASDAQ' }] });
+    // Once AAPL is live on SMART the check no longer lists it.
+    lines['AAPL:SMART'] = { type: 1 };
+    ctx.quotes.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const later = await finish(svc.run({ trigger: 'user' }));
+    expect(item(later, 'stk')!.fallback).toBeUndefined();
   });
 
   it('says whether the running check tests Level 2', async () => {

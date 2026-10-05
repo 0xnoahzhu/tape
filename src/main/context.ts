@@ -177,8 +177,18 @@ export interface DepthService {
   set(contract: ContractRef | null): Promise<void>;
   /** The book of the open depth line (null when none is wanted). */
   current(): DepthBook | null;
-  /** The request id of the depth line this client holds at IB (null: none, or IB ended it). */
+  /** The request id of the view's depth line at IB (null: none, or IB ended it). */
   lineReqId(): number | null;
+  /**
+   * Opens a depth line outside the view (the market data check's) and returns its request id;
+   * throws without a session. The view's 309 handling counts it.
+   */
+  openLine(contract: ContractRef, rows: number): number;
+  /**
+   * Releases a line from openLine: cancelled once IB has started it (an earlier cancel is ignored
+   * by IB), dropped when IB ended it, cancelled anyway CANCEL_CAP_MS after the request.
+   */
+  closeLine(reqId: number): void;
 }
 
 /** The active market data check (market/marketCheck.ts). */

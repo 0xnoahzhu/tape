@@ -1,11 +1,11 @@
 // Contracts, history, depth and option chain services against the IB test double.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { index, stock } from '@shared/contract';
 import type { TapeEvent } from '@shared/ipc';
 import type { ContractInfo, DepthBook, OptionChainParams } from '@shared/types';
 import { CONTRACT_REFRESH_MS, createContractService, SEARCH_TTL_MS } from './contracts';
-import { createDepthService } from './depth';
+import { CANCEL_CAP_MS, createDepthService } from './depth';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
 import { createHistoryService } from './history';
 import { NOT_CONNECTED } from './ibRequest';
@@ -291,6 +291,7 @@ describe('HistoryService', () => {
 });
 
 describe('DepthService', () => {
+  afterEach(() => void vi.useRealTimers());
   const books = (events: TapeEvent[]): DepthBook[] => events.flatMap((e) => (e.type === 'depth' ? [e.book] : []));
 
   it('keeps one SMART depth request and maintains the book', async () => {
@@ -319,15 +320,25 @@ describe('DepthService', () => {
     await ctx.depth.set(stock('NVDA'));
     expect(fake.callsOf('cancelMktDepth')).toEqual([[id, true]]);
     expect(books(events).at(-1)).toMatchObject({ key: 'STK:NVDA', bids: [], asks: [] });
+    const nvda = fake.callsOf('reqMktDepth')[1][0] as number;
+    fake.emit('updateMktDepth', nvda, 0, 0, 1, 180, 10);
     await ctx.depth.set(null);
-    expect(fake.callsOf('cancelMktDepth')).toHaveLength(2);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([
+      [id, true],
+      [nvda, true],
+    ]);
   });
 
   it('always cancels the open line before subscribing the next one', async () => {
     const { fake, ctx } = setup();
     await settle();
     fake.ready();
-    for (const s of ['AAPL', 'NVDA', 'MSFT', 'AAPL']) await ctx.depth.set(stock(s));
+    for (const s of ['AAPL', 'NVDA', 'MSFT', 'AAPL']) {
+      // Each line has answered before the switch (see below for one that has not).
+      const last = fake.callsOf('reqMktDepth').at(-1);
+      if (last) fake.emit('updateMktDepth', last[0], 0, 0, 1, 100, 1);
+      await ctx.depth.set(stock(s));
+    }
     const names = fake.calls.filter((c) => c[0] === 'reqMktDepth' || c[0] === 'cancelMktDepth').map((c) => `${c[0]}:${c[1]}`);
     const ids = fake.callsOf('reqMktDepth').map((c) => c[0]);
     expect(names).toEqual([
@@ -341,11 +352,65 @@ describe('DepthService', () => {
     ]);
   });
 
+  it('cancels a line that has not answered yet on its first update, or at the cap', async () => {
+    const { fake, ctx } = setup();
+    await settle();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    fake.ready();
+    // IB ignores a cancel that comes before it has started the stream: none is sent yet.
+    await ctx.depth.set(stock('AAPL'));
+    await ctx.depth.set(stock('NVDA'));
+    const [aapl, nvda] = fake.callsOf('reqMktDepth').map((c) => c[0] as number);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([]);
+    // AAPL starts 10 s later: cancelled then, once; its trailing updates change nothing.
+    vi.advanceTimersByTime(10_000);
+    fake.emit('updateMktDepth', aapl, 0, 0, 1, 227, 10);
+    fake.emit('updateMktDepth', aapl, 1, 0, 1, 226, 10);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([[aapl, true]]);
+    expect(ctx.depth.current()).toMatchObject({ key: 'STK:NVDA', bids: [] });
+    // NVDA never answers: cancelled anyway at the cap; an error that ended a line needs none.
+    await ctx.depth.set(stock('MSFT'));
+    const msft = fake.callsOf('reqMktDepth')[2][0] as number;
+    await ctx.depth.set(null);
+    fake.error(msft, 10092, 'Deep market data is not supported for this combination of security/exchange');
+    vi.advanceTimersByTime(CANCEL_CAP_MS);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([
+      [aapl, true],
+      [nvda, true],
+    ]);
+    // Updates after the cap are ignored (nothing left to cancel).
+    fake.emit('updateMktDepth', nvda, 0, 0, 1, 180, 10);
+    expect(fake.callsOf('cancelMktDepth')).toHaveLength(2);
+  });
+
+  it('retries a 309 once this client’s other depth lines are gone', async () => {
+    const { fake, ctx, events } = setup();
+    await settle();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    fake.ready();
+    // The market data check holds a line that has not started yet when the view subscribes.
+    const check = ctx.depth.openLine(stock('SPY'), 5);
+    await ctx.depth.set(stock('NVDA'));
+    const nvda = fake.callsOf('reqMktDepth')[1][0] as number;
+    fake.error(nvda, 309, 'Max number (3) of market depth requests has been reached');
+    ctx.depth.closeLine(check);
+    vi.advanceTimersByTime(5_000);
+    expect(fake.callsOf('reqMktDepth')).toHaveLength(2);
+    expect(books(events).at(-1)?.error).toBeUndefined();
+    // The check's line starts and is cancelled; the view asks again a second later.
+    fake.emit('updateMktDepth', check, 0, 0, 1, 670, 10);
+    expect(fake.callsOf('cancelMktDepth')).toEqual([[check, true]]);
+    vi.advanceTimersByTime(2_000);
+    expect(fake.callsOf('reqMktDepth')).toHaveLength(3);
+    expect((fake.callsOf('reqMktDepth')[2][1] as { symbol: string }).symbol).toBe('NVDA');
+  });
+
   it('retries once when IB reports the depth limit right after a switch', async () => {
     const { fake, ctx, events } = setup();
     await settle();
     fake.ready();
     await ctx.depth.set(stock('AAPL'));
+    fake.emit('updateMktDepth', fake.callsOf('reqMktDepth')[0][0], 0, 0, 1, 227, 10);
     await ctx.depth.set(stock('NVDA'));
     const nvda = fake.callsOf('reqMktDepth')[1][0] as number;
     fake.error(nvda, 309, 'Max number (3) of market depth requests has been reached');

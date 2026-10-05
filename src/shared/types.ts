@@ -130,7 +130,10 @@ export interface MarketCheckItem {
    * live ("Live · ARCA only"), Level 2 that IB sends from some exchanges only (2152: "Live · IEX only").
    */
   via?: string;
-  /** Stocks: quotes served by their primary exchange at the time of the check because SMART was delayed. */
+  /**
+   * Stocks: those the quotes service found SMART delayed and live on their primary exchange in this
+   * app session (served from the exchange then, whether or not their line is still open).
+   */
   fallback?: Array<{ symbol: string; exchange: string }>;
   /** Epoch ms when this market was checked (depth keeps its time when a later check skips it). */
   checkedAt: number;
