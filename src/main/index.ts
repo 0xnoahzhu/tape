@@ -27,6 +27,7 @@ import { installMenu } from './menu';
 import { setupDevCapture } from './devCapture';
 import { createMessages } from './i18n';
 import { createDispatch } from './ipcDispatch';
+import { onRendererReset } from './rendererReset';
 import { createBiometrics } from './lock/biometrics';
 import { createLockFile, LOCK_FILE } from './lock/lockFile';
 import { readResetMarker, removeResetMarker, startReset, wipeTapeData, type WipeResult } from './lock/reset';
@@ -311,14 +312,10 @@ function createWindow(): BrowserWindow {
   win.on('move', saveBounds);
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
-    ctx.quotes.resetRenderer();
   });
-  // A reload (or a crash) replaces the renderer: its quote owners go with it, and the new one, which
-  // starts without quotes, gets whole quotes for what it subscribes.
-  win.webContents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) ctx.quotes.resetRenderer();
-  });
-  win.webContents.on('render-process-gone', () => ctx.quotes.resetRenderer());
+  // A reload, a crash or closing the window ends the renderer: its quote owners go with it, and a
+  // new one, which starts without quotes, gets whole quotes for what it subscribes.
+  onRendererReset(win, () => ctx.quotes.resetRenderer());
 
   // Links open in the default browser; the app never navigates away from itself.
   win.webContents.setWindowOpenHandler(({ url }) => {
