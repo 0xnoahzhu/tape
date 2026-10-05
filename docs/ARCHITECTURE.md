@@ -384,8 +384,10 @@ shown on the quote and the connection. Quote changes reach the renderer as `quot
 every 100 ms. The `dividends` profile adds generic tick 456 to stocks: IB answers with tick 59
 ("past 12 months, next 12 months, next ex-date, next amount", e.g. `3.64,3.92,20261119,0.98`),
 kept as `Quote.dividends` (an empty object for IB's `,,,`: no dividend). IB sends it only on live
-lines; a delayed line (market data type 3 / 4) never gets it. A line already open for a stock is
-requested again once with the wider tick list.
+lines; a delayed line (market data type 3 / 4) never gets it. The `underlying` profile of stocks
+includes 456 too, so the stock tick lists nest (basic ⊂ dividends ⊂ underlying): a line already
+open for a stock is requested again once with the wider tick list and then kept when a page with a
+narrower profile takes over (options view ↔ dashboard).
 
 ### Corporate events
 
@@ -627,16 +629,16 @@ Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
 
 | Widget / header | Source |
 | --- | --- |
-| Market Value | The position rows' values of stocks and options (the one-price rule), IB's stock + option market values when a row has none (`calc.ts → accountTotals`) |
-| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L |
-| Excess Liquidity, margin cushion | `ExcessLiquidity` / `NetLiquidation` (IB's own `Cushion` tag is rounded to "1"); red below 10 %; leverage = gross position value / net liquidation |
+| Market Value | The position rows' values of stocks and options (the one-price rule), IB's stock + option market values when a row has none (`calc.ts → accountTotals`; account updates' `StockMarketValue` / `OptionMarketValue`, which paper accounts send only as `$LEDGER-…` keys, read from their `BASE` row, `account.ts → accountValueField`) |
+| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L (since New York midnight) |
+| Excess Liquidity, margin cushion | `ExcessLiquidity` / `NetLiquidation` (the fraction IB's account-updates `Cushion` value holds, computed from the summary values the dashboard already has); red below 10 %; leverage = gross position value / net liquidation |
 | Portfolio greeks | IB's per-share model greeks (tick 13) of each option × quantity × multiplier, stocks count their shares; totals are "—" while an option still waits for its greeks; dollar delta at the option's model underlying price, else the underlying's quote |
 | Concentration | Σ \|value\| per underlying (stock and options) / net liquidation, flagged from 20 % |
 | P&L contributions | The rows' re-marked day P&L, largest first |
-| Option expirations | Days to expiry (local calendar) and moneyness from the underlying price |
-| Today's trades | `executions` (today, journaled) |
-| Earnings & dividends | `getEarnings` (Wall Street Horizon, needs IB's subscription) and `Quote.dividends` (tick 456, live lines only) |
-| vs. benchmark | The equity card's range return against SPY / QQQ: live price over the daily close at or before the range's first NAV sample (daily bars through `getHistory`, older pages for long ALL ranges) |
+| Option expirations | Days to expiry (local calendar) and moneyness from the underlying price (futures options: only IB's model underlying price, never their own premium) |
+| Today's trades | `executions` since New York midnight (`shared/session.ts → nyDayStart`, re-checked every minute: main keeps the session's fills, so after midnight the list still holds yesterday's) |
+| Earnings & dividends | `getEarnings` (Wall Street Horizon, needs IB's subscription) and `Quote.dividends` (tick 456, live lines only); the note says when earnings dates are missing (not subscribed, or unavailable while connected) |
+| vs. benchmark | The equity card's range return against SPY / QQQ: live price over their price at the range's first NAV sample, so both start at the same moment. A start within 9 days is priced from 5-minute bars, within 25 days from hourly ones (the close of the last bar that ended by then, else the open of the bar it falls in); an older one, or one the intraday window misses, at the daily close (16:00 New York) at or before it (older pages for long ALL ranges). Bars through `getHistory`, regular hours |
 
 The hooks subscribe only while their widget is on the layout, under their own quote owners:
 `dashboard-und` (option underlyings, basic), `dashboard-div` (the holdings' stocks, `dividends`)
