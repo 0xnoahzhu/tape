@@ -15,7 +15,7 @@ import { spanLabel } from '../EquityCard';
 import { usePortfolioMessages } from '../messages';
 import { useBenchmark, useEarnings, useHoldingDividends, useHoldingUnderlyings, useNyDayStart } from './data';
 import { useDashboardMessages } from './messages';
-import { recentFills, upcomingEvents, type CorporateEvent } from './model';
+import { earningsState, recentFills, upcomingEvents, type CorporateEvent } from './model';
 import { EmptyLine, List, Note, WidgetCard } from './WidgetCard';
 
 const ROW_RULE = 'inset 0 -1px 0 var(--ln2)';
@@ -43,8 +43,10 @@ export function FillsWidget() {
         </div>
       }
     >
-      {/* One grid for all rows (subgrid), so the time column fits the widest time of either clock format. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(62px,max-content) 36px minmax(0,1fr) auto', columnGap: 10, fontVariantNumeric: 'tabular-nums' }}>
+      {/* One grid for all rows (subgrid), so the time column fits the widest time of either clock
+          format. Symbol and fill share the last column per row: each row's figures end flush right
+          and a short fill leaves its symbol the room. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(62px,max-content) 36px minmax(0,1fr)', columnGap: 10, fontVariantNumeric: 'tabular-nums' }}>
         {items.map((e) => (
           <div
             key={e.execId}
@@ -53,9 +55,13 @@ export function FillsWidget() {
           >
             <div style={{ font: '12px/1 var(--num)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{timeCell(e.time, clock)}</div>
             <div style={{ fontSize: 12, color: 'var(--mu)', whiteSpace: 'nowrap' }}>{e.side === 'BUY' ? m.buy : m.sell}</div>
-            <div className="ellipsis selectable">{contractLabel(e.contract)}</div>
-            <div className="selectable" style={{ fontFamily: 'var(--num)', whiteSpace: 'nowrap' }}>
-              {f0(e.shares)} @ {px(e.price)}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              <div className="ellipsis selectable" style={{ flex: 1, minWidth: 0 }}>
+                {contractLabel(e.contract)}
+              </div>
+              <div className="selectable" style={{ flexShrink: 0, fontFamily: 'var(--num)', whiteSpace: 'nowrap' }}>
+                {f0(e.shares)} @ {px(e.price)}
+              </div>
             </div>
           </div>
         ))}
@@ -80,6 +86,10 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
   const dividends = useHoldingDividends(underlyings);
   const earnings = useEarnings(underlyings);
   const events = useMemo(() => upcomingEvents(underlyings, dividends, earnings, new Date()), [underlyings, dividends, earnings]);
+  // Without earnings dates the list holds dividends only, and the note says why.
+  const state = earningsState(earnings, connected);
+  const note = state === 'unsubscribed' ? m.eventsNoteUnsubscribed : state === 'unavailable' ? m.eventsNoteUnavailable : m.eventsNote;
+  const empty = !connected && !rows.length ? common.notConnected : state === 'ok' ? m.noEvents : m.noDividends;
 
   const detail = (e: CorporateEvent) => {
     if (e.kind === 'earnings') return e.time ? `${monthDay(e.date)} · ${m.eventTime[e.time]}` : monthDay(e.date);
@@ -110,9 +120,9 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
             </div>
           </div>
         ))}
-        {!events.length && <EmptyLine>{connected || rows.length ? m.noEvents : common.notConnected}</EmptyLine>}
+        {!events.length && <EmptyLine>{empty}</EmptyLine>}
       </List>
-      <Note>{m.eventsNote}</Note>
+      <Note>{note}</Note>
     </WidgetCard>
   );
 }

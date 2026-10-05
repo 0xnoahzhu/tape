@@ -153,9 +153,23 @@ export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: str
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: 84, font: '11px/1 var(--num)', color: 'var(--dm)', minHeight: 11 }}>
+      {/* A size container: a narrow card (S) keeps only the first and last label (global.css). */}
+      <div
+        className="eq-ticks"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          paddingRight: 84,
+          font: '11px/1 var(--num)',
+          color: 'var(--dm)',
+          minHeight: 11,
+          containerType: 'inline-size',
+        }}
+      >
         {ticks.map((l, i) => (
-          <div key={i}>{l}</div>
+          <div key={i} style={{ whiteSpace: 'nowrap' }}>
+            {l}
+          </div>
         ))}
       </div>
     </div>

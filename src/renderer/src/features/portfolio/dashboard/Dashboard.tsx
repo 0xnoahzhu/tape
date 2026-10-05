@@ -282,11 +282,11 @@ function CatalogModal() {
         role="dialog"
         aria-label={m.addWidget}
         onClick={(e) => e.stopPropagation()}
-        // Its rows keep their height (flexShrink 0), so a short window scrolls the panel instead of squeezing them.
+        // Only the rows scroll: the title and Done stay in view in a short window.
         style={{
           width: 520,
           maxHeight: '80vh',
-          overflow: 'auto',
+          overflow: 'hidden',
           background: 'var(--p)',
           boxShadow: '0 0 0 1px var(--ln), 0 20px 60px rgba(0,0,0,.25)',
           display: 'flex',
@@ -298,38 +298,40 @@ function CatalogModal() {
           <div style={{ font: '600 18px/1.2 var(--sans)' }}>{m.addWidget}</div>
           <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.addWidgetHint}</div>
         </div>
-        {CATALOG.map((c) => {
-          const on = hasWidget(layout, c.id);
-          const text = m.catalog[c.id];
-          return (
-            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 24px', boxShadow: 'inset 0 1px 0 var(--ln2)', flexShrink: 0 }}>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ fontSize: 14 }}>{text.name}</div>
-                  {c.subscription && (
-                    <div style={{ fontSize: 10, padding: '2px 6px', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}>
-                      {m.subscription}
-                    </div>
-                  )}
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
+          {CATALOG.map((c) => {
+            const on = hasWidget(layout, c.id);
+            const text = m.catalog[c.id];
+            return (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 24px', boxShadow: 'inset 0 1px 0 var(--ln2)', flexShrink: 0 }}>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ fontSize: 14 }}>{text.name}</div>
+                    {c.subscription && (
+                      <div style={{ fontSize: 10, padding: '2px 6px', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}>
+                        {m.subscription}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5 }}>{text.desc}</div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5 }}>{text.desc}</div>
+                <button
+                  type="button"
+                  onClick={() => toggle(c.id)}
+                  className="hover-p2"
+                  style={{
+                    ...buttonBase,
+                    background: 'transparent',
+                    color: on ? 'var(--mu)' : 'var(--tx)',
+                    boxShadow: `inset 0 0 0 1px ${on ? 'var(--ln2)' : 'var(--ln)'}`,
+                  }}
+                >
+                  {on ? m.remove : m.add}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => toggle(c.id)}
-                className="hover-p2"
-                style={{
-                  ...buttonBase,
-                  background: 'transparent',
-                  color: on ? 'var(--mu)' : 'var(--tx)',
-                  boxShadow: `inset 0 0 0 1px ${on ? 'var(--ln2)' : 'var(--ln)'}`,
-                }}
-              >
-                {on ? m.remove : m.add}
-              </button>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
         <div style={{ padding: '14px 24px 20px', display: 'flex', justifyContent: 'flex-end', boxShadow: 'inset 0 1px 0 var(--ln2)', flexShrink: 0 }}>
           <button
             type="button"

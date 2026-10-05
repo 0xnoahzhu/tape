@@ -92,7 +92,10 @@ export const useDashboardMessages = createMessages({
     exDividend: 'Ex-dividend',
     eventTime: { bmo: 'Before open', amc: 'After close', dmh: 'During market' } as Record<'bmo' | 'amc' | 'dmh', string>,
     eventsNote: 'Earnings dates via Wall Street Horizon (IBKR subscription)',
+    eventsNoteUnsubscribed: 'Earnings dates need the Wall Street Horizon subscription (not subscribed)',
+    eventsNoteUnavailable: 'Earnings dates unavailable',
     noEvents: 'No upcoming events',
+    noDividends: 'No upcoming ex-dividend dates',
 
     // Benchmark
     benchTitle: 'vs. benchmark',
@@ -175,7 +178,10 @@ export const useDashboardMessages = createMessages({
     exDividend: '除息',
     eventTime: { bmo: '盘前', amc: '盘后', dmh: '盘中' } as Record<'bmo' | 'amc' | 'dmh', string>,
     eventsNote: '财报日期来自 Wall Street Horizon（需在 IBKR 订阅）',
+    eventsNoteUnsubscribed: '财报日期需要订阅 Wall Street Horizon（未订阅）',
+    eventsNoteUnavailable: '暂时无法获取财报日期',
     noEvents: '暂无近期事件',
+    noDividends: '暂无近期除息',
 
     benchTitle: '基准对比',
     benchSub: (span: string) => (span ? `${span} · 跟随走势图区间` : '跟随走势图区间'),
