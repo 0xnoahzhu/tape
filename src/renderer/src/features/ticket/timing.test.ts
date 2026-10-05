@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
-import { createClock } from '@shared/timeFormat';
+import { createClock, parseTypedTime } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
 import { initialTicket, normalizeTicketPatch, withModifiedTiming, type StoreState, type TicketState } from '../../state/store';
 import { useTicketM } from './messages';
@@ -182,6 +182,24 @@ describe('good-after time field', () => {
     expect(goodAfterCommit('3:55 pm', '12h')).toBe('15:55');
     expect(goodAfterCommit('15:55', '12h')).toBe('15:55');
     expect(goodAfterCommit('3:55', '24h')).toBe('03:55');
+  });
+
+  it('in the 12-hour format, keeps a typed "03:55" without AM / PM as "3:55", so it fails like "3:55"', () => {
+    // The clock writes "03:55 PM" / "下午 03:55": deleting the period leaves "03:55".
+    for (const typed of ['03:55', ' 03:55 ']) expect(goodAfterCommit(typed, '12h')).toBe('3:55');
+    expect(goodAfterCommit('11：05', '12h')).toBe('11：05');
+    expect(goodAfterCommit('03：55', '12h')).toBe('3：55');
+    expect(parseTypedTime(goodAfterCommit('03:55', '12h'), '12h')).toBeNull();
+    expect(goodAfterDisplay(goodAfterCommit('03:55', '12h'), h12en)).toBe('3:55');
+    // With a period, or an hour the 12-hour clock never writes, it is a time.
+    expect(goodAfterCommit('03:55 PM', '12h')).toBe('15:55');
+    expect(goodAfterCommit('下午 03:55', '12h')).toBe('15:55');
+    expect(goodAfterCommit('03:55 am', '12h')).toBe('03:55');
+    expect(goodAfterCommit('00:15', '12h')).toBe('00:15');
+    expect(goodAfterCommit('12:30', '12h')).toBe('12:30');
+    // The 24-hour format reads it as typed; a stored 24-hour 03:55 still shows as morning.
+    expect(goodAfterCommit('03:55', '24h')).toBe('03:55');
+    expect(goodAfterDisplay(goodAfterCommit('3:55 AM', '12h'), h12en)).toBe('03:55 AM');
   });
 
   it('keeps digits, separators and period markers of what is typed', () => {

@@ -206,8 +206,10 @@ export function timeColumn(clock: Pick<Clock, 'format'>): string {
  * "09:35", "9:35", "21:35", "9:35 AM", "9:35pm", "9:35 p.m.", "上午 9:35", "下午9:35", "9:35 下午",
  * and a bare hour with a period ("9 AM", "下午 3"). Without a period the time is read as 24-hour,
  * except that someone on the 12-hour clock who types "3:55" (an hour of 1–11 without a leading
- * zero) may well mean the afternoon: in `format` '12h' that is ambiguous and null, while "03:55",
- * "00:15", "12:30" and "13:00"–"23:59" can only be 24-hour times and are read as such.
+ * zero) may well mean the afternoon: in `format` '12h' that is ambiguous and null. "03:55" is read
+ * as 24-hour, because the ticket stores the times it reads that way; since the 12-hour clock
+ * writes "03:55 PM" too, the good-after field keeps a typed "03:55" as "3:55" (ticket/timing.ts →
+ * goodAfterCommit). "00:15", "12:30" and "13:00"–"23:59" can only be 24-hour times.
  */
 export function parseTypedTime(s: string, format: TimeFormat): string | null {
   let text = s.trim().toLowerCase().replace(/\s+/g, ' ');

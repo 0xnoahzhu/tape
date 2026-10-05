@@ -171,7 +171,8 @@ describe('parseTypedTime', () => {
     expect(parseTypedTime('10:15', '12h')).toBeNull();
     expect(parseTypedTime('11:59', '12h')).toBeNull();
     expect(parseTypedTime('3：55', '12h')).toBeNull();
-    // Unambiguous: a leading zero, midnight hour 0, noon hour 12, afternoon hours, or a period.
+    // Read as 24-hour: a leading zero (the stored form; the good-after field keeps a typed "03:55"
+    // as "3:55", see ticket/timing.ts), midnight hour 0, noon hour 12, afternoon hours, or a period.
     expect(parseTypedTime('03:55', '12h')).toBe('03:55');
     expect(parseTypedTime('00:15', '12h')).toBe('00:15');
     expect(parseTypedTime('0:15', '12h')).toBe('00:15');

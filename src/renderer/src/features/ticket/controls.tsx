@@ -412,7 +412,8 @@ export function WallTimeField({ value, onChange, placeholder }: { value: string;
   const type = (v: string) => {
     const next = goodAfterTyping(v, composing.current);
     setDraft(next);
-    onChange(next);
+    // The ticket reads its value while the field is still being typed in (errors, summary).
+    onChange(goodAfterCommit(next, clock.format));
   };
   return (
     <TextField

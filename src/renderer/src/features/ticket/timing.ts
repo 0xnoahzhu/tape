@@ -123,7 +123,8 @@ export function ticketTiming(t: TicketState, contract: ContractRef, session: Tra
  * The good-after field when it does not have the focus: a time it can read ("09:35", "9:35 pm")
  * in the user's format ("09:35 AM", "上午 09:35", "09:35"); anything else as typed, so the mistake
  * stays visible next to the error. In the 12-hour format "3:55" is not a time it can read (AM or
- * PM?), so it stays "3:55" rather than turning into "03:55 AM".
+ * PM?), so it stays "3:55" rather than turning into "03:55 AM"; "03:55" is the stored 24-hour time
+ * (a typed one is kept as "3:55", see goodAfterCommit).
  */
 export function goodAfterDisplay(value: string, clock: Clock): string {
   const time = parseTypedTime(value, clock.format);
@@ -145,9 +146,14 @@ export function goodAfterTyping(v: string, composing: boolean): string {
 }
 
 /**
- * Leaving the field stores a time it can read as 24-hour "HH:MM" (what IB gets), else the text as
- * typed (an ambiguous "3:55" in the 12-hour format stays as typed and fails on submit).
+ * What the ticket keeps of the field's text, as it is typed and when the field is left: a time it
+ * can read as 24-hour "HH:MM" (what IB gets), else the text as typed (an ambiguous "3:55" in the
+ * 12-hour format stays as typed and fails on submit). The 12-hour clock writes "03:55 PM" too, so
+ * there a typed "03:55" without AM / PM is just as ambiguous; kept as typed it would read as the
+ * stored 24-hour 03:55, so it is kept as "3:55", which parseTypedTime turns down in that format.
  */
 export function goodAfterCommit(value: string, format: TimeFormat): string {
+  const zeroHour = format === '12h' ? /^0([1-9][:：]\d{2})$/.exec(value.trim()) : null;
+  if (zeroHour) return zeroHour[1];
   return parseTypedTime(value, format) ?? value;
 }

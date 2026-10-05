@@ -8,6 +8,7 @@ import { buildOrderRequest, pendingOrder, typePriceText, type BuildResult, type 
 import { useTicketM } from './messages';
 import { newCondition } from './ticketConditions';
 import type { TicketMarket } from './ticketModel';
+import { goodAfterCommit } from './timing';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 const mkt: TicketMarket = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
@@ -246,7 +247,9 @@ describe('buildOrderRequest: condition, iceberg, good-after-time', () => {
     expect(build12('10:30')).toMatchObject({ ok: false, error: 'gat' });
     expect(ok(build12('3:55 PM')).goodAfterTime).toBe('15:55');
     expect(ok(build12('15:55')).goodAfterTime).toBe('15:55');
+    // The stored 24-hour form; the field keeps a typed "03:55" as "3:55" (the clock writes "03:55 PM").
     expect(ok(build12('09:35')).goodAfterTime).toBe('09:35');
+    expect(build12(goodAfterCommit('03:55', '12h'))).toMatchObject({ ok: false, error: 'gat' });
   });
 });
 
