@@ -14,12 +14,12 @@ const en = {
   nav: {
     view: 'General',
     conn: 'Connection',
-    data: 'Market data',
+    data: 'Market Data',
     trade: 'Trade',
     notif: 'Notifications',
     sec: 'Privacy & Security',
     keys: 'Shortcuts',
-    log: 'API log',
+    log: 'API Log',
   },
 
   // Connection
@@ -104,7 +104,7 @@ const en = {
     10168: 'Delayed market data is not enabled for this account.',
     162: 'IB rejected a historical data request. Charts may stay empty while this persists.',
   } as Record<number, string>,
-  cacheTitle: 'Local cache',
+  cacheTitle: 'Local Cache',
   cacheDesc:
     'Bars, contract details and option chains are stored on this computer, so charts open at once and IB is asked only for what is missing. Intraday bars are kept for 30 days, charts not opened for 90 days are removed, and the cache stays under 512 MB by removing the least recently used charts first, intraday charts not opened in the past week before all others. Trade history and net liquidation history are always kept.',
   /** "84.2 MB · 312 series · 1.2M bars" */
@@ -182,7 +182,7 @@ const en = {
 
   // Privacy & Security
   privacy: 'Privacy',
-  lockScreen: 'Lock screen',
+  lockScreen: 'Lock Screen',
   lockNoPin: 'Set a lock PIN to turn on the lock screen and auto-lock.',
   autoLock: 'Auto-lock when idle',
   autoLockD: 'No keyboard or mouse input on this computer',
