@@ -60,6 +60,27 @@ export function limitOrder(contract: ContractRef, action: OrderAction, quantity:
   return { contract, action, orderType: 'LMT', quantity, limitPrice, tif: 'DAY', outsideRth: false, ...(condition ? { condition } : {}) };
 }
 
+/** How the strategy builder sends its legs. */
+export interface StrategyOrderOptions {
+  type: 'LMT' | 'MKT';
+  tif: 'DAY' | 'GTC';
+  /** Combos only: SMART may fill the legs separately (IB's NonGuaranteed routing). */
+  nonGuaranteed?: boolean;
+  condition?: PriceConditionSpec;
+}
+
+/** A strategy order: limit at the net price or market, DAY or GTC; combos optionally non-guaranteed. */
+export function strategyOrder(contract: ContractRef, action: OrderAction, quantity: number, limitPrice: number, o: StrategyOrderOptions): OrderRequest {
+  const req = limitOrder(contract, action, quantity, limitPrice, o.condition);
+  if (o.type === 'MKT') {
+    req.orderType = 'MKT';
+    delete req.limitPrice;
+  }
+  req.tif = o.tif;
+  if (o.nonGuaranteed && contract.secType === 'BAG') req.nonGuaranteed = true;
+  return req;
+}
+
 /** Default trigger level: 3% above (≥) or below (≤) the underlying. */
 export function defaultTrigger(spot: number, op: '>=' | '<='): string {
   return (spot * (op === '>=' ? 1.03 : 0.97)).toFixed(2);

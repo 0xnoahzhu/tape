@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { CLOCK_24H, createClock } from '@shared/timeFormat';
+import { defaultSettings } from '@shared/defaults';
 import type { Execution, WorkingOrder } from '@shared/types';
+import { initialTicket } from '../../state/store';
+import { buildOrderRequest } from '../ticket/buildOrder';
 import { useOrdersMessages } from './messages';
 import {
   canModifyInTicket,
@@ -13,7 +16,7 @@ import {
   orderTypeLabel,
   parseGoodAfter,
   priceOrUndefined,
-  ticketPatchFor,
+  ticketPatchFromOrder,
   timeCell,
   tradeAmount,
   workingOrders,
@@ -193,7 +196,7 @@ describe('orderStatusText', () => {
   });
 });
 
-describe('ticketPatchFor', () => {
+describe('ticketPatchFromOrder', () => {
   it('reproduces a stop-limit order with its advanced options', () => {
     const o = order({
       orderId: 4012,
@@ -208,7 +211,7 @@ describe('ticketPatchFor', () => {
       goodAfterTime: '20261005 09:35:00 US/Eastern',
       condition: { symbol: 'AAPL', operator: '<=', price: 220, outsideRth: true },
     });
-    expect(ticketPatchFor(o)).toMatchObject({
+    expect(ticketPatchFromOrder(o)).toMatchObject({
       side: 'SELL',
       orderType: 'STP LMT',
       qty: 50,
@@ -218,8 +221,7 @@ describe('ticketPatchFor', () => {
       goodTill: null,
       session: 'extended',
       condition: true,
-      condOp: '<=',
-      condPx: '220',
+      conds: [expect.objectContaining({ kind: 'price', op: '<=', value: '220', contract: stock('AAPL') })],
       condRth: true,
       iceberg: true,
       iceQty: '10',
@@ -232,24 +234,26 @@ describe('ticketPatchFor', () => {
   });
 
   it('keeps the TIF, the GTD expiry and the session', () => {
-    expect(ticketPatchFor(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }))).toMatchObject({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'regular', advancedOpen: false });
-    expect(ticketPatchFor(order({ tif: 'GTD', goodTillDate: '20261009-20:00:00' })).goodTill).toBe('2026-10-09T16:00');
-    expect(ticketPatchFor(order({ session: 'overnightDay', outsideRth: true }))).toMatchObject({ tif: 'DAY', session: 'overnightDay', advancedOpen: true });
-    expect(ticketPatchFor(order({ session: 'overnight' }))).toMatchObject({ tif: 'DAY', session: 'overnight', advancedOpen: true });
-    expect(ticketPatchFor(order({ tif: 'FOK' })).tif).toBe('FOK');
-    expect(ticketPatchFor(order({ tif: 'GTT' })).tif).toBe('DAY');
+    expect(ticketPatchFromOrder(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }))).toMatchObject({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'regular', advancedOpen: false });
+    expect(ticketPatchFromOrder(order({ tif: 'GTD', goodTillDate: '20261009-20:00:00' })).goodTill).toBe('2026-10-09T16:00');
+    expect(ticketPatchFromOrder(order({ session: 'overnightDay', outsideRth: true }))).toMatchObject({ tif: 'DAY', session: 'overnightDay', advancedOpen: true });
+    expect(ticketPatchFromOrder(order({ session: 'overnight' }))).toMatchObject({ tif: 'DAY', session: 'overnight', advancedOpen: true });
+    expect(ticketPatchFromOrder(order({ tif: 'FOK' })).tif).toBe('FOK');
+    expect(ticketPatchFromOrder(order({ tif: 'GTT' })).tif).toBe('DAY');
     expect(goodTillInput('whenever')).toBeNull();
   });
 
   it('maps trailing orders to the ticket trail fields', () => {
-    expect(ticketPatchFor(order({ orderType: 'TRAIL', limitPrice: undefined, trailingPercent: 2.5 }))).toMatchObject({ trailMode: 'pct', trailAmt: '2.5', limitPrice: null });
-    expect(ticketPatchFor(order({ orderType: 'TRAIL', limitPrice: undefined, auxPrice: 1.25 }))).toMatchObject({ trailMode: 'amt', trailAmt: '1.25' });
+    expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', limitPrice: undefined, trailingPercent: 2.5 }))).toMatchObject({ trailMode: 'pct', trailAmt: '2.5', limitPrice: null });
+    expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', limitPrice: undefined, auxPrice: 1.25 }))).toMatchObject({ trailMode: 'amt', trailAmt: '1.25' });
   });
 
-  it('only offers Modify for stock orders of ticket types', () => {
+  it('offers Modify for the ticket order types on single instruments', () => {
     expect(canModifyInTicket(order())).toBe(true);
-    expect(canModifyInTicket(order({ contract: option('AAPL', '20261016', 230, 'C') }))).toBe(false);
-    expect(canModifyInTicket(order({ orderType: 'MOC' }))).toBe(false);
+    expect(canModifyInTicket(order({ contract: option('AAPL', '20261016', 230, 'C') }))).toBe(true);
+    expect(canModifyInTicket(order({ orderType: 'MOC' }))).toBe(true);
+    expect(canModifyInTicket(order({ orderType: 'VWAP' }))).toBe(false);
+    expect(canModifyInTicket(order({ contract: { symbol: 'AAPL', secType: 'BAG', exchange: 'SMART', currency: 'USD' } }))).toBe(false);
   });
 });
 
@@ -274,5 +278,105 @@ describe('executions', () => {
   it('sorts newest first', () => {
     const list = newestExecutions([fill({ execId: 'a', time: 1 }), fill({ execId: 'b', time: 3 }), fill({ execId: 'c', time: 2 })]);
     expect(list.map((e) => e.execId)).toEqual(['b', 'c', 'a']);
+  });
+});
+
+describe('modify keeps every attribute', () => {
+  // IB replaces the whole order on a modify: whatever the ticket does not load is switched off.
+  const base = { ...initialTicket(defaultSettings()) };
+  const mkt = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
+  const resend = (o: WorkingOrder) => {
+    const r = buildOrderRequest({ contract: o.contract, ticket: { ...base, ...ticketPatchFromOrder(o) }, market: mkt, now: Date.UTC(2026, 9, 5, 14), timeFormat: '24h' });
+    if (!r.ok) throw new Error(r.error);
+    return r.request;
+  };
+
+  it('sends a limit order back with its fill attributes, algo, conditions, OCA group, route and note', () => {
+    const spy = { ...stock('SPY'), conId: 756733 };
+    const o = order({
+      algo: { strategy: 'Adaptive', params: { adaptivePriority: 'Patient' } },
+      conditions: {
+        items: [
+          { kind: 'price', contract: spy, operator: '<=', price: 600, triggerMethod: 2, join: 'or' },
+          { kind: 'time', time: '20261009 10:30:00 US/Eastern', join: 'and' },
+          { kind: 'margin', operator: '<=', percent: 25 },
+        ],
+        cancel: true,
+        outsideRth: true,
+      },
+      oca: { group: 'exits', type: 2 },
+      orderRef: 'core',
+      displaySize: undefined,
+    });
+    const req = resend(o);
+    expect(req).toMatchObject({ orderType: 'LMT', limitPrice: 226.5, oca: { group: 'exits', type: 2 }, orderRef: 'core' });
+    expect(req.algo).toEqual(o.algo);
+    expect(req.conditions).toEqual(o.conditions);
+    expect(req).toMatchObject({ allOrNone: false, hidden: false, sweepToFill: false, minQty: 0, discretionaryAmt: 0 });
+    // IB algo orders take no hidden or discretionary attributes; a plain limit order keeps them.
+    expect(resend(order({ hidden: true, discretionaryAmt: 0.05, displaySize: undefined }))).toMatchObject({ hidden: true, discretionaryAmt: 0.05 });
+  });
+
+  it('sends the other order types back with their prices', () => {
+    expect(resend(order({ orderType: 'MIT', limitPrice: 0, auxPrice: 225, triggerMethod: 8 }))).toMatchObject({ orderType: 'MIT', stopPrice: 225, triggerMethod: 8 });
+    expect(resend(order({ orderType: 'TRAIL LIMIT', action: 'SELL', limitPrice: 221.3, auxPrice: 2, trailStopPrice: 220.5, limitOffset: 0.4 }))).toMatchObject({
+      orderType: 'TRAIL LIMIT',
+      trailingAmount: 2,
+      trailStopPrice: 220.5,
+      limitOffset: 0.4,
+    });
+    expect(resend(order({ orderType: 'REL', limitPrice: 0, auxPrice: 0, percentOffset: 0.5 }))).toMatchObject({ orderType: 'REL', percentOffset: 0.5 });
+    expect(resend(order({ orderType: 'REL', limitPrice: 228, auxPrice: 0.02 }))).toMatchObject({ offset: 0.02, limitPrice: 228 });
+    expect(resend(order({ orderType: 'MIDPRICE', limitPrice: 0 }))).not.toHaveProperty('limitPrice');
+    expect(resend(order({ orderType: 'MOC', limitPrice: 0 }))).toMatchObject({ orderType: 'MOC' });
+  });
+
+  it('sends a stop with its adjustable stop, and an option with its minimum quantity', () => {
+    const adj = { trigger: 240, type: 'TRAIL' as const, trailAmount: 1, trailUnit: 'percent' as const };
+    expect(resend(order({ orderType: 'STP', action: 'SELL', limitPrice: 0, auxPrice: 230, adjustStop: adj })).adjustStop).toEqual(adj);
+    const opt = option('AAPL', '20261016', 230, 'C');
+    expect(resend(order({ contract: opt, key: 'opt', totalQuantity: 5, limitPrice: 4.25, minQty: 2 }))).toMatchObject({ minQty: 2, quantity: 5 });
+  });
+
+  it('opens the Advanced sections the order uses', () => {
+    expect(ticketPatchFromOrder(order({ allOrNone: true, oca: { group: 'g', type: 1 } }))).toMatchObject({ advancedOpen: true, advSections: ['fill', 'routing'] });
+    expect(ticketPatchFromOrder(order())).toMatchObject({ advancedOpen: false, advSections: [] });
+  });
+});
+
+describe('new order types and attributes in the lists', () => {
+  it('writes the price column of every type', () => {
+    expect(orderPriceText(order({ orderType: 'MIT', limitPrice: 0, auxPrice: 225 }))).toBe('225.00');
+    expect(orderPriceText(order({ orderType: 'LIT', limitPrice: 225.5, auxPrice: 225 }))).toBe('225.00 / 225.50');
+    expect(orderPriceText(order({ orderType: 'MOC', limitPrice: 0 }))).toBe('—');
+    expect(orderPriceText(order({ orderType: 'MIDPRICE', limitPrice: 0 }))).toBe('—');
+    expect(orderPriceText(order({ orderType: 'MIDPRICE', limitPrice: 228 }))).toBe('≤ 228.00');
+    // A sell's limit is a floor.
+    expect(orderPriceText(order({ orderType: 'MIDPRICE', action: 'SELL', limitPrice: 228 }))).toBe('≥ 228.00');
+    // Relative, snap and pegged orders show their offset (and limit).
+    expect(orderPriceText(order({ orderType: 'REL', limitPrice: 230, auxPrice: 0.02 }))).toBe('±0.02 · ≤ 230.00');
+    expect(orderPriceText(order({ orderType: 'REL', limitPrice: 0, percentOffset: 0.5 }))).toBe('±0.5%');
+    expect(orderPriceText(order({ orderType: 'PEG MID', action: 'SELL', limitPrice: 231, auxPrice: 0.01 }))).toBe('±0.01 · ≥ 231.00');
+    expect(orderPriceText(order({ orderType: 'SNAP MID', limitPrice: 0, auxPrice: 0.01 }))).toBe('±0.01');
+    expect(orderPriceText(order({ orderType: 'SNAP MKT', limitPrice: 0 }))).toBe('±0.00');
+    expect(orderPriceText(order({ orderType: 'TRAIL LIT', limitPrice: 0, trailStopPrice: 220.5 }))).toBe('220.50');
+    expect(orderTypeLabel('MIT', en)).toBe('MIT');
+    expect(en.typeNames.MIT).toBe('Market if touched');
+    expect(orderTypeLabel('MIDPRICE', zh)).toBe('中间价');
+  });
+
+  it('adds the attributes to the status and waits on any condition', () => {
+    const now = Date.UTC(2026, 9, 5, 14);
+    const flags = order({ allOrNone: true, algo: { strategy: 'Vwap', params: {} }, triggerMethod: 8, oca: { group: 'g1', type: 1 }, route: 'NASDAQ', orderRef: 'core' });
+    expect(orderStatusText(flags, en, CLOCK_24H, now).text).toBe('Submitted · DAY · AON · Trigger: Midpoint · VWAP · OCA g1 · → NASDAQ · “core”');
+    expect(orderStatusText(flags, zh, CLOCK_24H, now).text).toBe('已提交 · DAY · AON · 触发：中间价 · VWAP · OCA g1 · → NASDAQ · “core”');
+    const waiting = order({
+      status: 'PreSubmitted',
+      conditions: { items: [{ kind: 'time', time: '20261009 10:30:00 US/Eastern', join: 'and' }, { kind: 'margin', operator: '<=', percent: 25 }], outsideRth: false },
+    });
+    expect(orderStatusText(waiting, en, CLOCK_24H, now)).toEqual({ text: 'Waiting · after 10/09 10:30 ET +1', tone: 'ac' });
+    // An order a condition cancels works meanwhile.
+    const cancel = order({ conditions: { items: [{ kind: 'price', contract: stock('AAPL'), operator: '>=', price: 240 }], cancel: true, outsideRth: false } });
+    expect(orderStatusText(cancel, en, CLOCK_24H, now).text).toBe('Submitted · DAY · Cancel if AAPL ≥ 240.00');
   });
 });

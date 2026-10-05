@@ -30,12 +30,13 @@ export function useTicketKeys(submit: () => void): void {
       switch (e.key) {
         case 'b':
         case 'B':
-          if (!tradable) return;
+          // A working order keeps its side (IB refuses to switch it).
+          if (!tradable || s.ticket.modifyingOrderId != null) return;
           s.patchTicket({ side: 'BUY', limitPrice: null, stopPrice: null });
           break;
         case 's':
         case 'S':
-          if (!tradable) return;
+          if (!tradable || s.ticket.modifyingOrderId != null) return;
           s.patchTicket({ side: 'SELL', limitPrice: null, stopPrice: null });
           break;
         case 'ArrowUp':

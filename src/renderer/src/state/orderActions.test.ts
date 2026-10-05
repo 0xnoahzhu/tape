@@ -160,18 +160,21 @@ describe('order toasts', () => {
       updatedAt: 0,
     };
     confirmCancel(order);
-    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Type', value: 'LMT · DAY' });
+    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Type', value: 'Limit · DAY' });
     await useStore.getState().confirm!.run();
     expect(cancelOrder).toHaveBeenCalledWith(12);
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `${IB_321} ${GATEWAY_HINT}` });
 
     confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', session: 'extended', outsideRth: true });
-    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 4:00 PM ET · Extended hours');
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('Limit · GTD 10/09 4:00 PM ET · Extended hours');
+    // The order's attributes get a row of their own.
+    confirmCancel({ ...order, allOrNone: true, algo: { strategy: 'Adaptive', params: { adaptivePriority: 'Normal' } }, oca: { group: 'exit', type: 1 } });
+    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Attributes', value: 'AON · Adaptive · OCA exit' });
     setUp(4002, 'gateway', 'zh', '24h');
     confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
-    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('LMT · GTD 10/09 16:00 ET');
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('限价 · GTD 10/09 16:00 ET');
     setUp(4002, 'gateway', 'zh');
     confirmCancel({ ...order, session: 'overnightDay', outsideRth: true });
-    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: '类型', value: 'LMT · DAY · 夜盘 + 日盘' });
+    expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: '类型', value: '限价 · DAY · 夜盘 + 日盘' });
   });
 });

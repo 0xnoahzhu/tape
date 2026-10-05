@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
+import { useAttrM } from '../orders/attributeMessages';
 import { canModifyInTicket, orderPriceText, orderStatusText, ticketPatchFromOrder, type StatusLabels } from './orderModel';
 
 const L: StatusLabels = {
@@ -13,6 +14,7 @@ const L: StatusLabels = {
   iceberg: 'ice',
   filled: (n) => `${n} filled`,
   sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
+  attr: useAttrM.for('en'),
 };
 
 const C24 = CLOCK_24H;
@@ -111,7 +113,7 @@ describe('orderPriceText', () => {
     expect(orderPriceText(order())).toBe('226.50');
     expect(orderPriceText(order({ orderType: 'MKT', limitPrice: undefined }))).toBe('MKT');
     expect(orderPriceText(order({ orderType: 'STP', limitPrice: undefined, auxPrice: 245 }))).toBe('245.00');
-    expect(orderPriceText(order({ orderType: 'STP LMT', limitPrice: 244.5, auxPrice: 245 }))).toBe('244.50');
+    expect(orderPriceText(order({ orderType: 'STP LMT', limitPrice: 244.5, auxPrice: 245 }))).toBe('245.00 / 244.50');
     expect(orderPriceText(order({ orderType: 'TRAIL', limitPrice: undefined, trailStopPrice: 219.8 }))).toBe('219.80');
     expect(orderPriceText(order({ orderType: 'MOC', limitPrice: undefined }))).toBe('MOC');
   });
@@ -153,8 +155,7 @@ describe('ticketPatchFromOrder', () => {
       limitPrice: 4.5,
       stopPrice: 4.6,
       condition: true,
-      condOp: '<=',
-      condPx: '220',
+      conds: [expect.objectContaining({ kind: 'price', op: '<=', value: '220', contract: stock('AAPL') })],
       condRth: true,
       iceberg: true,
       iceQty: '2',
@@ -167,7 +168,8 @@ describe('ticketPatchFromOrder', () => {
   it('maps trailing orders and unknown types / TIFs', () => {
     expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', trailingPercent: 2.5 }))).toMatchObject({ orderType: 'TRAIL', trailMode: 'pct', trailAmt: '2.5', limitPrice: null });
     expect(ticketPatchFromOrder(order({ orderType: 'TRAIL', auxPrice: 1.5 }))).toMatchObject({ trailMode: 'amt', trailAmt: '1.5' });
-    expect(ticketPatchFromOrder(order({ orderType: 'REL', tif: 'XYZ' }))).toMatchObject({ orderType: 'LMT', tif: 'DAY' });
+    expect(ticketPatchFromOrder(order({ orderType: 'REL', tif: 'XYZ' }))).toMatchObject({ orderType: 'REL', tif: 'DAY' });
+    expect(ticketPatchFromOrder(order({ orderType: 'VWAP', tif: 'XYZ' }))).toMatchObject({ orderType: 'LMT', tif: 'DAY' });
   });
 
   it('keeps the TIF, GTD expiry and session of the working order', () => {
@@ -185,8 +187,9 @@ describe('canModifyInTicket', () => {
   });
 
   it('refuses order types and combos the ticket would silently change', () => {
-    expect(canModifyInTicket(order({ orderType: 'REL' }))).toBe(false);
-    expect(canModifyInTicket(order({ orderType: 'MOC' }))).toBe(false);
+    expect(canModifyInTicket(order({ orderType: 'REL' }))).toBe(true);
+    expect(canModifyInTicket(order({ orderType: 'MOC' }))).toBe(true);
+    expect(canModifyInTicket(order({ orderType: 'VOL' }))).toBe(false);
     expect(canModifyInTicket(order({ contract: { symbol: 'AAPL', secType: 'BAG', exchange: 'SMART', currency: 'USD' } }))).toBe(false);
   });
 });

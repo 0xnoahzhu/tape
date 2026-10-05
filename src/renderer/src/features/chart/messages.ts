@@ -6,6 +6,7 @@ import type { ChartRange } from './ranges';
 import type { PickerSectionId } from './timeframePicker';
 import { createMessages } from '../../i18n';
 import { useCommon } from '../../i18n/common';
+import { useAttrM } from '../orders/attributeMessages';
 import type { RefKind } from './sessionQuote';
 import type { StatusLabels } from './orderModel';
 
@@ -18,6 +19,7 @@ const statusEn: StatusLabels = {
   iceberg: 'ice',
   filled: (n) => `${n} filled`,
   sessions: useCommon.for('en').sessions,
+  attr: useAttrM.for('en'),
 };
 
 const statusZh: StatusLabels = {
@@ -29,6 +31,7 @@ const statusZh: StatusLabels = {
   iceberg: '冰山',
   filled: (n) => `已成交 ${n}`,
   sessions: useCommon.for('zh').sessions,
+  attr: useAttrM.for('zh'),
 };
 
 export const useChartMessages = createMessages({

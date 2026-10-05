@@ -107,6 +107,7 @@ export function StrategyPanel({ model }: { model: DeskModel }) {
           <Payoff view={view} spot={spot} m={m} />
           <Stats view={view} m={m} />
           <Condition symbol={model.symbol} spot={spot} combo={legs.length > 1} />
+          <OrderChoices combo={legs.length > 1} />
           <div style={{ padding: '14px 20px 6px', fontSize: 12, color: 'var(--mu)' }}>{m.netGreeks}</div>
           <NetGreeks view={view} m={m} />
           <div style={{ padding: '16px 20px 20px', marginTop: 'auto' }}>
@@ -123,6 +124,7 @@ export function StrategyPanel({ model }: { model: DeskModel }) {
                     underlying,
                     tmpl: st.tmpl,
                     cond: { on: st.cond, op: st.condOp, px: st.condPx ?? (spot != null ? defaultTrigger(spot, st.condOp) : '') },
+                    order: { type: st.ordType, tif: st.tif, nonGuaranteed: st.nonGuaranteed },
                   });
                 } finally {
                   setSending(false);
@@ -357,6 +359,53 @@ function Condition({ symbol, spot, combo }: { symbol: string; spot: number | und
   );
 }
 
+/** Order type (net limit or market), TIF and, for combos, non-guaranteed routing. */
+function OrderChoices({ combo }: { combo: boolean }) {
+  const m = useM();
+  const { ordType, tif, nonGuaranteed, patch } = useDesk();
+  const seg = (on: boolean) => ({
+    flex: 1,
+    height: 28,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+    cursor: 'pointer',
+    background: on ? 'var(--p2)' : 'transparent',
+    color: on ? 'var(--tx)' : 'var(--dm)',
+  });
+  return (
+    <div style={{ margin: '14px 20px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div style={{ display: 'flex', padding: 2, boxShadow: 'inset 0 0 0 1px var(--ln)' }} role="radiogroup" aria-label={m.orderL}>
+          {(['LMT', 'MKT'] as const).map((k) => (
+            <div key={k} role="radio" aria-checked={ordType === k} onClick={() => patch({ ordType: k })} style={seg(ordType === k)}>
+              {k === 'LMT' ? m.limit : m.market}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', padding: 2, boxShadow: 'inset 0 0 0 1px var(--ln)' }} role="radiogroup">
+          {(['DAY', 'GTC'] as const).map((k) => (
+            <div key={k} role="radio" aria-checked={tif === k} onClick={() => patch({ tif: k })} style={seg(tif === k)}>
+              {k}
+            </div>
+          ))}
+        </div>
+      </div>
+      {ordType === 'MKT' && <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--dm)' }}>{m.mktHint}</div>}
+      {combo && (
+        <div onClick={() => patch({ nonGuaranteed: !nonGuaranteed })} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ fontSize: 13 }}>{m.nonGuaranteed}</div>
+            <div style={{ fontSize: 11, lineHeight: 1.4, color: 'var(--dm)' }}>{m.nonGuaranteedD}</div>
+          </div>
+          <Toggle on={nonGuaranteed} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) {
   const g = view.greeks;
   const items = [
@@ -381,11 +430,13 @@ function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) {
 
 function SendButton({ view, busy, onSend }: { view: StrategyView; busy: boolean; onSend: () => void }) {
   const m = useM();
+  const market = useDesk((s) => s.ordType) === 'MKT';
   const n = view.legs.length;
   const o = view.order;
   const price = o ? (o.single ? o.price : o.terms.limitPrice) : undefined;
   const debit = view.orderCost == null ? (view.analysis?.cost ?? 0) >= 0 : view.orderCost >= 0;
-  const label = busy ? m.resolving : price != null ? m.send(n, debit ? m.netDebit : m.netCredit, f2(price)) : m.sendNoPrice(n);
+  // A market order has no net price to show.
+  const label = busy ? m.resolving : market ? m.sendMarket(n) : price != null ? m.send(n, debit ? m.netDebit : m.netCredit, f2(price)) : m.sendNoPrice(n);
   return (
     <button
       onClick={onSend}

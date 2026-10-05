@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comboContract, comboTerms, defaultTrigger, gcd, limitOrder } from './orders';
+import { comboContract, comboTerms, defaultTrigger, gcd, limitOrder, strategyOrder } from './orders';
 
 describe('comboTerms', () => {
   it('prices a debit vertical as BUY', () => {
@@ -69,5 +69,24 @@ describe('requests', () => {
   it('defaults the trigger 3% away', () => {
     expect(defaultTrigger(200, '>=')).toBe('206.00');
     expect(defaultTrigger(200, '<=')).toBe('194.00');
+  });
+});
+
+describe('strategyOrder', () => {
+  const bag = comboContract('AAPL', [
+    { conId: 1, ratio: 1, action: 'BUY' },
+    { conId: 2, ratio: 1, action: 'SELL' },
+  ]);
+  it('sends the legs at the net limit or at market, DAY or GTC', () => {
+    expect(strategyOrder(bag, 'BUY', 1, 2.2, { type: 'LMT', tif: 'DAY' })).toEqual(limitOrder(bag, 'BUY', 1, 2.2));
+    const mkt = strategyOrder(bag, 'SELL', 2, 1.1, { type: 'MKT', tif: 'GTC' });
+    expect(mkt).toMatchObject({ orderType: 'MKT', tif: 'GTC', quantity: 2 });
+    expect(mkt).not.toHaveProperty('limitPrice');
+  });
+
+  it('routes combos non-guaranteed on request, never a single leg', () => {
+    expect(strategyOrder(bag, 'BUY', 1, 2.2, { type: 'LMT', tif: 'DAY', nonGuaranteed: true }).nonGuaranteed).toBe(true);
+    const leg = { symbol: 'AAPL', secType: 'OPT' as const, exchange: 'SMART', currency: 'USD' };
+    expect(strategyOrder(leg, 'BUY', 1, 2.2, { type: 'LMT', tif: 'DAY', nonGuaranteed: true })).not.toHaveProperty('nonGuaranteed');
   });
 });

@@ -1,13 +1,17 @@
 // Pure helpers for the Orders page: which orders are listed and in what order, and how
 // IB's order fields read in the type / price / status columns.
 
-import { multiplierOf } from '@shared/contract';
+import { multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, px } from '@shared/format';
+import { isOrderType, ORDER_TYPE_FIELDS, TRAILING_ORDER_TYPES } from '@shared/orderRules';
 import { isTimeInForce, NEW_YORK, parseIbDateTime, sessionOf, timingText, zonedParts } from '@shared/orderTiming';
 import { CLOCK_24H, type Clock } from '@shared/timeFormat';
 import { isOrderActive, type Execution, type OrderType, type WorkingOrder } from '@shared/types';
-import type { TicketState } from '../../state/store';
+import type { AdvancedSection, TicketState } from '../../state/store';
+import { typedAlgoParams } from '../ticket/algo';
+import { conditionRows, newCondition } from '../ticket/ticketConditions';
 import { toLocalInput } from '../ticket/timing';
+import { attributeFlags, conditionsShort } from './attributes';
 import type { OrdersMessages } from './messages';
 
 /** IB sends Double.MAX_VALUE for unset prices; treat it (and non-finite values) as missing. */
@@ -64,22 +68,37 @@ export function orderTypeLabel(type: string, m: OrdersMessages): string {
   return m.typeLabels[type] ?? type;
 }
 
-/** Price column: limit or trigger price; both for stop-limit; the current stop for trailing orders. */
+/**
+ * Price column: limit or trigger price; both for stop-limit and limit-if-touched; the current stop
+ * for trailing orders; the offset of relative, snap and pegged orders and the limit of midprice,
+ * relative and pegged ones (a cap for a buy, ≤; a floor for a sell, ≥); "—" without a price.
+ */
 export function orderPriceText(o: WorkingOrder): string {
   const lmt = priceOrUndefined(o.limitPrice);
   const aux = priceOrUndefined(o.auxPrice);
+  const cap = lmt != null && lmt > 0 ? `${o.action === 'SELL' ? '≥' : '≤'} ${px(lmt)}` : null;
+  const offset = `±${o.percentOffset ? `${o.percentOffset}%` : px(aux ?? 0)}`;
   switch (o.orderType) {
     case 'MKT':
     case 'MOC':
+    case 'MTL':
       return DASH;
+    case 'SNAP MID':
+    case 'SNAP MKT':
+      return offset;
     case 'STP':
+    case 'MIT':
       return px(aux);
     case 'STP LMT':
+    case 'LIT':
       return aux != null && lmt != null ? `${px(aux)} / ${px(lmt)}` : px(lmt ?? aux);
-    case 'TRAIL':
-    case 'TRAIL LIMIT':
-      return px(priceOrUndefined(o.trailStopPrice));
+    case 'MIDPRICE':
+      return cap ?? DASH;
+    case 'REL':
+    case 'PEG MID':
+      return cap ? `${offset} · ${cap}` : offset;
     default:
+      if (o.orderType.startsWith('TRAIL')) return px(priceOrUndefined(o.trailStopPrice));
       return px(lmt ?? aux);
   }
 }
@@ -176,7 +195,7 @@ export interface OrderStatusText {
 }
 
 function trailText(o: WorkingOrder): string {
-  if (o.orderType !== 'TRAIL' && o.orderType !== 'TRAIL LIMIT') return '';
+  if (!o.orderType.startsWith('TRAIL')) return '';
   const pctValue = priceOrUndefined(o.trailingPercent);
   if (pctValue != null) return ` · ${+pctValue.toFixed(4)}%`;
   const amt = priceOrUndefined(o.auxPrice);
@@ -196,9 +215,13 @@ export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock
   if (o.status === 'PendingCancel') return { text: m.stCancelling + extra, tone: 'mu' };
   if (o.status === 'ApiPending' || o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
 
-  // IB keeps conditional and good-after orders PreSubmitted until they are released.
+  // IB keeps conditional and good-after orders PreSubmitted until they are released (an order
+  // that conditions cancel works meanwhile).
   const released = o.status === 'Submitted' || o.filled > 0;
-  if (o.condition && !released) {
+  if (o.conditions?.items.length && !o.conditions.cancel && !released) {
+    return { text: `${m.waiting} · ${conditionsShort(o.conditions, m.attr, clock)}${extra}`, tone: 'ac' };
+  }
+  if (o.condition && !o.conditions && !released) {
     const op = o.condition.operator === '>=' ? '≥' : '≤';
     return { text: `${m.waiting} · ${o.condition.symbol} ${op} ${px(o.condition.price)}${extra}`, tone: 'ac' };
   }
@@ -208,13 +231,12 @@ export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock
   }
   const state = o.status === 'PreSubmitted' ? m.stPreSubmitted : o.status === 'Unknown' ? m.stUnknown : m.stWorking;
   const ice = o.displaySize ? ` · ${m.ice} ${f0(o.displaySize)}` : '';
-  return { text: `${state} · ${tif}${trailText(o)}${ice}${extra}`, tone: 'mu' };
+  const flags = attributeFlags(o, m.attr, clock).map((f) => ` · ${f}`).join('');
+  return { text: `${state} · ${tif}${trailText(o)}${ice}${flags}${extra}`, tone: 'mu' };
 }
 
 // ---------------------------------------------------------------------------
 // Modify
-
-const TICKET_TYPES: readonly OrderType[] = ['LMT', 'MKT', 'STP', 'STP LMT', 'TRAIL'];
 
 /** IB's GTD expiry as the ticket's input value (New York time); null when unreadable. */
 export function goodTillInput(goodTillDate: string | undefined): string | null {
@@ -232,46 +254,101 @@ export function ticketTimingFor(o: WorkingOrder): Pick<TicketState, 'tif' | 'goo
   return { tif, goodTill: tif === 'GTD' ? goodTillInput(o.goodTillDate) : null, session: sessionOf(o) };
 }
 
-/** Only stock orders can be edited in the order ticket. */
+/**
+ * Whether "Modify" can load the order into the ticket without changing it: an order type the
+ * ticket offers, on a single instrument (combos are changed in the options desk). Other orders are
+ * only cancelled.
+ */
 export function canModifyInTicket(o: WorkingOrder): boolean {
-  return o.contract.secType === 'STK' && (TICKET_TYPES as readonly string[]).includes(o.orderType);
+  // IB refuses API modifies of an order sized by cash amount (10241).
+  return isOrderType(o.orderType) && o.contract.secType !== 'BAG' && o.cashQty == null;
 }
 
+const OFFSET_TYPES: readonly OrderType[] = ['REL', 'SNAP MID', 'SNAP MKT', 'PEG MID'];
+
 /**
- * Order ticket state that reproduces an existing order, so "Modify" resubmits it with edits:
- * including its time in force, GTD expiry and trading session.
+ * Order ticket state that reproduces an existing order, so "Modify" resubmits it with edits: its
+ * prices, time in force, GTD expiry and session, and every attribute (IB replaces the whole order
+ * on a modify, so one the ticket did not load would be switched off): fill attributes, trigger
+ * method, algo, conditions, adjustable stop, OCA group, destination, note and good-after time.
  */
-export function ticketPatchFor(o: WorkingOrder): Partial<TicketState> {
-  const orderType = (TICKET_TYPES as readonly string[]).includes(o.orderType) ? (o.orderType as OrderType) : 'LMT';
+export function ticketPatchFromOrder(o: WorkingOrder): Partial<TicketState> {
+  const orderType: OrderType = isOrderType(o.orderType) ? o.orderType : 'LMT';
+  const f = ORDER_TYPE_FIELDS[orderType];
   const timing = ticketTimingFor(o);
   const lmt = priceOrUndefined(o.limitPrice);
   const aux = priceOrUndefined(o.auxPrice);
   const trailPct = priceOrUndefined(o.trailingPercent);
+  const trailing = TRAILING_ORDER_TYPES.includes(orderType);
   const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime) : null;
+  const iceberg = o.displaySize != null && o.displaySize > 0;
+  // Orders mapped before every condition was read back carry only the first price condition.
+  const legacy = !o.conditions?.items.length && o.condition ? o.condition : undefined;
+  const conditions = !!o.conditions?.items.length || !!legacy;
+  const adj = o.adjustStop;
   const patch: Partial<TicketState> = {
     side: o.action,
     orderType,
     qty: o.totalQuantity,
-    limitPrice: (orderType === 'LMT' || orderType === 'STP LMT') && lmt != null ? lmt : null,
-    stopPrice: (orderType === 'STP' || orderType === 'STP LMT') && aux != null ? aux : null,
+    // IB reports 0 for a cap that is not set.
+    limitPrice: f.limit !== 'none' && lmt != null && lmt > 0 ? lmt : null,
+    // A trailing order keeps its current stop.
+    stopPrice: f.stop !== 'none' ? (aux ?? null) : trailing ? (priceOrUndefined(o.trailStopPrice) ?? null) : null,
+    limitOffset: f.limitOffset !== 'none' ? (o.limitOffset ?? null) : null,
+    offset: OFFSET_TYPES.includes(orderType) ? (o.percentOffset ?? aux ?? 0) : null,
+    offsetMode: orderType === 'REL' && o.percentOffset ? 'pct' : 'amt',
     ...timing,
     bracket: false,
     takeProfit: null,
     stopLoss: null,
-    condition: !!o.condition,
-    condOp: o.condition?.operator ?? '>=',
-    condPx: o.condition ? String(o.condition.price) : null,
-    condRth: o.condition?.outsideRth ?? false,
-    iceberg: !!o.displaySize,
-    iceQty: o.displaySize ? String(o.displaySize) : '100',
+    adjust: !!adj,
+    adjTrigger: adj ? String(adj.trigger) : null,
+    adjType: adj?.type ?? 'STP',
+    adjStop: adj?.stopPrice != null ? String(adj.stopPrice) : null,
+    adjLimit: adj?.limitPrice != null ? String(adj.limitPrice) : null,
+    adjTrail: adj?.trailAmount != null ? String(adj.trailAmount) : '1',
+    adjTrailUnit: adj?.trailUnit ?? 'percent',
+    condition: conditions,
+    conds: legacy ? [newCondition('price', { op: legacy.operator, value: String(legacy.price), contract: stock(legacy.symbol) })] : conditionRows(o.conditions),
+    condCancel: !!o.conditions?.cancel,
+    condRth: o.conditions?.outsideRth ?? o.condition?.outsideRth ?? false,
+    iceberg,
+    iceQty: iceberg ? String(o.displaySize) : '100',
+    allOrNone: !!o.allOrNone,
+    minQtyOn: !!o.minQty,
+    minQty: o.minQty ? String(o.minQty) : '1',
+    hidden: !!o.hidden,
+    sweep: !!o.sweepToFill,
+    disc: !!o.discretionaryAmt,
+    discAmt: o.discretionaryAmt ? String(o.discretionaryAmt) : '0.05',
+    cashQtyOn: !!o.cashQty && o.contract.secType === 'CASH',
+    cashQty: o.cashQty ? String(o.cashQty) : '10000',
+    triggerMethod: o.triggerMethod ?? 0,
+    algo: o.algo?.strategy ?? null,
+    algoParams: o.algo ? typedAlgoParams(o.algo) : {},
+    oca: !!o.oca,
+    ocaGroup: o.oca?.group ?? '',
+    ocaType: o.oca?.type ?? 1,
+    route: o.route ?? 'SMART',
+    orderRef: o.orderRef ?? '',
     goodAfter: !!gat?.etTime,
     goodAfterTime: gat?.etTime ?? '09:35',
     modifyingOrderId: o.orderId,
   };
-  if (orderType === 'TRAIL') {
+  if (trailing) {
     patch.trailMode = trailPct != null ? 'pct' : 'amt';
     patch.trailAmt = String(trailPct ?? aux ?? 3);
   }
-  patch.advancedOpen = !!(timing.session !== 'regular' || o.condition || o.displaySize || gat?.etTime);
+  // The Advanced panel opens on the sections the order uses.
+  const sections: AdvancedSection[] = [];
+  if (adj) sections.push('exits');
+  if (conditions) sections.push('conditions');
+  if (o.allOrNone || o.minQty || o.hidden || o.sweepToFill || o.discretionaryAmt || iceberg || patch.cashQtyOn) sections.push('fill');
+  if (o.triggerMethod) sections.push('trigger');
+  if (o.algo) sections.push('algo');
+  if (o.oca || o.route) sections.push('routing');
+  if (gat?.etTime || o.orderRef) sections.push('other');
+  patch.advSections = sections;
+  patch.advancedOpen = timing.session !== 'regular' || sections.length > 0;
   return patch;
 }

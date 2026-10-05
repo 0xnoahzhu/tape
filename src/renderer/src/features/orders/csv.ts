@@ -5,6 +5,7 @@ import { contractLabel } from '@shared/contract';
 import { hms, ymd } from '@shared/format';
 import { sessionOf } from '@shared/orderTiming';
 import type { Execution, TradingSession, WorkingOrder } from '@shared/types';
+import { algoCode, attributeCodes, conditionsCode } from './attributes';
 import { priceOrUndefined, tradeAmount } from './model';
 
 type Cell = string | number | null | undefined;
@@ -33,6 +34,12 @@ const HEADER = [
   'Realized P&L',
   'Exchange',
   'Exec ID',
+  'Attributes',
+  'Algo',
+  'Conditions',
+  'OCA group',
+  'Route',
+  'Note',
 ];
 
 /** Rounds away binary noise (e.g. 22695.000000000004) and drops missing values. */
@@ -89,9 +96,15 @@ export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): stri
       '',
       '',
       '',
-      // Overnight-only orders are routed to IB's OVERNIGHT venue.
-      session === 'overnight' ? 'OVERNIGHT' : o.contract.exchange,
+      // Overnight-only orders are routed to IB's OVERNIGHT venue; directed ones to their exchange.
+      session === 'overnight' ? 'OVERNIGHT' : (o.route ?? o.contract.exchange),
       '',
+      attributeCodes(o),
+      algoCode(o.algo),
+      conditionsCode(o.conditions),
+      o.oca ? `${o.oca.group} (type ${o.oca.type})` : '',
+      o.route ?? '',
+      o.orderRef ?? '',
     ]);
   }
   for (const e of executions) {
@@ -119,6 +132,12 @@ export function ordersCsv(orders: WorkingOrder[], executions: Execution[]): stri
       num(e.realizedPnL),
       e.exchange,
       e.execId,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
     ]);
   }
   return toCsv(rows);

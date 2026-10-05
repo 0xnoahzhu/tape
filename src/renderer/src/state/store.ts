@@ -7,11 +7,13 @@
 import { create } from 'zustand';
 import { presetPrice } from '../features/alerts/model';
 import { ticketTimingFor } from '../features/orders/model';
+import { newCondition } from '../features/ticket/ticketConditions';
 import { contractKey, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import { sessionOutsideRth } from '@shared/orderTiming';
 import type {
   AccountSummary,
+  AlgoStrategy,
   ApiLogEntry,
   AppNotification,
   ConnectionState,
@@ -21,15 +23,19 @@ import type {
   LocalizedName,
   LockState,
   NavPoint,
+  OcaType,
   OrderAction,
   OrderRequest,
   OrderType,
   Position,
   PriceAlert,
   Quote,
+  SecType,
   Settings,
+  StopOrderType,
   TimeInForce,
   TradingSession,
+  TriggerMethod,
   Watchlist,
   WorkingOrder,
 } from '@shared/types';
@@ -40,15 +46,54 @@ export type TradeView = 'chart' | 'opt' | 'depth';
 export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log';
 export type BellTab = 'alerts' | 'notifs';
 
+/** Kinds of order condition the ticket offers (IB's six). */
+export type TicketConditionKind = 'price' | 'time' | 'percentChange' | 'volume' | 'margin' | 'execution';
+
+/** One row of the ticket's conditions editor; values are the raw input strings. */
+export interface TicketCondition {
+  /** Stable key of the row (React). */
+  id: number;
+  kind: TicketConditionKind;
+  op: '>=' | '<=';
+  /**
+   * Price, percent change, volume or margin cushion as typed. For a price row watching the
+   * ticket's reference instrument, null follows the market (±3%).
+   */
+  value: string | null;
+  /** Watched instrument (price, % change, volume); null = the ticket's reference (the underlying for options). */
+  contract: ContractRef | null;
+  /** Price rows: IB's trigger method. */
+  trigger: TriggerMethod;
+  /** Time rows: a New York wall time, "2026-10-09T10:00"; null = the default (in an hour). */
+  time: string | null;
+  /** Execution rows: the symbol and security type whose trade triggers; '' = the ticket's instrument. */
+  symbol: string;
+  secType: SecType | null;
+  /** How this row combines with the next one. */
+  join: 'and' | 'or';
+}
+
+/** Collapsible sections of the ticket's Advanced panel. */
+export type AdvancedSection = 'exits' | 'conditions' | 'fill' | 'trigger' | 'algo' | 'routing' | 'other';
+
 /** Order ticket state shared by the ticket, depth view, command bar and "Modify". */
 export interface TicketState {
   side: OrderAction;
   orderType: OrderType;
   qty: number;
-  /** null = follow the market (ask for buys, bid for sells). */
+  /**
+   * null = follow the market (ask for buys, bid for sells). For MIDPRICE, REL and PEG MID this is
+   * the optional price cap and null means no cap.
+   */
   limitPrice: number | null;
-  /** null = default offset from last (±1%). */
+  /** Stop / trigger price, or the initial stop of trailing orders; null = default offset from last (±1%). */
   stopPrice: number | null;
+  /** TRAIL LIMIT / TRAIL LIT limit offset; null = default (0.2% of the stop). */
+  limitOffset: number | null;
+  /** REL, SNAP and PEG MID offset from the reference price; null = 0. */
+  offset: number | null;
+  /** REL: the offset is an amount or a percentage of the reference price. */
+  offsetMode: 'amt' | 'pct';
   tif: TimeInForce;
   /** GTD expiry as a New York wall time, "2026-10-09T16:00"; null = the next session close. */
   goodTill: string | null;
@@ -59,18 +104,58 @@ export interface TicketState {
    */
   outsideRth: boolean;
   advancedOpen: boolean;
+  /** Open sections of the Advanced panel. */
+  advSections: AdvancedSection[];
   bracket: boolean;
   /** Raw input strings; null = default (+3% / −2%). */
   takeProfit: string | null;
   stopLoss: string | null;
+  /** Stop-loss order type of the bracket and its extra values (raw strings; null = default). */
+  slType: StopOrderType;
+  slLimit: string | null;
+  slTrailMode: 'pct' | 'amt';
+  slTrail: string;
+  slOffset: string | null;
+  /** Adjustable stop (of the bracket's stop-loss, or of the order itself when it is a stop). */
+  adjust: boolean;
+  adjTrigger: string | null;
+  adjType: 'STP' | 'STP LMT' | 'TRAIL';
+  adjStop: string | null;
+  adjLimit: string | null;
+  adjTrail: string;
+  adjTrailUnit: 'amount' | 'percent';
   trailMode: 'pct' | 'amt';
   trailAmt: string;
+  /** Conditions are on (the rows are in `conds`). */
   condition: boolean;
-  condOp: '>=' | '<=';
-  condPx: string | null;
+  conds: TicketCondition[];
+  /** Cancel the order when the conditions are met instead of submitting it. */
+  condCancel: boolean;
   condRth: boolean;
   iceberg: boolean;
   iceQty: string;
+  /** Fill attributes. */
+  allOrNone: boolean;
+  minQtyOn: boolean;
+  minQty: string;
+  hidden: boolean;
+  sweep: boolean;
+  disc: boolean;
+  discAmt: string;
+  /** Forex: size the order by an amount of the quote currency. */
+  cashQtyOn: boolean;
+  cashQty: string;
+  triggerMethod: TriggerMethod;
+  /** IB algo and its parameters as typed (fractions as percentages, times as "HH:MM" New York). */
+  algo: AlgoStrategy | null;
+  algoParams: Record<string, string | boolean>;
+  oca: boolean;
+  ocaGroup: string;
+  ocaType: OcaType;
+  /** Destination: 'SMART' or a directed exchange. */
+  route: string;
+  /** Free-text note (IB's order reference). */
+  orderRef: string;
   goodAfter: boolean;
   goodAfterTime: string;
   /** When set, submitting modifies this order instead of placing a new one. */
@@ -81,6 +166,8 @@ export interface ConfirmRow {
   label: string;
   value: string;
   color?: string;
+  /** The value is " · "-separated parts that wrap between parts only ("Start 9:45 AM ET" stays whole). */
+  parts?: boolean;
 }
 
 /** Generic confirmation dialog ("act" in the design). */
@@ -237,18 +324,51 @@ export function initialTicket(settings: Settings): TicketState {
     goodTill: null,
     session,
     outsideRth: sessionOutsideRth(session),
+    limitOffset: null,
+    offset: null,
+    offsetMode: 'amt',
     advancedOpen: false,
+    advSections: [],
     bracket: false,
     takeProfit: null,
     stopLoss: null,
+    slType: 'STP',
+    slLimit: null,
+    slTrailMode: 'pct',
+    slTrail: '2',
+    slOffset: null,
+    adjust: false,
+    adjTrigger: null,
+    adjType: 'STP',
+    adjStop: null,
+    adjLimit: null,
+    adjTrail: '1',
+    adjTrailUnit: 'percent',
     trailMode: 'pct',
     trailAmt: '3',
     condition: false,
-    condOp: '>=',
-    condPx: null,
+    conds: [newCondition()],
+    condCancel: false,
     condRth: false,
     iceberg: false,
     iceQty: '100',
+    allOrNone: false,
+    minQtyOn: false,
+    minQty: '1',
+    hidden: false,
+    sweep: false,
+    disc: false,
+    discAmt: '0.05',
+    cashQtyOn: false,
+    cashQty: '10000',
+    triggerMethod: 0,
+    algo: null,
+    algoParams: {},
+    oca: false,
+    ocaGroup: '',
+    ocaType: 1,
+    route: 'SMART',
+    orderRef: '',
     goodAfter: false,
     goodAfterTime: '09:35',
     modifyingOrderId: null,
@@ -317,7 +437,24 @@ export const useStore = create<StoreState>()((set, get) => ({
     set((s) => ({
       symbol: contract,
       symbolName: name,
-      ticket: { ...s.ticket, limitPrice: null, stopPrice: null, takeProfit: null, stopLoss: null, condPx: null, modifyingOrderId: null },
+      ticket: {
+        ...s.ticket,
+        limitPrice: null,
+        stopPrice: null,
+        limitOffset: null,
+        takeProfit: null,
+        stopLoss: null,
+        slLimit: null,
+        slOffset: null,
+        adjTrigger: null,
+        adjStop: null,
+        adjLimit: null,
+        // Price rows that follow the reference instrument follow the new one; a directed route
+        // may not exist for it.
+        conds: s.ticket.conds.map((c) => (c.kind === 'price' && c.contract == null ? { ...c, value: null } : c)),
+        route: 'SMART',
+        modifyingOrderId: null,
+      },
     })),
   openSymbol: (contract, view, name) => {
     // Keep the known name only when the same instrument is reopened.

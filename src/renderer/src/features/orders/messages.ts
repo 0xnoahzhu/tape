@@ -1,6 +1,7 @@
 // Orders page strings (design TPL k62–k72, ordTabs, ordStL, the trades header trH and the status texts of stOf()).
 import { createMessages } from '../../i18n';
 import { useCommon } from '../../i18n/common';
+import { useAttrM } from './attributeMessages';
 
 export const useOrdersMessages = createMessages({
   en: {
@@ -22,7 +23,41 @@ export const useOrdersMessages = createMessages({
     cancel: 'Cancel',
     noTrades: 'No trades today',
     // Order types (design OTYPES)
-    typeLabels: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail', 'TRAIL LIMIT': 'Trail limit' } as Record<string, string>,
+    typeLabels: {
+      LMT: 'Limit',
+      MKT: 'Market',
+      STP: 'Stop',
+      'STP LMT': 'Stop limit',
+      TRAIL: 'Trail',
+      'TRAIL LIMIT': 'Trail limit',
+      // The column is narrow: the More menu's types by IB's code, as the menu shows it beside the
+      // name (typeNames has the ticket's names for the tooltip).
+      MIT: 'MIT',
+      LIT: 'LIT',
+      MOC: 'MOC',
+      LOC: 'LOC',
+      MTL: 'MTL',
+      MIDPRICE: 'Midprice',
+      REL: 'Relative',
+      'SNAP MID': 'SNAP MID',
+      'SNAP MKT': 'SNAP MKT',
+      'PEG MID': 'PEG MID',
+      'TRAIL MIT': 'TRAIL MIT',
+      'TRAIL LIT': 'TRAIL LIT',
+    } as Record<string, string>,
+    /** The ticket's names of the types (the type cell's tooltip). */
+    typeNames: {
+      MIT: 'Market if touched',
+      LIT: 'Limit if touched',
+      MOC: 'Market on close',
+      LOC: 'Limit on close',
+      MTL: 'Market to limit',
+      'SNAP MID': 'Snap to midpoint',
+      'SNAP MKT': 'Snap to market',
+      'PEG MID': 'Pegged to midpoint',
+      'TRAIL MIT': 'Trail market if touched',
+      'TRAIL LIT': 'Trail limit if touched',
+    } as Record<string, string>,
     // Status column
     stWorking: 'Submitted',
     stPreSubmitted: 'Pre-submitted',
@@ -35,6 +70,7 @@ export const useOrdersMessages = createMessages({
     ice: 'ice',
     stopLimitTitle: 'Stop / Limit',
     sessions: useCommon.for('en').sessions,
+    attr: useAttrM.for('en'),
     // Ownership
     tws: 'TWS',
     clientN: (id: number) => `Client ${id}`,
@@ -62,7 +98,27 @@ export const useOrdersMessages = createMessages({
     modify: '改单',
     cancel: '撤单',
     noTrades: '今日没有成交',
-    typeLabels: { LMT: '限价', MKT: '市价', STP: '止损', 'STP LMT': '止损限价', TRAIL: '跟踪止损', 'TRAIL LIMIT': '跟踪止损限价' } as Record<string, string>,
+    typeLabels: {
+      LMT: '限价',
+      MKT: '市价',
+      STP: '止损',
+      'STP LMT': '止损限价',
+      TRAIL: '跟踪止损',
+      'TRAIL LIMIT': '跟踪止损限价',
+      MIT: '触价市价',
+      LIT: '触价限价',
+      MOC: '收盘市价',
+      LOC: '收盘限价',
+      MTL: '市价转限价',
+      MIDPRICE: '中间价',
+      REL: '相对价',
+      'SNAP MID': '即时中间价',
+      'SNAP MKT': '即时市价',
+      'PEG MID': '挂钩中间价',
+      'TRAIL MIT': '跟踪触价市价',
+      'TRAIL LIT': '跟踪触价限价',
+    } as Record<string, string>,
+    typeNames: {} as Record<string, string>,
     stWorking: '已提交',
     stPreSubmitted: '预提交',
     stSubmitting: '提交中',
@@ -74,6 +130,7 @@ export const useOrdersMessages = createMessages({
     ice: '冰山',
     stopLimitTitle: '触发价 / 限价',
     sessions: useCommon.for('zh').sessions,
+    attr: useAttrM.for('zh'),
     tws: 'TWS',
     clientN: (id: number) => `客户端 ${id}`,
     ownOrder: (id: number, client: number) => `订单 #${id} · 由本应用提交（客户端 ${client}）`,

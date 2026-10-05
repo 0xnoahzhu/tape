@@ -407,6 +407,9 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
         style={{
           width,
+          // Never taller than the window: a dialog with long content scrolls a part of it.
+          maxHeight: 'calc(100% - 32px)',
+          boxSizing: 'border-box',
           background: 'var(--p)',
           boxShadow: '0 0 0 1px var(--ln), 0 20px 60px rgba(0,0,0,.25)',
           padding: 28,
@@ -423,7 +426,7 @@ export function Modal({
 }
 
 /** Key/value rows inside dialogs. */
-export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string }> }) {
+export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string; parts?: boolean }> }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {rows.map((r, i) => (
@@ -431,9 +434,16 @@ export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: 
           key={i}
           style={{ minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', fontSize: 13 }}
         >
-          <div style={{ color: 'var(--mu)' }}>{r.label}</div>
-          <div className="num selectable" style={{ color: r.color ?? 'var(--tx)', textAlign: 'right' }}>
-            {r.value}
+          <div style={{ color: 'var(--mu)', flexShrink: 0, whiteSpace: 'nowrap' }}>{r.label}</div>
+          <div className="num selectable" style={{ color: r.color ?? 'var(--tx)', textAlign: 'right', minWidth: 0 }}>
+            {r.parts && typeof r.value === 'string'
+              ? r.value.split(' · ').map((part, k) => (
+                  <span key={k}>
+                    {k > 0 && ' · '}
+                    <span style={{ whiteSpace: 'nowrap' }}>{part}</span>
+                  </span>
+                ))
+              : r.value}
           </div>
         </div>
       ))}

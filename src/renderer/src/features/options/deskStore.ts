@@ -26,10 +26,15 @@ interface DeskState {
   condOp: '>=' | '<=';
   /** Raw trigger input; null = default (±3% from the underlying). */
   condPx: string | null;
+  /** How the legs are sent: at the net mark (limit) or at market, DAY or GTC. */
+  ordType: 'LMT' | 'MKT';
+  tif: 'DAY' | 'GTC';
+  /** Combos: SMART may fill the legs separately (leg risk). */
+  nonGuaranteed: boolean;
 
   /** Resets per-underlying state (legs, expiry) when the instrument changes. */
   setUnderlying(key: string): void;
-  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx'>>): void;
+  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed'>>): void;
   addLeg(leg: NewLeg): void;
   setLegs(legs: NewLeg[], tmpl: StrategyKey | null): void;
   updateLeg(id: number, f: (l: Leg) => Leg): void;
@@ -51,6 +56,9 @@ export const useDesk = create<DeskState>()((set) => ({
   cond: false,
   condOp: '>=',
   condPx: null,
+  ordType: 'LMT',
+  tif: 'DAY',
+  nonGuaranteed: false,
 
   setUnderlying: (key) =>
     set((s) => (s.underlyingKey === key ? s : { underlyingKey: key, expiry: null, legs: [], tmpl: null, expOpen: false, condPx: null })),

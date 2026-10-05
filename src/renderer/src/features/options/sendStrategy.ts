@@ -8,7 +8,7 @@ import { useCommon } from '../../i18n/common';
 import { errorText, submitOrder } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useM } from './messages';
-import { comboContract, limitOrder } from './orders';
+import { comboContract, strategyOrder, type StrategyOrderOptions } from './orders';
 import type { StrategyKey } from './strategies';
 import type { StrategyView } from './strategyModel';
 
@@ -17,12 +17,14 @@ export interface SendOptions {
   underlying: ContractRef;
   tmpl: StrategyKey | null;
   cond: { on: boolean; op: '>=' | '<='; px: string };
+  /** Order type, TIF and combo routing. */
+  order?: Omit<StrategyOrderOptions, 'condition'>;
 }
 
 const opSymbol = (op: '>=' | '<=') => (op === '>=' ? '≥' : '≤');
 
 /** Validates, resolves combo legs and opens the order review (or sends right away). */
-export async function sendStrategy({ view, underlying, tmpl, cond }: SendOptions): Promise<void> {
+export async function sendStrategy({ view, underlying, tmpl, cond, order = { type: 'LMT', tif: 'DAY' } }: SendOptions): Promise<void> {
   const s = useStore.getState();
   const m = useM.now();
   const c = useCommon.now();
@@ -43,7 +45,7 @@ export async function sendStrategy({ view, underlying, tmpl, cond }: SendOptions
   let name: string;
   if (view.order.single) {
     const v = legs[0];
-    request = limitOrder(v.contract, v.leg.side, v.leg.qty, view.order.price, condition);
+    request = strategyOrder(v.contract, v.leg.side, v.leg.qty, view.order.price, { ...order, condition });
     name = contractLabel(v.contract);
   } else {
     if (s.connection.status !== 'connected') return fail(c.notConnected);
@@ -61,7 +63,7 @@ export async function sendStrategy({ view, underlying, tmpl, cond }: SendOptions
       underlying.symbol,
       conIds.map((conId, i) => ({ conId, ratio: terms.ratios[i], action: terms.legActions[i] })),
     );
-    request = limitOrder(bag, terms.action, terms.quantity, terms.limitPrice, condition);
+    request = strategyOrder(bag, terms.action, terms.quantity, terms.limitPrice, { ...order, condition });
     name = m.comboName(underlying.symbol, legs.length, tmpl ? m.strategies[tmpl] : m.combo);
   }
 
@@ -75,8 +77,8 @@ export async function sendStrategy({ view, underlying, tmpl, cond }: SendOptions
       { label: c.contract, value: name },
       { label: c.side, value: sideLabel, color: buy ? 'var(--up)' : 'var(--dn)' },
       { label: c.qty, value: f0(request.quantity) },
-      { label: c.typePrice, value: `${m.limit} ${f2(request.limitPrice)}` },
-      { label: c.tif, value: request.tif + (condition ? m.conditional : '') },
+      { label: c.typePrice, value: request.orderType === 'MKT' ? m.market : `${m.limit} ${f2(request.limitPrice)}` },
+      { label: c.tif, value: request.tif + (condition ? m.conditional : '') + (request.nonGuaranteed ? m.nonGuaranteedExtra : '') },
       ...(condition ? [{ label: c.trigger, value: `${underlying.symbol} ${opSymbol(condition.operator)} ${f2(condition.price)}` }] : []),
       { label: c.estAmount, value: usd(Math.abs(view.orderCost ?? 0)) },
     ],

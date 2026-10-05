@@ -89,7 +89,9 @@ export function DepthView() {
   const fmt = (p: number) => f2(p, decimals);
   const label = contractLabel(symbol);
 
-  const pick = (r: LadderRow) => patchTicket({ orderType: 'LMT', limitPrice: r.price, side: r.side === 'ask' ? 'BUY' : 'SELL' });
+  // A working order being modified keeps its side and type (IB refuses to change them): only its price follows.
+  const pick = (r: LadderRow) =>
+    patchTicket(useStore.getState().ticket.modifyingOrderId != null ? { limitPrice: r.price } : { orderType: 'LMT', limitPrice: r.price, side: r.side === 'ask' ? 'BUY' : 'SELL' });
 
   const bookError = book?.error ? `${book.error.message} (${book.error.code})` : requestError;
   const needsL2 = !!book?.error && NO_L2_CODES.has(book.error.code);

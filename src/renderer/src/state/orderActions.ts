@@ -3,7 +3,9 @@
 import { contractLabel } from '@shared/contract';
 import { f0 } from '@shared/format';
 import { timingText } from '@shared/orderTiming';
-import { orderPriceText } from '../features/orders/model';
+import { attributeFlags } from '../features/orders/attributes';
+import { useOrdersMessages } from '../features/orders/messages';
+import { orderPriceText, orderTypeLabel } from '../features/orders/model';
 import { hostAppName } from '../features/settings/logic';
 import type { WorkingOrder } from '@shared/types';
 import { currentClock } from '../i18n';
@@ -114,14 +116,18 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
 export function confirmCancel(o: WorkingOrder): void {
   const s = useStore.getState();
   const m = useCommon.now();
+  const om = useOrdersMessages.now();
+  const clock = currentClock();
   const price = o.orderType === 'MKT' ? 'MKT' : orderPriceText(o);
+  const flags = attributeFlags(o, om.attr, clock, true);
   s.ask({
     title: m.cancelOrderTitle,
     rows: [
       { label: m.contract, value: contractLabel(o.contract) },
       { label: m.side, value: o.action === 'BUY' ? m.buy : m.sell, color: o.action === 'BUY' ? 'var(--up)' : 'var(--dn)' },
       { label: `${m.qty} / ${m.price}`, value: `${f0(o.totalQuantity)} @ ${price}` },
-      { label: m.type, value: `${o.orderType} · ${timingText(o, m.sessions, currentClock())}` },
+      { label: m.type, value: `${om.typeNames[o.orderType] ?? orderTypeLabel(o.orderType, om)} · ${timingText(o, m.sessions, clock)}` },
+      ...(flags.length ? [{ label: m.orderAttributes, value: flags.join(' · ') }] : []),
     ],
     label: m.cancelOrderLabel,
     danger: true,

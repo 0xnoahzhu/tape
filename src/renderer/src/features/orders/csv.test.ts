@@ -60,8 +60,37 @@ describe('ordersCsv', () => {
     expect(lines).toHaveLength(3);
     expect(lines[0].startsWith('Record,Time,Account,Order ID')).toBe(true);
     expect(lines[0]).toContain(',Status,TIF,Session,Good till,Amount,');
-    expect(lines[1]).toBe('Open order,2026-10-04 09:41:05,DU1,4012,7,AAPL,AAPL,STK,SELL,STP LMT,50,244.5,245,0,PreSubmitted,GTC,Regular,,,,,SMART,');
-    expect(lines[2]).toBe('Trade,2026-10-04 10:12:09,DU1,4008,,AAPL 10/16 230 Call,AAPL,OPT,BUY,,10,3.1,,10,Filled,,,,3100,6.5,,CBOE,0001f4e8.1');
+    expect(lines[0].endsWith(',Exec ID,Attributes,Algo,Conditions,OCA group,Route,Note')).toBe(true);
+    expect(lines[1]).toBe('Open order,2026-10-04 09:41:05,DU1,4012,7,AAPL,AAPL,STK,SELL,STP LMT,50,244.5,245,0,PreSubmitted,GTC,Regular,,,,,SMART,,,,,,,');
+    expect(lines[2]).toBe('Trade,2026-10-04 10:12:09,DU1,4008,,AAPL 10/16 230 Call,AAPL,OPT,BUY,,10,3.1,,10,Filled,,,,3100,6.5,,CBOE,0001f4e8.1,,,,,,');
+  });
+
+  it('writes the attributes, algo, conditions, OCA group, route and note in IB terms', () => {
+    const rich: WorkingOrder = {
+      ...o,
+      orderType: 'LMT',
+      allOrNone: true,
+      hidden: true,
+      discretionaryAmt: 0.05,
+      displaySize: 10,
+      triggerMethod: 8,
+      algo: { strategy: 'Vwap', params: { maxPctVol: 0.1, startTime: '09:45' } },
+      conditions: {
+        items: [
+          { kind: 'price', contract: { ...stock('SPY'), conId: 756733 }, operator: '>=', price: 600, triggerMethod: 2, join: 'or' },
+          { kind: 'time', time: '20261009 10:00:00 US/Eastern' },
+        ],
+        cancel: true,
+        outsideRth: true,
+      },
+      oca: { group: 'exit', type: 3 },
+      route: 'NASDAQ',
+      orderRef: 'swing, part 1',
+    };
+    const line = ordersCsv([rich], []).trimEnd().split('\r\n')[1];
+    expect(line.endsWith(
+      ',NASDAQ,,AON;Hidden;Disc=0.05;Display=10;Trigger=8,Vwap maxPctVol=0.1 startTime=09:45,price SPY >= 600 trigger=2 or time 20261009 10:00:00 US/Eastern cancel outsideRth,exit (type 3),NASDAQ,"swing, part 1"',
+    )).toBe(true);
   });
 
   it('writes the session, the GTD expiry and the OVERNIGHT venue', () => {

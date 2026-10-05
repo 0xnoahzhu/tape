@@ -9,7 +9,7 @@ import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useOrdersMessages, type OrdersMessages } from './messages';
-import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFor, timeCell } from './model';
+import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
 import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
@@ -26,7 +26,7 @@ function modify(o: WorkingOrder): void {
   const s = useStore.getState();
   // openSymbol resets the ticket's price overrides, so patch the ticket afterwards.
   openInstrument(o.contract, s.view === 'opt' ? 'chart' : undefined);
-  s.patchTicket(ticketPatchFor(o));
+  s.patchTicket(ticketPatchFromOrder(o));
   s.showToast(useOrdersMessages.now().modifyHint(o.orderId));
 }
 
@@ -76,13 +76,13 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
               {contractLabel(o.contract)}
             </div>
             <div style={{ color: buy ? 'var(--up)' : 'var(--dn)', fontWeight: 500 }}>{buy ? c.buyShort : c.sellShort}</div>
-            <div className="ellipsis" style={{ color: 'var(--mu)' }}>
+            <div className="ellipsis" style={{ color: 'var(--mu)' }} title={`${m.typeNames[o.orderType] ?? orderTypeLabel(o.orderType, m)} (${o.orderType})`}>
               {orderTypeLabel(o.orderType, m)}
             </div>
             <div className="num" style={{ textAlign: 'right' }}>
               {f0(o.totalQuantity)}
             </div>
-            <div className="num ellipsis" style={{ textAlign: 'right' }} title={o.orderType === 'STP LMT' ? `${m.stopLimitTitle}: ${price}` : undefined}>
+            <div className="num ellipsis" style={{ textAlign: 'right' }} title={o.orderType === 'STP LMT' ? `${m.stopLimitTitle}: ${price}` : price}>
               {price}
             </div>
             <div className="num" style={{ textAlign: 'right', color: 'var(--mu)' }}>

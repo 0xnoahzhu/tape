@@ -5,6 +5,8 @@ import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { OrderRequest } from '@shared/types';
 import { initialTicket, type TicketState } from '../../state/store';
 import { buildOrderRequest, pendingOrder, typePriceText, type BuildResult, type ReviewLabels } from './buildOrder';
+import { useTicketM } from './messages';
+import { newCondition } from './ticketConditions';
 import type { TicketMarket } from './ticketModel';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
@@ -22,11 +24,15 @@ const labels: ReviewLabels = {
   tpSl: 'Take profit / Stop loss',
   buy: 'Buy',
   sell: 'Sell',
-  orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' },
+  orderTypes: { LMT: 'Limit', MKT: 'Market', STP: 'Stop', 'STP LMT': 'Stop limit', TRAIL: 'Trail' } as ReviewLabels['orderTypes'],
   sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
   clock: CLOCK_24H,
   extras: { bracket: ' · with bracket', conditional: ' · conditional', iceberg: ' · iceberg', goodAfter: (t) => ` · GAT ${t}` },
 };
+
+const en = useTicketM.for('en');
+/** Labels with every review row (the ticket's own). */
+const fullLabels: ReviewLabels = { ...labels, orderTypes: en.orderTypes, review: en.review, stopTypes: en.stopTypes, attr: en.attr };
 
 function ok(r: BuildResult): OrderRequest {
   if (!r.ok) throw new Error(`expected ok, got ${r.error}`);
@@ -204,18 +210,19 @@ describe('buildOrderRequest: bracket', () => {
 
 describe('buildOrderRequest: condition, iceberg, good-after-time', () => {
   it('adds a price condition on the instrument', () => {
-    const r = ok(build({ condition: true, condOp: '>=', condPx: '235', condRth: true }));
-    expect(r.condition).toEqual({ contract: AAPL, operator: '>=', price: 235, outsideRth: true });
+    const r = ok(build({ condition: true, conds: [newCondition('price', { op: '>=', value: '235' })], condRth: true }));
+    expect(r.conditions).toEqual({ items: [{ kind: 'price', contract: AAPL, operator: '>=', price: 235 }], outsideRth: true });
+    expect(r.condition).toBeUndefined();
   });
 
-  it('watches the underlying for options', () => {
+  it('watches the underlying for options, 3% from it by default', () => {
     const opt = option('AAPL', '20261016', 230, 'C');
-    const r = ok(build({ condition: true, condOp: '<=', limitPrice: 4.25 }, { ...mkt, minTick: 0.05, refMinTick: 0.01 }, opt));
-    expect(r.condition).toEqual({ contract: AAPL, operator: '<=', price: 220.67, outsideRth: false });
+    const r = ok(build({ condition: true, conds: [newCondition('price', { op: '<=' })], limitPrice: 4.25 }, { ...mkt, minTick: 0.05, refMinTick: 0.01 }, opt));
+    expect(r.conditions).toEqual({ items: [{ kind: 'price', contract: AAPL, operator: '<=', price: 220.67 }], outsideRth: false });
   });
 
   it('rejects a missing condition price', () => {
-    expect(build({ condition: true, condPx: '' })).toMatchObject({ error: 'cond' });
+    expect(build({ condition: true, conds: [newCondition('price', { value: '' })] })).toMatchObject({ error: 'cond' });
   });
 
   it('adds the iceberg display size', () => {
@@ -262,7 +269,7 @@ describe('review rows', () => {
   });
 
   it('lists extras, bracket and trigger rows', () => {
-    const r = build({ side: 'SELL', limitPrice: 100, session: 'extended', bracket: true, condition: true, condPx: '235', iceberg: true, iceQty: '10', goodAfter: true, tif: 'GTC', modifyingOrderId: 41 });
+    const r = build({ side: 'SELL', limitPrice: 100, session: 'extended', bracket: true, condition: true, conds: [newCondition('price', { value: '235' })], iceberg: true, iceQty: '10', goodAfter: true, tif: 'GTC', modifyingOrderId: 41 });
     if (!r.ok) throw new Error(r.error);
     const p = pendingOrder(r.request, r.model, labels, mkt, 41);
     expect(p.modifyOrderId).toBe(41);
@@ -271,15 +278,20 @@ describe('review rows', () => {
     expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 ET');
     const h12 = pendingOrder(r.request, r.model, { ...labels, clock: createClock('12h', 'en') }, mkt, 41);
     expect(h12.rows.find((x) => x.label === 'TIF')?.value).toBe('GTC · Extended hours · conditional · iceberg · GAT 9:35 AM ET');
-    expect(byLabel['Trigger'].value).toBe('AAPL ≥ 235.00');
     expect(byLabel['Take profit / Stop loss']).toBeUndefined();
+    // With the attribute labels the conditions get their own row.
+    const full = pendingOrder(r.request, r.model, fullLabels, mkt, 41).rows;
+    expect(full.find((x) => x.label === 'Conditions')?.value).toBe('AAPL ≥ 235.00');
+    // …and the TIF row no longer repeats them.
+    expect(full.find((x) => x.label === 'TIF')?.value).not.toContain('conditional');
   });
 
   it('shows the bracket for new orders', () => {
     const r = build({ limitPrice: 100, bracket: true });
     if (!r.ok) throw new Error(r.error);
     const rows = pendingOrder(r.request, r.model, labels, mkt).rows;
-    expect(rows.find((x) => x.label === 'TIF')?.value).toBe('DAY · with bracket');
+    // The bracket has a row of its own.
+    expect(rows.find((x) => x.label === 'TIF')?.value).toBe('DAY');
     expect(rows.find((x) => x.label === 'Take profit / Stop loss')?.value).toBe('103.00 / 98.00');
   });
 

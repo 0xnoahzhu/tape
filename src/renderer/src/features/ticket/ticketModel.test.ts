@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultSettings } from '@shared/defaults';
 import { index, option, stock } from '@shared/contract';
 import { initialTicket, type TicketState } from '../../state/store';
+import { newCondition } from './ticketConditions';
 import { buyingPowerAfter, conditionContract, money, priceInput, resolveTicket, stepQty, tickDecimals, trailStop, type TicketMarket } from './ticketModel';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
@@ -100,16 +101,19 @@ describe('resolveTicket', () => {
   });
 
   it('typed bracket and condition values win over defaults', () => {
-    const m = resolveTicket(ticket({ limitPrice: 100, takeProfit: '110', stopLoss: '', condPx: '240' }), mkt);
+    const m = resolveTicket(ticket({ limitPrice: 100, takeProfit: '110', stopLoss: '', conds: [newCondition('price', { value: '240' })] }), mkt);
     expect(m.takeProfit).toBe(110);
     expect(m.takeProfitPct).toBeCloseTo(10);
     expect(m.stopLoss).toBeUndefined();
-    expect(m.condPrice).toBe(240);
+    expect(m.condTexts).toEqual(['240']);
   });
 
-  it('condition defaults to ±3% of the reference price', () => {
-    expect(resolveTicket(ticket(), mkt).condText).toBe('234.33');
-    expect(resolveTicket(ticket({ condOp: '<=' }), mkt).condText).toBe('220.67');
+  it('a price condition on the reference defaults to ±3% of it; other rows keep their text', () => {
+    expect(resolveTicket(ticket(), mkt).condTexts).toEqual(['234.33']);
+    expect(resolveTicket(ticket({ conds: [newCondition('price', { op: '<=' })] }), mkt).condTexts).toEqual(['220.67']);
+    // Watching another instrument: no default, the price is typed.
+    expect(resolveTicket(ticket({ conds: [newCondition('price', { contract: stock('SPY') })] }), mkt).condTexts).toEqual(['']);
+    expect(resolveTicket(ticket({ conds: [newCondition('percentChange'), newCondition('margin')] }), mkt).condTexts).toEqual(['5', '30']);
   });
 });
 
