@@ -161,7 +161,8 @@ export function GroupList({
             flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
-            padding: '0 8px 0 26px',
+            gap: LEAD.gap,
+            padding: `0 8px 0 ${LEAD.inset}px`,
             border: 'none',
             background: 'transparent',
             fontSize: 12,
@@ -169,15 +170,24 @@ export function GroupList({
             cursor: 'pointer',
           }}
         >
-          {m.newGroup}
+          <span aria-hidden style={{ width: LEAD.width, flexShrink: 0, textAlign: 'left' }}>
+            +
+          </span>
+          <span>{m.newGroup}</span>
         </button>
       )}
     </div>
   );
 }
 
+/**
+ * Group headers and "New group" start with a 10 px glyph column (8 px in) and a 6 px gap, so the
+ * group name and "New group" line up with the tickers of the rows (24 px in).
+ */
+const LEAD = { inset: 8, width: 10, gap: 6 } as const;
+
 function Arrow({ open }: { open: boolean }) {
-  return <div style={{ width: 10, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>{open ? '▼' : '▶'}</div>;
+  return <div style={{ width: LEAD.width, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>{open ? '▼' : '▶'}</div>;
 }
 
 /**
@@ -244,8 +254,8 @@ function GroupSection({
               height: 34,
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              padding: '0 4px 0 8px',
+              gap: LEAD.gap,
+              padding: `0 4px 0 ${LEAD.inset}px`,
               cursor: 'pointer',
               fontSize: 12,
               color: 'var(--mu)',
@@ -404,7 +414,7 @@ function GroupNameInput({
 
   return (
     <div style={{ flexShrink: 0, position: 'relative', padding: renaming ? 0 : '6px 8px' }}>
-      <div style={renaming ? { height: 34, display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px 0 8px' } : undefined}>
+      <div style={renaming ? { height: 34, display: 'flex', alignItems: 'center', gap: LEAD.gap, padding: `0 4px 0 ${LEAD.inset}px` } : undefined}>
         {lead}
         <TextInput
           inputRef={inputRef}
