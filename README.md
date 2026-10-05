@@ -116,8 +116,8 @@ daily log files, retention and export.
 
 **General** — dark, light or system theme (the dock / window icon follows the theme, and on macOS so does
 Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention, English and
-中文, and 12-hour ("9:41 AM", "上午 9:41"; the default) or 24-hour ("09:41") clock times everywhere you read
-them; the API log and what is sent to IB stay 24-hour.
+中文, and 12-hour ("09:41 AM", "上午 09:41"; the default) or 24-hour ("09:41") clock times everywhere you
+read them; the API log and what is sent to IB stay 24-hour.
 
 **Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
 idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).

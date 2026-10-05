@@ -1254,7 +1254,7 @@ options desk reuses `portfolioGreeks`, `optionLine` and `GreeksLine` for one und
 (`getEarnings`: Wall Street Horizon, else the scanner's estimate) and its ex-dividend date
 (`Quote.dividends`, tick 456, live lines only) from today (New York's) through `EVENT_WINDOW_DAYS`
 (14) ahead, earnings first on the same day; other instruments and past dates are ignored, and without WSH or the
-scanner only dividends remain. The chip reads "Earnings 10/23 AMC · Est." (an exact time wins: "8:30
+scanner only dividends remain. The chip reads "Earnings 10/23 AMC · Est." (an exact time wins: "08:30
 AM ET" in the user's clock format; the tooltip says an estimate is not a confirmed date) or "Ex-div
 10/15 $0.24" (`eventLabel`; another currency "0.24 EUR"), a hairline ring (a fill would vanish into the
 hovered row's --p2) that takes only the room the symbol leaves: short of room it is cut with an
@@ -1315,9 +1315,12 @@ decides how every clock time a person reads is written. `src/shared/timeFormat.t
 formatter, pure and used by both processes:
 
 * `createClock(format, lang)` returns a cached `Clock`: `time(t, { seconds, timeZone, zone, date })`
-  for instants ("9:41 AM", "上午 9:41:07", "10/09 4:00 PM ET", "09:41"), `wall('16:00', { zone })` for
+  for instants ("09:41 AM", "上午 09:41:07", "10/09 04:00 PM ET", "09:41"), `wall('16:00', { zone })` for
   24-hour wall times as IB and the ticket keep them, `range()`, and `parts()` (digits and period apart,
   for the lock screen). 12-hour Chinese puts 上午 / 下午 first; midnight is 12:00 AM / 上午 12:00.
+  Hours have two digits in both formats ("09:41 AM", "下午 02:35"), like minutes, seconds and the
+  numeric dates people read ("10/09", "2026-10-09"; the Positions tab's event chips, "Earnings
+  01/05"), so times line up in columns and keep their width.
   The renderer gets the user's clock with `useClock()` (re-renders on a change, so open views follow it
   live) or `currentClock()` outside React (`i18n/index.ts`). Model functions take the `Clock` as an
   argument; shared helpers that predate it (`orderTiming.ts → timingText`) default to `CLOCK_24H`.
@@ -1335,7 +1338,7 @@ formatter, pure and used by both processes:
 * The chart (`features/chart`) follows the setting too. Its label functions (`chartMath.ts →
   formatBarTime`, `timeTicks`, `timeAxisLabels`) take a `LabelClock` (the format and language of a
   `Clock`; `PriceChart` passes `useClock()`). Intraday axis ticks and the crosshair chip write every
-  clock label with its period ("10:30 AM", "上午 10:30", "7:58:15 PM" on seconds intervals), so a
+  clock label with its period ("10:30 AM", "上午 10:30", "07:58:15 PM" on seconds intervals), so a
   label read on its own is never ambiguous; noon is "12:00 PM" / "下午 12:00", and midnight starts a
   day, so it shows the date. Dates, months, quarters and years are the same in both formats. The
   12-hour labels are wider, so `timeTickGap(tf, clock, step)` (the widest clock label of the interval
@@ -1345,7 +1348,7 @@ formatter, pure and used by both processes:
   `TIME_TICK_GAP`, so a zoomed-out intraday axis shows the same dates in both formats. The header's
   last-trade time (`sessionQuote.ts → etTime`), the symbol activity panel's order times
   (`timeColumn(clock)`) and its status texts (`orderModel.ts → orderStatusText(o, labels, clock)`:
-  "After 9:35 AM ET", "GTD 10/09 4:00 PM ET") use the clock as well. The good-after time is read by
+  "After 09:35 AM ET", "GTD 10/09 04:00 PM ET") use the clock as well. The good-after time is read by
   Portfolio › Orders' `parseGoodAfter`, so IB's UTC form ("20261005-13:35:00") and other zones
   ("… Asia/Shanghai") show the same time as there, and "Modify" loads the ticket with its 24-hour
   US/Eastern time.
