@@ -2,7 +2,7 @@
 // market data observation, API log filtering/formatting and shortcut labels.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
-import { depthPermissions } from '@shared/depthPermissions';
+import { depthPermissions, isFullBook } from '@shared/depthPermissions';
 import { DASH, hmsMs } from '@shared/format';
 import { CATEGORY_KINDS, NO_SOUND, PLATFORM_SOUNDS, soundPlatform, type SoundCategory } from '@shared/notificationSounds';
 import type {
@@ -406,6 +406,19 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
   if (has.has('lines')) out.push({ kind: 'lines' });
   if (has.has('noOption')) out.push({ kind: 'noOption' });
   return out;
+}
+
+/**
+ * The line under the Level 2 switch: IB sends the book of some exchanges only (2152); the switch is
+ * on without the user having set it (a check found a full book, main/market/marketCheck.ts); a full
+ * book; else (not checked, no data) what Level 2 needs.
+ */
+export type DepthNote = { kind: 'partial'; via: string } | { kind: 'auto' } | { kind: 'full' } | { kind: 'needs' };
+
+export function depthNote(item: MarketCheckItem | undefined, features: Settings['features']): DepthNote {
+  if (item?.via) return { kind: 'partial', via: item.via };
+  if (features.depth && !features.depthSetByUser) return { kind: 'auto' };
+  return item && isFullBook(item.probe) ? { kind: 'full' } : { kind: 'needs' };
 }
 
 /** How long ago a check ran, for "checked 2 min ago" (null: show the date and time instead). */

@@ -66,6 +66,21 @@ describe('loadSettings', () => {
     expect(applySettingsPatch(s, { connection: { readOnly: false } })).toEqual(s);
   });
 
+  it('drops the removed options and flow switches, and counts a saved Level 2 on as the user’s choice', () => {
+    // Saved before depthSetByUser: Level 2 was off by default, so on was set by the user.
+    const on = loadSettings({ features: { depth: true, options: false, flow: false } }, defaults);
+    expect(on.features).toEqual({ depth: true, depthSetByUser: true });
+    expect(loadSettings({ features: { depth: 'true', options: true } }, defaults).features).toEqual({ depth: true, depthSetByUser: true });
+    // Off (or never saved) leaves the choice open, so a check may still turn it on.
+    expect(loadSettings({ features: { depth: false, options: true, flow: true } }, defaults).features).toEqual({ depth: false, depthSetByUser: false });
+    expect(loadSettings({}, defaults).features).toEqual({ depth: false, depthSetByUser: false });
+    // Files written by this version keep what they say: on by a check stays open, off by the user stays chosen.
+    expect(loadSettings({ features: { depth: true, depthSetByUser: false } }, defaults).features).toEqual({ depth: true, depthSetByUser: false });
+    expect(loadSettings({ features: { depth: false, depthSetByUser: true } }, defaults).features).toEqual({ depth: false, depthSetByUser: true });
+    // A patch from the renderer that still names the removed switches changes nothing else.
+    expect(applySettingsPatch(on, { features: { options: true } as never })).toEqual(on);
+  });
+
   it('tells whether the removed read-only setting was on', () => {
     expect(hadReadOnlyMode({ connection: { readOnly: true } })).toBe(true);
     // Coerced like the setting was.

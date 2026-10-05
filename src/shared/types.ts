@@ -880,9 +880,13 @@ export interface Settings {
   };
   /** Features that depend on extra market data subscriptions. */
   features: {
+    /** Level 2: the Trade page's Depth tab and the ticket's book; holds one of the account's 3 depth lines. */
     depth: boolean;
-    options: boolean;
-    flow: boolean;
+    /**
+     * The user has set `depth` in Settings. Until then a market data check that finds a full book
+     * from IB turns it on (main/market/marketCheck.ts); nothing turns it off by itself.
+     */
+    depthSetByUser: boolean;
   };
   notifications: {
     /** Whether each kind is also pushed to the OS notification center. */

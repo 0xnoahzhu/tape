@@ -153,12 +153,17 @@ const en = {
   obsError: (code: number | undefined, n: number) => `error ${code ?? '?'}${n > 1 ? ` ×${n}` : ''}`,
   obsDepth: (sym: string, n: number) => `${sym} · ${n} levels`,
   ftTitle: 'Features',
-  ftDesc: 'Features that need extra market data. Tags show what IB actually returned; without a subscription these views stay empty.',
-  features: {
-    depth: { l: 'Market depth (Level 2)', d: 'Shows a 10-level book on the Trade page. Requires NASDAQ TotalView or NYSE OpenBook' },
-    options: { l: 'Option chain & strategies', d: 'The Options view on the Trade page. Requires OPRA' },
-    flow: { l: 'Options flow', d: 'Unusual activity in the option chain. Requires OPRA' },
-  } as Record<'depth' | 'options' | 'flow', Pair>,
+  ftDesc:
+    'Market depth shows a 10-level book on the Trade page (Depth tab) and 5 levels a side in the floating order ticket. It holds one of the account’s 3 depth lines, which TWS and IBKR Mobile share.',
+  depthSwitch: 'Market depth (Level 2)',
+  /** The line under the Level 2 switch (logic.ts → depthNote). */
+  depthNote: {
+    partial: (via: string) =>
+      `IB sends this account only the ${via} book${via === 'IEX' ? ' (IEX trades a few percent of US stock volume)' : ''}: it shows part of the orders and can mislead. A full book needs NASDAQ TotalView or NYSE OpenBook.`,
+    auto: 'Turned on automatically: the market data check found a full book from IB.',
+    full: 'IB sends this account a full book.',
+    needs: 'Requires NASDAQ TotalView or NYSE OpenBook. Check now tests what IB sends.',
+  },
   fieldsT: 'Quote field sources',
   /** Rows of the quote field table (the close time in the user's clock format). */
   fields: (c: Clock) => [
@@ -463,11 +468,14 @@ const zh: typeof en = {
   obsError: (code: number | undefined, n: number) => `错误 ${code ?? '?'}${n > 1 ? ` ×${n}` : ''}`,
   obsDepth: (sym: string, n: number) => `${sym} · ${n} 档`,
   ftTitle: '功能',
-  ftDesc: '依赖额外行情订阅的功能。标签显示 IB 实际返回的数据；未订阅时这些视图没有数据。',
-  features: {
-    depth: { l: '盘口深度（Level 2）', d: 'Trade 页显示 10 档盘口，需要 NASDAQ TotalView 或 NYSE OpenBook' },
-    options: { l: '期权链与策略', d: 'Trade 页的期权视图，需要 OPRA 行情' },
-    flow: { l: '期权异动', d: '期权页的大单与异常成交，需要 OPRA 行情' },
+  ftDesc: '深度行情在交易页的“盘口”标签显示 10 档，在浮动下单面板显示买卖各 5 档。它会占用账户的 3 条深度线路之一，这些线路与 TWS 和 IBKR Mobile 共用。',
+  depthSwitch: '深度行情（Level 2）',
+  depthNote: {
+    partial: (via: string) =>
+      `IB 只向此账户提供 ${via} 的盘口${via === 'IEX' ? '（IEX 只占美股成交量的几个百分点）' : ''}，显示的只是部分挂单，容易误导。完整盘口需要 NASDAQ TotalView 或 NYSE OpenBook。`,
+    auto: '已自动开启：行情检测发现 IB 提供完整盘口。',
+    full: 'IB 向此账户提供完整盘口。',
+    needs: '需要 NASDAQ TotalView 或 NYSE OpenBook。点“立即检测”可查看 IB 实际提供的盘口。',
   },
   fieldsT: '报价字段来源',
   fields: (c: Clock) => [

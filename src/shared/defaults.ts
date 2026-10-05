@@ -22,7 +22,7 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
     },
     trading: { confirmOrders: true, defaultQty: 100, outsideRthDefault: false },
     appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, upColor: 'cn', showAccountId: true },
-    features: { depth: false, options: true, flow: true },
+    features: { depth: false, depthSetByUser: false },
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },
       sound: true,

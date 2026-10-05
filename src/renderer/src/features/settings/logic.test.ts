@@ -5,6 +5,7 @@ import {
   checkItems,
   checkNeeded,
   checkReasons,
+  depthNote,
   STALE_CHECK_MS,
   hasSoundChoice,
   soundCategoryOff,
@@ -283,6 +284,37 @@ describe('market data check', () => {
     expect(checkReasons(partial)).toEqual([{ kind: 'depthPartial', depth: ['IEX'], missing: ['NASDAQ', 'NYSE'] }]);
     const lines = result([stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: -1, own: 'lines', message: 'x' } })]);
     expect(checkReasons(lines)).toEqual([{ kind: 'lines' }]);
+  });
+
+  it('says under the Level 2 switch what the check found and why the switch is on', () => {
+    const depth = (probe: MarketCheckItem['probe'], via?: string): MarketCheckItem => ({
+      market: 'depth',
+      status: probe.status,
+      instrument: 'SPY',
+      probe,
+      checkedAt: at,
+      ...(via ? { via } : {}),
+    });
+    const iex = depth({ status: 'live', exchange: 'SMART', code: 2152, message: 'Exchanges - Depth: IEX; Need additional market data permissions - Depth: NASDAQ; ' }, 'IEX');
+    const full = depth({ status: 'live', exchange: 'SMART' });
+    const off = { depth: false, depthSetByUser: false };
+    const auto = { depth: true, depthSetByUser: false };
+    const mine = { depth: true, depthSetByUser: true };
+    // Some exchanges only: said whatever the switch is.
+    for (const f of [off, auto, mine]) expect(depthNote(iex, f)).toEqual({ kind: 'partial', via: 'IEX' });
+    // On without the user: a check turned it on.
+    expect(depthNote(full, auto)).toEqual({ kind: 'auto' });
+    expect(depthNote(undefined, auto)).toEqual({ kind: 'auto' });
+    expect(depthNote(full, mine)).toEqual({ kind: 'full' });
+    expect(depthNote(full, { depth: false, depthSetByUser: true })).toEqual({ kind: 'full' });
+    // Not checked, no data, or a 2152 Tape cannot read: what Level 2 needs.
+    expect(depthNote(undefined, off)).toEqual({ kind: 'needs' });
+    expect(depthNote(depth({ status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }), off)).toEqual({ kind: 'needs' });
+    expect(depthNote(depth({ status: 'live', exchange: 'SMART', code: 2152, message: 'unexpected' }), mine)).toEqual({ kind: 'needs' });
+    // The share of US volume is only named for IEX.
+    const en = useSettingsMessages.for('en');
+    expect(en.depthNote.partial('IEX')).toMatch(/only the IEX book \(IEX trades a few percent of US stock volume\)/);
+    expect(en.depthNote.partial('NASDAQ')).not.toMatch(/percent/);
   });
 
   it('says how long ago a check ran', () => {

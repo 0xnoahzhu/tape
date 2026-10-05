@@ -4,6 +4,11 @@
 // "Exchanges - Depth: IEX; Top: EDGEA; Unknown market data permissions - Depth: NASDAQ; …; NYSE;
 // Top: BYX; …" (pure, used by main and renderer).
 
+import type { MarketCheckProbe } from './types';
+
+/** IB's notice that Level 2 comes from some exchanges only. */
+export const DEPTH_PARTIAL = 2152;
+
 export interface DepthPermissions {
   /** Exchanges that send their book. */
   depth: string[];
@@ -24,4 +29,9 @@ export function depthPermissions(message: string | undefined): DepthPermissions 
   const missing = /(?:Need additional|Unknown) market data permissions\s*-\s*Depth:\s*(.*?)(?:\s*Top:|$)/i.exec(message)?.[1];
   if (depth == null && missing == null) return null;
   return { depth: list(depth), missing: list(missing) };
+}
+
+/** A Level 2 answer of the market data check that is a full book: live, and no 2152 limiting it to some exchanges. */
+export function isFullBook(probe: Pick<MarketCheckProbe, 'status' | 'code'>): boolean {
+  return probe.status === 'live' && probe.code !== DEPTH_PARTIAL;
 }

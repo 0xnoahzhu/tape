@@ -109,7 +109,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     upColor: oneOf(['cn', 'us']),
     showAccountId: bool,
   },
-  features: { depth: bool, options: bool, flow: bool },
+  features: { depth: bool, depthSetByUser: bool },
   notifications: {
     system: notificationRules,
     sound: bool,
@@ -143,9 +143,15 @@ function sanitize<T>(spec: Spec<T>, raw: unknown, fallback: T): T {
   return out;
 }
 
-/** Saved settings deep-merged over the defaults. */
+/**
+ * Saved settings deep-merged over the defaults. Files from before depthSetByUser (which also had
+ * the removed features.options / .flow) count Level 2 on as the user's choice: it was off by default.
+ */
 export function loadSettings(raw: unknown, defaults: Settings): Settings {
-  return sanitize(SETTINGS_SPEC, raw, defaults);
+  const s = sanitize(SETTINGS_SPEC, raw, defaults);
+  const saved = isObject(raw) && isObject(raw.features) ? raw.features : null;
+  if (saved && saved.depthSetByUser === undefined && s.features.depth) s.features.depthSetByUser = true;
+  return s;
 }
 
 /**

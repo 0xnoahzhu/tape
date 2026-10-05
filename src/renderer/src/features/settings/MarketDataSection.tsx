@@ -1,4 +1,4 @@
-// Settings › Market data: request type, what each market actually delivers, feature switches,
+// Settings › Market data: request type, what each market actually delivers, the Level 2 switch,
 // quote field sources, the local cache (LocalCacheBlock). Tags come from what IB answered: the
 // active check (main/market/marketCheck.ts; run when the section opens with a result older than
 // STALE_CHECK_MS, and by "Check now") and the quotes received in this session, never from
@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo } from 'react';
 import type { Clock } from '@shared/timeFormat';
-import type { MarketCheckItem } from '@shared/types';
+import type { MarketCheckItem, Settings } from '@shared/types';
 import { useClock } from '../../i18n';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
@@ -20,6 +20,7 @@ import {
   checkNeeded,
   checkReasons,
   checkTag,
+  depthNote,
   MARKET_ROWS,
   observeMarkets,
   type CheckReason,
@@ -91,6 +92,11 @@ function checkedTip(item: MarketCheckItem, m: SettingsMessages, clock: Clock): s
   return lines.join('\n');
 }
 
+function depthNoteText(item: MarketCheckItem | undefined, features: Settings['features'], m: SettingsMessages): string {
+  const note = depthNote(item, features);
+  return note.kind === 'partial' ? m.depthNote.partial(note.via) : m.depthNote[note.kind];
+}
+
 function reasonText(r: CheckReason, m: SettingsMessages, paper: boolean): { t: string; d: string } {
   switch (r.kind) {
     case 'notSubscribed':
@@ -133,12 +139,7 @@ export function MarketDataSection() {
   const offline = status !== 'connected';
   const ago = shown ? m.checkedAgo(checkAge(shown.checkedAt, now), clock.time(shown.checkedAt, { date: 'md' })) : null;
   const checkedLine = check.running ? m.checking : ago ? (offline ? m.checkedOffline(ago) : ago) : m.notCheckedYet;
-
-  const featureRows: Array<{ key: keyof typeof features; obs: MarketRow }> = [
-    { key: 'depth', obs: 'depth' },
-    { key: 'options', obs: 'opt' },
-    { key: 'flow', obs: 'opt' },
-  ];
+  const depthItem = items.depth;
 
   return (
     <>
@@ -254,30 +255,25 @@ export function MarketDataSection() {
       </div>
       <SubHeader title={m.ftTitle} desc={m.ftDesc} />
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: -14 }}>
-        {featureRows.map(({ key, obs: row }) => {
-          const on = features[key];
-          const item = items[row];
-          return (
-            <div
-              key={key}
-              role="switch"
-              aria-checked={on}
-              onClick={() => saveSettings({ features: { [key]: !on } })}
-              style={{ minHeight: 60, display: 'flex', alignItems: 'center', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', cursor: 'pointer' }}
-            >
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 0' }}>
-                <div>{m.features[key].l}</div>
-                <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.features[key].d}</div>
-              </div>
-              {item ? (
-                <ObservedTagBox tag={checkTag(item)} via={item.via} muted={offline} title={checkedTip(item, m, clock)} />
-              ) : (
-                <ObservedTagBox tag={obs?.[row].tag ?? 'none'} title={observedText(row, obs?.[row], m)} />
-              )}
-              <Toggle on={on} />
-            </div>
-          );
-        })}
+        {/* Setting the switch here is the user's choice: a check no longer turns it on (marketCheck.ts). */}
+        <div
+          data-md="depth-switch"
+          role="switch"
+          aria-checked={features.depth}
+          onClick={() => saveSettings({ features: { depth: !features.depth, depthSetByUser: true } })}
+          style={{ minHeight: 60, display: 'flex', alignItems: 'center', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', cursor: 'pointer' }}
+        >
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 0' }}>
+            <div>{m.depthSwitch}</div>
+            <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.6, textWrap: 'pretty' }}>{depthNoteText(depthItem, features, m)}</div>
+          </div>
+          {depthItem ? (
+            <ObservedTagBox tag={checkTag(depthItem)} via={depthItem.via} muted={offline} title={checkedTip(depthItem, m, clock)} />
+          ) : (
+            <ObservedTagBox tag={obs?.depth.tag ?? 'none'} title={observedText('depth', obs?.depth, m)} />
+          )}
+          <Toggle on={features.depth} />
+        </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontWeight: 600 }}>{m.fieldsT}</div>
