@@ -1,8 +1,9 @@
 // Clock times as the user chose to read them (Settings › General › Time format), shared by the
 // renderer and the main process. Pure: no DOM, no Electron.
 //
-//   12-hour: en "9:41 AM", "9:41:07 PM"; zh "上午 9:41", "下午 2:35" (the period comes first, as
-//            Chinese writes it). Midnight is "12:00 AM" / "上午 12:00", noon "12:00 PM" / "下午 12:00":
+//   12-hour: en "09:41 AM", "09:41:07 PM"; zh "上午 09:41", "下午 02:35" (the period comes first,
+//            as Chinese writes it). Hours have two digits like minutes, so times line up in a
+//            column and keep their width as the hour changes. Midnight is "12:00 AM" / "上午 12:00", noon "12:00 PM" / "下午 12:00":
 //            上午 / 下午 are CLDR's am / pm markers for Chinese (what Intl's zh-CN hour12 output and
 //            the Windows / macOS 12-hour clocks use); the finer day periods (凌晨, 中午, 晚上 …) would
 //            give one clock reading several names and make the period's width jump.
@@ -30,7 +31,7 @@ export interface WallClock {
 }
 
 export interface ClockParts {
-  /** "9:41", "9:41:07", "09:41". */
+  /** "09:41", "09:41:07"; two-digit hours in both formats. */
   time: string;
   /** "AM" / "PM" / "上午" / "下午"; null in the 24-hour format. */
   period: string | null;
@@ -46,16 +47,16 @@ export function clockParts(w: WallClock, format: TimeFormat, lang: Lang, seconds
   const h = ((w.h % 24) + 24) % 24;
   const rest = `${two(w.m)}${seconds ? `:${two(w.s ?? 0)}` : ''}`;
   if (format === '24h') return { time: `${two(h)}:${rest}`, period: null, periodFirst: false };
-  return { time: `${h % 12 || 12}:${rest}`, period: PERIODS[lang][h < 12 ? 0 : 1], periodFirst: lang === 'zh' };
+  return { time: `${two(h % 12 || 12)}:${rest}`, period: PERIODS[lang][h < 12 ? 0 : 1], periodFirst: lang === 'zh' };
 }
 
-/** "9:41 AM", "上午 9:41", "09:41". */
+/** "09:41 AM", "上午 09:41", "09:41". */
 export function joinClockParts(p: ClockParts): string {
   if (!p.period) return p.time;
   return p.periodFirst ? `${p.period} ${p.time}` : `${p.time} ${p.period}`;
 }
 
-/** A wall clock reading as text: "9:41 AM", "上午 9:41", "09:41". */
+/** A wall clock reading as text: "09:41 AM", "上午 09:41", "09:41". */
 export function clockText(w: WallClock, format: TimeFormat, lang: Lang, seconds = false): string {
   return joinClockParts(clockParts(w, format, lang, seconds));
 }
@@ -68,9 +69,9 @@ export interface ClockOptions {
   seconds?: boolean;
   /** IANA time zone of the wall clock; the local zone when omitted. */
   timeZone?: string;
-  /** Written after the time, e.g. 'ET' -> "9:35 AM ET". */
+  /** Written after the time, e.g. 'ET' -> "09:35 AM ET". */
   zone?: string;
-  /** Date before the time: 'md' -> "10/09 4:00 PM", 'ymd' -> "2026-10-09 4:00 PM". */
+  /** Date before the time: 'md' -> "10/09 04:00 PM", 'ymd' -> "2026-10-09 04:00 PM". */
   date?: 'md' | 'ymd';
 }
 
@@ -124,18 +125,18 @@ export function readWallTime(s: string): WallClock | null {
 export interface Clock {
   readonly format: TimeFormat;
   readonly lang: Lang;
-  /** An instant: "9:41 AM", "上午 9:41:07", "10/09 4:00 PM ET", "09:41". */
+  /** An instant: "09:41 AM", "上午 09:41:07", "10/09 04:00 PM ET", "09:41". */
   time(t: number | Date, o?: ClockOptions): string;
   /** The pieces of an instant's clock reading (no date or zone). */
   parts(t: number | Date, o?: Pick<ClockOptions, 'seconds' | 'timeZone'>): ClockParts;
   /**
    * A 24-hour wall time ("16:00", "09:35:00", as IB and the order ticket keep them) in this
-   * format: "4:00 PM"; with `zone` "4:00 PM ET". Text that is not such a time comes back unchanged.
+   * format: "04:00 PM"; with `zone` "04:00 PM ET". Text that is not such a time comes back unchanged.
    */
   wall(hhmm: string, o?: Pick<ClockOptions, 'seconds' | 'zone'>): string;
   /**
-   * A range of two 24-hour wall times: "9:30 AM–4:00 PM", "09:30–16:00"; a period both ends share
-   * is written once ("4:00–9:30 AM", "上午 4:00–9:30").
+   * A range of two 24-hour wall times: "09:30 AM–04:00 PM", "09:30–16:00"; a period both ends
+   * share is written once ("04:00–09:30 AM", "上午 04:00–09:30").
    */
   range(from: string, to: string): string;
 }

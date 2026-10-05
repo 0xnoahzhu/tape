@@ -17,7 +17,7 @@ import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 // The design gives the status column 70px, which truncates every status ("Working…");
 // it gets the largest flexible share here so "Waiting · AAPL ≥ 235.00" and the TIF with its
 // session or GTD expiry ("Pre-submitted · DAY · Overnight + Day", "Pre-submitted · GTD 10/09
-// 4:00 PM ET") stay readable at the minimum window width before IB's messages. Contract keeps room
+// 04:00 PM ET") stay readable at the minimum window width before IB's messages. Contract keeps room
 // for an option ("AAPL Oct16 230 Call") and Price for a stop-limit "240.00 / 239.50".
 // The time column is sized for the clock format (timeColumn).
 export const workingColumns = (time: string): string =>

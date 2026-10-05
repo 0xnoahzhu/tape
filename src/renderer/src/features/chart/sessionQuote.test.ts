@@ -126,10 +126,10 @@ describe('etTime', () => {
   });
 
   it('follows the clock format and language', () => {
-    expect(etTime(Date.UTC(2026, 9, 2, 20, 0, 5), now, createClock('12h', 'en'))).toBe('4:00:05 PM');
-    expect(etTime(Date.UTC(2026, 9, 2, 20, 0, 5), now, createClock('12h', 'zh'))).toBe('下午 4:00:05');
+    expect(etTime(Date.UTC(2026, 9, 2, 20, 0, 5), now, createClock('12h', 'en'))).toBe('04:00:05 PM');
+    expect(etTime(Date.UTC(2026, 9, 2, 20, 0, 5), now, createClock('12h', 'zh'))).toBe('下午 04:00:05');
     expect(etTime(Date.UTC(2026, 9, 2, 16, 0, 0), now, createClock('12h', 'en'))).toBe('12:00:00 PM');
-    expect(etTime(Date.UTC(2026, 9, 1, 20, 0, 5), now, createClock('12h', 'en'))).toBe('10/01 4:00 PM');
+    expect(etTime(Date.UTC(2026, 9, 1, 20, 0, 5), now, createClock('12h', 'en'))).toBe('10/01 04:00 PM');
     expect(etTime(Date.UTC(2026, 9, 1, 4, 30), now, createClock('12h', 'zh'))).toBe('10/01 上午 12:30');
     expect(etTime(Date.UTC(2026, 9, 2, 20, 0, 5), now, createClock('24h', 'zh'))).toBe('16:00:05');
   });
@@ -137,6 +137,6 @@ describe('etTime', () => {
   it('compares New York days, not UTC ones', () => {
     // 21:30 ET on 10/02 is already 10/03 in UTC; "now" is 22:00 ET the same New York day.
     const late = new Date(Date.UTC(2026, 9, 3, 2, 0));
-    expect(etTime(Date.UTC(2026, 9, 3, 1, 30), late, createClock('12h', 'en'))).toBe('9:30:00 PM');
+    expect(etTime(Date.UTC(2026, 9, 3, 1, 30), late, createClock('12h', 'en'))).toBe('09:30:00 PM');
   });
 });

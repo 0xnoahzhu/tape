@@ -69,7 +69,7 @@ export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lan
   return { title: resolveTimeTokens(n.title[lang], clock), body: resolveTimeTokens(n.body[lang], clock) };
 }
 
-/** Full date and time of a notification or alert trigger: "2026-10-05 9:41:07 AM", "2026-10-05 下午 2:35:07". */
+/** Full date and time of a notification or alert trigger: "2026-10-05 09:41:07 AM", "2026-10-05 下午 02:35:07". */
 export function stampText(t: number, clock: Clock): string {
   return clock.time(t, { date: 'ymd', seconds: true });
 }

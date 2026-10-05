@@ -86,8 +86,8 @@ describe('notification times', () => {
   const stored = { title: { en: 'Buy 100 AAPL submitted', zh: '买入 100 AAPL 已提交' }, body: { en: `Limit 226.95 · GTD ${gtd} · awaiting fill`, zh: `限价 226.95 · GTD ${gtd} · 等待成交` } };
 
   it('shows stored clock times in the format chosen now', () => {
-    expect(notificationText(stored, 'en', createClock('12h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 4:00 PM ET · awaiting fill');
-    expect(notificationText(stored, 'zh', createClock('12h', 'zh'))).toEqual({ title: '买入 100 AAPL 已提交', body: '限价 226.95 · GTD 10/09 下午 4:00 ET · 等待成交' });
+    expect(notificationText(stored, 'en', createClock('12h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 04:00 PM ET · awaiting fill');
+    expect(notificationText(stored, 'zh', createClock('12h', 'zh'))).toEqual({ title: '买入 100 AAPL 已提交', body: '限价 226.95 · GTD 10/09 下午 04:00 ET · 等待成交' });
     expect(notificationText(stored, 'en', createClock('24h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 16:00 ET · awaiting fill');
   });
 
@@ -98,8 +98,8 @@ describe('notification times', () => {
 
   it('stamps the full date and time', () => {
     const t = new Date(2026, 9, 5, 9, 41, 7).getTime();
-    expect(stampText(t, createClock('12h', 'en'))).toBe('2026-10-05 9:41:07 AM');
-    expect(stampText(t, createClock('12h', 'zh'))).toBe('2026-10-05 上午 9:41:07');
+    expect(stampText(t, createClock('12h', 'en'))).toBe('2026-10-05 09:41:07 AM');
+    expect(stampText(t, createClock('12h', 'zh'))).toBe('2026-10-05 上午 09:41:07');
     expect(stampText(t, createClock('24h', 'zh'))).toBe('2026-10-05 09:41:07');
   });
 });

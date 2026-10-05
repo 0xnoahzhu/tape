@@ -93,13 +93,13 @@ describe('Notifier', () => {
     const n = t.notifier.notify({ kind: 'order', title: text('Submitted'), body });
     // The list keeps the token; the renderer resolves it whenever it draws the list.
     expect(n.body).toEqual(body);
-    expect(os.shown[0].options).toMatchObject({ body: 'Limit 226.95 · GTD 10/09 4:00 PM ET' });
+    expect(os.shown[0].options).toMatchObject({ body: 'Limit 226.95 · GTD 10/09 04:00 PM ET' });
     t.setSettings({ ...defaultSettings('zh'), appearance: { ...defaultSettings('zh').appearance, timeFormat: '24h' } });
     t.notifier.notify({ kind: 'order', title: text('Submitted'), body });
     expect(os.shown[1].options).toMatchObject({ body: '限价 226.95 · GTD 10/09 16:00 ET' });
     t.setSettings({ ...defaultSettings('zh') });
     t.notifier.notify({ kind: 'order', title: text('Submitted'), body });
-    expect(os.shown[2].options).toMatchObject({ body: '限价 226.95 · GTD 10/09 下午 4:00 ET' });
+    expect(os.shown[2].options).toMatchObject({ body: '限价 226.95 · GTD 10/09 下午 04:00 ET' });
   });
 
   it('respects the per-kind rule, sound and do-not-disturb', () => {

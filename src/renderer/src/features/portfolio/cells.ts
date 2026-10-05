@@ -42,7 +42,7 @@ const sameDay = (a: number, b: number): boolean => new Date(a).toDateString() ==
 /** "20261016" → "2026-10-16"; other text as it is. */
 const dateText = (v: string): string => (/^\d{8}$/.test(v) ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : v);
 
-/** "0400-2000,..." → "4:00 AM–8:00 PM, ..." in the user's clock; "CLOSED" → Closed. */
+/** "0400-2000,..." → "04:00 AM–08:00 PM, ..." in the user's clock; "CLOSED" → Closed. */
 function hoursText(v: string, w: CellWords, clock: Clock): string {
   if (v === 'CLOSED') return w.closed;
   const wall = (hhmm: string) => `${hhmm.slice(0, 2)}:${hhmm.slice(2)}`;

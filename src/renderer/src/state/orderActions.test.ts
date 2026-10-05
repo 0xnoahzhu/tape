@@ -169,7 +169,7 @@ describe('order toasts', () => {
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `${IB_321} ${GATEWAY_HINT}` });
 
     confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', session: 'extended', outsideRth: true });
-    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('Limit · GTD 10/09 4:00 PM ET · Extended hours');
+    expect(useStore.getState().confirm!.rows.at(-1)?.value).toBe('Limit · GTD 10/09 04:00 PM ET · Extended hours');
     // The order's attributes get a row of their own.
     confirmCancel({ ...order, allOrNone: true, algo: { strategy: 'Adaptive', params: { adaptivePriority: 'Normal' } }, oca: { group: 'exit', type: 1 } });
     expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Attributes', value: 'AON · Adaptive · OCA exit' });

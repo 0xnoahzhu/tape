@@ -1285,7 +1285,7 @@ describe('chart times in the 12- and 24-hour formats', () => {
   it('writes hover times in the clock format and language', () => {
     expect(formatBarTime(at(10, 31), '5m', EN12)).toBe('Fri 10/02 10:31 AM');
     expect(formatBarTime(at(10, 31), '5m', ZH12)).toBe('10/02 周五 上午 10:31');
-    expect(formatBarTime(at(14, 31), '1h', EN12)).toBe('Fri 10/02 2:31 PM');
+    expect(formatBarTime(at(14, 31), '1h', EN12)).toBe('Fri 10/02 02:31 PM');
     expect(formatBarTime(at(14, 31), '1h', ZH24)).toBe('10/02 周五 14:31');
     // Noon and midnight.
     expect(formatBarTime(at(12, 0), '1m', EN12)).toBe('Fri 10/02 12:00 PM');
@@ -1294,13 +1294,13 @@ describe('chart times in the 12- and 24-hour formats', () => {
     expect(formatBarTime(at(0, 5), '1m', ZH12)).toBe('10/02 周五 上午 12:05');
     expect(formatBarTime(at(23, 59), '1m', EN12)).toBe('Fri 10/02 11:59 PM');
     // Seconds intervals keep their seconds.
-    expect(formatBarTime(at(14, 31, 7), '1s', EN12)).toBe('Fri 10/02 2:31:07 PM');
-    expect(formatBarTime(at(14, 31, 7), '1s', ZH12)).toBe('10/02 周五 下午 2:31:07');
+    expect(formatBarTime(at(14, 31, 7), '1s', EN12)).toBe('Fri 10/02 02:31:07 PM');
+    expect(formatBarTime(at(14, 31, 7), '1s', ZH12)).toBe('10/02 周五 下午 02:31:07');
     expect(formatBarTime(at(0, 0, 45), '15s', EN12)).toBe('Fri 10/02 12:00:45 AM');
     // Exchange time in another zone; dates do not change with the format.
     const hk = Date.UTC(2026, 9, 1, 1, 30) / 1000;
-    expect(formatBarTime(hk, '5m', EN12)).toBe('Wed 09/30 9:30 PM');
-    expect(formatBarTime(hk, '5m', ZH12, 'Asia/Hong_Kong')).toBe('10/01 周四 上午 9:30');
+    expect(formatBarTime(hk, '5m', EN12)).toBe('Wed 09/30 09:30 PM');
+    expect(formatBarTime(hk, '5m', ZH12, 'Asia/Hong_Kong')).toBe('10/01 周四 上午 09:30');
     const day = Date.UTC(2026, 9, 2) / 1000;
     for (const c of [EN12, ZH12]) {
       expect(formatBarTime(day, '1D', c)).toBe(formatBarTime(day, '1D', c.lang === 'en' ? EN24 : ZH24));
@@ -1311,15 +1311,15 @@ describe('chart times in the 12- and 24-hour formats', () => {
   it('follows the DST change in both formats', () => {
     // Sun 2026-03-08: 02:00 EST becomes 03:00 EDT. 01:55 EST and 03:00 EDT are five minutes apart.
     const before = Date.UTC(2026, 2, 8, 6, 55) / 1000;
-    expect(formatBarTime(before, '5m', EN12)).toBe('Sun 03/08 1:55 AM');
-    expect(formatBarTime(before + 300, '5m', EN12)).toBe('Sun 03/08 3:00 AM');
-    expect(formatBarTime(before + 300, '5m', ZH12)).toBe('03/08 周日 上午 3:00');
+    expect(formatBarTime(before, '5m', EN12)).toBe('Sun 03/08 01:55 AM');
+    expect(formatBarTime(before + 300, '5m', EN12)).toBe('Sun 03/08 03:00 AM');
+    expect(formatBarTime(before + 300, '5m', ZH12)).toBe('03/08 周日 上午 03:00');
     expect(formatBarTime(before + 300, '5m', EN24)).toBe('Sun 03/08 03:00');
     // Sun 2026-11-01: 01:00–01:59 comes twice (EDT, then EST).
     const first = Date.UTC(2026, 10, 1, 5, 30) / 1000;
-    expect(formatBarTime(first, '1m', EN12)).toBe('Sun 11/01 1:30 AM');
-    expect(formatBarTime(first + 3600, '1m', EN12)).toBe('Sun 11/01 1:30 AM');
-    expect(formatBarTime(first + 7200, '1m', ZH12)).toBe('11/01 周日 上午 2:30');
+    expect(formatBarTime(first, '1m', EN12)).toBe('Sun 11/01 01:30 AM');
+    expect(formatBarTime(first + 3600, '1m', EN12)).toBe('Sun 11/01 01:30 AM');
+    expect(formatBarTime(first + 7200, '1m', ZH12)).toBe('11/01 周日 上午 02:30');
     // The regular session after the spring change: 10:00 EDT is 14:00 UTC.
     const bars = sessionBars(2026, 3, 6, 2, 5);
     for (const [c, label] of [
@@ -1398,12 +1398,12 @@ describe('chart times in the 12- and 24-hour formats', () => {
     const bars = sessionBars(2026, 9, 28, 5, 5);
     // One day in 936 px: 12 px per bar, half hours 72 px apart.
     const en = timeAxisLabels(bars, '5m', view(76, 78), 936, EN12);
-    expect(texts(en)).toEqual(['09/29', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '1:00 PM', '1:30 PM', '2:00 PM', '2:30 PM', '3:00 PM', '3:30 PM']);
+    expect(texts(en)).toEqual(['09/29', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM']);
     // Ticks fall on the same bars as in the 24-hour format.
     expect(en.map((l) => l.index)).toEqual(timeAxisLabels(bars, '5m', view(76, 78), 936, EN24).map((l) => l.index));
     // The zh labels are wider than 72 px allow: every hour, and 10:00 gives way to the day start at 9:30.
     const zh = timeAxisLabels(bars, '5m', view(76, 78), 936, ZH12);
-    expect(texts(zh)).toEqual(['09/29', '上午 11:00', '下午 12:00', '下午 1:00', '下午 2:00', '下午 3:00']);
+    expect(texts(zh)).toEqual(['09/29', '上午 11:00', '下午 12:00', '下午 01:00', '下午 02:00', '下午 03:00']);
     expectReadable(zh, 936, timeTickGap('5m', ZH12));
     // With a little more room they keep the half hours too.
     expect(texts(timeAxisLabels(bars, '5m', view(76, 78), 1000, ZH12))).toContain('下午 12:30');
@@ -1425,9 +1425,9 @@ describe('chart times in the 12- and 24-hour formats', () => {
       expectReadable(ls, 1000, timeTickGap('1h', c));
     }
     const en = timeAxisLabels(bars, '1h', view(24, 48), 1000, EN12);
-    expect(en.filter((l) => l.kind === 'time').every((l) => /^1?\d:00 [AP]M$/.test(l.label))).toBe(true);
+    expect(en.filter((l) => l.kind === 'time').every((l) => /^(0\d|1[0-2]):00 [AP]M$/.test(l.label))).toBe(true);
     const zh = timeAxisLabels(bars, '1h', view(24, 48), 1000, ZH12);
-    expect(zh.filter((l) => l.kind === 'time').every((l) => /^[上下]午 1?\d:00$/.test(l.label))).toBe(true);
+    expect(zh.filter((l) => l.kind === 'time').every((l) => /^[上下]午 (0\d|1[0-2]):00$/.test(l.label))).toBe(true);
   });
 
   it('keeps seconds on seconds-interval labels', () => {
@@ -1435,12 +1435,12 @@ describe('chart times in the 12- and 24-hour formats', () => {
     const en = timeAxisLabels(bars, '1s', view(1680, 120), 800, EN12);
     expectReadable(en, 800, timeTickGap('1s', EN12));
     expect(en.length).toBeGreaterThan(3);
-    expect(en.every((l) => /^7:\d\d(:\d\d)? PM$/.test(l.label))).toBe(true);
-    expect(en.some((l) => /^7:\d\d:\d\d PM$/.test(l.label))).toBe(true);
+    expect(en.every((l) => /^07:\d\d(:\d\d)? PM$/.test(l.label))).toBe(true);
+    expect(en.some((l) => /^07:\d\d:\d\d PM$/.test(l.label))).toBe(true);
     const zh = timeAxisLabels(bars, '1s', view(1680, 120), 800, ZH12);
     expectReadable(zh, 800, timeTickGap('1s', ZH12));
     expect(zh.length).toBeGreaterThan(2);
-    expect(zh.every((l) => /^下午 7:\d\d(:\d\d)?$/.test(l.label))).toBe(true);
+    expect(zh.every((l) => /^下午 07:\d\d(:\d\d)?$/.test(l.label))).toBe(true);
     // Whole minutes without seconds.
     for (const l of [...en, ...zh]) if (bars[l.index].time % 60 === 0) expect(l.label).not.toMatch(/:\d\d:\d\d/);
   });

@@ -111,12 +111,12 @@ export interface EventWords {
   exDiv: string;
   estimated: string;
   times: Record<NonNullable<EarningsEvent['time']>, string>;
-  /** An exact release time, New York, in the user's clock format: "8:30 AM ET". */
+  /** An exact release time, New York, in the user's clock format: "08:30 AM ET". */
   atEt(t: string): string;
 }
 
 /**
- * A chip's text: "Earnings 10/23 AMC · Est.", "Earnings 10/21 8:30 AM ET" (an exact time says more
+ * A chip's text: "Earnings 10/23 AMC · Est.", "Earnings 10/21 08:30 AM ET" (an exact time says more
  * than before the open / after the close; `wall` writes it in the user's clock format) or "Ex-div
  * 10/15 $0.24" (the amount in the underlying's currency).
  */

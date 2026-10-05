@@ -169,7 +169,7 @@ export interface ConfirmRow {
   label: string;
   value: string;
   color?: string;
-  /** The value is " · "-separated parts that wrap between parts only ("Start 9:45 AM ET" stays whole). */
+  /** The value is " · "-separated parts that wrap between parts only ("Start 09:45 AM ET" stays whole). */
   parts?: boolean;
 }
 

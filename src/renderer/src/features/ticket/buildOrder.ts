@@ -404,8 +404,8 @@ export function typePriceText(req: OrderRequest, labels: ReviewLabels, minTick: 
 }
 
 /**
- * TIF, session and the order's extra attributes, e.g. "GTD 10/09 4:00 PM ET · Extended hours · GAT
- * 9:35 AM ET". A bracket and conditions have rows of their own (conditions without the attribute
+ * TIF, session and the order's extra attributes, e.g. "GTD 10/09 04:00 PM ET · Extended hours · GAT
+ * 09:35 AM ET". A bracket and conditions have rows of their own (conditions without the attribute
  * labels only the single price condition's).
  */
 export function tifText(req: OrderRequest, labels: ReviewLabels): string {

@@ -54,7 +54,7 @@ export function newestExecutions(executions: Execution[]): Execution[] {
   return [...executions].sort((a, b) => b.time - a.time || (a.execId < b.execId ? 1 : -1));
 }
 
-/** Time column of the order and trade lists: "9:41:07 AM", "下午 2:35:07", "14:35:07". */
+/** Time column of the order and trade lists: "09:41:07 AM", "下午 02:35:07", "14:35:07". */
 export function timeCell(t: number, clock: Clock): string {
   return clock.time(t, { seconds: true });
 }
@@ -142,7 +142,7 @@ function etHhmm(t: number): string {
 }
 
 export interface GoodAfter {
-  /** Display text in the clock's format, e.g. "9:35 AM ET" / "09:35 ET". */
+  /** Display text in the clock's format, e.g. "09:35 AM ET" / "09:35 ET". */
   label: string;
   /** "HH:MM" in US/Eastern when known (for the order ticket). */
   etTime?: string;
@@ -204,9 +204,9 @@ function trailText(o: WorkingOrder): string {
 
 /**
  * Status text as in the design: a pending price condition reads "Waiting · AAPL ≥ 235.00",
- * a pending good-after time "After 9:35 AM ET · DAY", anything else "<status> · <TIF>" plus
+ * a pending good-after time "After 09:35 AM ET · DAY", anything else "<status> · <TIF>" plus
  * trailing / iceberg details. The TIF carries a GTD expiry and a session other than regular
- * hours ("GTD 10/09 4:00 PM ET", "DAY · Overnight + Day"). IB warnings and hold reasons are
+ * hours ("GTD 10/09 04:00 PM ET", "DAY · Overnight + Day"). IB warnings and hold reasons are
  * appended. Times are in `clock`'s format.
  */
 export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock, now: number = Date.now()): OrderStatusText {

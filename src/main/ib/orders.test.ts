@@ -762,8 +762,8 @@ describe('notification texts', () => {
     const gtd = orderNotice({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', outsideRth: true }, 'submitted').body;
     expect(gtd.en).toBe(`Limit 226.95 · GTD ⟦t:${Date.UTC(2026, 9, 9, 20)}:de⟧ · Extended hours · awaiting fill`);
     expect(resolveTimeTokens(gtd.en, createClock('24h', 'en'))).toBe('Limit 226.95 · GTD 10/09 16:00 ET · Extended hours · awaiting fill');
-    expect(resolveTimeTokens(gtd.en, createClock('12h', 'en'))).toBe('Limit 226.95 · GTD 10/09 4:00 PM ET · Extended hours · awaiting fill');
-    expect(resolveTimeTokens(gtd.zh, createClock('12h', 'zh'))).toBe('限价 226.95 · GTD 10/09 下午 4:00 ET · 盘前盘后 · 等待成交');
+    expect(resolveTimeTokens(gtd.en, createClock('12h', 'en'))).toBe('Limit 226.95 · GTD 10/09 04:00 PM ET · Extended hours · awaiting fill');
+    expect(resolveTimeTokens(gtd.zh, createClock('12h', 'zh'))).toBe('限价 226.95 · GTD 10/09 下午 04:00 ET · 盘前盘后 · 等待成交');
     const opt = orderNotice({ ...order, contract: option('AAPL', '20261016', 230, 'C'), totalQuantity: 10, limitPrice: 3.1 }, 'submitted');
     expect(opt.title.en).toBe('Buy 10 AAPL 10/16 230 Call submitted');
   });

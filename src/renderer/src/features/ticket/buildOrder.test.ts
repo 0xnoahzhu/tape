@@ -277,7 +277,7 @@ describe('review rows', () => {
     expect(byLabel['Side']).toEqual({ label: 'Side', value: 'Sell', color: 'var(--dn)' });
     expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 ET');
     const h12 = pendingOrder(r.request, r.model, { ...labels, clock: createClock('12h', 'en') }, mkt, 41);
-    expect(h12.rows.find((x) => x.label === 'TIF')?.value).toBe('GTC · Extended hours · conditional · iceberg · GAT 9:35 AM ET');
+    expect(h12.rows.find((x) => x.label === 'TIF')?.value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 AM ET');
     expect(byLabel['Take profit / Stop loss']).toBeUndefined();
     // With the attribute labels the conditions get their own row.
     const full = pendingOrder(r.request, r.model, fullLabels, mkt, 41).rows;
@@ -313,8 +313,8 @@ describe('review rows', () => {
       if (!r.ok) throw new Error(r.error);
       return pendingOrder(r.request, r.model, { ...labels, clock }, mkt).rows.find((x) => x.label === 'TIF')?.value;
     };
-    expect(tif(createClock('12h', 'en'))).toBe('GTD 10/09 4:00 PM ET');
-    expect(tif(createClock('12h', 'zh'))).toBe('GTD 10/09 下午 4:00 ET');
+    expect(tif(createClock('12h', 'en'))).toBe('GTD 10/09 04:00 PM ET');
+    expect(tif(createClock('12h', 'zh'))).toBe('GTD 10/09 下午 04:00 ET');
     expect(tif(createClock('24h', 'zh'))).toBe('GTD 10/09 16:00 ET');
   });
 

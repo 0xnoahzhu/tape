@@ -991,7 +991,7 @@ export interface Settings {
   appearance: {
     theme: ThemeSetting;
     language: Lang;
-    /** Clock times: '12h' "9:41 AM" (the default) or '24h' "09:41" (shared/timeFormat.ts). */
+    /** Clock times: '12h' "09:41 AM" (the default) or '24h' "09:41" (shared/timeFormat.ts). */
     timeFormat: TimeFormat;
     upColor: UpColor;
     showAccountId: boolean;

@@ -66,14 +66,14 @@ describe('orderStatusText', () => {
 
   it('writes good-after and GTD times in the clock format', () => {
     const gat = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
-    expect(orderStatusText(gat, L, createClock('12h', 'en')).text).toBe('After 9:35 AM ET · DAY');
+    expect(orderStatusText(gat, L, createClock('12h', 'en')).text).toBe('After 09:35 AM ET · DAY');
     const zh: StatusLabels = { ...L, after: (t) => `定时 ${t}` };
-    expect(orderStatusText(gat, zh, createClock('12h', 'zh')).text).toBe('定时 上午 9:35 ET · DAY');
+    expect(orderStatusText(gat, zh, createClock('12h', 'zh')).text).toBe('定时 上午 09:35 ET · DAY');
     const noon = order({ status: 'PreSubmitted', goodAfterTime: '20261005 12:00:00 US/Eastern' });
     expect(orderStatusText(noon, L, createClock('12h', 'en')).text).toBe('After 12:00 PM ET · DAY');
     const gtd = order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
-    expect(orderStatusText(gtd, L, createClock('12h', 'en')).text).toBe('Working · GTD 10/09 4:00 PM ET');
-    expect(orderStatusText(gtd, L, createClock('12h', 'zh')).text).toBe('Working · GTD 10/09 下午 4:00 ET');
+    expect(orderStatusText(gtd, L, createClock('12h', 'en')).text).toBe('Working · GTD 10/09 04:00 PM ET');
+    expect(orderStatusText(gtd, L, createClock('12h', 'zh')).text).toBe('Working · GTD 10/09 下午 04:00 ET');
     expect(orderStatusText(gtd, L, createClock('24h', 'zh')).text).toBe('Working · GTD 10/09 16:00 ET');
     // The ticket keeps the 24-hour wall time IB uses, whatever the display format.
     expect(ticketPatchFromOrder(gat).goodAfterTime).toBe('09:35');
@@ -85,16 +85,16 @@ describe('orderStatusText', () => {
     const zh: StatusLabels = { ...L, after: (t) => `定时 ${t}` };
     // IB's UTC form: 14:35 UTC on 12/05 (EST) and 13:35 UTC on 10/05 (EDT) are both 9:35 ET.
     const utc = order({ status: 'PreSubmitted', goodAfterTime: '20261205-14:35:00' });
-    expect(orderStatusText(utc, L, en12).text).toBe('After 9:35 AM ET · DAY');
+    expect(orderStatusText(utc, L, en12).text).toBe('After 09:35 AM ET · DAY');
     expect(orderStatusText(utc, L, C24).text).toBe('After 09:35 ET · DAY');
-    expect(orderStatusText(utc, zh, zh12).text).toBe('定时 上午 9:35 ET · DAY');
+    expect(orderStatusText(utc, zh, zh12).text).toBe('定时 上午 09:35 ET · DAY');
     const utcDst = order({ status: 'PreSubmitted', goodAfterTime: '20261005-13:35:00' });
-    expect(orderStatusText(utcDst, L, en12).text).toBe('After 9:35 AM ET · DAY');
+    expect(orderStatusText(utcDst, L, en12).text).toBe('After 09:35 AM ET · DAY');
     // A TWS order placed with a Shanghai clock keeps its zone.
     const sh = order({ status: 'PreSubmitted', goodAfterTime: '20261005 21:35:00 Asia/Shanghai' });
-    expect(orderStatusText(sh, L, en12).text).toBe('After 9:35 PM Asia/Shanghai · DAY');
+    expect(orderStatusText(sh, L, en12).text).toBe('After 09:35 PM Asia/Shanghai · DAY');
     expect(orderStatusText(sh, L, C24).text).toBe('After 21:35 Asia/Shanghai · DAY');
-    expect(orderStatusText(sh, zh, zh12).text).toBe('定时 下午 9:35 Asia/Shanghai · DAY');
+    expect(orderStatusText(sh, zh, zh12).text).toBe('定时 下午 09:35 Asia/Shanghai · DAY');
     // "Modify" loads the ET wall time into the ticket.
     for (const o of [utc, utcDst, sh]) expect(ticketPatchFromOrder(o)).toMatchObject({ goodAfter: true, goodAfterTime: '09:35', advancedOpen: true });
     expect(ticketPatchFromOrder(order({ goodAfterTime: '9:05' }))).toMatchObject({ goodAfter: true, goodAfterTime: '09:05' });

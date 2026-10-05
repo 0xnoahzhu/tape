@@ -11,7 +11,7 @@ import { orderPriceText as listPriceText, parseGoodAfter } from '../orders/model
 export interface StatusLabels {
   /** Price-conditioned order that has not triggered yet. */
   waiting: string;
-  /** Good-after-time order that has not activated yet; receives the time with its zone as the clock writes it ("9:35 AM ET", "21:35 Asia/Shanghai"). */
+  /** Good-after-time order that has not activated yet; receives the time with its zone as the clock writes it ("09:35 AM ET", "21:35 Asia/Shanghai"). */
   after: (time: string) => string;
   pending: string;
   cancelling: string;

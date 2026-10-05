@@ -87,7 +87,7 @@ export const usePortfolioMessages = createMessages({
     earnings: 'Earnings',
     exDiv: 'Ex-div',
     estimated: 'Est.',
-    /** An exact release time, New York, in the user's clock format ("8:30 AM"). */
+    /** An exact release time, New York, in the user's clock format ("08:30 AM"). */
     atEt: (t: string) => `${t} ET`,
     estimatedHint: 'Estimated from IB’s market scanner: not a confirmed date',
     earningsOn: (d: string) => `Earnings on ${d}`,

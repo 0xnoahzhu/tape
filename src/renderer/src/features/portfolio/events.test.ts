@@ -131,9 +131,9 @@ describe('event chips', () => {
     expect(eventLabel(ev({ time: 'bmo' }), words('en'), en.wall)).toBe('Earnings 10/23 BMO');
     expect(eventLabel(ev({}), words('en'), en.wall)).toBe('Earnings 10/23');
     // An exact time wins over before the open.
-    expect(eventLabel(ev({ date: '20261021', time: 'bmo', minutes: 510, estimated: true }), words('en'), en.wall)).toBe('Earnings 10/21 8:30 AM ET · Est.');
+    expect(eventLabel(ev({ date: '20261021', time: 'bmo', minutes: 510, estimated: true }), words('en'), en.wall)).toBe('Earnings 10/21 08:30 AM ET · Est.');
     expect(eventLabel(ev({ time: 'amc', estimated: true }), words('zh'), zh.wall)).toBe('财报 10/23 盘后 · 预估');
-    expect(eventLabel(ev({ minutes: 510 }), words('zh'), zh.wall)).toBe('财报 10/23 美东 上午 8:30');
+    expect(eventLabel(ev({ minutes: 510 }), words('zh'), zh.wall)).toBe('财报 10/23 美东 上午 08:30');
   });
 
   it('reads the ex-dividend date and the amount in the underlying’s currency', () => {

@@ -259,7 +259,7 @@ export interface TimingFields {
 
 /**
  * TIF and trading session as shown in reviews, lists and notifications: "DAY",
- * "GTC · Extended hours", "DAY · Overnight + Day", "GTD 10/09 4:00 PM ET" (the expiry in
+ * "GTC · Extended hours", "DAY · Overnight + Day", "GTD 10/09 04:00 PM ET" (the expiry in
  * `clock`'s format; 24-hour "GTD 10/09 16:00 ET" without one).
  */
 export function timingText(o: TimingFields, sessions: Record<TradingSession, string>, clock: Clock = CLOCK_24H): string {

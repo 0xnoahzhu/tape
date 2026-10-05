@@ -1014,8 +1014,8 @@ const BAR_LABELS = {
 
 /**
  * The time format and language chart labels are written in (the user's Clock, see
- * shared/timeFormat.ts): dates are the same in both formats, clock times are "9:30 AM" /
- * "上午 9:30" on the 12-hour clock and "09:30" on the 24-hour one.
+ * shared/timeFormat.ts): dates are the same in both formats, clock times are "09:30 AM" /
+ * "上午 09:30" on the 12-hour clock and "09:30" on the 24-hour one.
  */
 export type LabelClock = Pick<Clock, 'format' | 'lang'>;
 

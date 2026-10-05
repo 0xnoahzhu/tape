@@ -121,9 +121,9 @@ export function ticketTiming(t: TicketState, contract: ContractRef, session: Tra
 
 /**
  * The good-after field when it does not have the focus: a time it can read ("09:35", "9:35 pm")
- * in the user's format ("9:35 AM", "上午 9:35", "09:35"); anything else as typed, so the mistake
+ * in the user's format ("09:35 AM", "上午 09:35", "09:35"); anything else as typed, so the mistake
  * stays visible next to the error. In the 12-hour format "3:55" is not a time it can read (AM or
- * PM?), so it stays "3:55" rather than turning into "3:55 AM".
+ * PM?), so it stays "3:55" rather than turning into "03:55 AM".
  */
 export function goodAfterDisplay(value: string, clock: Clock): string {
   const time = parseTypedTime(value, clock.format);

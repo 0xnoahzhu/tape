@@ -642,7 +642,7 @@ describe('the columns of extra market data, earnings and contract details', () =
     expect(text('contractMonth', c)).toBe('2026-10');
     expect(value('lastTradeTime', c)).toBe('20261016 16:00');
     expect(text('lastTradeTime', c)).toBe('2026-10-16 16:00');
-    expect(cellText(COLUMNS.lastTradeTime, c, words, createClock('12h', 'en'))).toBe('2026-10-16 4:00 PM');
+    expect(cellText(COLUMNS.lastTradeTime, c, words, createClock('12h', 'en'))).toBe('2026-10-16 04:00 PM');
     expect(COLUMNS.lastTradeTime.title!(c, words)).toBe('US/Eastern');
     expect(text('realExpiration', c)).toBe('2026-10-16');
     expect(text('marketName', c)).toBe('AAPL');
@@ -724,7 +724,7 @@ describe('new cell formats', () => {
   it('writes months, stamps, earnings, ratios, 3 decimals and features', () => {
     expect(formatValue('month', '202612', words, clock, NOW)).toBe('2026-12');
     expect(formatValue('stamp', '20261218 08:30', words, clock, NOW)).toBe('2026-12-18 08:30');
-    expect(formatValue('stamp', '20261218 08:30', words, createClock('12h', 'zh'), NOW)).toBe('2026-12-18 上午 8:30');
+    expect(formatValue('stamp', '20261218 08:30', words, createClock('12h', 'zh'), NOW)).toBe('2026-12-18 上午 08:30');
     expect(formatValue('earn', '20261030|bmo', words, clock, NOW)).toBe('2026-10-30 BMO');
     expect(formatValue('earn', '20261030|', words, clock, NOW)).toBe('2026-10-30');
     expect(formatValue('ratio', 1.254, words, clock, NOW)).toBe('1.25×');

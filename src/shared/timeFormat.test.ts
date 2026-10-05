@@ -21,17 +21,17 @@ const h24zh = createClock('24h', 'zh');
 const ET = { timeZone: NEW_YORK_ZONE, zone: 'ET' };
 
 describe('clockText', () => {
-  it('writes 12-hour English without a leading zero on the hour', () => {
-    expect(clockText({ h: 9, m: 41 }, '12h', 'en')).toBe('9:41 AM');
-    expect(clockText({ h: 9, m: 41, s: 7 }, '12h', 'en', true)).toBe('9:41:07 AM');
-    expect(clockText({ h: 14, m: 35 }, '12h', 'en')).toBe('2:35 PM');
+  it('writes 12-hour English with a two-digit hour', () => {
+    expect(clockText({ h: 9, m: 41 }, '12h', 'en')).toBe('09:41 AM');
+    expect(clockText({ h: 9, m: 41, s: 7 }, '12h', 'en', true)).toBe('09:41:07 AM');
+    expect(clockText({ h: 14, m: 35 }, '12h', 'en')).toBe('02:35 PM');
     expect(clockText({ h: 23, m: 59, s: 59 }, '12h', 'en', true)).toBe('11:59:59 PM');
   });
 
   it('writes 12-hour Chinese with the period first', () => {
-    expect(clockText({ h: 9, m: 41 }, '12h', 'zh')).toBe('上午 9:41');
-    expect(clockText({ h: 14, m: 35 }, '12h', 'zh')).toBe('下午 2:35');
-    expect(clockText({ h: 14, m: 35, s: 7 }, '12h', 'zh', true)).toBe('下午 2:35:07');
+    expect(clockText({ h: 9, m: 41 }, '12h', 'zh')).toBe('上午 09:41');
+    expect(clockText({ h: 14, m: 35 }, '12h', 'zh')).toBe('下午 02:35');
+    expect(clockText({ h: 14, m: 35, s: 7 }, '12h', 'zh', true)).toBe('下午 02:35:07');
   });
 
   it('reads midnight as 12 AM / 上午 12 and noon as 12 PM / 下午 12', () => {
@@ -49,9 +49,19 @@ describe('clockText', () => {
     expect(clockText({ h: 0, m: 0 }, '24h', 'en')).toBe('00:00');
   });
 
+  it('writes every hour with two digits', () => {
+    for (let h = 0; h < 24; h++) {
+      for (const format of ['12h', '24h'] as const) {
+        for (const lang of ['en', 'zh'] as const) expect(clockParts({ h, m: 5, s: 9 }, format, lang, true).time).toMatch(/^\d{2}:05:09$/);
+      }
+    }
+    expect(clockText({ h: 13, m: 0 }, '12h', 'en')).toBe('01:00 PM');
+    expect(clockText({ h: 1, m: 0 }, '12h', 'zh')).toBe('上午 01:00');
+  });
+
   it('splits the period for the lock screen', () => {
-    expect(clockParts({ h: 21, m: 5 }, '12h', 'en')).toEqual({ time: '9:05', period: 'PM', periodFirst: false });
-    expect(clockParts({ h: 9, m: 5 }, '12h', 'zh')).toEqual({ time: '9:05', period: '上午', periodFirst: true });
+    expect(clockParts({ h: 21, m: 5 }, '12h', 'en')).toEqual({ time: '09:05', period: 'PM', periodFirst: false });
+    expect(clockParts({ h: 9, m: 5 }, '12h', 'zh')).toEqual({ time: '09:05', period: '上午', periodFirst: true });
     expect(clockParts({ h: 9, m: 5 }, '24h', 'zh')).toEqual({ time: '09:05', period: null, periodFirst: false });
   });
 });
@@ -59,32 +69,32 @@ describe('clockText', () => {
 describe('createClock', () => {
   it('formats instants in the local zone by default', () => {
     const t = new Date(2026, 9, 5, 14, 35, 7);
-    expect(h12en.time(t)).toBe('2:35 PM');
-    expect(h12en.time(t.getTime(), { seconds: true })).toBe('2:35:07 PM');
-    expect(h12zh.time(t)).toBe('下午 2:35');
+    expect(h12en.time(t)).toBe('02:35 PM');
+    expect(h12en.time(t.getTime(), { seconds: true })).toBe('02:35:07 PM');
+    expect(h12zh.time(t)).toBe('下午 02:35');
     expect(h24zh.time(t, { seconds: true })).toBe('14:35:07');
-    expect(h12en.time(t, { date: 'ymd', seconds: true })).toBe('2026-10-05 2:35:07 PM');
-    expect(h12en.parts(t)).toEqual({ time: '2:35', period: 'PM', periodFirst: false });
+    expect(h12en.time(t, { date: 'ymd', seconds: true })).toBe('2026-10-05 02:35:07 PM');
+    expect(h12en.parts(t)).toEqual({ time: '02:35', period: 'PM', periodFirst: false });
   });
 
   it('formats instants in a time zone with a zone suffix and a date', () => {
     // 2026-10-09 20:00 UTC = 16:00 EDT.
     const close = Date.UTC(2026, 9, 9, 20);
-    expect(h12en.time(close, ET)).toBe('4:00 PM ET');
-    expect(h12en.time(close, { ...ET, date: 'md' })).toBe('10/09 4:00 PM ET');
-    expect(h12zh.time(close, { ...ET, date: 'md' })).toBe('10/09 下午 4:00 ET');
+    expect(h12en.time(close, ET)).toBe('04:00 PM ET');
+    expect(h12en.time(close, { ...ET, date: 'md' })).toBe('10/09 04:00 PM ET');
+    expect(h12zh.time(close, { ...ET, date: 'md' })).toBe('10/09 下午 04:00 ET');
     expect(h24en.time(close, { ...ET, date: 'md' })).toBe('10/09 16:00 ET');
-    expect(h12en.time(close, { timeZone: 'Asia/Shanghai' })).toBe('4:00 AM');
-    expect(h12en.time(close, { timeZone: 'UTC', zone: 'UTC' })).toBe('8:00 PM UTC');
+    expect(h12en.time(close, { timeZone: 'Asia/Shanghai' })).toBe('04:00 AM');
+    expect(h12en.time(close, { timeZone: 'UTC', zone: 'UTC' })).toBe('08:00 PM UTC');
   });
 
   it('follows daylight saving time', () => {
     // 2026-03-08: New York springs forward from 02:00 EST to 03:00 EDT.
-    expect(h12en.time(Date.UTC(2026, 2, 8, 6, 59), ET)).toBe('1:59 AM ET');
-    expect(h12en.time(Date.UTC(2026, 2, 8, 7, 0), ET)).toBe('3:00 AM ET');
+    expect(h12en.time(Date.UTC(2026, 2, 8, 6, 59), ET)).toBe('01:59 AM ET');
+    expect(h12en.time(Date.UTC(2026, 2, 8, 7, 0), ET)).toBe('03:00 AM ET');
     // 2026-11-01: 01:30 happens twice (EDT, then EST).
-    expect(h12en.time(Date.UTC(2026, 10, 1, 5, 30), ET)).toBe('1:30 AM ET');
-    expect(h12en.time(Date.UTC(2026, 10, 1, 6, 30), ET)).toBe('1:30 AM ET');
+    expect(h12en.time(Date.UTC(2026, 10, 1, 5, 30), ET)).toBe('01:30 AM ET');
+    expect(h12en.time(Date.UTC(2026, 10, 1, 6, 30), ET)).toBe('01:30 AM ET');
     // The same UTC time reads an hour apart in summer and winter.
     expect(h24en.time(Date.UTC(2026, 6, 1, 13, 30), ET)).toBe('09:30 ET');
     expect(h24en.time(Date.UTC(2026, 11, 1, 13, 30), ET)).toBe('08:30 ET');
@@ -93,17 +103,17 @@ describe('createClock', () => {
   });
 
   it('rewrites 24-hour wall times and ranges', () => {
-    expect(h12en.wall('16:00')).toBe('4:00 PM');
-    expect(h12en.wall('09:35', { zone: 'ET' })).toBe('9:35 AM ET');
-    expect(h12zh.wall('9:35', { zone: 'ET' })).toBe('上午 9:35 ET');
-    expect(h12en.wall('16:00:05')).toBe('4:00:05 PM');
+    expect(h12en.wall('16:00')).toBe('04:00 PM');
+    expect(h12en.wall('09:35', { zone: 'ET' })).toBe('09:35 AM ET');
+    expect(h12zh.wall('9:35', { zone: 'ET' })).toBe('上午 09:35 ET');
+    expect(h12en.wall('16:00:05')).toBe('04:00:05 PM');
     expect(h24en.wall('9:35')).toBe('09:35');
     expect(h12en.wall('soon')).toBe('soon');
     expect(h12en.wall('24:00')).toBe('24:00');
-    expect(h12en.range('09:30', '16:00')).toBe('9:30 AM–4:00 PM');
-    expect(h12en.range('04:00', '09:30')).toBe('4:00–9:30 AM');
-    expect(h12zh.range('16:00', '20:00')).toBe('下午 4:00–8:00');
-    expect(h12zh.range('20:00', '03:50')).toBe('下午 8:00–上午 3:50');
+    expect(h12en.range('09:30', '16:00')).toBe('09:30 AM–04:00 PM');
+    expect(h12en.range('04:00', '09:30')).toBe('04:00–09:30 AM');
+    expect(h12zh.range('16:00', '20:00')).toBe('下午 04:00–08:00');
+    expect(h12zh.range('20:00', '03:50')).toBe('下午 08:00–上午 03:50');
     expect(h24zh.range('09:30', '16:00')).toBe('09:30–16:00');
   });
 
@@ -175,6 +185,15 @@ describe('parseTypedTime', () => {
     expect(parseTypedTime('3:55', '24h')).toBe('03:55');
   });
 
+  it('reads back every time the clock writes', () => {
+    for (let h = 0; h < 24; h++) {
+      for (const m of [0, 5, 59]) {
+        const hhmm = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        for (const c of [h12en, h12zh, h24en]) expect(parseTypedTime(c.wall(hhmm), c.format), c.wall(hhmm)).toBe(hhmm);
+      }
+    }
+  });
+
   it('rejects what is not a time', () => {
     for (const s of ['', '9', '935', '9.30', '25:00', '9:60', '13:00 PM', '0:30 AM', '9:35 XM', 'AM', '9:35 AM PM', '1:2']) for (const f of ['12h', '24h'] as const) expect(parseTypedTime(s, f), s).toBeNull();
   });
@@ -194,15 +213,15 @@ describe('time tokens', () => {
   it('stores New York times with a date as tokens and resolves them in any format', () => {
     const text = `GTD ${TOKEN_CLOCK.time(close, { ...ET, date: 'md' })} ET-free`;
     expect(text).toBe(`GTD ⟦t:${close}:de⟧ ET-free`);
-    expect(resolveTimeTokens(text, h12en)).toBe('GTD 10/09 4:00 PM ET ET-free');
-    expect(resolveTimeTokens(text, h12zh)).toBe('GTD 10/09 下午 4:00 ET ET-free');
+    expect(resolveTimeTokens(text, h12en)).toBe('GTD 10/09 04:00 PM ET ET-free');
+    expect(resolveTimeTokens(text, h12zh)).toBe('GTD 10/09 下午 04:00 ET ET-free');
     expect(resolveTimeTokens(text, h24zh)).toBe('GTD 10/09 16:00 ET ET-free');
   });
 
   it('keeps seconds and the local zone', () => {
     const t = new Date(2026, 9, 5, 14, 35, 7).getTime();
     const token = TOKEN_CLOCK.time(t, { seconds: true });
-    expect(resolveTimeTokens(`at ${token}`, h12en)).toBe('at 2:35:07 PM');
+    expect(resolveTimeTokens(`at ${token}`, h12en)).toBe('at 02:35:07 PM');
     expect(resolveTimeTokens(`${token} / ${token}`, h24en)).toBe('14:35:07 / 14:35:07');
   });
 

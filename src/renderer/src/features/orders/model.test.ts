@@ -122,10 +122,10 @@ describe('parseGoodAfter', () => {
   it('writes the label in the clock format, keeping the 24-hour ET time for the ticket', () => {
     const h12en = createClock('12h', 'en');
     const h12zh = createClock('12h', 'zh');
-    expect(parseGoodAfter('9:35', h12en)).toEqual({ label: '9:35 AM ET', etTime: '09:35' });
-    expect(parseGoodAfter('20261005 13:05:00 US/Eastern', h12zh)!.label).toBe('下午 1:05 ET');
-    expect(parseGoodAfter('20261205-14:35:00', h12en)!.label).toBe('9:35 AM ET');
-    expect(parseGoodAfter('20261005 21:35:00 Asia/Shanghai', h12en)!.label).toBe('9:35 PM Asia/Shanghai');
+    expect(parseGoodAfter('9:35', h12en)).toEqual({ label: '09:35 AM ET', etTime: '09:35' });
+    expect(parseGoodAfter('20261005 13:05:00 US/Eastern', h12zh)!.label).toBe('下午 01:05 ET');
+    expect(parseGoodAfter('20261205-14:35:00', h12en)!.label).toBe('09:35 AM ET');
+    expect(parseGoodAfter('20261005 21:35:00 Asia/Shanghai', h12en)!.label).toBe('09:35 PM Asia/Shanghai');
     expect(parseGoodAfter('20261005 00:15:00', h12en)!.label).toBe('12:15 AM');
   });
 });
@@ -133,8 +133,8 @@ describe('parseGoodAfter', () => {
 describe('timeCell', () => {
   const t = new Date(2026, 9, 5, 14, 35, 7).getTime();
   it('shows the local time with seconds in the clock format', () => {
-    expect(timeCell(t, createClock('12h', 'en'))).toBe('2:35:07 PM');
-    expect(timeCell(t, createClock('12h', 'zh'))).toBe('下午 2:35:07');
+    expect(timeCell(t, createClock('12h', 'en'))).toBe('02:35:07 PM');
+    expect(timeCell(t, createClock('12h', 'zh'))).toBe('下午 02:35:07');
     expect(timeCell(t, createClock('24h', 'zh'))).toBe('14:35:07');
   });
 });
@@ -188,10 +188,10 @@ describe('orderStatusText', () => {
   it('writes good-after and GTD times in the clock format', () => {
     const gat = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
     const gtd = order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
-    expect(orderStatusText(gat, en, createClock('12h', 'en'), now).text).toBe('After 9:35 AM ET · DAY');
-    expect(orderStatusText(gat, zh, createClock('12h', 'zh'), now).text).toBe('定时 上午 9:35 ET · DAY');
-    expect(orderStatusText(gtd, en, createClock('12h', 'en'), now).text).toBe('Submitted · GTD 10/09 4:00 PM ET');
-    expect(orderStatusText(gtd, zh, createClock('12h', 'zh'), now).text).toBe('已提交 · GTD 10/09 下午 4:00 ET');
+    expect(orderStatusText(gat, en, createClock('12h', 'en'), now).text).toBe('After 09:35 AM ET · DAY');
+    expect(orderStatusText(gat, zh, createClock('12h', 'zh'), now).text).toBe('定时 上午 09:35 ET · DAY');
+    expect(orderStatusText(gtd, en, createClock('12h', 'en'), now).text).toBe('Submitted · GTD 10/09 04:00 PM ET');
+    expect(orderStatusText(gtd, zh, createClock('12h', 'zh'), now).text).toBe('已提交 · GTD 10/09 下午 04:00 ET');
     expect(orderStatusText(gtd, zh, createClock('24h', 'zh'), now).text).toBe('已提交 · GTD 10/09 16:00 ET');
   });
 });

@@ -89,7 +89,7 @@ export function usesUsEquitySession(c: ContractRef): boolean {
 }
 
 /**
- * Exchange time of a quote in `clock`'s format: "4:00:05 PM" / "16:00:05", or "10/03 4:00 PM" /
+ * Exchange time of a quote in `clock`'s format: "04:00:05 PM" / "16:00:05", or "10/03 04:00 PM" /
  * "10/03 16:00" when it is not from today (New York days).
  */
 export function etTime(t: number, now: Date = new Date(), clock: Clock = CLOCK_24H): string {
