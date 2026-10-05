@@ -1,6 +1,8 @@
 // Trade page layout (design 3a): watchlist | view tabs + view content.
 // Chart and depth views share the same grid: content top-left, the symbol's
 // positions/orders bottom-left (150px) and the order ticket on the right (340px).
+// With the ticket floating (features/panels) the right column goes and the view and the
+// positions/orders take the full width.
 
 import { createMessages } from '../i18n';
 import { useStore, type TradeView } from '../state/store';
@@ -12,6 +14,8 @@ import { SymbolActivityPanel } from '../features/chart/SymbolActivityPanel';
 import { OrderTicket } from '../features/ticket/OrderTicket';
 import { OptionsDesk } from '../features/options/OptionsDesk';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
+import { PopOutButton } from '../features/panels/chrome';
+import { isFloating, usePanels } from '../features/panels/panelStore';
 
 const useM = createMessages({
   en: { chart: 'Chart', options: 'Options', depth: 'Depth' },
@@ -27,6 +31,7 @@ export function TradePage() {
   const features = useStore((s) => s.settings.features);
   const rawView = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
+  const ticketFloating = usePanels(isFloating('ticket'));
 
   // Views whose feature is switched off fall back to the chart.
   const view: TradeView = (rawView === 'opt' && !features.options) || (rawView === 'depth' && !features.depth) ? 'chart' : rawView;
@@ -83,7 +88,7 @@ export function TradePage() {
               minWidth: 0,
               minHeight: 0,
               display: 'grid',
-              gridTemplateColumns: 'minmax(0,1fr) 340px',
+              gridTemplateColumns: ticketFloating ? 'minmax(0,1fr)' : 'minmax(0,1fr) 340px',
               gridTemplateRows: 'minmax(0,1fr) 150px',
               gap: 'var(--gap)',
               background: 'var(--gbg)',
@@ -93,9 +98,11 @@ export function TradePage() {
             <ErrorBoundary name="Positions">
               <SymbolActivityPanel />
             </ErrorBoundary>
-            <ErrorBoundary name="Order ticket" style={{ gridColumn: 2, gridRow: '1 / 3' }}>
-              <OrderTicket />
-            </ErrorBoundary>
+            {!ticketFloating && (
+              <ErrorBoundary name="Order ticket" style={{ gridColumn: 2, gridRow: '1 / 3' }}>
+                <OrderTicket actions={<PopOutButton id="ticket" />} />
+              </ErrorBoundary>
+            )}
           </div>
         )}
       </div>

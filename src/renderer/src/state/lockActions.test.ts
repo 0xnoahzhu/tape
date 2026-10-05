@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { LockState } from '@shared/types';
 import { requestLock } from '../features/lock/actions';
+import { usePanels } from '../features/panels/panelStore';
 import { applyLockState } from './lockActions';
 import { isCovered, useStore } from './store';
 
@@ -30,6 +31,18 @@ describe('lock state in the renderer', () => {
     const s = useStore.getState();
     expect(s).toMatchObject({ bellOpen: false, pendingOrder: null, confirm: null, alertForm: null, pinDialog: null });
     expect(isCovered(s)).toBe(true);
+  });
+
+  it('collapses floating panels to their bars, and they stay so after the unlock', () => {
+    const panels = usePanels.getState();
+    panels.setFloating('ticket', true);
+    panels.setFloating('strategy', false);
+    applyLockState(state({ locked: true }));
+    expect(usePanels.getState().panels.ticket).toMatchObject({ floating: true, collapsed: true });
+    expect(usePanels.getState().panels.strategy).toMatchObject({ floating: false, collapsed: false });
+    applyLockState(state({ locked: false }));
+    expect(usePanels.getState().panels.ticket.collapsed).toBe(true);
+    panels.setFloating('ticket', false);
   });
 
   it('stays covered while the unlock animation plays', () => {

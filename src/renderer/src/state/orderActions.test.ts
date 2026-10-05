@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { TimeFormat } from '@shared/timeFormat';
 import type { Lang, OrderRequest, WorkingOrder } from '@shared/types';
-import { confirmCancel, orderErrorText, sendOrder } from './orderActions';
+import { confirmCancel, orderErrorText, orderLine, sendOrder } from './orderActions';
+import { usePanels } from '../features/panels/panelStore';
+import { isPanelSending, useOrderFeedback } from './orderFeedback';
 import { useStore } from './store';
 
 const placeOrder = vi.fn();
 const cancelOrder = vi.fn();
-(globalThis as unknown as { window: unknown }).window = { tape: { placeOrder, cancelOrder } };
+const modifyOrder = vi.fn();
+(globalThis as unknown as { window: unknown }).window = { tape: { placeOrder, cancelOrder, modifyOrder } };
 
 /** IB's Read-Only API rejection as the renderer receives it from a failed IPC call. */
 const IB_321 = 'The API interface is currently in Read-Only mode. (321)';
@@ -176,5 +179,162 @@ describe('order toasts', () => {
     setUp(4002, 'gateway', 'zh');
     confirmCancel({ ...order, session: 'overnightDay', outsideRth: true });
     expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: '类型', value: '限价 · DAY · 夜盘 + 日盘' });
+  });
+});
+
+describe('orders sent from a floating panel', () => {
+  const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.56, tif: 'DAY', outsideRth: false };
+  const pending = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', origin: 'ticket' as const };
+  const working = (status: WorkingOrder['status'], message?: string): WorkingOrder => ({
+    orderId: 31,
+    clientId: 7,
+    key: '7:31',
+    contract: stock('AAPL'),
+    action: 'BUY',
+    orderType: 'LMT',
+    totalQuantity: 100,
+    limitPrice: 227.56,
+    tif: 'DAY',
+    outsideRth: false,
+    status,
+    filled: 0,
+    remaining: 100,
+    avgFillPrice: 0,
+    createdAt: 0,
+    updatedAt: 0,
+    message,
+  });
+  const ticketPanel = () => usePanels.getState().panels.ticket;
+
+  beforeEach(() => {
+    setUp(4002);
+    useStore.setState((s) => ({ page: 'trade', view: 'chart', connection: { ...s.connection, clientId: 7 }, positions: [], orders: [] }));
+    useOrderFeedback.setState({ sent: {} });
+    for (const f of [placeOrder, modifyOrder]) f.mockReset();
+    usePanels.getState().setFloating('ticket', true);
+  });
+
+  it('writes the order line', () => {
+    expect(orderLine(pending)).toBe('Buy 100 AAPL · LMT 227.56 · DAY');
+    expect(orderLine({ ...pending, request: { ...request, orderType: 'MKT', limitPrice: undefined } })).toBe('Buy 100 AAPL · MKT · DAY');
+    expect(orderLine({ ...pending, request: { ...request, orderType: 'STP', limitPrice: undefined, stopPrice: 220 } })).toBe('Buy 100 AAPL · STP 220.00 · DAY');
+  });
+
+  it('is “Submitting…” until IB answers, then the strip follows it (no toast) and the panel collapses to its bar', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[] }) => void;
+    placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    const sent = sendOrder(pending);
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'sending', summary: 'Buy 100 AAPL · LMT 227.56 · DAY', side: 'BUY', quantity: 100 });
+    expect(ticketPanel().collapsed).toBe(false);
+    resolve({ orderId: 31, childOrderIds: [] });
+    await expect(sent).resolves.toBe(true);
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'sent', orderId: 31, clientId: 7, autoCollapsed: true });
+    expect(useOrderFeedback.getState().sent.ticket?.acceptedAt).toEqual(expect.any(Number));
+    expect(useStore.getState().toast).toBeNull();
+    expect(ticketPanel()).toMatchObject({ floating: true, collapsed: true });
+  });
+
+  it('a refusal turns the strip red, keeps the panel expanded and the form as it was', async () => {
+    useStore.getState().patchTicket({ qty: 100, limitPrice: 227.56 });
+    placeOrder.mockRejectedValue(ipcError('placeOrder', 'Order rejected - reason: margin. (201)'));
+    await expect(sendOrder(pending)).resolves.toBe(false);
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed', error: 'Order rejected - reason: margin. (201)' });
+    expect(ticketPanel().collapsed).toBe(false);
+    expect(useStore.getState().ticket).toMatchObject({ qty: 100, limitPrice: 227.56 });
+    expect(useStore.getState().toast).toBeNull();
+  });
+
+  it('not connected: the strip says so and the panel stays', async () => {
+    useStore.setState((s) => ({ connection: { ...s.connection, status: 'disconnected' } }));
+    await expect(sendOrder(pending)).resolves.toBe(false);
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed' });
+    expect(ticketPanel().collapsed).toBe(false);
+  });
+
+  it('a late rejection turns it red and expands the panel this order collapsed', async () => {
+    placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
+    await sendOrder(pending);
+    expect(ticketPanel().collapsed).toBe(true);
+    useStore.setState({ orders: [working('Inactive', 'No trading permissions (201)')] });
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed', error: 'No trading permissions (201)' });
+    expect(ticketPanel().collapsed).toBe(false);
+    useStore.setState({ orders: [] });
+  });
+
+  it('a modify shows as such, ends modifying and collapses the panel too', async () => {
+    modifyOrder.mockResolvedValue(undefined);
+    useStore.getState().patchTicket({ modifyingOrderId: 31 });
+    await sendOrder({ ...pending, modifyOrderId: 31 });
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ kind: 'modify', phase: 'sent', orderId: 31 });
+    expect(useStore.getState().ticket.modifyingOrderId).toBeNull();
+    expect(ticketPanel().collapsed).toBe(true);
+  });
+
+  it('a panel docked meanwhile is not collapsed (nothing to collapse), and a toast reports the order', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[] }) => void;
+    placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    const sent = sendOrder(pending);
+    usePanels.getState().setFloating('ticket', false);
+    resolve({ orderId: 31, childOrderIds: [] });
+    await sent;
+    expect(ticketPanel()).toMatchObject({ floating: false, collapsed: false });
+    expect(useOrderFeedback.getState().sent.ticket?.autoCollapsed).toBeUndefined();
+    expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 100 AAPL' });
+  });
+
+  it('a second order while the first waits for IB is not sent', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[] }) => void;
+    placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    const first = sendOrder(pending);
+    expect(isPanelSending('ticket')).toBe(true);
+    expect(isPanelSending(undefined)).toBe(false);
+    const seq = useOrderFeedback.getState().sent.ticket?.seq;
+    await expect(sendOrder(pending)).resolves.toBe(false);
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ seq, phase: 'sending' });
+    resolve({ orderId: 31, childOrderIds: [] });
+    await expect(first).resolves.toBe(true);
+    expect(isPanelSending('ticket')).toBe(false);
+    // Once IB has answered, the next order goes out.
+    placeOrder.mockResolvedValue({ orderId: 32, childOrderIds: [] });
+    await expect(sendOrder(pending)).resolves.toBe(true);
+    expect(placeOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refusal while the panel is docked back shows a toast as well', async () => {
+    let reject!: (e: Error) => void;
+    placeOrder.mockReturnValue(new Promise((_, r) => (reject = r)));
+    const sent = sendOrder(pending);
+    usePanels.getState().setFloating('ticket', false);
+    reject(ipcError('placeOrder', 'Order rejected - reason: margin. (201)'));
+    await expect(sent).resolves.toBe(false);
+    expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'Order failed: Order rejected - reason: margin. (201)' });
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed' });
+  });
+
+  it('a late rejection after leaving the page shows a toast', async () => {
+    placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
+    await sendOrder(pending);
+    expect(useStore.getState().toast).toBeNull();
+    useStore.setState({ page: 'ord' });
+    useStore.setState({ orders: [working('Inactive', 'No trading permissions (201)')] });
+    expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'Order failed: No trading permissions (201)' });
+    expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed' });
+    useStore.setState({ orders: [] });
+  });
+
+  it('an order from the docked ticket keeps its toasts', async () => {
+    placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
+    await sendOrder({ ...pending, origin: undefined });
+    expect(useStore.getState().toast?.text).toContain('Buy 100 AAPL');
+    expect(useOrderFeedback.getState().sent.ticket).toBeUndefined();
+    expect(ticketPanel().collapsed).toBe(false);
+  });
+
+  it('notes the position before the order (the fill line)', async () => {
+    placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
+    useStore.setState({ positions: [{ key: 'p', contract: stock('AAPL'), quantity: 200, avgPrice: 200 } as never] });
+    await sendOrder(pending);
+    expect(useOrderFeedback.getState().sent.ticket?.positionBefore).toBe(200);
   });
 });

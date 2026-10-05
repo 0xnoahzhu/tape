@@ -31,10 +31,15 @@ interface DeskState {
   tif: 'DAY' | 'GTC';
   /** Combos: SMART may fill the legs separately (leg risk). */
   nonGuaranteed: boolean;
+  /**
+   * The limit price the user set with the floating strategy panel's − / + (per share or combo unit);
+   * null follows the legs' prices. Any change to the legs drops it.
+   */
+  netPrice: number | null;
 
   /** Resets per-underlying state (legs, expiry) when the instrument changes. */
   setUnderlying(key: string): void;
-  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed'>>): void;
+  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed' | 'netPrice'>>): void;
   addLeg(leg: NewLeg): void;
   setLegs(legs: NewLeg[], tmpl: StrategyKey | null): void;
   updateLeg(id: number, f: (l: Leg) => Leg): void;
@@ -59,13 +64,14 @@ export const useDesk = create<DeskState>()((set) => ({
   ordType: 'LMT',
   tif: 'DAY',
   nonGuaranteed: false,
+  netPrice: null,
 
   setUnderlying: (key) =>
-    set((s) => (s.underlyingKey === key ? s : { underlyingKey: key, expiry: null, legs: [], tmpl: null, expOpen: false, condPx: null })),
+    set((s) => (s.underlyingKey === key ? s : { underlyingKey: key, expiry: null, legs: [], tmpl: null, expOpen: false, condPx: null, netPrice: null })),
   patch: (p) => set(p),
-  addLeg: (leg) => set((s) => ({ legs: addLeg(s.legs, leg, s.seq), seq: s.seq + 1, tmpl: null })),
-  setLegs: (legs, tmpl) => set((s) => ({ legs: legs.map((l, i) => ({ ...l, id: s.seq + i })), seq: s.seq + legs.length, tmpl, tmplOpen: false })),
-  updateLeg: (id, f) => set((s) => ({ legs: s.legs.map((l) => (l.id === id ? f(l) : l)), tmpl: null })),
-  removeLeg: (id) => set((s) => ({ legs: s.legs.filter((l) => l.id !== id), tmpl: null })),
-  clearLegs: () => set({ legs: [], tmpl: null }),
+  addLeg: (leg) => set((s) => ({ legs: addLeg(s.legs, leg, s.seq), seq: s.seq + 1, tmpl: null, netPrice: null })),
+  setLegs: (legs, tmpl) => set((s) => ({ legs: legs.map((l, i) => ({ ...l, id: s.seq + i })), seq: s.seq + legs.length, tmpl, tmplOpen: false, netPrice: null })),
+  updateLeg: (id, f) => set((s) => ({ legs: s.legs.map((l) => (l.id === id ? f(l) : l)), tmpl: null, netPrice: null })),
+  removeLeg: (id) => set((s) => ({ legs: s.legs.filter((l) => l.id !== id), tmpl: null, netPrice: null })),
+  clearLegs: () => set({ legs: [], tmpl: null, netPrice: null }),
 }));

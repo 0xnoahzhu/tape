@@ -1,10 +1,13 @@
 // Strategy builder (right column of the chain tab): templates, legs, payoff chart,
-// statistics, optional trigger condition, net greeks and the send button.
+// statistics, optional trigger condition, net greeks and the send button. Its parts and state
+// (useStrategy) are shared with the floating builder (features/panels/StrategyFloat).
 
 import { useCommon } from '../../i18n/common';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, usd } from '@shared/format';
+import { isPanelSending } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
+import type { PanelId } from '../panels/model';
 import { TextInput, Toggle } from '../../ui/primitives';
 import { fixed } from './chain';
 import { useDesk } from './deskStore';
@@ -15,18 +18,23 @@ import type { DeskModel } from './model';
 import { defaultTrigger } from './orders';
 import { sendStrategy } from './sendStrategy';
 import { buildStrategy, hasStockLeg, legContract, NO_STRATEGY_ICON, STRATEGIES, type StrategyKey } from './strategies';
-import { strategyView, type StrategyView } from './strategyModel';
+import { orderPrice, strategyView, withNetPrice, type StrategyView } from './strategyModel';
 
-export function StrategyPanel({ model }: { model: DeskModel }) {
-  const m = useM();
+/**
+ * The strategy builder's state and actions, shared by the docked panel and the floating one
+ * (features/panels/StrategyFloat): the legs' view at the order's price (the floating panel's
+ * − / + may set it), the template picker and the send flow. `origin`: the floating panel the
+ * order is sent from (its status strip reports it instead of toasts).
+ */
+export function useStrategy(model: DeskModel, origin?: PanelId) {
   const desk = useDesk();
-  const { legs, tmpl, tmplOpen } = desk;
+  const { legs, tmpl, tmplOpen, netPrice } = desk;
   const [sending, setSending] = useState(false);
   const { underlying, spot } = model;
 
   const view = useMemo(
-    () => (underlying ? strategyView(legs, underlying, spot, model.uq, model.quotes, model.ivAtm) : null),
-    [legs, underlying, spot, model.uq, model.quotes, model.ivAtm],
+    () => (underlying ? withNetPrice(strategyView(legs, underlying, spot, model.uq, model.quotes, model.ivAtm), netPrice) : null),
+    [legs, underlying, spot, model.uq, model.quotes, model.ivAtm, netPrice],
   );
 
   const isIndex = underlying?.secType === 'IND';
@@ -48,58 +56,62 @@ export function StrategyPanel({ model }: { model: DeskModel }) {
       if (st.legs === shown && listed.some((l, i) => l.strike !== shown[i]?.strike)) st.setLegs(listed, key);
     });
   };
+  const send = async () => {
+    if (!underlying || sending || !view || isPanelSending(origin)) return;
+    setSending(true);
+    try {
+      const st = useDesk.getState();
+      await sendStrategy({
+        view,
+        underlying,
+        tmpl: st.tmpl,
+        cond: { on: st.cond, op: st.condOp, px: st.condPx ?? (spot != null ? defaultTrigger(spot, st.condOp) : '') },
+        order: { type: st.ordType, tif: st.tif, nonGuaranteed: st.nonGuaranteed },
+        origin,
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+  return { desk, legs, tmpl, view, sending, send, isIndex, current, open, pickTemplate, model };
+}
 
-  return (
-    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-      <div style={{ padding: '16px 20px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontWeight: 600 }}>{m.strategy}</div>
-        <div onClick={desk.clearLegs} className="hover-tx" style={{ fontSize: 12, color: 'var(--dm)', cursor: 'pointer' }}>
-          {m.clear}
-        </div>
-      </div>
-      <div style={{ padding: '0 20px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div
-          onClick={() => desk.patch({ tmplOpen: !tmplOpen })}
-          className="hover-p2"
-          style={{ height: 40, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', cursor: 'pointer', boxShadow: 'inset 0 0 0 1px var(--ln)' }}
-        >
-          <Icon d={current?.icon ?? NO_STRATEGY_ICON} stroke="var(--ac)" />
-          <div style={{ flex: 1, fontSize: 13 }}>{current ? m.strategies[current.key] : m.chooseStrategy}</div>
-          <div style={{ fontSize: 9, color: 'var(--dm)' }}>{open ? '▲' : '▼'}</div>
-        </div>
-        {open && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-            {STRATEGIES.map((s) => {
-              const on = tmpl === s.key;
-              const disabled = isIndex && hasStockLeg(s.key);
-              return (
-                <div
-                  key={s.key}
-                  onClick={() => pickTemplate(s.key)}
-                  className={disabled ? undefined : 'hover-tx'}
-                  title={disabled ? m.noStockOnIndex : undefined}
-                  style={{
-                    height: 36,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '0 10px',
-                    fontSize: 12,
-                    cursor: disabled ? 'not-allowed' : 'pointer',
-                    background: 'var(--p2)',
-                    boxShadow: `inset 0 0 0 1px ${on ? 'var(--ac)' : 'transparent'}`,
-                    color: on ? 'var(--tx)' : 'var(--mu)',
-                    opacity: disabled ? 0.4 : 1,
-                  }}
-                >
-                  <Icon d={s.icon} stroke="currentColor" />
-                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.strategies[s.key]}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+export type StrategyCtl = ReturnType<typeof useStrategy>;
+
+/**
+ * The docked builder (right column of the chain tab). `actions` goes at the end of its title row
+ * (the pop-out button); `header` replaces the title row and `footer` the send button (the floating
+ * builder in its narrow layout). With a `header`, it stays put above the scrolling builder (it is
+ * the floating panel's drag handle and controls), and `heading` titles the row that keeps Clear.
+ */
+export function StrategyPanel({
+  model,
+  actions,
+  header,
+  heading,
+  footer,
+  origin,
+}: {
+  model: DeskModel;
+  actions?: ReactNode;
+  header?: ReactNode;
+  heading?: string;
+  footer?: (ctl: StrategyCtl) => ReactNode;
+  origin?: PanelId;
+}) {
+  const m = useM();
+  const ctl = useStrategy(model, origin);
+  const { desk, legs, view, sending, send } = ctl;
+  const { spot } = model;
+
+  const clear = (
+    <div onClick={desk.clearLegs} className="hover-tx" style={{ fontSize: 12, color: 'var(--dm)', cursor: 'pointer' }}>
+      {m.clear}
+    </div>
+  );
+  const body = (
+    <>
+      <TemplatePicker ctl={ctl} />
       {!legs.length && <div style={{ margin: '0 20px', padding: 18, background: 'var(--p2)', fontSize: 12, color: 'var(--dm)', textAlign: 'center' }}>{m.empty}</div>}
       {view && <LegList view={view} />}
       {view && legs.length > 0 && (
@@ -110,29 +122,90 @@ export function StrategyPanel({ model }: { model: DeskModel }) {
           <OrderChoices combo={legs.length > 1} />
           <div style={{ padding: '14px 20px 6px', fontSize: 12, color: 'var(--mu)' }}>{m.netGreeks}</div>
           <NetGreeks view={view} m={m} />
-          <div style={{ padding: '16px 20px 20px', marginTop: 'auto' }}>
-            <SendButton
-              view={view}
-              busy={sending}
-              onSend={async () => {
-                if (!underlying || sending) return;
-                setSending(true);
-                try {
-                  const st = useDesk.getState();
-                  await sendStrategy({
-                    view,
-                    underlying,
-                    tmpl: st.tmpl,
-                    cond: { on: st.cond, op: st.condOp, px: st.condPx ?? (spot != null ? defaultTrigger(spot, st.condOp) : '') },
-                    order: { type: st.ordType, tif: st.tif, nonGuaranteed: st.nonGuaranteed },
-                  });
-                } finally {
-                  setSending(false);
-                }
-              }}
-            />
-          </div>
+          <div style={{ padding: '16px 20px 20px', marginTop: 'auto' }}>{footer ? footer(ctl) : <SendButton view={view} busy={sending} onSend={() => void send()} />}</div>
         </>
+      )}
+    </>
+  );
+  if (header) {
+    return (
+      <div style={{ flex: 1, minHeight: 0, background: 'var(--p)', display: 'flex', flexDirection: 'column' }}>
+        {header}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 20px 10px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--mu)' }}>{heading}</div>
+            {clear}
+          </div>
+          {body}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
+      <div style={{ padding: '16px 20px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontWeight: 600 }}>{m.strategy}</div>
+        {actions ? (
+          // The 26px button does not make the row taller than its text.
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '-5px 0' }}>
+            {clear}
+            {actions}
+          </div>
+        ) : (
+          clear
+        )}
+      </div>
+      {body}
+    </div>
+  );
+}
+
+/** The template button and, open, the grid of strategies. */
+export function TemplatePicker({ ctl, style }: { ctl: StrategyCtl; style?: CSSProperties }) {
+  const m = useM();
+  const { desk, tmpl, current, open, isIndex, pickTemplate } = ctl;
+  return (
+    <div style={{ padding: '0 20px 12px', display: 'flex', flexDirection: 'column', gap: 6, ...style }}>
+      <div
+        onClick={() => desk.patch({ tmplOpen: !desk.tmplOpen })}
+        className="hover-p2"
+        style={{ height: 40, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', cursor: 'pointer', boxShadow: 'inset 0 0 0 1px var(--ln)' }}
+      >
+        <Icon d={current?.icon ?? NO_STRATEGY_ICON} stroke="var(--ac)" />
+        <div style={{ flex: 1, fontSize: 13 }}>{current ? m.strategies[current.key] : m.chooseStrategy}</div>
+        <div style={{ fontSize: 9, color: 'var(--dm)' }}>{open ? '▲' : '▼'}</div>
+      </div>
+      {open && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 4 }}>
+          {STRATEGIES.map((s) => {
+            const on = tmpl === s.key;
+            const disabled = isIndex && hasStockLeg(s.key);
+            return (
+              <div
+                key={s.key}
+                onClick={() => pickTemplate(s.key)}
+                className={disabled ? undefined : 'hover-tx'}
+                title={disabled ? m.noStockOnIndex : undefined}
+                style={{
+                  height: 36,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '0 10px',
+                  fontSize: 12,
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  background: 'var(--p2)',
+                  boxShadow: `inset 0 0 0 1px ${on ? 'var(--ac)' : 'transparent'}`,
+                  color: on ? 'var(--tx)' : 'var(--mu)',
+                  opacity: disabled ? 0.4 : 1,
+                }}
+              >
+                <Icon d={s.icon} stroke="currentColor" />
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.strategies[s.key]}</div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -146,7 +219,7 @@ function Icon({ d, stroke }: { d: string; stroke: string }) {
   );
 }
 
-function LegList({ view }: { view: StrategyView }) {
+export function LegList({ view }: { view: StrategyView }) {
   const m = useM();
   const common = useCommon();
   const { updateLeg, removeLeg } = useDesk();
@@ -187,7 +260,8 @@ function LegList({ view }: { view: StrategyView }) {
 
 const W = 332;
 
-function Payoff({ view, spot, m }: { view: StrategyView; spot: number | undefined; m: DeskMessages }) {
+/** `grow`: the chart takes the height its column leaves (the floating panel) instead of 150px. */
+export function Payoff({ view, spot, m, grow = false }: { view: StrategyView; spot: number | undefined; m: DeskMessages; grow?: boolean }) {
   const chart = useMemo(() => {
     if (!view.payoff || !view.analysis || spot == null) return null;
     const ks = view.payoff.filter((l) => l.kind !== 'S').map((l) => l.strike);
@@ -236,7 +310,7 @@ function Payoff({ view, spot, m }: { view: StrategyView; spot: number | undefine
           </div>
         </div>
       </div>
-      <div style={{ margin: '8px 20px 0', height: 150, position: 'relative', flexShrink: 0 }}>
+      <div style={{ margin: '8px 20px 0', position: 'relative', ...(grow ? { flex: 1, minHeight: 200 } : { height: 150, flexShrink: 0 }) }}>
         {chart ? (
           <>
             <svg viewBox={`0 0 ${W} 150`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
@@ -265,7 +339,7 @@ function Payoff({ view, spot, m }: { view: StrategyView; spot: number | undefine
   );
 }
 
-function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
+export function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
   const a = view.analysis;
   const cost = a?.cost ?? view.orderCost;
   const debit = cost == null || cost >= 0;
@@ -309,7 +383,7 @@ function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
   );
 }
 
-function Condition({ symbol, spot, combo }: { symbol: string; spot: number | undefined; combo: boolean }) {
+export function Condition({ symbol, spot, combo }: { symbol: string; spot: number | undefined; combo: boolean }) {
   const m = useM();
   const { cond, condOp, condPx, patch } = useDesk();
   const px = condPx ?? (spot != null ? defaultTrigger(spot, condOp) : '');
@@ -360,7 +434,7 @@ function Condition({ symbol, spot, combo }: { symbol: string; spot: number | und
 }
 
 /** Order type (net limit or market), TIF and, for combos, non-guaranteed routing. */
-function OrderChoices({ combo }: { combo: boolean }) {
+export function OrderChoices({ combo }: { combo: boolean }) {
   const m = useM();
   const { ordType, tif, nonGuaranteed, patch } = useDesk();
   const seg = (on: boolean) => ({
@@ -406,7 +480,7 @@ function OrderChoices({ combo }: { combo: boolean }) {
   );
 }
 
-function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) {
+export function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) {
   const g = view.greeks;
   const items = [
     { l: m.delta, v: g ? fixed(g.delta, 1) : DASH },
@@ -428,22 +502,22 @@ function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) {
   );
 }
 
-function SendButton({ view, busy, onSend }: { view: StrategyView; busy: boolean; onSend: () => void }) {
+/** `label` replaces the text (the floating panel: "Submitting…" until IB answers); `height` the 44px. */
+export function SendButton({ view, busy, onSend, label: text, height = 44 }: { view: StrategyView; busy: boolean; onSend: () => void; label?: string; height?: number }) {
   const m = useM();
   const market = useDesk((s) => s.ordType) === 'MKT';
   const n = view.legs.length;
-  const o = view.order;
-  const price = o ? (o.single ? o.price : o.terms.limitPrice) : undefined;
+  const price = orderPrice(view);
   const debit = view.orderCost == null ? (view.analysis?.cost ?? 0) >= 0 : view.orderCost >= 0;
   // A market order has no net price to show.
-  const label = busy ? m.resolving : market ? m.sendMarket(n) : price != null ? m.send(n, debit ? m.netDebit : m.netCredit, f2(price)) : m.sendNoPrice(n);
+  const label = text ?? (busy ? m.resolving : market ? m.sendMarket(n) : price != null ? m.send(n, debit ? m.netDebit : m.netCredit, f2(price)) : m.sendNoPrice(n));
   return (
     <button
       onClick={onSend}
       disabled={busy}
       style={{
         width: '100%',
-        height: 44,
+        height,
         border: 'none',
         background: debit ? 'var(--up)' : 'var(--dn)',
         color: 'var(--btnTx)',

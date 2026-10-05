@@ -2,7 +2,7 @@
 // (the stock and its derivatives), with Modify / Cancel for this app's working orders.
 
 import { useMemo } from 'react';
-import { contractKey, contractLabel, sameContract } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type Position, type WorkingOrder } from '@shared/types';
@@ -15,7 +15,8 @@ import { TabItems } from '../../ui/primitives';
 import { livePrice, positionRow } from '../portfolio/calc';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
-import { canModifyInTicket, orderPriceText, orderStatusText, ticketPatchFromOrder } from './orderModel';
+import { modifyOrderInTicket } from '../panels/actions';
+import { canModifyInTicket, orderPriceText, orderStatusText } from './orderModel';
 
 const signed0 = (n: number | undefined) => (n == null ? '—' : sg(n, f0));
 
@@ -76,15 +77,9 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
   const st = orderStatusText(o, m.status, clock);
   const buy = o.action === 'BUY';
   const modify = () => {
-    const s = useStore.getState();
-    // The ticket trades the selected instrument: stock orders keep the underlying selected,
-    // option orders select the option so the modification goes to the right contract.
-    if (!sameContract(o.contract, s.symbol)) {
-      const sameUnderlying = o.contract.secType === s.symbol.secType && o.contract.symbol === s.symbol.symbol;
-      s.selectSymbol(o.contract, sameUnderlying ? s.symbolName : undefined);
-    }
-    s.patchTicket(ticketPatchFromOrder(o));
-    s.showToast(m.modifyHint(o.orderId));
+    // The order's own contract is selected first; a floating ticket collapsed to its bar expands.
+    modifyOrderInTicket(o);
+    useStore.getState().showToast(m.modifyHint(o.orderId));
   };
   return (
     <div

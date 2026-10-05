@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import type { Quote } from '@shared/types';
 import type { Leg } from './strategies';
-import { legDesc, strategyView } from './strategyModel';
+import { legDesc, orderPrice, strategyView, withNetPrice, type StrategyView } from './strategyModel';
 
 const now = Date.parse('2026-10-05T14:00:00Z');
 const underlying = stock('AAPL');
@@ -60,5 +60,41 @@ describe('strategyView', () => {
   it('describes legs', () => {
     expect(legDesc(leg(1, 'BUY', 230), 'AAPL')).toBe('10/16 230.00 Call');
     expect(legDesc(leg(1, 'BUY', 0, 'S', 2), 'AAPL')).toBe('200 AAPL');
+  });
+});
+
+describe('withNetPrice', () => {
+  const base = {
+    legs: [{ leg: { id: 1, side: 'BUY', right: 'C', strike: 230, expiry: '20261016', qty: 2, multiplier: 100 } }],
+    payoff: null,
+    analysis: null,
+    greeks: null,
+    minDte: 10,
+    order: { single: true, price: 1.25 },
+    orderCost: 250,
+  } as unknown as StrategyView;
+
+  it('prices a single leg at the set net price', () => {
+    const v = withNetPrice(base, 1.3);
+    expect(orderPrice(v)).toBe(1.3);
+    expect(v.orderCost).toBeCloseTo(260);
+  });
+
+  it('prices a combo unit at the set net price', () => {
+    const combo = {
+      ...base,
+      legs: [base.legs[0], { leg: { ...base.legs[0].leg, id: 2, side: 'SELL', strike: 240, qty: 1 } }],
+      order: { single: false, terms: { action: 'BUY', quantity: 1, ratios: [1, 1], legActions: ['BUY', 'SELL'], limitPrice: 2.1 } },
+      orderCost: 210,
+    } as unknown as StrategyView;
+    const v = withNetPrice(combo, 2.05);
+    expect(orderPrice(v)).toBe(2.05);
+    expect(v.orderCost).toBeCloseTo(205);
+  });
+
+  it('leaves the view as it is without a price, or before the legs are priced', () => {
+    expect(withNetPrice(base, null)).toBe(base);
+    const unpriced = { ...base, order: null };
+    expect(withNetPrice(unpriced, 1.3)).toBe(unpriced);
   });
 });

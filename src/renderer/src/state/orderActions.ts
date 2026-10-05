@@ -1,7 +1,7 @@
 // Sending orders: review dialog (optional), placement, cancellation and user feedback.
 
-import { contractLabel } from '@shared/contract';
-import { f0 } from '@shared/format';
+import { contractKey, contractLabel } from '@shared/contract';
+import { f0, px } from '@shared/format';
 import { timingText } from '@shared/orderTiming';
 import { attributeFlags } from '../features/orders/attributes';
 import { useOrdersMessages } from '../features/orders/messages';
@@ -10,6 +10,10 @@ import { hostAppName } from '../features/settings/logic';
 import type { WorkingOrder } from '@shared/types';
 import { currentClock } from '../i18n';
 import { useCommon } from '../i18n/common';
+import { panelShown } from '../features/panels/actions';
+import type { PanelId } from '../features/panels/model';
+import { usePanels } from '../features/panels/panelStore';
+import { useOrderFeedback } from './orderFeedback';
 import { useStore, type PendingOrder } from './store';
 
 /** Strips Electron's IPC wrapper from error messages. */
@@ -54,17 +58,16 @@ const LATE_REJECTION_MS = 5_000;
 /**
  * IB sometimes acknowledges an order (PreSubmitted) and rejects it half a second later (Inactive,
  * then the reason as error 201), after placeOrder / modifyOrder have resolved. For a few seconds
- * such a rejection replaces the success toast with the failure and IB's reason.
+ * such a rejection replaces the success feedback with the failure and IB's reason.
  */
-function watchLateRejection(orderIds: number[]): void {
+function watchLateRejection(orderIds: number[], onReject: (reason: string) => void): void {
   const clientId = useStore.getState().connection.clientId;
   const unsubscribe = useStore.subscribe((s, prev) => {
     if (s.orders === prev.orders) return;
     const o = s.orders.find((x) => x.clientId === clientId && orderIds.includes(x.orderId) && x.status === 'Inactive');
     if (!o) return;
     stop();
-    const m = useCommon.now();
-    s.showToast(m.orderFailed(o.message || m.orderInactive), 'error');
+    onReject(o.message || useCommon.now().orderInactive);
   });
   const timer = setTimeout(() => stop(), LATE_REJECTION_MS);
   function stop() {
@@ -86,28 +89,94 @@ export function submitOrder(p: PendingOrder): void {
   void sendOrder(p);
 }
 
+/** The status strip's line: "Buy 100 AAPL · LMT 227.56 · DAY". */
+export function orderLine(p: Pick<PendingOrder, 'summary' | 'request'>): string {
+  const r = p.request;
+  const price = r.orderType === 'MKT' ? '' : r.limitPrice != null ? ` ${px(r.limitPrice)}` : r.stopPrice != null ? ` ${px(r.stopPrice)}` : '';
+  return `${p.summary} · ${r.orderType}${price} · ${r.tif}`;
+}
+
+/** Whether floating panel `id` is on screen now (floating, on its page and view), so its strip and bar can report. */
+function panelOnScreen(id: PanelId): boolean {
+  return usePanels.getState().panels[id].floating && panelShown(id, useStore.getState());
+}
+
+/**
+ * Sends an order (after the review, if any). It reports with toasts, or, sent from a floating
+ * panel (`origin`, features/panels), with that panel's status strip and bar
+ * (state/orderFeedback.ts): an accepted order collapses the panel to its bar, a rejection keeps it
+ * expanded (and a late one expands it again) with the form as it was. When that panel is not on
+ * screen when IB answers (docked back, another page or view), the toasts report as well, so no
+ * answer goes unseen. A panel's second order while the first still waits for IB is not sent (its
+ * button is disabled, and ⏎ must not send it twice).
+ */
 export async function sendOrder(p: PendingOrder): Promise<boolean> {
   const s = useStore.getState();
   const m = useCommon.now();
   s.setPendingOrder(null);
+  const panel = p.origin ?? null;
+  const feedback = useOrderFeedback.getState();
+  if (panel && feedback.sent[panel]?.phase === 'sending') return false;
+  const key = contractKey(p.request.contract);
+  const seq = panel
+    ? feedback.begin(panel, {
+        kind: p.modifyOrderId != null ? 'modify' : 'place',
+        summary: orderLine(p),
+        side: p.request.action,
+        quantity: p.request.quantity,
+        contractKey: key,
+        positionBefore: s.positions.find((x) => contractKey(x.contract) === key)?.quantity ?? 0,
+        ...(p.modifyOrderId != null ? { orderId: p.modifyOrderId, clientId: s.connection.clientId } : {}),
+      })
+    : 0;
+  /** Reported by a toast: the docked ticket, or a panel that is not on screen now. */
+  const toast = () => !panel || !panelOnScreen(panel);
+  const fail = (text: string) => {
+    if (panel) useOrderFeedback.getState().update(panel, seq, { phase: 'failed', error: text });
+    if (toast()) s.showToast(m.orderFailed(text), 'error');
+  };
+  const rejectedLater = (reason: string) => {
+    if (toast()) s.showToast(m.orderFailed(reason), 'error');
+    if (!panel) return;
+    const cur = useOrderFeedback.getState().sent[panel];
+    useOrderFeedback.getState().update(panel, seq, { phase: 'failed', error: reason });
+    // A rejection is fixed in the expanded panel: one this order collapsed opens again.
+    if (cur?.seq === seq && cur.autoCollapsed) usePanels.getState().setCollapsed(panel, false);
+  };
+  const accepted = (orderId: number, text: string) => {
+    if (toast()) s.showToast(text);
+    if (!panel) return;
+    const panels = usePanels.getState();
+    // The panel steps aside (the chart shows; the bar follows the fills) unless it is docked now.
+    const collapse = panels.panels[panel].floating && !panels.panels[panel].collapsed;
+    useOrderFeedback.getState().update(panel, seq, {
+      phase: 'sent',
+      orderId,
+      clientId: useStore.getState().connection.clientId,
+      acceptedAt: Date.now(),
+      ...(collapse ? { autoCollapsed: true } : {}),
+    });
+    if (collapse) panels.setCollapsed(panel, true);
+  };
   if (s.connection.status !== 'connected') {
-    s.showToast(m.notConnected, 'error');
+    if (panel) useOrderFeedback.getState().update(panel, seq, { phase: 'failed', error: m.notConnected });
+    if (toast()) s.showToast(m.notConnected, 'error');
     return false;
   }
   try {
     if (p.modifyOrderId != null) {
       await window.tape.modifyOrder(p.modifyOrderId, p.request);
-      s.showToast(m.orderModified(p.modifyOrderId));
       s.patchTicket({ modifyingOrderId: null });
-      watchLateRejection([p.modifyOrderId]);
+      accepted(p.modifyOrderId, m.orderModified(p.modifyOrderId));
+      watchLateRejection([p.modifyOrderId], rejectedLater);
     } else {
       const placed = await window.tape.placeOrder(p.request);
-      s.showToast(m.orderSubmitted(p.summary));
-      watchLateRejection([placed.orderId, ...placed.childOrderIds]);
+      accepted(placed.orderId, m.orderSubmitted(p.summary));
+      watchLateRejection([placed.orderId, ...placed.childOrderIds], rejectedLater);
     }
     return true;
   } catch (err) {
-    s.showToast(m.orderFailed(orderErrorText(err)), 'error');
+    fail(orderErrorText(err));
     return false;
   }
 }

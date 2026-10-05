@@ -1,14 +1,17 @@
 // Applies main's lock state to the store. Locking closes whatever was open on top of the app
 // (dialogs, the bell, popovers, the search dropdown) and drops a pending order review, which is
-// never sent: after unlocking, the user starts again from a clean screen.
+// never sent: after unlocking, the user starts again from a clean screen. Floating panels collapse
+// to their bars (and stay so after the unlock).
 
 import type { LockState } from '@shared/types';
+import { usePanels } from '../features/panels/panelStore';
 import { useStore } from './store';
 
 export function applyLockState(state: LockState): void {
   const prev = useStore.getState().lock;
   if (state.locked && !prev.locked) {
     closeTransientUi();
+    usePanels.getState().collapseAll();
     // Locked again while the unlock animation was still playing: that screen (fading out) is replaced.
     useStore.setState((s) => ({ unlocking: false, lockSeq: s.lockSeq + 1 }));
   }

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode 
 import { f2 } from '@shared/format';
 import type { OptionRight, OrderAction } from '@shared/types';
 import { Segmented } from '../../ui/primitives';
+import { revealPanel } from '../panels/actions';
 import { cellColor, COLUMN_PRESETS, formatCell, type ColumnKey, type OptionData } from './chain';
 import { useDesk, type StrikeRange } from './deskStore';
 import { useM } from './messages';
@@ -145,8 +146,11 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
   };
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
-  const add = (side: OrderAction, right: OptionRight, strike: number) =>
+  // A floating strategy builder collapsed to its bar expands with the leg.
+  const add = (side: OrderAction, right: OptionRight, strike: number) => {
     addLeg({ side, right, strike, expiry: exp.expiry, qty: 1, tradingClass: exp.tradingClass, multiplier: exp.multiplier });
+    revealPanel('strategy');
+  };
 
   const widths = columnWidths(keys, model.rows);
   const template = cols(widths);

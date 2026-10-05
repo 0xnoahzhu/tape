@@ -52,7 +52,8 @@ export function WatchlistPanel() {
           position: 'absolute',
           left: 0,
           top: 64,
-          zIndex: 6,
+          // Page content: a floating panel (layer 1, later in the DOM) draws over it.
+          zIndex: 1,
           width: 26,
           padding: '12px 0',
           display: 'flex',

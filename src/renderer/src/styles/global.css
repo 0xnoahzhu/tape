@@ -140,3 +140,14 @@ input::placeholder {
 .ticket-body > * {
   flex-shrink: 0;
 }
+
+/* A row that just appeared (the floating ticket's new working order): a short accent highlight. */
+@keyframes tape-flash {
+  from {
+    background: var(--sel);
+    box-shadow: inset 2px 0 0 var(--ac);
+  }
+  to {
+    background: transparent;
+  }
+}

@@ -1,7 +1,10 @@
-// The full options desk (Trade › Options): header, tabs and the active tab.
+// The full options desk (Trade › Options): header, tabs and the active tab. With the strategy
+// builder floating (features/panels) the chain takes the full width.
 
 import { useState } from 'react';
 import { useStore } from '../../state/store';
+import { PopOutButton } from '../panels/chrome';
+import { isFloating, usePanels } from '../panels/panelStore';
 import { ChainPanel } from './ChainPanel';
 import { DeskHeader } from './DeskHeader';
 import { DeskTabs } from './DeskTabs';
@@ -20,6 +23,7 @@ export function DeskFull() {
   const flow = useStore((s) => s.settings.features.flow);
   const rawTab = useDesk((s) => s.tab);
   const posCount = useOptionPositions(model.symbol).length;
+  const strategyFloating = usePanels(isFloating('strategy'));
 
   const tabs: DeskTab[] = ['chain', 'vol', ...(flow ? (['flow'] as const) : []), 'pos'];
   const tab = tabs.includes(rawTab) ? rawTab : 'chain';
@@ -34,9 +38,19 @@ export function DeskFull() {
       <DeskTabs tabs={tabs} expiries={model.chain.expiries} selected={model.exp?.expiry} posCount={posCount} />
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {tab === 'chain' && (
-          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 384px', gap: 'var(--gap)', padding: 'var(--pad)', background: 'var(--gbg)' }}>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'grid',
+              gridTemplateColumns: strategyFloating ? 'minmax(0,1fr)' : 'minmax(0,1fr) 384px',
+              gap: 'var(--gap)',
+              padding: 'var(--pad)',
+              background: 'var(--gbg)',
+            }}
+          >
             <ChainPanel model={model} onVisible={setVisible} state={model.chain.status === 'ready' ? null : <ChainState model={model} />} />
-            <StrategyPanel model={model} />
+            {!strategyFloating && <StrategyPanel model={model} actions={<PopOutButton id="strategy" />} />}
           </div>
         )}
         {tab === 'vol' && <VolatilityTab model={model} />}

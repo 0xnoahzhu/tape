@@ -7,6 +7,7 @@ import type { ContractRef, PriceConditionSpec } from '@shared/types';
 import { useCommon } from '../../i18n/common';
 import { errorText, submitOrder } from '../../state/orderActions';
 import { useStore } from '../../state/store';
+import type { PanelId } from '../panels/model';
 import { useM } from './messages';
 import { comboContract, strategyOrder, type StrategyOrderOptions } from './orders';
 import type { StrategyKey } from './strategies';
@@ -19,12 +20,14 @@ export interface SendOptions {
   cond: { on: boolean; op: '>=' | '<='; px: string };
   /** Order type, TIF and combo routing. */
   order?: Omit<StrategyOrderOptions, 'condition'>;
+  /** The floating panel the order is sent from: its status strip reports it instead of toasts. */
+  origin?: PanelId;
 }
 
 const opSymbol = (op: '>=' | '<=') => (op === '>=' ? '≥' : '≤');
 
 /** Validates, resolves combo legs and opens the order review (or sends right away). */
-export async function sendStrategy({ view, underlying, tmpl, cond, order = { type: 'LMT', tif: 'DAY' } }: SendOptions): Promise<void> {
+export async function sendStrategy({ view, underlying, tmpl, cond, order = { type: 'LMT', tif: 'DAY' }, origin }: SendOptions): Promise<void> {
   const s = useStore.getState();
   const m = useM.now();
   const c = useCommon.now();
@@ -70,6 +73,7 @@ export async function sendStrategy({ view, underlying, tmpl, cond, order = { typ
   const buy = request.action === 'BUY';
   const sideLabel = buy ? c.buy : c.sell;
   submitOrder({
+    origin,
     request,
     label: sideLabel,
     summary: `${sideLabel} ${f0(request.quantity)} ${name}`,

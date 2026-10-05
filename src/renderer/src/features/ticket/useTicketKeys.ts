@@ -10,6 +10,11 @@ function isEditable(t: EventTarget | null): boolean {
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 }
 
+/** The key goes to no control: the page itself, or a floating panel (not a control inside it). */
+function nothingFocused(t: EventTarget | null): boolean {
+  return t === document.body || t === document.documentElement || (t instanceof HTMLElement && t.dataset.panelRoot != null);
+}
+
 /**
  * Active only on the Trade page with no dialog or notifications panel open, the lock screen down and
  * focus outside text fields.
@@ -48,8 +53,9 @@ export function useTicketKeys(submit: () => void): void {
           s.patchTicket({ qty: stepQty(s.ticket.qty, -1) });
           break;
         case 'Enter':
-          // Only with nothing focused: Enter on a focused control belongs to that control.
-          if (e.repeat || (e.target !== document.body && e.target !== document.documentElement)) return;
+          // Only with nothing focused: Enter on a focused control belongs to that control. A
+          // floating panel itself takes the focus when clicked (features/panels/FloatingPanel).
+          if (e.repeat || !nothingFocused(e.target)) return;
           submitRef.current();
           break;
         default:

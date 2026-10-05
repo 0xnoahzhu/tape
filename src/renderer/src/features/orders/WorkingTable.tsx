@@ -9,6 +9,7 @@ import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useOrdersMessages, type OrdersMessages } from './messages';
+import { openTicket } from '../panels/actions';
 import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
 import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
@@ -26,7 +27,8 @@ function modify(o: WorkingOrder): void {
   const s = useStore.getState();
   // openSymbol resets the ticket's price overrides, so patch the ticket afterwards.
   openInstrument(o.contract, s.view === 'opt' ? 'chart' : undefined);
-  s.patchTicket(ticketPatchFromOrder(o));
+  // A floating ticket collapsed to its bar expands with the order.
+  openTicket(ticketPatchFromOrder(o));
   s.showToast(useOrdersMessages.now().modifyHint(o.orderId));
 }
 

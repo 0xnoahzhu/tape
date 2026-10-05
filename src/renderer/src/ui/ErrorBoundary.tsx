@@ -9,6 +9,8 @@ interface Props {
   children: ReactNode;
   /** Grid/flex placement of the fallback, so the layout stays intact. */
   style?: CSSProperties;
+  /** Replaces the default fallback (it can keep controls around ErrorFallback). */
+  fallback?: (error: Error, retry: () => void) => ReactNode;
 }
 
 export class ErrorBoundary extends Component<Props, { error: Error | null }> {
@@ -24,11 +26,13 @@ export class ErrorBoundary extends Component<Props, { error: Error | null }> {
 
   override render() {
     if (!this.state.error) return this.props.children;
-    return <Fallback error={this.state.error} style={this.props.style} onRetry={() => this.setState({ error: null })} />;
+    const retry = () => this.setState({ error: null });
+    if (this.props.fallback) return this.props.fallback(this.state.error, retry);
+    return <ErrorFallback error={this.state.error} style={this.props.style} onRetry={retry} />;
   }
 }
 
-function Fallback({ error, style, onRetry }: { error: Error; style?: CSSProperties; onRetry: () => void }) {
+export function ErrorFallback({ error, style, onRetry }: { error: Error; style?: CSSProperties; onRetry: () => void }) {
   const m = useCommon();
   return (
     <div

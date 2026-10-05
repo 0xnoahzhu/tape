@@ -3,12 +3,15 @@ import { createRoot } from 'react-dom/client';
 import './styles/global.css';
 import { App } from './App';
 import { startBridge } from './state/bridge';
+import { useDesk } from './features/options/deskStore';
+import { usePanels } from './features/panels/panelStore';
+import { useOrderFeedback } from './state/orderFeedback';
 import { useStore } from './state/store';
 import { installLockKeyGuard } from './features/lock/actions';
 import { focusLockInput } from './features/lock/LockScreen';
 
-// Debug handle for scripted screenshots (see src/main/devCapture.ts).
-(window as unknown as { __tape: unknown }).__tape = { store: useStore };
+// Debug handle for scripted screenshots (see src/main/devCapture.ts): the stores.
+(window as unknown as { __tape: unknown }).__tape = { store: useStore, panels: usePanels, feedback: useOrderFeedback, desk: useDesk };
 
 // Apply the theme before first paint to avoid a flash.
 const root = document.documentElement;

@@ -28,7 +28,7 @@ import type { TicketModel } from './ticketModel';
  * line describing the selected one. Sessions that do not combine with the rest of the order are
  * inert and say why; a working order's session cannot change at all.
  */
-function SessionControl({ timing, locked, onChange, rule }: { timing: TimingInput; locked: boolean; onChange: (s: TradingSession) => void; rule: (s: TradingSession) => string | null }) {
+export function SessionControl({ timing, locked, onChange, rule }: { timing: TimingInput; locked: boolean; onChange: (s: TradingSession) => void; rule: (s: TradingSession) => string | null }) {
   const m = useTicketM();
   const c = useCommon();
   const hints = m.sessionHints(useClock());
@@ -117,6 +117,7 @@ export function AdvancedPanel({
   ocaGroups,
   now,
   modified,
+  session = true,
 }: {
   t: TicketState;
   model: TicketModel;
@@ -135,6 +136,8 @@ export function AdvancedPanel({
   now: number;
   /** The working order being modified. */
   modified?: WorkingOrder;
+  /** Shows the trading session on top (the floating ticket shows it beside the TIF instead). */
+  session?: boolean;
 }) {
   const m = useTicketM();
   const clock = useClock();
@@ -181,7 +184,7 @@ export function AdvancedPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'var(--p2)' }}>
-      <SessionControl timing={timing} locked={modifying} onChange={(session) => patch({ session })} rule={(k) => choices.rule({ session: k }, 'session')} />
+      {session && <SessionControl timing={timing} locked={modifying} onChange={(session) => patch({ session })} rule={(k) => choices.rule({ session: k }, 'session')} />}
 
       <Section title={m.sections.exits} summary={open('exits') ? undefined : exitsSummary} open={open('exits')} onToggle={() => toggle('exits')} testId="exits">
         <SwitchRow

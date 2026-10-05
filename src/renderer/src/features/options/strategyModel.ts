@@ -110,3 +110,23 @@ export function strategyView(
 
   return { legs: views, payoff, analysis, greeks, minDte, order, orderCost };
 }
+
+/** The order's limit price (per share, or per combo unit), when the legs are priced. */
+export function orderPrice(view: StrategyView): number | undefined {
+  return view.order ? (view.order.single ? view.order.price : view.order.terms.limitPrice) : undefined;
+}
+
+/**
+ * The view with its order at `netPrice` (the floating strategy panel's − / +) instead of the legs' price;
+ * the order's cost follows. Unchanged without a price or before the legs are priced.
+ */
+export function withNetPrice(view: StrategyView, netPrice: number | null): StrategyView {
+  if (netPrice == null || !(netPrice > 0) || !view.order) return view;
+  if (view.order.single) {
+    const leg = view.legs[0].leg;
+    return { ...view, order: { single: true, price: netPrice }, orderCost: (leg.side === 'BUY' ? 1 : -1) * netPrice * leg.qty * leg.multiplier };
+  }
+  const terms = { ...view.order.terms, limitPrice: netPrice };
+  const mult = view.legs.find((l) => l.leg.right !== 'S')?.leg.multiplier ?? 100;
+  return { ...view, order: { single: false, terms }, orderCost: (terms.action === 'BUY' ? 1 : -1) * netPrice * terms.quantity * mult };
+}

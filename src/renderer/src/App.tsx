@@ -17,6 +17,7 @@ import { ErrorBoundary } from './ui/ErrorBoundary';
 import { requestLock } from './features/lock/actions';
 import { LockScreen } from './features/lock/LockScreen';
 import { PinDialogHost } from './features/lock/PinDialog';
+import { FloatingPanels } from './features/panels/FloatingPanels';
 
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const subscribeDark = (cb: () => void) => {
@@ -88,7 +89,8 @@ export function App() {
 
   useEffect(() => onCommand((c) => runCommand(c, dark)), [dark]);
 
-  // Global shortcuts. Trade-specific keys (B / S / ↑ / ↓ / ⏎) live in the order ticket.
+  // Global shortcuts. Trade-specific keys (B / S / ↑ / ↓ / ⏎) live in the order ticket (and, on
+  // the floating ticket's bar, B / S in features/panels/shortcuts.ts).
   // None of them works while the lock screen is up.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -121,12 +123,16 @@ export function App() {
       <ErrorBoundary name="Top bar">
         <TopBar />
       </ErrorBoundary>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <ErrorBoundary name={page} key={page} style={{ flex: 1 }}>
           {page === 'trade' && <TradePage />}
           {page === 'acct' && <PortfolioPage />}
           {page === 'ord' && <OrdersPage />}
           {page === 'set' && <SettingsPage />}
+        </ErrorBoundary>
+        {/* The order ticket and the strategy builder when popped out, over the content area. */}
+        <ErrorBoundary name="Floating panels" style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
+          <FloatingPanels />
         </ErrorBoundary>
       </div>
       <ErrorBoundary name="Notifications" style={{ position: 'absolute', top: 60, right: 14, zIndex: 16 }}>

@@ -11,6 +11,7 @@ import { newCondition } from '../features/ticket/ticketConditions';
 import { contractKey, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import { sessionOutsideRth } from '@shared/orderTiming';
+import type { PanelId } from '../features/panels/model';
 import type {
   AccountSummary,
   AlgoStrategy,
@@ -190,6 +191,11 @@ export interface PendingOrder {
   modifyOrderId?: number;
   /** Description used in the success toast, e.g. "Buy 100 AAPL". */
   summary: string;
+  /**
+   * The floating panel the order is sent from (features/panels): its status strip and bar report
+   * it instead of toasts. Undefined from anywhere else (the docked ticket too).
+   */
+  origin?: PanelId;
 }
 
 export interface AlertFormState {

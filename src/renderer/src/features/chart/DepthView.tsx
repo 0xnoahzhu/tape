@@ -6,12 +6,17 @@ import { useEffect, useState } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, f2 } from '@shared/format';
 import { useCommon } from '../../i18n/common';
+import { setDepthOwner } from '../../state/depthSubscription';
 import { useStore } from '../../state/store';
+import { openTicket } from '../panels/actions';
 import { useContractInfo } from './contractInfo';
 import { buildLadder, type LadderRow } from './depthModel';
 import { priceDecimals } from './chartMath';
 import { ipcErrorMessage } from './errors';
 import { useChartMessages } from './messages';
+
+/** The depth view's share of the Level 2 subscription (state/depthSubscription.ts). */
+const DEPTH_OWNER = 'depth-view';
 
 /** IB codes that mean "no Level 2 permission": 354 / 10186 not subscribed, 2152 needs depth permissions, 10092 no deep book. */
 const NO_L2_CODES = new Set([354, 2152, 10092, 10186]);
@@ -63,7 +68,6 @@ export function DepthView() {
   const common = useCommon();
   const symbol = useStore((s) => s.symbol);
   const connected = useMarketDataAvailable();
-  const patchTicket = useStore((s) => s.patchTicket);
   const key = contractKey(symbol);
   const book = useStore((s) => (s.depth && s.depth.key === key ? s.depth : null));
   const info = useContractInfo(symbol);
@@ -75,14 +79,14 @@ export function DepthView() {
     if (!connected) return;
     // Indices have no book: release the previous instrument's depth request (IB limits them).
     if (isIndex) {
-      void window.tape.setDepthSubscription(null).catch(() => undefined);
+      void setDepthOwner(DEPTH_OWNER, null).catch(() => undefined);
       return;
     }
-    window.tape.setDepthSubscription(symbol).catch((err: unknown) => setRequestError(ipcErrorMessage(err)));
+    setDepthOwner(DEPTH_OWNER, symbol, true).catch((err: unknown) => setRequestError(ipcErrorMessage(err)));
     // The key identifies the contract; resubscribe after a reconnect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, connected, isIndex]);
-  useEffect(() => () => void window.tape.setDepthSubscription(null).catch(() => undefined), []);
+  useEffect(() => () => void setDepthOwner(DEPTH_OWNER, null).catch(() => undefined), []);
 
   const ladder = buildLadder(book);
   const decimals = priceDecimals(info?.minTick, ladder.bestBid ?? ladder.bestAsk);
@@ -90,8 +94,9 @@ export function DepthView() {
   const label = contractLabel(symbol);
 
   // A working order being modified keeps its side and type (IB refuses to change them): only its price follows.
+  // A floating ticket collapsed to its bar expands with the price.
   const pick = (r: LadderRow) =>
-    patchTicket(useStore.getState().ticket.modifyingOrderId != null ? { limitPrice: r.price } : { orderType: 'LMT', limitPrice: r.price, side: r.side === 'ask' ? 'BUY' : 'SELL' });
+    openTicket(useStore.getState().ticket.modifyingOrderId != null ? { limitPrice: r.price } : { orderType: 'LMT', limitPrice: r.price, side: r.side === 'ask' ? 'BUY' : 'SELL' });
 
   const bookError = book?.error ? `${book.error.message} (${book.error.code})` : requestError;
   const needsL2 = !!book?.error && NO_L2_CODES.has(book.error.code);
