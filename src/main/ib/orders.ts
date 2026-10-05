@@ -43,7 +43,7 @@ import { EventName, type CommissionReport, type Contract, type ContractDetails, 
 import { contractLabel } from '@shared/contract';
 import { modifyProblems, MODIFY_PROBLEM_TEXT, requestConditions, withOrderAttributes, type OrderRulesContext } from '@shared/orderRules';
 import { parseIbDateTime, sessionOf, tifChangeAllowed } from '@shared/orderTiming';
-import { nyClock } from '@shared/session';
+import { nyClock, nyDayStart } from '@shared/session';
 import { isOrderActive, type ContractRef, type Execution, type OrderConditions, type OrderPreview, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
 import { LOCKED_MESSAGE } from '@shared/ipc';
 import type { MainContext, OrderService } from '../context';
@@ -98,14 +98,6 @@ interface Waiter {
   inactive: Set<number>;
   resolve(): void;
   reject(err: Error): void;
-}
-
-/**
- * Start of the current New York calendar day (unix ms), the "today" of the executions list.
- * On daylight saving changes it is off by an hour, which only widens the window.
- */
-function nyDayStart(now: number): number {
-  return now - nyClock(new Date(now)).minutes * 60_000 - (now % 60_000);
 }
 
 /** Order errors that do not mean the order was rejected. */

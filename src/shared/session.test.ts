@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { usEquitySession } from './session';
+import { nyDayStart, usEquitySession } from './session';
 
 // November 2026 is EST (UTC−5).
 const et = (day: number, hhmm: string) => new Date(`2026-11-${day}T${hhmm}:00-05:00`);
@@ -31,5 +31,16 @@ describe('usEquitySession', () => {
 
   it('accepts the older format without a date on the end time', () => {
     expect(usEquitySession(et(27, '14:00'), '20261127:0930-1300;20261130:0930-1600')).toBe('post');
+  });
+});
+
+describe('nyDayStart', () => {
+  it('is New York midnight of the current New York day', () => {
+    const midnight = et(24, '00:00').getTime();
+    expect(nyDayStart(et(24, '09:41').getTime() + 7_123)).toBe(midnight);
+    expect(nyDayStart(et(24, '23:59').getTime())).toBe(midnight);
+    expect(nyDayStart(midnight)).toBe(midnight);
+    // 11 PM in New York is already the next day in UTC+8.
+    expect(nyDayStart(new Date('2026-11-25T12:30:00+08:00').getTime())).toBe(midnight);
   });
 });

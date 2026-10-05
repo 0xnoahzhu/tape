@@ -30,6 +30,14 @@ export function nyClock(now: Date = new Date()): NyClock {
   };
 }
 
+/**
+ * Start of the current New York calendar day (unix ms), the "today" of the executions list.
+ * On daylight saving changes it is off by an hour, which only widens the window.
+ */
+export function nyDayStart(now: number): number {
+  return now - nyClock(new Date(now)).minutes * 60_000 - (now % 60_000);
+}
+
 const REGULAR_OPEN = 9 * 60 + 30;
 const REGULAR_CLOSE = 16 * 60;
 const PRE_OPEN = 4 * 60;
