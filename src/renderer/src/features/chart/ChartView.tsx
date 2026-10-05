@@ -26,7 +26,7 @@ import { nyClock, usEquitySession } from '@shared/session';
 import { barSeconds, isSecondsTimeframe } from '@shared/timeframes';
 import type { Bar } from '@shared/types';
 import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../hooks/useQuotes';
-import { nameOf, useLang } from '../../i18n';
+import { nameOf, useClock, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
@@ -118,6 +118,7 @@ export function ChartView() {
   const m = useChartMessages();
   const common = useCommon();
   const lang = useLang();
+  const clock = useClock();
   const symbol = useStore((s) => s.symbol);
   const symbolName = useStore((s) => s.symbolName);
   const connected = useMarketDataAvailable();
@@ -364,7 +365,7 @@ export function ChartView() {
             {r.base != null && <div style={{ fontFamily: 'var(--num)', color: signColor(r.value - r.base) }}>{change(r.value, r.base)}</div>}
           </div>
         ))}
-        {sq.price != null && quote?.lastTime != null && <div style={{ whiteSpace: 'nowrap' }}>{m.et(etTime(quote.lastTime, now))}</div>}
+        {sq.price != null && quote?.lastTime != null && <div style={{ whiteSpace: 'nowrap' }}>{m.et(etTime(quote.lastTime, now, clock))}</div>}
         {reason && (
           <div className="ellipsis" title={reason} style={{ maxWidth: 420 }}>
             {reason}

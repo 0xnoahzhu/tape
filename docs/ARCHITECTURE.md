@@ -411,8 +411,23 @@ formatter, pure and used by both processes:
   tokens (`TOKEN_CLOCK` writes "⟦t:<ms>:<flags>⟧"); `resolveTimeTokens` writes them in the current
   format when the bell list draws them and when main shows the OS notification.
 * Not affected: the API log (milliseconds), CSV exports and everything sent to IB.
-* The chart (`features/chart`) still formats its own times in 24-hour; it adopts the setting in a
-  follow-up.
+* The chart (`features/chart`) follows the setting too. Its label functions (`chartMath.ts →
+  formatBarTime`, `timeTicks`, `timeAxisLabels`) take a `LabelClock` (the format and language of a
+  `Clock`; `PriceChart` passes `useClock()`). Intraday axis ticks and the crosshair chip write every
+  clock label with its period ("10:30 AM", "上午 10:30", "7:58:15 PM" on seconds intervals), so a
+  label read on its own is never ambiguous; noon is "12:00 PM" / "下午 12:00", and midnight starts a
+  day, so it shows the date. Dates, months, quarters and years are the same in both formats. The
+  12-hour labels are wider, so `timeTickGap(tf, clock, step)` (the widest clock label of the interval
+  plus a clearance, at least `TIME_TICK_GAP`) replaces the fixed gap when picking the tick step and
+  thinning ticks; zh and seconds labels thin out to coarser steps. Only clock steps get the wider
+  gap: calendar steps (days and longer, and every step of 2 to 4-hour bars) label dates only and keep
+  `TIME_TICK_GAP`, so a zoomed-out intraday axis shows the same dates in both formats. The header's
+  last-trade time (`sessionQuote.ts → etTime`), the symbol activity panel's order times
+  (`timeColumn(clock)`) and its status texts (`orderModel.ts → orderStatusText(o, labels, clock)`:
+  "After 9:35 AM ET", "GTD 10/09 4:00 PM ET") use the clock as well. The good-after time is read by
+  the Orders page's `parseGoodAfter`, so IB's UTC form ("20261005-13:35:00") and other zones
+  ("… Asia/Shanghai") show the same time as there, and "Modify" loads the ticket with its 24-hour
+  US/Eastern time.
 
 ## Conventions
 

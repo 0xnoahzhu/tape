@@ -3,15 +3,16 @@
 
 import { f0, px } from '@shared/format';
 import { timingText } from '@shared/orderTiming';
+import type { Clock } from '@shared/timeFormat';
 import type { OrderType, TradingSession, WorkingOrder } from '@shared/types';
 import type { TicketState } from '../../state/store';
-import { ticketTimingFor } from '../orders/model';
+import { parseGoodAfter, ticketTimingFor } from '../orders/model';
 
 export interface StatusLabels {
   /** Price-conditioned order that has not triggered yet. */
   waiting: string;
-  /** Good-after-time order that has not activated yet; receives "09:35". */
-  after: (hhmm: string) => string;
+  /** Good-after-time order that has not activated yet; receives the time with its zone as the clock writes it ("9:35 AM ET", "21:35 Asia/Shanghai"). */
+  after: (time: string) => string;
   pending: string;
   cancelling: string;
   working: string;
@@ -34,24 +35,19 @@ function isEarly(o: WorkingOrder): boolean {
   return o.status === 'PreSubmitted' || o.status === 'PendingSubmit' || o.status === 'ApiPending';
 }
 
-/** "20261003 09:35:00 US/Eastern" or "09:35" -> "09:35". */
-export function goodAfterHhmm(s: string | undefined): string | undefined {
-  if (!s) return undefined;
-  const m = /(\d{1,2}):(\d{2})/.exec(s);
-  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : undefined;
-}
-
-export function orderStatusText(o: WorkingOrder, L: StatusLabels): OrderStatusText {
+/** Status text of a working order; its times (good-after, GTD expiry) are written in `clock`'s format. */
+export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock): OrderStatusText {
   if (o.status === 'PendingCancel') return { text: L.cancelling, accent: false };
   const early = isEarly(o);
   // TIF with its GTD expiry and any session other than regular hours, as on the Orders page.
-  const tif = timingText(o, L.sessions);
+  const tif = timingText(o, L.sessions, clock);
   if (o.condition && early) {
     const op = o.condition.operator === '>=' ? '≥' : '≤';
     return { text: `${L.waiting} · ${o.condition.symbol} ${op} ${px(o.condition.price)}`, accent: true };
   }
-  const gat = goodAfterHhmm(o.goodAfterTime);
-  if (gat && early) return { text: `${L.after(gat)} · ${tif}`, accent: true };
+  // Parsed as on the Orders page: IB's UTC form and other zones are read, not taken as ET.
+  const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime, clock) : null;
+  if (gat && early) return { text: `${L.after(gat.label)} · ${tif}`, accent: true };
   let text = `${early ? L.pending : L.working} · ${tif}`;
   if (o.orderType === 'TRAIL' && o.trailingPercent != null) text += ` · ${o.trailingPercent}%`;
   if (o.displaySize != null && o.displaySize > 0) text += ` · ${L.iceberg} ${f0(o.displaySize)}`;
@@ -89,7 +85,8 @@ export function ticketPatchFromOrder(o: WorkingOrder): Partial<TicketState> {
   // IB keeps the session and changes the TIF only in some cases (tifChangeAllowed), so start from them.
   const timing = ticketTimingFor(o);
   const hasStop = orderType === 'STP' || orderType === 'STP LMT';
-  const gat = goodAfterHhmm(o.goodAfterTime);
+  // The ticket takes the good-after time as HH:MM US/Eastern.
+  const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime)?.etTime : undefined;
   const iceberg = o.displaySize != null && o.displaySize > 0;
   const patch: Partial<TicketState> = {
     side: o.action,

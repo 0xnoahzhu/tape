@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Bar } from '@shared/types';
+import { createClock } from '@shared/timeFormat';
+import type { Bar, Timeframe } from '@shared/types';
 import {
   anchorAt,
   anchorIndex,
@@ -54,17 +55,26 @@ import {
   TIME_TICK_GAP,
   timeAxisLabels,
   timeStepSpacing,
+  timeTickGap,
   timeTicks,
   VB_H,
   VB_W,
   visibleBarCount,
   zoomView,
   type ChartView,
+  type LabelClock,
   type MaSeries,
   type Rect,
   type TimeAxisLabel,
   type ViewWindow,
 } from './chartMath';
+
+/** Chart label clocks: the 24-hour ones keep the labels of the tests written before the setting. */
+const EN24 = createClock('24h', 'en');
+const ZH24 = createClock('24h', 'zh');
+const EN12 = createClock('12h', 'en');
+const ZH12 = createClock('12h', 'zh');
+const CLOCKS: LabelClock[] = [EN24, ZH24, EN12, ZH12];
 
 const bar = (time: number, open: number, high: number, low: number, close: number, volume = 100): Bar => ({ time, open, high, low, close, volume });
 
@@ -586,30 +596,30 @@ describe('labels', () => {
 
   it('formats hover times per timeframe', () => {
     const intraday = Date.UTC(2026, 9, 2, 14, 31) / 1000; // Fri 10:31 ET
-    expect(formatBarTime(intraday, '5m', 'en')).toBe('Fri 10/02 10:31');
-    expect(formatBarTime(intraday, '1m', 'zh')).toBe('10/02 周五 10:31');
+    expect(formatBarTime(intraday, '5m', EN24)).toBe('Fri 10/02 10:31');
+    expect(formatBarTime(intraday, '1m', ZH24)).toBe('10/02 周五 10:31');
     const day = Date.UTC(2026, 9, 2) / 1000;
-    expect(formatBarTime(day, '1D', 'en')).toBe('Fri 2026-10-02');
-    expect(formatBarTime(day, '1D', 'zh')).toBe('2026-10-02 周五');
-    expect(formatBarTime(day, '1W', 'en')).toBe('Week of 2026-10-02');
-    expect(formatBarTime(day, '1M', 'en')).toBe('Oct 2026');
-    expect(formatBarTime(day, '1M', 'zh')).toBe('2026年10月');
-    expect(formatBarTime(day, '1Y', 'en')).toBe('2026');
+    expect(formatBarTime(day, '1D', EN24)).toBe('Fri 2026-10-02');
+    expect(formatBarTime(day, '1D', ZH24)).toBe('2026-10-02 周五');
+    expect(formatBarTime(day, '1W', EN24)).toBe('Week of 2026-10-02');
+    expect(formatBarTime(day, '1M', EN24)).toBe('Oct 2026');
+    expect(formatBarTime(day, '1M', ZH24)).toBe('2026年10月');
+    expect(formatBarTime(day, '1Y', EN24)).toBe('2026');
     // Just after midnight ET, and in another exchange's time zone.
-    expect(formatBarTime(Date.UTC(2026, 9, 2, 4, 5) / 1000, '1m', 'en')).toBe('Fri 10/02 00:05');
+    expect(formatBarTime(Date.UTC(2026, 9, 2, 4, 5) / 1000, '1m', EN24)).toBe('Fri 10/02 00:05');
     const hk = Date.UTC(2026, 9, 1, 1, 30) / 1000; // Thu 09:30 in Hong Kong, Wed 21:30 ET
-    expect(formatBarTime(hk, '5m', 'en')).toBe('Wed 09/30 21:30');
-    expect(formatBarTime(hk, '5m', 'en', 'Asia/Hong_Kong')).toBe('Thu 10/01 09:30');
-    expect(formatBarTime(hk, '5m', 'zh', 'Asia/Hong_Kong')).toBe('10/01 周四 09:30');
+    expect(formatBarTime(hk, '5m', EN24)).toBe('Wed 09/30 21:30');
+    expect(formatBarTime(hk, '5m', EN24, 'Asia/Hong_Kong')).toBe('Thu 10/01 09:30');
+    expect(formatBarTime(hk, '5m', ZH24, 'Asia/Hong_Kong')).toBe('10/01 周四 09:30');
     // Second intervals show seconds; minute and hour intervals do not.
     const sec = Date.UTC(2026, 9, 2, 14, 31, 7) / 1000;
-    expect(formatBarTime(sec, '1s', 'en')).toBe('Fri 10/02 10:31:07');
-    expect(formatBarTime(sec - 7, '45s', 'zh')).toBe('10/02 周五 10:31:00');
-    expect(formatBarTime(sec - 7, '3m', 'en')).toBe('Fri 10/02 10:31');
+    expect(formatBarTime(sec, '1s', EN24)).toBe('Fri 10/02 10:31:07');
+    expect(formatBarTime(sec - 7, '45s', ZH24)).toBe('10/02 周五 10:31:00');
+    expect(formatBarTime(sec - 7, '3m', EN24)).toBe('Fri 10/02 10:31');
     // Quarters by their first month.
-    expect(formatBarTime(Date.UTC(2026, 6, 1) / 1000, '1Q', 'en')).toBe('Q3 2026');
-    expect(formatBarTime(Date.UTC(2026, 9, 1) / 1000, '1Q', 'zh')).toBe('2026年Q4');
-    expect(formatBarTime(Date.UTC(2026, 0, 1) / 1000, '1Q', 'en')).toBe('Q1 2026');
+    expect(formatBarTime(Date.UTC(2026, 6, 1) / 1000, '1Q', EN24)).toBe('Q3 2026');
+    expect(formatBarTime(Date.UTC(2026, 9, 1) / 1000, '1Q', ZH24)).toBe('2026年Q4');
+    expect(formatBarTime(Date.UTC(2026, 0, 1) / 1000, '1Q', EN24)).toBe('Q1 2026');
   });
 
   it('chooses price decimals from the tick size and price level', () => {
@@ -925,12 +935,15 @@ function calendarBars(kind: '1D' | '1W' | '1M' | '1Y', y: number, m: number, d: 
 const view = (start: number, span: number): ViewWindow => ({ start, span, latest: false });
 const texts = (ls: TimeAxisLabel[]) => ls.map((l) => l.label);
 
-/** Labels at least TIME_TICK_GAP apart and fully inside the width. */
-function expectReadable(ls: TimeAxisLabel[], width: number) {
+/** Labels at least `gap` apart (and never touching), fully inside the width. */
+function expectReadable(ls: TimeAxisLabel[], width: number, gap = TIME_TICK_GAP) {
   for (let i = 0; i < ls.length; i++) {
     expect(ls[i].x - labelWidth(ls[i].label) / 2).toBeGreaterThanOrEqual(0);
     expect(ls[i].x + labelWidth(ls[i].label) / 2).toBeLessThanOrEqual(width);
-    if (i) expect(ls[i].x - ls[i - 1].x).toBeGreaterThanOrEqual(TIME_TICK_GAP);
+    if (i) {
+      expect(ls[i].x - ls[i - 1].x).toBeGreaterThanOrEqual(gap);
+      expect(ls[i].x - ls[i - 1].x - (labelWidth(ls[i].label) + labelWidth(ls[i - 1].label)) / 2).toBeGreaterThanOrEqual(12);
+    }
   }
 }
 
@@ -938,7 +951,7 @@ describe('time axis', () => {
   it('labels 5m bars on the half hour and a new day by its date', () => {
     const bars = sessionBars(2026, 9, 28, 5, 5); // Mon 09/28 .. Fri 10/02, 78 bars a day
     // One day in 1000 px (12.8 px per bar): 15 minutes would be 38 px apart, 30 minutes 77 px.
-    const ls = timeAxisLabels(bars, '5m', view(76, 78), 1000, 'en');
+    const ls = timeAxisLabels(bars, '5m', view(76, 78), 1000, EN24);
     expect(texts(ls)).toEqual(['09/29', ...['10', '11', '12', '13', '14', '15'].flatMap((h) => (h === '10' ? ['10:00', '10:30'] : [`${h}:00`, `${h}:30`]))]);
     // Ticks sit at the centers of their bars.
     expect(ls[0].index).toBe(78);
@@ -948,36 +961,36 @@ describe('time axis', () => {
 
   it('steps out to hours and days when zoomed out, with month starts by name', () => {
     const bars = sessionBars(2026, 9, 28, 5, 5);
-    const ls = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'en');
+    const ls = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24);
     expect(texts(ls)).toEqual(['12:00', '09/29', '12:00', '09/30', '12:00', 'Oct', '12:00', '10/02', '12:00']);
-    expect(texts(timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'zh'))).toContain('10月');
+    expect(texts(timeAxisLabels(bars, '5m', view(0, bars.length), 1000, ZH24))).toContain('10月');
   });
 
   it('uses exchange time across a DST change', () => {
     // Fri 03/06 is EST (UTC-5), Mon 03/09 EDT (UTC-4).
     const bars = sessionBars(2026, 3, 6, 2, 5);
-    const ls = timeAxisLabels(bars, '5m', view(60, 40), 1000, 'en');
+    const ls = timeAxisLabels(bars, '5m', view(60, 40), 1000, EN24);
     expect(ls.find((l) => l.index === 78)?.label).toBe('03/09');
     expect(ls.find((l) => l.index === 84)?.label).toBe('10:00');
     expect(bars[84].time).toBe(Date.UTC(2026, 2, 9, 14) / 1000);
-    expect(texts(timeAxisLabels(bars, '5m', view(0, 40), 1000, 'en'))).toContain('10:00');
-    expect(timeAxisLabels(bars, '5m', view(0, 40), 1000, 'en').find((l) => l.label === '10:00')?.index).toBe(6);
+    expect(texts(timeAxisLabels(bars, '5m', view(0, 40), 1000, EN24))).toContain('10:00');
+    expect(timeAxisLabels(bars, '5m', view(0, 40), 1000, EN24).find((l) => l.label === '10:00')?.index).toBe(6);
   });
 
   it('shows hours and days on 1m and 1h bars', () => {
     const minute = sessionBars(2026, 9, 28, 2, 1);
-    const m1 = timeAxisLabels(minute, '1m', view(390 - 30, 120), 1000, 'en');
+    const m1 = timeAxisLabels(minute, '1m', view(390 - 30, 120), 1000, EN24);
     // 8.3 px per bar: every 15 minutes, from 15:30 on 09/28 to 11:00 on 09/29.
     expect(texts(m1)).toEqual(['15:45', '09/29', '09:45', '10:00', '10:15', '10:30', '10:45']);
     const hourly = sessionBars(2026, 9, 1, 40, 60, true); // 16 bars a day
-    const h1 = timeAxisLabels(hourly, '1h', view(hourly.length - 60, 60), 1000, 'en');
+    const h1 = timeAxisLabels(hourly, '1h', view(hourly.length - 60, 60), 1000, EN24);
     expect(h1.every((l) => /^\d\d\/\d\d$|^\d\d:00$/.test(l.label))).toBe(true);
     expect(h1.some((l) => l.kind === 'day')).toBe(true);
     // Extended hours (04:00–20:00) at 15 px per bar: every 6 hours; the day start wins over 06:00
     // two bars later and over 18:00 two bars before it.
-    const h6 = timeAxisLabels(hourly, '1h', view(hourly.length - 66, 66), 990, 'en');
+    const h6 = timeAxisLabels(hourly, '1h', view(hourly.length - 66, 66), 990, EN24);
     expect(texts(h6)).toEqual(['10/21', '12:00', '10/22', '12:00', '10/23', '12:00', '10/26', '12:00', '18:00']);
-    const h1out = timeAxisLabels(hourly, '1h', view(0, hourly.length), 1000, 'en');
+    const h1out = timeAxisLabels(hourly, '1h', view(0, hourly.length), 1000, EN24);
     expect(h1out.some((l) => l.label === 'Oct')).toBe(true);
     expect(h1out.every((l) => l.kind !== 'time')).toBe(true);
     expectReadable(h1out, 1000);
@@ -986,7 +999,7 @@ describe('time axis', () => {
   it('marks weeks, months and the year on daily bars', () => {
     const bars = calendarBars('1D', 2025, 11, 3, 110); // Mon 2025-11-03 .. Fri 2026-04-03
     const at = (time: number) => bars.findIndex((b) => b.time === time / 1000);
-    const ls = timeAxisLabels(bars, '1D', view(20, 60), 1200, 'en'); // 20 px per bar: weekly
+    const ls = timeAxisLabels(bars, '1D', view(20, 60), 1200, EN24); // 20 px per bar: weekly
     expect(ls.find((l) => l.index === at(Date.UTC(2026, 0, 1)))?.label).toBe('2026');
     expect(ls.find((l) => l.index === at(Date.UTC(2025, 11, 1)))?.label).toBe('Dec');
     // Mon 12/29 is three bars before the year start: the coarser label wins.
@@ -995,30 +1008,30 @@ describe('time axis', () => {
     for (const l of ls) if (l.kind === 'day') expect(new Date(bars[l.index].time * 1000).getUTCDay()).toBe(1);
     expectReadable(ls, 1200);
     // Zoomed out: months only, in Chinese as "1月".
-    const out = timeAxisLabels(bars, '1D', view(0, 110), 900, 'zh');
+    const out = timeAxisLabels(bars, '1D', view(0, 110), 900, ZH24);
     expect(texts(out)).toEqual(['12月', '2026', '2月', '3月', '4月']);
   });
 
   it('uses months, quarters and years on weekly bars', () => {
     const bars = calendarBars('1W', 2016, 1, 4, 522);
-    const out = timeAxisLabels(bars, '1W', view(bars.length - 400, 400), 1000, 'en');
+    const out = timeAxisLabels(bars, '1W', view(bars.length - 400, 400), 1000, EN24);
     expect(out.every((l) => /^20\d\d$/.test(l.label))).toBe(true);
     expectReadable(out, 1000);
-    const zoomed = timeAxisLabels(bars, '1W', view(bars.length - 40, 40), 1000, 'en'); // 25 px per bar: months
+    const zoomed = timeAxisLabels(bars, '1W', view(bars.length - 40, 40), 1000, EN24); // 25 px per bar: months
     expect(zoomed.map((l) => l.kind)).toContain('month');
     expectReadable(zoomed, 1000);
   });
 
   it('uses years on monthly and yearly bars', () => {
     const monthly = calendarBars('1M', 2006, 11, 1, 240);
-    const m = timeAxisLabels(monthly, '1M', view(0, 240), 900, 'en'); // 3.75 px per bar: every 2 years
+    const m = timeAxisLabels(monthly, '1M', view(0, 240), 900, EN24); // 3.75 px per bar: every 2 years
     expect(texts(m)).toEqual(['2008', '2010', '2012', '2014', '2016', '2018', '2020', '2022', '2024', '2026']);
-    const q = timeAxisLabels(monthly, '1M', view(200, 30), 900, 'en'); // 2023-07 on, 30 px per bar: quarters
+    const q = timeAxisLabels(monthly, '1M', view(200, 30), 900, EN24); // 2023-07 on, 30 px per bar: quarters
     expect(texts(q)).toEqual(['Jul', 'Oct', '2024', 'Apr', 'Jul', 'Oct', '2025', 'Apr', 'Jul', 'Oct']);
-    const h = timeAxisLabels(monthly, '1M', view(180, 60), 900, 'en'); // 15 px per bar: half years
+    const h = timeAxisLabels(monthly, '1M', view(180, 60), 900, EN24); // 15 px per bar: half years
     expect(texts(h)).toEqual(['2022', 'Jul', '2023', 'Jul', '2024', 'Jul', '2025', 'Jul', '2026', 'Jul']);
     const yearly = calendarBars('1Y', 2007, 1, 1, 20);
-    expect(texts(timeAxisLabels(yearly, '1Y', view(-10, 30), 900, 'en'))).toEqual(['2010', '2015', '2020', '2025']);
+    expect(texts(timeAxisLabels(yearly, '1Y', view(-10, 30), 900, EN24))).toEqual(['2010', '2015', '2020', '2025']);
   });
 
   it('never overlaps labels or the edges, at any zoom and offset', () => {
@@ -1035,7 +1048,7 @@ describe('time axis', () => {
       for (const span of [20, 37.5, 80, 150, 260, 400]) {
         for (const width of [640, 1000, 1380]) {
           for (const start of [0, 13.3, bars.length / 2 + 0.7, bars.length - span]) {
-            const ls = timeAxisLabels(bars, tf, view(start, span), width, 'en', NY_ZONE, spacing);
+            const ls = timeAxisLabels(bars, tf, view(start, span), width, EN24, NY_ZONE, spacing);
             expectReadable(ls, width);
             if (span <= 150) expect(ls.length).toBeGreaterThan(0);
           }
@@ -1058,9 +1071,9 @@ describe('time axis', () => {
       const spacing = timeStepSpacing(bars, tf);
       const ppb = width / span;
       const inner = (ls: TimeAxisLabel[]) => ls.filter((l) => l.x > 60 && l.x < width - 60);
-      let prev = timeAxisLabels(bars, tf, view(from, span), width, 'en', NY_ZONE, spacing);
+      let prev = timeAxisLabels(bars, tf, view(from, span), width, EN24, NY_ZONE, spacing);
       for (let k = 1; k <= 60; k++) {
-        const next = timeAxisLabels(bars, tf, view(from + k * 0.37, span), width, 'en', NY_ZONE, spacing);
+        const next = timeAxisLabels(bars, tf, view(from + k * 0.37, span), width, EN24, NY_ZONE, spacing);
         const byIndex = new Map(next.map((l) => [l.index, l]));
         for (const l of inner(prev)) {
           // Still well inside after the pan: the same label, moved by exactly the pan.
@@ -1093,7 +1106,7 @@ describe('time axis', () => {
   it('lets a coarser tick win over a finer one nearby, and the earlier of two equal ones', () => {
     const bars = sessionBars(2026, 9, 28, 2, 5);
     // Every 30 minutes at 10 px per bar: 60 px apart, so 10:30 gives way to 10:00, 11:30 to 11:00, ...
-    const ts = timeTicks(bars, '5m', 1, 0, bars.length, 10, 'en');
+    const ts = timeTicks(bars, '5m', 1, 0, bars.length, 10, EN24);
     expect(ts.slice(0, 4).map((t) => t.label)).toEqual(['10:00', '11:00', '12:00', '13:00']);
     // 15:30 is 6 bars before the next day's start: the day wins.
     expect(ts.map((t) => t.label)).toContain('09/29');
@@ -1105,7 +1118,7 @@ describe('time axis', () => {
     // Weekdays from 2026-06-01 to 09-25 without Labor Day (Mon 09/07): "Sep" on Tue 09/01 drops
     // Tue 09/08 four bars later at 15 px per bar; 09/14 is four bars after 09/08 but eight after "Sep".
     const bars = calendarBars('1D', 2026, 6, 1, 85).filter((b) => b.time !== Date.UTC(2026, 8, 7) / 1000);
-    const ls = timeAxisLabels(bars, '1D', view(bars.length - 24, 24), 24 * 15, 'en');
+    const ls = timeAxisLabels(bars, '1D', view(bars.length - 24, 24), 24 * 15, EN24);
     expect(texts(ls)).toEqual(['Sep', '09/14', '09/21']);
   });
 
@@ -1117,12 +1130,12 @@ describe('time axis', () => {
   it('labels weekly bars every two months at the automatic zoom', () => {
     // 15 px per bar: months are 4 or 5 bars (60–75 px) apart, two months 8 or 9.
     const bars = calendarBars('1W', 2024, 1, 1, 150); // Mondays from 2024-01-01
-    const ls = timeAxisLabels(bars, '1W', view(bars.length - 48, 48), 48 * 15, 'en');
+    const ls = timeAxisLabels(bars, '1W', view(bars.length - 48, 48), 48 * 15, EN24);
     expect(texts(ls)).toEqual(['2026', 'Mar', 'May', 'Jul', 'Sep', 'Nov']);
     expectReadable(ls, 48 * 15);
     // Daily bars zoomed out all the way: two months rather than quarters.
     const daily = calendarBars('1D', 2024, 1, 1, 500);
-    const d = timeAxisLabels(daily, '1D', view(daily.length - 400, 400), 1000, 'en');
+    const d = timeAxisLabels(daily, '1D', view(daily.length - 400, 400), 1000, EN24);
     expect(texts(d)).toEqual(['Jul', 'Sep', 'Nov', '2025', 'Mar', 'May', 'Jul', 'Sep', 'Nov']);
     expectReadable(d, 1000);
   });
@@ -1166,16 +1179,16 @@ describe('exchange time', () => {
     for (const zone of ['Asia/Hong_Kong', chartTimeZone('Hongkong'), chartTimeZone('HKT')]) {
       const spacing = timeStepSpacing(bars, '5m', zone);
       // The newest 132 bars in 900 px (6.8 px per bar): hours, the day start at the open.
-      const ls = timeAxisLabels(bars, '5m', view(bars.length - 132, 132), 900, 'en', zone, spacing);
+      const ls = timeAxisLabels(bars, '5m', view(bars.length - 132, 132), 900, EN24, zone, spacing);
       expect(texts(ls)).toEqual(['11:00', '13:00', '14:00', '15:00', '10/02', '11:00', '13:00', '14:00', '15:00']);
       for (const l of ls) {
         if (l.kind === 'time') expect(opens.has(l.index)).toBe(false);
         else expect(opens.has(l.index)).toBe(true);
-        const hm = formatBarTime(bars[l.index].time, '5m', 'en', zone).slice(-5);
+        const hm = formatBarTime(bars[l.index].time, '5m', EN24, zone).slice(-5);
         expect(hm >= '09:30' && hm < '16:00').toBe(true);
       }
       // Zoomed out over the week: each open and afternoon re-open, "Oct" on Thursday's open.
-      const week = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'en', zone, spacing);
+      const week = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24, zone, spacing);
       expect(texts(week)).toEqual(['13:00', '09/29', '13:00', '09/30', '13:00', 'Oct', '13:00', '10/02', '13:00']);
       expect(week.filter((l) => l.kind !== 'time').map((l) => [l.label, l.index])).toEqual([
         ['09/29', 66],
@@ -1185,7 +1198,7 @@ describe('exchange time', () => {
       ]);
     }
     // The same bars in New York time would start days and months mid-session (the old behavior).
-    const ny = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'en');
+    const ny = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24);
     expect(ny.filter((l) => l.kind !== 'time').every((l) => opens.has(l.index))).toBe(false);
   });
 
@@ -1203,11 +1216,11 @@ describe('exchange time', () => {
     const perDay = 102;
     for (let pass = 0; pass < 2; pass++) {
       // New York first, then Frankfurt: the cached offsets of one zone never leak into the other.
-      timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'en', NY_ZONE);
-      const met = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, 'en', chartTimeZone('MET'));
+      timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24, NY_ZONE);
+      const met = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24, chartTimeZone('MET'));
       expect(met.filter((l) => l.kind === 'day').map((l) => l.index)).toEqual([perDay, 2 * perDay, 3 * perDay]);
-      expect(formatBarTime(bars[2 * perDay].time, '5m', 'en', 'MET')).toBe('Mon 10/26 09:00');
-      expect(formatBarTime(bars[2 * perDay - 1].time, '5m', 'en', 'MET')).toBe('Fri 10/23 17:25');
+      expect(formatBarTime(bars[2 * perDay].time, '5m', EN24, 'MET')).toBe('Mon 10/26 09:00');
+      expect(formatBarTime(bars[2 * perDay - 1].time, '5m', EN24, 'MET')).toBe('Fri 10/23 17:25');
     }
   });
 });
@@ -1219,7 +1232,7 @@ describe('time axis of the new intervals', () => {
 
   it('labels seconds bars with seconds where a tick is not on a whole minute', () => {
     const bars = secondBars(t0, 1800, 1);
-    const ls = timeAxisLabels(bars, '1s', view(1680, 120), 800, 'en');
+    const ls = timeAxisLabels(bars, '1s', view(1680, 120), 800, EN24);
     expectReadable(ls, 800);
     expect(ls.length).toBeGreaterThan(4);
     expect(ls.every((l) => /^\d\d:\d\d(:\d\d)?$/.test(l.label))).toBe(true);
@@ -1227,7 +1240,7 @@ describe('time axis of the new intervals', () => {
     // Whole minutes without seconds.
     expect(ls.filter((l) => bars[l.index].time % 60 === 0).every((l) => l.label.length === 5)).toBe(true);
     // Zoomed out the ticks become minutes.
-    const wide = timeAxisLabels(bars, '1s', view(0, 1200), 800, 'en');
+    const wide = timeAxisLabels(bars, '1s', view(0, 1200), 800, EN24);
     expectReadable(wide, 800);
     expect(wide.every((l) => l.label.length === 5)).toBe(true);
   });
@@ -1235,7 +1248,7 @@ describe('time axis of the new intervals', () => {
   it('puts the ticks of 45-second bars on bars whose start is a whole step', () => {
     const bars = secondBars(Date.UTC(2026, 9, 2, 13, 30) / 1000, 400, 45);
     for (const span of [60, 150, 400]) {
-      const ls = timeAxisLabels(bars, '45s', view(400 - span, span), 800, 'en');
+      const ls = timeAxisLabels(bars, '45s', view(400 - span, span), 800, EN24);
       expectReadable(ls, 800);
       expect(ls.length).toBeGreaterThan(2);
       // Ticks only where the clock reaches a multiple of the bar (90 s, 3 min, …): never mid-bar.
@@ -1245,11 +1258,11 @@ describe('time axis of the new intervals', () => {
 
   it('labels 2-hour, 4-hour, quarter and year bars by dates', () => {
     const h2 = secondBars(Date.UTC(2026, 8, 1, 8) / 1000, 300, 7200);
-    const ls = timeAxisLabels(h2, '2h', view(200, 100), 800, 'en');
+    const ls = timeAxisLabels(h2, '2h', view(200, 100), 800, EN24);
     expectReadable(ls, 800);
     expect(ls.every((l) => /^(\d\d\/\d\d|[A-Z][a-z]{2}|\d{4})$/.test(l.label))).toBe(true);
     const quarters = Array.from({ length: 80 }, (_, i) => bar(Date.UTC(2006, 3 * i, 1) / 1000, 1, 1, 1, 1));
-    const q = timeAxisLabels(quarters, '1Q', view(0, 80), 800, 'zh');
+    const q = timeAxisLabels(quarters, '1Q', view(0, 80), 800, ZH24);
     expectReadable(q, 800);
     expect(q.length).toBeGreaterThan(3);
     expect(q.every((l) => /^\d{4}$/.test(l.label))).toBe(true);
@@ -1263,5 +1276,216 @@ describe('time axis of the new intervals', () => {
     // All of a long series up to the widest zoom.
     const months = series(2000);
     expect(resolveView(fitView(months, null), months, 60).span).toBe(MAX_SPAN);
+  });
+});
+
+describe('chart times in the 12- and 24-hour formats', () => {
+  const at = (h: number, m: number, sec = 0) => Date.UTC(2026, 9, 2, h + 4, m, sec) / 1000; // Fri 10/02, EDT
+
+  it('writes hover times in the clock format and language', () => {
+    expect(formatBarTime(at(10, 31), '5m', EN12)).toBe('Fri 10/02 10:31 AM');
+    expect(formatBarTime(at(10, 31), '5m', ZH12)).toBe('10/02 周五 上午 10:31');
+    expect(formatBarTime(at(14, 31), '1h', EN12)).toBe('Fri 10/02 2:31 PM');
+    expect(formatBarTime(at(14, 31), '1h', ZH24)).toBe('10/02 周五 14:31');
+    // Noon and midnight.
+    expect(formatBarTime(at(12, 0), '1m', EN12)).toBe('Fri 10/02 12:00 PM');
+    expect(formatBarTime(at(12, 0), '1m', ZH12)).toBe('10/02 周五 下午 12:00');
+    expect(formatBarTime(at(0, 5), '1m', EN12)).toBe('Fri 10/02 12:05 AM');
+    expect(formatBarTime(at(0, 5), '1m', ZH12)).toBe('10/02 周五 上午 12:05');
+    expect(formatBarTime(at(23, 59), '1m', EN12)).toBe('Fri 10/02 11:59 PM');
+    // Seconds intervals keep their seconds.
+    expect(formatBarTime(at(14, 31, 7), '1s', EN12)).toBe('Fri 10/02 2:31:07 PM');
+    expect(formatBarTime(at(14, 31, 7), '1s', ZH12)).toBe('10/02 周五 下午 2:31:07');
+    expect(formatBarTime(at(0, 0, 45), '15s', EN12)).toBe('Fri 10/02 12:00:45 AM');
+    // Exchange time in another zone; dates do not change with the format.
+    const hk = Date.UTC(2026, 9, 1, 1, 30) / 1000;
+    expect(formatBarTime(hk, '5m', EN12)).toBe('Wed 09/30 9:30 PM');
+    expect(formatBarTime(hk, '5m', ZH12, 'Asia/Hong_Kong')).toBe('10/01 周四 上午 9:30');
+    const day = Date.UTC(2026, 9, 2) / 1000;
+    for (const c of [EN12, ZH12]) {
+      expect(formatBarTime(day, '1D', c)).toBe(formatBarTime(day, '1D', c.lang === 'en' ? EN24 : ZH24));
+      expect(formatBarTime(day, '1Q', c)).toBe(formatBarTime(day, '1Q', c.lang === 'en' ? EN24 : ZH24));
+    }
+  });
+
+  it('follows the DST change in both formats', () => {
+    // Sun 2026-03-08: 02:00 EST becomes 03:00 EDT. 01:55 EST and 03:00 EDT are five minutes apart.
+    const before = Date.UTC(2026, 2, 8, 6, 55) / 1000;
+    expect(formatBarTime(before, '5m', EN12)).toBe('Sun 03/08 1:55 AM');
+    expect(formatBarTime(before + 300, '5m', EN12)).toBe('Sun 03/08 3:00 AM');
+    expect(formatBarTime(before + 300, '5m', ZH12)).toBe('03/08 周日 上午 3:00');
+    expect(formatBarTime(before + 300, '5m', EN24)).toBe('Sun 03/08 03:00');
+    // Sun 2026-11-01: 01:00–01:59 comes twice (EDT, then EST).
+    const first = Date.UTC(2026, 10, 1, 5, 30) / 1000;
+    expect(formatBarTime(first, '1m', EN12)).toBe('Sun 11/01 1:30 AM');
+    expect(formatBarTime(first + 3600, '1m', EN12)).toBe('Sun 11/01 1:30 AM');
+    expect(formatBarTime(first + 7200, '1m', ZH12)).toBe('11/01 周日 上午 2:30');
+    // The regular session after the spring change: 10:00 EDT is 14:00 UTC.
+    const bars = sessionBars(2026, 3, 6, 2, 5);
+    for (const [c, label] of [
+      [EN12, '10:00 AM'],
+      [ZH12, '上午 10:00'],
+      [EN24, '10:00'],
+    ] as const) {
+      const ls = timeAxisLabels(bars, '5m', view(60, 40), 1000, c);
+      expect(ls.find((l) => l.index === 78)?.label).toBe('03/09');
+      expect(ls.find((l) => l.index === 84)?.label).toBe(label);
+    }
+  });
+
+  it('widens the gap between clock labels to fit the 12-hour ones', () => {
+    for (const tf of ['1m', '5m', '1h', '4h', '1D', '1W'] as const) {
+      expect(timeTickGap(tf, EN24)).toBe(TIME_TICK_GAP);
+      expect(timeTickGap(tf, ZH24)).toBe(TIME_TICK_GAP);
+    }
+    expect(timeTickGap('1s', EN24)).toBe(TIME_TICK_GAP);
+    // "12:00 PM" fits the 24-hour gap; "下午 12:00", "12:00:00 PM" and "下午 12:00:00" need more.
+    expect(timeTickGap('5m', EN12)).toBe(TIME_TICK_GAP);
+    expect(timeTickGap('5m', ZH12)).toBeGreaterThanOrEqual(Math.ceil(labelWidth('下午 12:00') + 12));
+    expect(timeTickGap('1s', EN12)).toBeGreaterThanOrEqual(Math.ceil(labelWidth('12:00:00 PM') + 12));
+    expect(timeTickGap('1s', ZH12)).toBeGreaterThanOrEqual(Math.ceil(labelWidth('下午 12:00:00') + 12));
+    expect(timeTickGap('1D', ZH12)).toBe(TIME_TICK_GAP);
+    // 2 to 4-hour bars have no clock steps, and calendar steps label dates only: the plain gap.
+    for (const c of CLOCKS) for (const tf of ['2h', '3h', '4h'] as const) expect(timeTickGap(tf, c)).toBe(TIME_TICK_GAP);
+    expect(timeTickGap('5m', ZH12, 0)).toBeGreaterThan(TIME_TICK_GAP);
+    expect(timeTickGap('5m', ZH12, 99)).toBe(TIME_TICK_GAP);
+    expect(timeTickGap('1s', EN12, 99)).toBe(TIME_TICK_GAP);
+  });
+
+  it('shows the same dates in both formats on axes without clock labels', () => {
+    const secs = (n: number, step: number, from = Date.UTC(2026, 5, 1, 13, 30)) =>
+      Array.from({ length: n }, (_, i) => bar(from / 1000 + i * step, 100, 101, 99, 100));
+    // 4h bars round the clock: 6 per day, 700 px over 40 bars is 70 px per day.
+    const h4 = secs(600, 14_400, Date.UTC(2026, 5, 1, 0));
+    const fourH = timeAxisLabels(h4, '4h', view(h4.length - 40, 40), 700, ZH12);
+    expect(fourH.length).toBeGreaterThan(5);
+    expect(texts(fourH)).toEqual(texts(timeAxisLabels(h4, '4h', view(h4.length - 40, 40), 700, ZH24)));
+    const cases: Array<[Bar[], Timeframe, number]> = [
+      [h4, '4h', 6],
+      [secs(600, 7200, Date.UTC(2026, 5, 1, 0)), '2h', 12],
+      [secs(600, 10_800, Date.UTC(2026, 5, 1, 0)), '3h', 8],
+      // Regular sessions: 78 5m bars and 7 1h bars a day.
+      [sessionBars(2026, 2, 2, 40, 5), '5m', 78],
+      [sessionBars(2026, 2, 2, 40, 60), '1h', 7],
+      // Extended sessions (16 h): 3840 15s bars and 192 5m bars a day.
+      [secs(3840 * 8, 15, Date.UTC(2026, 8, 28, 8)).filter((b) => (b.time - Date.UTC(2026, 8, 28, 8) / 1000) % 86_400 < 16 * 3600), '15s', 3840],
+      [sessionBars(2026, 8, 21, 20, 5, true), '5m', 192],
+    ];
+    for (const [bars, tf, perDay] of cases) {
+      const spacing = timeStepSpacing(bars, tf);
+      for (const [c12, c24] of [
+        [EN12, EN24],
+        [ZH12, ZH24],
+      ]) {
+        // 462 and 560 px: the 1180 px window's plot; 722 px: the 1440 px window's.
+        for (const width of [462, 560, 700, 722]) {
+          for (const pxPerDay of [62, 70, 71, 72, 73, 74, 80, 85, 90, 94, 100]) {
+            const span = (width / pxPerDay) * perDay;
+            if (span >= bars.length) continue;
+            for (const start of [0, bars.length - span, Math.floor((bars.length - span) / 2) + 0.4]) {
+              const a = timeAxisLabels(bars, tf, view(start, span), width, c12, NY_ZONE, spacing);
+              const b = timeAxisLabels(bars, tf, view(start, span), width, c24, NY_ZONE, spacing);
+              if (a.some((l) => l.kind === 'time') || b.some((l) => l.kind === 'time')) continue;
+              expect([tf, width, pxPerDay, start, texts(a)]).toEqual([tf, width, pxPerDay, start, texts(b)]);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('labels 5m bars with the period on every clock label', () => {
+    const bars = sessionBars(2026, 9, 28, 5, 5);
+    // One day in 936 px: 12 px per bar, half hours 72 px apart.
+    const en = timeAxisLabels(bars, '5m', view(76, 78), 936, EN12);
+    expect(texts(en)).toEqual(['09/29', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM', '1:00 PM', '1:30 PM', '2:00 PM', '2:30 PM', '3:00 PM', '3:30 PM']);
+    // Ticks fall on the same bars as in the 24-hour format.
+    expect(en.map((l) => l.index)).toEqual(timeAxisLabels(bars, '5m', view(76, 78), 936, EN24).map((l) => l.index));
+    // The zh labels are wider than 72 px allow: every hour, and 10:00 gives way to the day start at 9:30.
+    const zh = timeAxisLabels(bars, '5m', view(76, 78), 936, ZH12);
+    expect(texts(zh)).toEqual(['09/29', '上午 11:00', '下午 12:00', '下午 1:00', '下午 2:00', '下午 3:00']);
+    expectReadable(zh, 936, timeTickGap('5m', ZH12));
+    // With a little more room they keep the half hours too.
+    expect(texts(timeAxisLabels(bars, '5m', view(76, 78), 1000, ZH12))).toContain('下午 12:30');
+  });
+
+  it('labels noon and midnight on round-the-clock hourly bars', () => {
+    // 1h bars from Mon 10/05 00:00 ET, every hour (futures-like).
+    const bars = Array.from({ length: 24 * 5 }, (_, i) => bar(Date.UTC(2026, 9, 5, 4) / 1000 + i * 3600, 100, 101, 99, 100));
+    for (const [c, noon] of [
+      [EN12, '12:00 PM'],
+      [ZH12, '下午 12:00'],
+      [EN24, '12:00'],
+      [ZH24, '12:00'],
+    ] as const) {
+      const ls = timeAxisLabels(bars, '1h', view(24, 48), 1000, c);
+      expect(ls.find((l) => bars[l.index].time === Date.UTC(2026, 9, 6, 16) / 1000)?.label).toBe(noon);
+      // Midnight starts a day: its label is the date.
+      expect(ls.find((l) => bars[l.index].time === Date.UTC(2026, 9, 7, 4) / 1000)?.label).toBe('10/07');
+      expectReadable(ls, 1000, timeTickGap('1h', c));
+    }
+    const en = timeAxisLabels(bars, '1h', view(24, 48), 1000, EN12);
+    expect(en.filter((l) => l.kind === 'time').every((l) => /^1?\d:00 [AP]M$/.test(l.label))).toBe(true);
+    const zh = timeAxisLabels(bars, '1h', view(24, 48), 1000, ZH12);
+    expect(zh.filter((l) => l.kind === 'time').every((l) => /^[上下]午 1?\d:00$/.test(l.label))).toBe(true);
+  });
+
+  it('keeps seconds on seconds-interval labels', () => {
+    const bars = Array.from({ length: 1800 }, (_, i) => bar(Date.UTC(2026, 9, 2, 23, 30) / 1000 + i, 100, 101, 99, 100)); // from 7:30 PM ET
+    const en = timeAxisLabels(bars, '1s', view(1680, 120), 800, EN12);
+    expectReadable(en, 800, timeTickGap('1s', EN12));
+    expect(en.length).toBeGreaterThan(3);
+    expect(en.every((l) => /^7:\d\d(:\d\d)? PM$/.test(l.label))).toBe(true);
+    expect(en.some((l) => /^7:\d\d:\d\d PM$/.test(l.label))).toBe(true);
+    const zh = timeAxisLabels(bars, '1s', view(1680, 120), 800, ZH12);
+    expectReadable(zh, 800, timeTickGap('1s', ZH12));
+    expect(zh.length).toBeGreaterThan(2);
+    expect(zh.every((l) => /^下午 7:\d\d(:\d\d)?$/.test(l.label))).toBe(true);
+    // Whole minutes without seconds.
+    for (const l of [...en, ...zh]) if (bars[l.index].time % 60 === 0) expect(l.label).not.toMatch(/:\d\d:\d\d/);
+  });
+
+  it('never overlaps labels or the edges in either format and language, down to the narrowest plot', () => {
+    const secs = (n: number, step: number) => Array.from({ length: n }, (_, i) => bar(Date.UTC(2026, 9, 2, 13, 30) / 1000 + i * step, 100, 101, 99, 100));
+    const cases: Array<[Bar[], '1s' | '15s' | '1m' | '5m' | '1h' | '4h' | '1D']> = [
+      [secs(5000, 1), '1s'],
+      [secs(3000, 15), '15s'],
+      [sessionBars(2026, 9, 1, 6, 1), '1m'],
+      [sessionBars(2026, 9, 1, 25, 5, true), '5m'],
+      [sessionBars(2026, 6, 1, 90, 60), '1h'],
+      [secs(600, 14_400), '4h'],
+      [calendarBars('1D', 2023, 1, 2, 800), '1D'],
+    ];
+    for (const c of CLOCKS) {
+      for (const [bars, tf] of cases) {
+        const spacing = timeStepSpacing(bars, tf);
+        // Clock labels keep the interval's clock gap; date-only axes the plain one.
+        const gapOf = (ls: TimeAxisLabel[]) => (ls.some((l) => l.kind === 'time') ? timeTickGap(tf, c) : TIME_TICK_GAP);
+        // 560 px: the plot of the 1180 px window less the side panels.
+        for (const width of [560, 800, 1380]) {
+          for (const span of [20, 60, 150, 400]) {
+            for (const start of [0, 13.3, bars.length - span]) {
+              const ls = timeAxisLabels(bars, tf, view(start, span), width, c, NY_ZONE, spacing);
+              expectReadable(ls, width, gapOf(ls));
+              if (span <= 150) expect(ls.length).toBeGreaterThan(0);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps 12-hour labels on their bars while panning', () => {
+    const bars = sessionBars(2026, 9, 1, 25, 5);
+    const spacing = timeStepSpacing(bars, '5m');
+    for (const c of [EN12, ZH12]) {
+      let prev = timeAxisLabels(bars, '5m', view(500, 150), 1000, c, NY_ZONE, spacing);
+      for (let k = 1; k <= 40; k++) {
+        const next = timeAxisLabels(bars, '5m', view(500 + k * 0.37, 150), 1000, c, NY_ZONE, spacing);
+        const byIndex = new Map(next.map((l) => [l.index, l.label]));
+        for (const l of prev) if (l.x > 80 && l.x < 920) expect(byIndex.get(l.index)).toBe(l.label);
+        prev = next;
+      }
+    }
   });
 });

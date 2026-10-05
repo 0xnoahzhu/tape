@@ -11,7 +11,7 @@ import type { StatusLabels } from './orderModel';
 
 const statusEn: StatusLabels = {
   waiting: 'Waiting',
-  after: (t) => `After ${t} ET`,
+  after: (t) => `After ${t}`,
   pending: 'Pending',
   cancelling: 'Cancelling…',
   working: 'Submitted',
@@ -22,7 +22,7 @@ const statusEn: StatusLabels = {
 
 const statusZh: StatusLabels = {
   waiting: '等待触发',
-  after: (t) => `定时 ${t} ET`,
+  after: (t) => `定时 ${t}`,
   pending: '待提交',
   cancelling: '撤单中…',
   working: '已提交',

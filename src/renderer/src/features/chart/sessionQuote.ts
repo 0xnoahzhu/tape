@@ -11,6 +11,7 @@
 // fall back to the last trade vs the previous close.
 
 import { nyClock, usEquitySession, type MarketSession } from '@shared/session';
+import { CLOCK_24H, NEW_YORK_ZONE, wallClockAt, type Clock } from '@shared/timeFormat';
 import type { ContractRef, Quote } from '@shared/types';
 
 export type RefKind = 'close' | 'prev' | 'ext';
@@ -87,22 +88,13 @@ export function usesUsEquitySession(c: ContractRef): boolean {
   return c.currency === 'USD' && (c.secType === 'STK' || c.secType === 'OPT' || c.secType === 'IND' || c.secType === 'WAR' || c.secType === 'BAG');
 }
 
-const nyTime = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-});
-
-/** Exchange time of a quote: "16:00:00", or "10/03 16:00" when it is not from today (ET). */
-export function etTime(t: number, now: Date = new Date()): string {
-  const parts = (d: Date) => Object.fromEntries(nyTime.formatToParts(d).map((p) => [p.type, p.value]));
-  const p = parts(new Date(t));
-  const n = parts(now);
-  const hh = String(Number(p.hour) % 24).padStart(2, '0');
-  if (p.month === n.month && p.day === n.day) return `${hh}:${p.minute}:${p.second}`;
-  return `${p.month}/${p.day} ${hh}:${p.minute}`;
+/**
+ * Exchange time of a quote in `clock`'s format: "4:00:05 PM" / "16:00:05", or "10/03 4:00 PM" /
+ * "10/03 16:00" when it is not from today (New York days).
+ */
+export function etTime(t: number, now: Date = new Date(), clock: Clock = CLOCK_24H): string {
+  const at = wallClockAt(t, NEW_YORK_ZONE);
+  const today = wallClockAt(now, NEW_YORK_ZONE);
+  const sameDay = at.y === today.y && at.mo === today.mo && at.d === today.d;
+  return sameDay ? clock.time(t, { timeZone: NEW_YORK_ZONE, seconds: true }) : clock.time(t, { timeZone: NEW_YORK_ZONE, date: 'md' });
 }

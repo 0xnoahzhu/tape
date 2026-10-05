@@ -17,7 +17,7 @@
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Bar, Timeframe } from '@shared/types';
-import { useLang } from '../../i18n';
+import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
 import { scheduleOlderRetry, type OlderState } from './barsStore';
 import {
@@ -193,7 +193,7 @@ export const PriceChart = memo(function PriceChart({
   fit,
   onLeaveFit,
 }: Props) {
-  const lang = useLang();
+  const clock = useClock();
   const m = useChartMessages();
   const areaRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -438,8 +438,8 @@ export const PriceChart = memo(function PriceChart({
   const axisLabels = (geo?.axis ?? []).filter((a) => tags.every((t) => clearOfTag(a.frac * size.h, t.y, t.h)));
   // Time axis: labels at their bars' centers, with faint vertical grid lines above them in both panes;
   // the crosshair's time chip sits in the axis row and hides the labels it would touch.
-  const timeLabels = win && size.w > 0 ? timeAxisLabels(bars, timeframe, win, size.w, lang, timeZone, timeSpacing) : [];
-  const timeText = crossX != null && hoveredBar ? formatBarTime(hoveredBar.time, timeframe, lang, timeZone) : '';
+  const timeLabels = win && size.w > 0 ? timeAxisLabels(bars, timeframe, win, size.w, clock, timeZone, timeSpacing) : [];
+  const timeText = crossX != null && hoveredBar ? formatBarTime(hoveredBar.time, timeframe, clock, timeZone) : '';
   const timeHalf = labelWidth(timeText) / 2 + CHIP_PAD;
   const timeLeft = crossX != null ? Math.min(Math.max((crossX / VB_W) * size.w, timeHalf), Math.max(timeHalf, size.w - timeHalf)) : 0;
   const shownTimeLabels = timeText

@@ -5,6 +5,7 @@
 // No React or store imports so it can be unit tested in node.
 
 import { nyClock, type MarketSession } from '@shared/session';
+import { clockText, type Clock } from '@shared/timeFormat';
 import { barEndSec, barSeconds, barStartSec, isIntraday, isSecondsTimeframe, TIMEFRAMES } from '@shared/timeframes';
 import type { Bar, Timeframe } from '@shared/types';
 
@@ -1011,20 +1012,31 @@ const BAR_LABELS = {
   },
 };
 
-/** "HH:MM", or "HH:MM:SS" with `seconds`, of a bar's exchange clock. */
-const clockText = (f: BarFields, seconds: boolean) =>
-  `${pad2(Math.floor(f.min / 60))}:${pad2(f.min % 60)}${seconds ? `:${pad2(f.sec % 60)}` : ''}`;
+/**
+ * The time format and language chart labels are written in (the user's Clock, see
+ * shared/timeFormat.ts): dates are the same in both formats, clock times are "9:30 AM" /
+ * "上午 9:30" on the 12-hour clock and "09:30" on the 24-hour one.
+ */
+export type LabelClock = Pick<Clock, 'format' | 'lang'>;
+
+/**
+ * A bar's exchange clock in `clock`'s format, with seconds when `seconds`: "10:31 AM",
+ * "上午 10:31:07", "10:31". On the 12-hour clock every label carries its period, so a label read
+ * on its own (an axis tick, the crosshair chip) is never ambiguous.
+ */
+const barClock = (f: BarFields, clock: LabelClock, seconds: boolean) =>
+  clockText({ h: Math.floor(f.min / 60), m: f.min % 60, s: f.sec % 60 }, clock.format, clock.lang, seconds);
 
 /**
  * Hover label for a bar. Intraday bars are shown in exchange time (`zone`, see chartTimeZone), as
- * on the time axis, with seconds for second intervals; daily and longer bars by their trading
- * date (quarters as "Q3 2026").
+ * on the time axis, in `clock`'s format with seconds for second intervals ("Fri 10/02 10:31 AM");
+ * daily and longer bars by their trading date (quarters as "Q3 2026").
  */
-export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh', zone: string = NY_ZONE): string {
-  const L = BAR_LABELS[lang];
+export function formatBarTime(time: number, tf: Timeframe, clock: LabelClock, zone: string = NY_ZONE): string {
+  const L = BAR_LABELS[clock.lang];
   if (isIntraday(tf)) {
     const f = barFields(time, true, zone);
-    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, clockText(f, isSecondsTimeframe(tf)));
+    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, barClock(f, clock, isSecondsTimeframe(tf)));
   }
   const day = barDay(time);
   const [y, m] = [day.slice(0, 4), Number(day.slice(5, 7))];
@@ -1046,12 +1058,27 @@ export function formatBarTime(time: number, tf: Timeframe, lang: 'en' | 'zh', zo
 // ---------------------------------------------------------------------------
 // Time axis
 
-/** Minimum distance (px) between the centers of two time axis labels. */
+/** Minimum distance (px) between the centers of two time axis labels (more for wide clock labels, see timeTickGap). */
 export const TIME_TICK_GAP = 70;
+/** Space (px) kept between two clock labels on the time axis beyond their own widths. */
+const TIME_LABEL_CLEAR = 12;
+
+/**
+ * Minimum distance (px) between the centers of two time axis labels of interval `tf` in `clock`'s
+ * format at step `step` (an index into the timeframe's steps; omitted, its finest clock step):
+ * TIME_TICK_GAP, or more where the widest clock label the interval can have ("12:00:00 PM",
+ * "下午 12:00:30") needs it, so 12-hour labels thin out to wider steps instead of touching. Only
+ * clock steps widen it: calendar steps label dates only, which read the same in both formats.
+ */
+export function timeTickGap(tf: Timeframe, clock: LabelClock, step = 0): number {
+  if (step >= CLOCK_STEP_COUNT[tf]) return TIME_TICK_GAP;
+  const widest = clockText({ h: 12, m: 0, s: 0 }, clock.format, clock.lang, isSecondsTimeframe(tf));
+  return Math.max(TIME_TICK_GAP, Math.ceil(labelWidth(widest) + TIME_LABEL_CLEAR));
+}
 
 /**
  * What a tick marks, from the finest to the coarsest calendar unit it starts. The label follows
- * the kind ("10:30", "10/02", "Oct", "2026"), and a coarser kind wins where two labels would collide.
+ * the kind ("10:30 AM", "10/02", "Oct", "2026"), and a coarser kind wins where two labels would collide.
  */
 export type TimeTickKind = 'time' | 'day' | 'month' | 'year';
 const KIND_RANK: Record<TimeTickKind, number> = { time: 0, day: 1, month: 2, year: 3 };
@@ -1147,7 +1174,12 @@ function intradaySteps(barSec: number): TimeStep[] {
   return clock.concat(CALENDAR_STEPS);
 }
 
-/** Candidate steps per timeframe, finest first; the finest one whose labels stay TIME_TICK_GAP apart is used. */
+/** How many of a timeframe's steps (TIME_STEPS order, finest first) are clock steps; the rest label dates only. */
+const CLOCK_STEP_COUNT: Record<Timeframe, number> = Object.fromEntries(
+  TIMEFRAMES.map((tf) => [tf, isIntraday(tf) ? intradaySteps(barSeconds(tf)!).length - CALENDAR_STEPS.length : 0]),
+) as Record<Timeframe, number>;
+
+/** Candidate steps per timeframe, finest first; the finest one whose labels stay timeTickGap apart is used. */
 const TIME_STEPS: Record<Timeframe, TimeStep[]> = {
   ...(Object.fromEntries(TIMEFRAMES.filter(isIntraday).map((tf) => [tf, intradaySteps(barSeconds(tf)!)])) as Record<Timeframe, TimeStep[]>),
   '1D': [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
@@ -1200,9 +1232,17 @@ export function timeStepSpacing(bars: readonly Bar[], tf: Timeframe, zone: strin
   });
 }
 
-/** Index of the finest step whose ticks are on average at least `minGap` px apart (else the coarsest). */
-export function pickTimeStep(spacing: readonly number[], pxPerBar: number, minGap = TIME_TICK_GAP): number {
-  const i = spacing.findIndex((bars) => bars * pxPerBar >= minGap);
+/**
+ * Index of the finest step whose ticks are on average at least `minGap` px apart (else the
+ * coarsest); `minGap` may depend on the step (see timeTickGap).
+ */
+export function pickTimeStep(
+  spacing: readonly number[],
+  pxPerBar: number,
+  minGap: number | ((step: number) => number) = TIME_TICK_GAP,
+): number {
+  const gapAt = typeof minGap === 'number' ? () => minGap : minGap;
+  const i = spacing.findIndex((bars, s) => bars * pxPerBar >= gapAt(s));
   return i < 0 ? spacing.length - 1 : i;
 }
 
@@ -1229,17 +1269,17 @@ function tickKind(prev: BarFields, f: BarFields, intraday: boolean): TimeTickKin
   return intraday && f.day === prev.day ? 'time' : 'day';
 }
 
-function tickLabel(kind: TimeTickKind, f: BarFields, lang: 'en' | 'zh'): string {
+function tickLabel(kind: TimeTickKind, f: BarFields, clock: LabelClock): string {
   switch (kind) {
     case 'year':
       return String(f.y);
     case 'month':
-      return lang === 'zh' ? `${f.mo}月` : MONTH_EN[f.mo - 1];
+      return clock.lang === 'zh' ? `${f.mo}月` : MONTH_EN[f.mo - 1];
     case 'day':
       return `${pad2(f.mo)}/${pad2(f.d)}`;
     default:
       // Seconds only where the tick is not on a whole minute (second intervals).
-      return clockText(f, f.sec % 60 !== 0);
+      return barClock(f, clock, f.sec % 60 !== 0);
   }
 }
 
@@ -1249,7 +1289,8 @@ function tickLabel(kind: TimeTickKind, f: BarFields, lang: 'en' | 'zh'): string 
  * rank that is not itself dropped for a higher one ("Sep" on Tue 09/01 drops the week start on Tue
  * 09/08 after Labor Day, and 09/14 stays). Only ticks within twice `minGap` decide, and they are
  * read beyond [from, to) as well, so a tick keeps its label and visibility wherever the view is
- * (no jitter while panning). Intraday ticks follow the clock of time zone `zone` (see chartTimeZone).
+ * (no jitter while panning). Intraday ticks follow the clock of time zone `zone` (see chartTimeZone)
+ * and are labelled in `clock`'s format.
  */
 export function timeTicks(
   bars: readonly Bar[],
@@ -1258,9 +1299,9 @@ export function timeTicks(
   from: number,
   to: number,
   pxPerBar: number,
-  lang: 'en' | 'zh',
+  clock: LabelClock,
   zone: string = NY_ZONE,
-  minGap = TIME_TICK_GAP,
+  minGap = timeTickGap(tf, clock, step),
 ): TimeTick[] {
   const steps = TIME_STEPS[tf];
   const key = steps[Math.min(Math.max(0, step), steps.length - 1)];
@@ -1276,7 +1317,7 @@ export function timeTicks(
     const f = barFields(bars[i].time, intraday, zone);
     if (key(f) !== key(prev)) {
       const kind = tickKind(prev, f, intraday);
-      cands.push({ index: i, kind, label: tickLabel(kind, f, lang), rank: tickRank(kind, f) });
+      cands.push({ index: i, kind, label: tickLabel(kind, f, clock), rank: tickRank(kind, f) });
     }
     prev = f;
   }
@@ -1308,22 +1349,24 @@ export function labelWidth(text: string): number {
 /**
  * Time axis labels for a view `widthPx` wide: ticks at their bars' centers (px), without the ones
  * whose label would run past either edge. Intraday bars are labelled in time zone `zone` (see
- * chartTimeZone); `spacing` is timeStepSpacing of the series in that zone.
+ * chartTimeZone) and `clock`'s format, kept timeTickGap (of the chosen step) apart; `spacing` is timeStepSpacing of the
+ * series in that zone.
  */
 export function timeAxisLabels(
   bars: readonly Bar[],
   tf: Timeframe,
   win: ViewWindow,
   widthPx: number,
-  lang: 'en' | 'zh',
+  clock: LabelClock,
   zone: string = NY_ZONE,
   spacing: readonly number[] = timeStepSpacing(bars, tf, zone),
 ): TimeAxisLabel[] {
   if (!bars.length || !(widthPx > 0) || !(win.span > 0)) return [];
   const ppb = widthPx / win.span;
-  const step = pickTimeStep(spacing, ppb);
+  const step = pickTimeStep(spacing, ppb, (s) => timeTickGap(tf, clock, s));
+  const gap = timeTickGap(tf, clock, step);
   const out: TimeAxisLabel[] = [];
-  for (const t of timeTicks(bars, tf, step, Math.max(0, Math.floor(win.start)), Math.ceil(win.start + win.span), ppb, lang, zone)) {
+  for (const t of timeTicks(bars, tf, step, Math.max(0, Math.floor(win.start)), Math.ceil(win.start + win.span), ppb, clock, zone, gap)) {
     const x = (t.index - win.start + 0.5) * ppb;
     const half = labelWidth(t.label) / 2;
     if (x - half >= 0 && x + half <= widthPx) out.push({ ...t, x });

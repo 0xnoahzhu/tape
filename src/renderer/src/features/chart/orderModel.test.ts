@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
+import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
-import { canModifyInTicket, goodAfterHhmm, orderPriceText, orderStatusText, ticketPatchFromOrder, type StatusLabels } from './orderModel';
+import { canModifyInTicket, orderPriceText, orderStatusText, ticketPatchFromOrder, type StatusLabels } from './orderModel';
 
 const L: StatusLabels = {
   waiting: 'Waiting',
-  after: (t) => `After ${t} ET`,
+  after: (t) => `After ${t}`,
   pending: 'Pending',
   cancelling: 'Cancelling…',
   working: 'Working',
@@ -13,6 +14,8 @@ const L: StatusLabels = {
   filled: (n) => `${n} filled`,
   sessions: { regular: 'Regular hours', extended: 'Extended hours', overnight: 'Overnight', overnightDay: 'Overnight + Day' },
 };
+
+const C24 = CLOCK_24H;
 
 function order(over: Partial<WorkingOrder> = {}): WorkingOrder {
   return {
@@ -38,31 +41,68 @@ function order(over: Partial<WorkingOrder> = {}): WorkingOrder {
 
 describe('orderStatusText', () => {
   it('shows working orders with their TIF', () => {
-    expect(orderStatusText(order({ tif: 'GTC' }), L)).toEqual({ text: 'Working · GTC', accent: false });
-    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), L).text).toBe('Working · GTC · Extended hours');
-    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), L).text).toBe('Working · DAY · Overnight + Day');
-    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), L).text).toBe('Working · GTD 10/09 16:00 ET');
+    expect(orderStatusText(order({ tif: 'GTC' }), L, C24)).toEqual({ text: 'Working · GTC', accent: false });
+    expect(orderStatusText(order({ tif: 'GTC', outsideRth: true }), L, C24).text).toBe('Working · GTC · Extended hours');
+    expect(orderStatusText(order({ session: 'overnightDay', outsideRth: true }), L, C24).text).toBe('Working · DAY · Overnight + Day');
+    expect(orderStatusText(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }), L, C24).text).toBe('Working · GTD 10/09 16:00 ET');
   });
 
   it('shows pending states', () => {
-    expect(orderStatusText(order({ status: 'PreSubmitted' }), L).text).toBe('Pending · DAY');
-    expect(orderStatusText(order({ status: 'PendingSubmit' }), L).text).toBe('Pending · DAY');
-    expect(orderStatusText(order({ status: 'PendingCancel' }), L).text).toBe('Cancelling…');
+    expect(orderStatusText(order({ status: 'PreSubmitted' }), L, C24).text).toBe('Pending · DAY');
+    expect(orderStatusText(order({ status: 'PendingSubmit' }), L, C24).text).toBe('Pending · DAY');
+    expect(orderStatusText(order({ status: 'PendingCancel' }), L, C24).text).toBe('Cancelling…');
   });
 
   it('highlights untriggered conditions and good-after times', () => {
     const cond = order({ status: 'PreSubmitted', condition: { symbol: 'AAPL', operator: '>=', price: 235, outsideRth: false } });
-    expect(orderStatusText(cond, L)).toEqual({ text: 'Waiting · AAPL ≥ 235.00', accent: true });
+    expect(orderStatusText(cond, L, C24)).toEqual({ text: 'Waiting · AAPL ≥ 235.00', accent: true });
     const gat = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
-    expect(orderStatusText(gat, L)).toEqual({ text: 'After 09:35 ET · DAY', accent: true });
+    expect(orderStatusText(gat, L, C24)).toEqual({ text: 'After 09:35 ET · DAY', accent: true });
     // Once IB submits the order it is simply working.
-    expect(orderStatusText({ ...cond, status: 'Submitted' }, L).text).toBe('Working · DAY');
+    expect(orderStatusText({ ...cond, status: 'Submitted' }, L, C24).text).toBe('Working · DAY');
+  });
+
+  it('writes good-after and GTD times in the clock format', () => {
+    const gat = order({ status: 'PreSubmitted', goodAfterTime: '20261005 09:35:00 US/Eastern' });
+    expect(orderStatusText(gat, L, createClock('12h', 'en')).text).toBe('After 9:35 AM ET · DAY');
+    const zh: StatusLabels = { ...L, after: (t) => `定时 ${t}` };
+    expect(orderStatusText(gat, zh, createClock('12h', 'zh')).text).toBe('定时 上午 9:35 ET · DAY');
+    const noon = order({ status: 'PreSubmitted', goodAfterTime: '20261005 12:00:00 US/Eastern' });
+    expect(orderStatusText(noon, L, createClock('12h', 'en')).text).toBe('After 12:00 PM ET · DAY');
+    const gtd = order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
+    expect(orderStatusText(gtd, L, createClock('12h', 'en')).text).toBe('Working · GTD 10/09 4:00 PM ET');
+    expect(orderStatusText(gtd, L, createClock('12h', 'zh')).text).toBe('Working · GTD 10/09 下午 4:00 ET');
+    expect(orderStatusText(gtd, L, createClock('24h', 'zh')).text).toBe('Working · GTD 10/09 16:00 ET');
+    // The ticket keeps the 24-hour wall time IB uses, whatever the display format.
+    expect(ticketPatchFromOrder(gat).goodAfterTime).toBe('09:35');
+  });
+
+  it('reads good-after times in UTC and other zones as the Orders page does', () => {
+    const en12 = createClock('12h', 'en');
+    const zh12 = createClock('12h', 'zh');
+    const zh: StatusLabels = { ...L, after: (t) => `定时 ${t}` };
+    // IB's UTC form: 14:35 UTC on 12/05 (EST) and 13:35 UTC on 10/05 (EDT) are both 9:35 ET.
+    const utc = order({ status: 'PreSubmitted', goodAfterTime: '20261205-14:35:00' });
+    expect(orderStatusText(utc, L, en12).text).toBe('After 9:35 AM ET · DAY');
+    expect(orderStatusText(utc, L, C24).text).toBe('After 09:35 ET · DAY');
+    expect(orderStatusText(utc, zh, zh12).text).toBe('定时 上午 9:35 ET · DAY');
+    const utcDst = order({ status: 'PreSubmitted', goodAfterTime: '20261005-13:35:00' });
+    expect(orderStatusText(utcDst, L, en12).text).toBe('After 9:35 AM ET · DAY');
+    // A TWS order placed with a Shanghai clock keeps its zone.
+    const sh = order({ status: 'PreSubmitted', goodAfterTime: '20261005 21:35:00 Asia/Shanghai' });
+    expect(orderStatusText(sh, L, en12).text).toBe('After 9:35 PM Asia/Shanghai · DAY');
+    expect(orderStatusText(sh, L, C24).text).toBe('After 21:35 Asia/Shanghai · DAY');
+    expect(orderStatusText(sh, zh, zh12).text).toBe('定时 下午 9:35 Asia/Shanghai · DAY');
+    // "Modify" loads the ET wall time into the ticket.
+    for (const o of [utc, utcDst, sh]) expect(ticketPatchFromOrder(o)).toMatchObject({ goodAfter: true, goodAfterTime: '09:35', advancedOpen: true });
+    expect(ticketPatchFromOrder(order({ goodAfterTime: '9:05' }))).toMatchObject({ goodAfter: true, goodAfterTime: '09:05' });
+    expect(ticketPatchFromOrder(order())).toMatchObject({ goodAfter: false, goodAfterTime: '09:35' });
   });
 
   it('adds trailing percent, iceberg size and partial fills', () => {
-    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3 }), L).text).toBe('Working · DAY · 3%');
-    expect(orderStatusText(order({ displaySize: 100 }), L).text).toBe('Working · DAY · ice 100');
-    expect(orderStatusText(order({ filled: 30 }), L).text).toBe('Working · DAY · 30/100 filled');
+    expect(orderStatusText(order({ orderType: 'TRAIL', trailingPercent: 3 }), L, C24).text).toBe('Working · DAY · 3%');
+    expect(orderStatusText(order({ displaySize: 100 }), L, C24).text).toBe('Working · DAY · ice 100');
+    expect(orderStatusText(order({ filled: 30 }), L, C24).text).toBe('Working · DAY · 30/100 filled');
   });
 });
 
@@ -134,15 +174,6 @@ describe('ticketPatchFromOrder', () => {
     expect(ticketPatchFromOrder(order({ tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' }))).toMatchObject({ tif: 'GTD', goodTill: '2026-10-09T16:00', session: 'regular' });
     expect(ticketPatchFromOrder(order({ tif: 'FOK' }))).toMatchObject({ tif: 'FOK' });
     expect(ticketPatchFromOrder(order({ session: 'overnightDay', outsideRth: true }))).toMatchObject({ tif: 'DAY', session: 'overnightDay', advancedOpen: true });
-  });
-});
-
-describe('goodAfterHhmm', () => {
-  it('extracts HH:MM', () => {
-    expect(goodAfterHhmm('20261005 09:35:00 US/Eastern')).toBe('09:35');
-    expect(goodAfterHhmm('9:05')).toBe('09:05');
-    expect(goodAfterHhmm('')).toBeUndefined();
-    expect(goodAfterHhmm(undefined)).toBeUndefined();
   });
 });
 

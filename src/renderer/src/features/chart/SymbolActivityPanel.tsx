@@ -3,8 +3,10 @@
 
 import { useMemo } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
-import { f0, hms, MINUS, px, sg, signColor } from '@shared/format';
+import { f0, MINUS, px, sg, signColor } from '@shared/format';
+import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type Position, type WorkingOrder } from '@shared/types';
+import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
@@ -65,7 +67,8 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
 function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
   const m = useChartMessages();
   const common = useCommon();
-  const st = orderStatusText(o, m.status);
+  const clock = useClock();
+  const st = orderStatusText(o, m.status, clock);
   const buy = o.action === 'BUY';
   const modify = () => {
     const s = useStore.getState();
@@ -82,8 +85,10 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
     <div
       style={{
         display: 'grid',
-        // "qty @ price" keeps room for "100 @ 226.50" in a narrow window; contract and status clip first.
-        gridTemplateColumns: '72px 48px minmax(0,2fr) minmax(96px,1.2fr) minmax(0,1fr) 110px',
+        // The time column is sized for the clock format (timeColumn). "qty @ price" keeps room for
+        // "100 @ 226.50" and grows little beyond it; the rest goes to contract and status (with its
+        // good-after and GTD times, the larger share), which clip first in a narrow window.
+        gridTemplateColumns: `${timeColumn(clock)} 48px minmax(0,1.2fr) minmax(96px,0.5fr) minmax(0,2fr) 110px`,
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -92,7 +97,7 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
         boxShadow: 'inset 0 -1px 0 var(--ln2)',
       }}
     >
-      <div style={{ font: '13px/1 var(--num)', color: 'var(--dm)' }}>{hms(o.createdAt)}</div>
+      <div style={{ font: '13px/1 var(--num)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{clock.time(o.createdAt, { seconds: true })}</div>
       <div style={{ color: buy ? 'var(--up)' : 'var(--dn)', fontWeight: 500 }}>{buy ? common.buyShort : common.sellShort}</div>
       <div className="ellipsis">{contractLabel(o.contract)}</div>
       <div className="ellipsis" style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
