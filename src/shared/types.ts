@@ -301,7 +301,30 @@ export interface NavPoint {
 // Orders
 
 export type OrderAction = 'BUY' | 'SELL';
-export type OrderType = 'LMT' | 'MKT' | 'STP' | 'STP LMT' | 'TRAIL';
+/**
+ * Order types Tape sends (shared/orderRules.ts says which instruments and sessions take which).
+ * The first five are the ticket's main row; the others are IB's touched, auction, midpoint /
+ * pegged and trailing variants.
+ */
+export type OrderType =
+  | 'LMT'
+  | 'MKT'
+  | 'STP'
+  | 'STP LMT'
+  | 'TRAIL'
+  | 'TRAIL LIMIT'
+  | 'MIT'
+  | 'LIT'
+  | 'MOC'
+  | 'LOC'
+  | 'MTL'
+  | 'MIDPRICE'
+  | 'REL'
+  | 'SNAP MID'
+  | 'SNAP MKT'
+  | 'PEG MID'
+  | 'TRAIL MIT'
+  | 'TRAIL LIT';
 export type TimeInForce = 'DAY' | 'GTC' | 'IOC' | 'FOK' | 'OPG' | 'GTD';
 /**
  * When an order may work (see shared/orderTiming.ts for what combines with what):
@@ -312,6 +335,13 @@ export type TimeInForce = 'DAY' | 'GTC' | 'IOC' | 'FOK' | 'OPG' | 'GTD';
  */
 export type TradingSession = 'regular' | 'extended' | 'overnight' | 'overnightDay';
 
+/**
+ * IB's trigger methods of simulated stops, touched orders and price conditions: 0 default (double
+ * bid/ask for US options, last otherwise), 1 double bid/ask, 2 last, 3 double last, 4 bid/ask,
+ * 7 last or bid/ask, 8 midpoint.
+ */
+export type TriggerMethod = 0 | 1 | 2 | 3 | 4 | 7 | 8;
+
 export interface PriceConditionSpec {
   /** The instrument whose price is monitored (usually the order's underlying). */
   contract: ContractRef;
@@ -321,19 +351,121 @@ export interface PriceConditionSpec {
   outsideRth: boolean;
 }
 
+/** One condition of an order (IB's order conditions). */
+export type OrderConditionSpec =
+  /** Price of an instrument (an index too) at or above / below a value. */
+  | { kind: 'price'; contract: ContractRef; operator: '>=' | '<='; price: number; triggerMethod?: TriggerMethod }
+  /** After a time, "yyyyMMdd HH:mm:ss US/Eastern" (IB takes "after" only). */
+  | { kind: 'time'; time: string }
+  /** Change of an instrument since the last close, in percent (-5 = down 5 %). */
+  | { kind: 'percentChange'; contract: ContractRef; operator: '>=' | '<='; percent: number }
+  /** Today's traded volume of an instrument (a whole number, at most 2^31 - 1). */
+  | { kind: 'volume'; contract: ContractRef; operator: '>=' | '<='; volume: number }
+  /** The account's margin cushion, in whole percent. */
+  | { kind: 'margin'; operator: '>=' | '<='; percent: number }
+  /** A trade of this symbol / security type in the account. */
+  | { kind: 'execution'; symbol: string; secType: SecType };
+
+export type OrderConditionItem = OrderConditionSpec & {
+  /** How this condition combines with the next one (default 'and'; the last one's is not used). */
+  join?: 'and' | 'or';
+};
+
+export interface OrderConditions {
+  items: OrderConditionItem[];
+  /** Cancel the order when the conditions are met, instead of submitting it (LMT and MIDPRICE only). */
+  cancel?: boolean;
+  /** The conditions are also evaluated outside regular trading hours. */
+  outsideRth: boolean;
+}
+
+/** IB algos Tape offers (shared/orderRules.ts › ALGOS lists their parameters). */
+export type AlgoStrategy =
+  | 'Adaptive'
+  | 'Vwap'
+  | 'Twap'
+  | 'ArrivalPx'
+  | 'ClosePx'
+  | 'PctVol'
+  | 'PctVolPx'
+  | 'PctVolSz'
+  | 'PctVolTm'
+  | 'DarkIce'
+  | 'AD'
+  | 'MinImpact'
+  | 'BalanceImpactRisk';
+
+/** Algo parameter values: numbers, switches, choices and times ("HH:MM" New York time). */
+export type AlgoParamValue = string | number | boolean;
+
+export interface AlgoSpec {
+  strategy: AlgoStrategy;
+  params: Record<string, AlgoParamValue>;
+}
+
+/** Stop types of a bracket's stop-loss and of an adjusted stop. */
+export type StopOrderType = 'STP' | 'STP LMT' | 'TRAIL' | 'TRAIL LIMIT';
+
+/**
+ * Adjustable stop: once the order's instrument trades at `trigger`, IB turns the stop into another
+ * stop (e.g. moves it to break-even, or makes it trail).
+ */
+export interface AdjustedStop {
+  trigger: number;
+  type: 'STP' | 'STP LMT' | 'TRAIL';
+  /** New stop price (STP, STP LMT; the initial stop of TRAIL). */
+  stopPrice?: number;
+  /** New limit price (STP LMT). */
+  limitPrice?: number;
+  /** New trailing amount (TRAIL), in price or percent per `trailUnit`. */
+  trailAmount?: number;
+  trailUnit?: 'amount' | 'percent';
+}
+
+/** Take-profit and stop-loss children attached to an order. */
+export interface BracketSpec {
+  /** Take-profit limit price. */
+  takeProfit?: number;
+  /** Stop-loss stop price; for trailing stop-losses the initial stop. */
+  stopLoss?: number;
+  /** The stop-loss order type (default STP). */
+  stopType?: StopOrderType;
+  /** STP LMT stop-loss: limit price. */
+  stopLimit?: number;
+  /** TRAIL / TRAIL LIMIT stop-loss: trailing amount or percent (one of them). */
+  stopTrailAmount?: number;
+  stopTrailPercent?: number;
+  /** TRAIL LIMIT stop-loss: limit offset from the stop. */
+  stopLimitOffset?: number;
+  /** Adjustable stop-loss. */
+  adjust?: AdjustedStop;
+}
+
+/** OCA type: 1 cancel the others (with block), 2 reduce the others (with block), 3 reduce (no block). */
+export type OcaType = 1 | 2 | 3;
+
 export interface OrderRequest {
   contract: ContractRef;
   action: OrderAction;
   orderType: OrderType;
+  /** Shares / contracts; 0 for a forex order sized by `cashQty`. */
   quantity: number;
-  /** LMT and STP LMT limit price. */
+  /**
+   * Limit price: LMT, STP LMT, LIT, LOC; the optional price cap of MIDPRICE, REL and PEG MID.
+   */
   limitPrice?: number;
-  /** STP and STP LMT trigger price. */
+  /** STP and STP LMT stop price; MIT and LIT trigger price. */
   stopPrice?: number;
-  /** TRAIL: either a percentage or an amount, plus the initial stop. */
+  /** TRAIL, TRAIL LIMIT, TRAIL MIT, TRAIL LIT: either a percentage or an amount, plus the initial stop. */
   trailingPercent?: number;
   trailingAmount?: number;
   trailStopPrice?: number;
+  /** TRAIL LIMIT and TRAIL LIT: limit offset from the trailing stop (IB's lmtPriceOffset). */
+  limitOffset?: number;
+  /** REL, SNAP MID, SNAP MKT, PEG MID: offset from the reference price (IB's auxPrice). */
+  offset?: number;
+  /** REL: offset in percent of the reference price instead of `offset` (0.5 = 0.5 %). */
+  percentOffset?: number;
   tif: TimeInForce;
   /** Pre-market and after-hours (IB's outsideRth); `session`, when set, decides it instead. */
   outsideRth: boolean;
@@ -341,13 +473,55 @@ export interface OrderRequest {
   session?: TradingSession;
   /** GTD expiry, "yyyyMMdd HH:mm:ss US/Eastern" (required with tif GTD). */
   goodTillDate?: string;
-  /** Attach take-profit (LMT) and stop-loss (STP) children. */
-  bracket?: { takeProfit?: number; stopLoss?: number };
+  /** Attach take-profit and stop-loss children. */
+  bracket?: BracketSpec;
+  /** One price condition (the ticket's simple form); `conditions` is the general one. Not both. */
   condition?: PriceConditionSpec;
+  conditions?: OrderConditions;
   /** Iceberg display size. */
   displaySize?: number;
   /** Good-after time, "HH:MM" in US/Eastern on the next valid day. */
   goodAfterTime?: string;
+  /** Fill attributes. */
+  allOrNone?: boolean;
+  /** Minimum quantity per fill (options). */
+  minQty?: number;
+  /** Not shown in the order book (US stocks). */
+  hidden?: boolean;
+  /** Takes all displayed liquidity up to the limit at once (US stocks via SMART). */
+  sweepToFill?: boolean;
+  /** Limit orders: hidden discretion beyond the limit price (US stocks). */
+  discretionaryAmt?: number;
+  /** Trigger method of stops and touched orders (0 / absent: IB's default). */
+  triggerMethod?: TriggerMethod;
+  /** Adjustable stop of a stop order (STP, STP LMT, TRAIL). */
+  adjustStop?: AdjustedStop;
+  algo?: AlgoSpec;
+  /** One-cancels-all group: orders with the same group name cancel / reduce each other. */
+  oca?: { group: string; type: OcaType };
+  /** Directed routing: an exchange from the contract's valid exchanges instead of SMART (stocks). */
+  route?: string;
+  /** Combos: SMART routes the legs separately (leg risk) instead of as a guaranteed combo. */
+  nonGuaranteed?: boolean;
+  /** Forex: order size in the quote currency instead of `quantity` (IB computes the quantity). */
+  cashQty?: number;
+  /** Free-text note (IB's orderRef), shown in TWS and on executions. */
+  orderRef?: string;
+}
+
+/** IB's margin and commission estimate of an order (whatIf), before it is placed. */
+export interface OrderPreview {
+  /** Commission; IB may give a range instead (minCommission..maxCommission). */
+  commission?: number;
+  minCommission?: number;
+  maxCommission?: number;
+  commissionCurrency?: string;
+  /** Margin before / change / after; absent when IB returned none (e.g. for some limit orders). */
+  initMargin?: { before?: number; change?: number; after?: number };
+  maintMargin?: { before?: number; change?: number; after?: number };
+  equityWithLoan?: { before?: number; change?: number; after?: number };
+  /** IB's notice about the order (price bands, odd lots, …). */
+  warningText?: string;
 }
 
 export interface PlaceOrderResult {
@@ -393,8 +567,33 @@ export interface WorkingOrder {
   goodTillDate?: string;
   goodAfterTime?: string;
   displaySize?: number;
-  /** Human-readable price condition, e.g. { symbol: 'AAPL', operator: '>=', price: 235 }. */
+  /** Human-readable price condition, e.g. { symbol: 'AAPL', operator: '>=', price: 235 } (the first one). */
   condition?: { symbol: string; operator: '>=' | '<='; price: number; outsideRth: boolean };
+  /**
+   * Every condition, as a request carries them (watched contracts as { conId, symbol } refs; the
+   * symbol is the conId until IB has named it).
+   */
+  conditions?: OrderConditions;
+  /** TRAIL LIMIT / TRAIL LIT limit offset. */
+  limitOffset?: number;
+  /** REL percent offset. */
+  percentOffset?: number;
+  allOrNone?: boolean;
+  minQty?: number;
+  hidden?: boolean;
+  sweepToFill?: boolean;
+  discretionaryAmt?: number;
+  /** Absent for IB's default (0). */
+  triggerMethod?: TriggerMethod;
+  /** The adjustable-stop rule of a stop order (a bracket's stop-loss child included). */
+  adjustStop?: AdjustedStop;
+  algo?: AlgoSpec;
+  oca?: { group: string; type: OcaType };
+  /** Directed exchange (not SMART / OVERNIGHT). */
+  route?: string;
+  nonGuaranteed?: boolean;
+  cashQty?: number;
+  orderRef?: string;
   status: OrderStatus;
   filled: number;
   remaining: number;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compact, usd } from './format';
+import { compact, roundToTick, usd } from './format';
 
 describe('compact', () => {
   it('uses K / M / B units', () => {
@@ -32,5 +32,22 @@ describe('usd', () => {
   it('drops the sign when the value rounds to zero', () => {
     expect(usd(-0.004)).toBe('$0.00');
     expect(usd(-0.4, 0)).toBe('$0');
+  });
+});
+
+describe('roundToTick', () => {
+  it('keeps the decimals of quarter and eighth ticks', () => {
+    expect(roundToTick(1000.25, 0.25)).toBe(1000.25);
+    expect(roundToTick(6800.75, 0.25)).toBe(6800.75);
+    expect(roundToTick(6800.8, 0.25)).toBe(6800.75);
+    expect(roundToTick(1.125, 0.125)).toBe(1.125);
+  });
+
+  it('rounds to small and exponent-notation ticks', () => {
+    expect(roundToTick(1.2345, 0.005)).toBe(1.235);
+    expect(roundToTick(1.123456, 0.00005)).toBe(1.12345);
+    expect(roundToTick(0.0000123, 0.0000005)).toBe(0.0000125);
+    expect(roundToTick(228.456, 0.01)).toBe(228.46);
+    expect(roundToTick(1234, 5)).toBe(1235);
   });
 });

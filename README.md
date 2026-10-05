@@ -24,20 +24,29 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
   through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, and the position and open orders for
   the selected symbol.
-- **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent); time in force DAY /
-  GTC / IOC / FOK / OPG / GTD (with an expiry in New York time); **trading session** regular hours, extended
-  hours (pre-market and after-hours), overnight, or overnight + day (US stocks and ETFs, DAY limit orders);
-  choices IBKR does not combine are disabled with the reason; **bracket** orders (take-profit and stop-loss children); **conditional**
-  orders (price condition on any instrument); **iceberg** (display size); **good-after** time. Optional
-  confirmation before every order; keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
+- **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
+  market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
+  on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force
+  DAY / GTC / IOC / FOK / OPG / GTD (with an expiry in New York time); **trading session** regular hours,
+  extended hours (pre-market and after-hours), overnight, or overnight + day (US stocks and ETFs, DAY limit
+  orders). **Advanced**: **bracket** orders (take-profit, and a stop-loss as stop, stop limit, trailing stop
+  or trailing stop limit) and **adjustable stops**; **conditions** (price, time, % change, volume, margin
+  cushion, execution; and / or; submit or cancel when met); **all or none**, minimum quantity, hidden, sweep
+  to fill, discretionary amount, **iceberg**, forex orders sized by amount; **trigger method**; **IB algos**
+  (Adaptive, VWAP, TWAP, Arrival price, Close price, % of volume and its variants, Dark ice, Accumulate /
+  distribute, and for options Minimise impact and Balance impact and risk) with their parameters; **OCA
+  groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
+  the reason. Optional confirmation before every order, with IBKR's **margin and commission estimate**
+  (what-if); keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
 - **Symbol search** (⌘K / Ctrl+K): find a ticker or company and open it on the Trade page; orders are
   entered in the order ticket.
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type, ATM IV and
-  expected move; strategy builder with payoff and risk; volatility view; unusual options flow; option
+  expected move; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
+  non-guaranteed; volatility view; unusual options flow; option
   positions with risk alerts.
 - **Depth**: 10-level book (Level 2) when enabled and subscribed.
 
-**Orders** — working orders (modify, cancel, cancel all) and today's trades with commissions, CSV export.
+**Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions, CSV export.
 
 **Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
 events appear in the bell; each kind can also be pushed to the system notification center, with sound and

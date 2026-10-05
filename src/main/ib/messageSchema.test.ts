@@ -292,6 +292,47 @@ describe('decodeFrame', () => {
     expect(Object.fromEntries(gtd.fields)).toMatchObject({ exchange: 'OVERNIGHT', primaryExch: 'NASDAQ', tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern' });
   });
 
+  it('names the attributes, algo and what-if flag of placeOrder', () => {
+    const contract: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as Contract['secType'], exchange: 'SMART', currency: 'USD' };
+    const order: Order = {
+      action: 'BUY' as Order['action'],
+      orderType: 'LMT' as Order['orderType'],
+      totalQuantity: 10,
+      lmtPrice: 1,
+      tif: 'DAY' as Order['tif'],
+      transmit: true,
+      ocaGroup: 'g1',
+      ocaType: 2,
+      sweepToFill: true,
+      hidden: true,
+      triggerMethod: 8,
+      discretionaryAmt: 0.05,
+      allOrNone: true,
+      minQty: 5,
+      algoStrategy: 'Adaptive',
+      algoParams: [{ tag: 'adaptivePriority', value: 'Normal' }],
+      whatIf: true,
+    };
+    for (const sv of [176, 193]) {
+      const fields = Object.fromEntries(decodeFrame('out', encode(sv, (enc) => enc.placeOrder(7, contract, order)), { serverVersion: sv }).fields);
+      expect(fields).toMatchObject({
+        ocaGroup: 'g1',
+        ocaType: '2',
+        sweepToFill: '1',
+        hidden: '1',
+        triggerMethod: '8',
+        discretionaryAmt: '0.05',
+        allOrNone: '1',
+        minQty: '5',
+        algoStrategy: 'Adaptive (adaptivePriority=Normal)',
+        whatIf: '1',
+      });
+    }
+    // Unset attributes are not listed.
+    const plain = Object.fromEntries(decodeFrame('out', encode(193, (enc) => enc.placeOrder(7, contract, { ...order, ...{ sweepToFill: undefined, hidden: undefined, triggerMethod: undefined, discretionaryAmt: undefined, allOrNone: undefined, minQty: undefined, algoStrategy: undefined, whatIf: undefined } }))).fields);
+    for (const k of ['sweepToFill', 'hidden', 'triggerMethod', 'discretionaryAmt', 'allOrNone', 'minQty', 'algoStrategy', 'whatIf']) expect(plain).not.toHaveProperty(k);
+  });
+
   it('decodes combo legs of a BAG order', () => {
     const contract: Contract = {
       symbol: 'AAPL',
@@ -306,6 +347,8 @@ describe('decodeFrame', () => {
     const order: Order = { action: 'BUY' as Order['action'], orderType: 'LMT' as Order['orderType'], totalQuantity: 1, lmtPrice: 1.25, tif: 'DAY' as Order['tif'], transmit: true };
     const e = decodeFrame('out', encode(193, (enc) => enc.placeOrder(7, contract, order)));
     expect(Object.fromEntries(e.fields)).toMatchObject({ secType: 'BAG', comboLegs: 'BUY 1×11, SELL 1×12', lmtPrice: '1.25', tif: 'DAY' });
+    const ng = decodeFrame('out', encode(193, (enc) => enc.placeOrder(7, contract, { ...order, goodAfterTime: '20261005 09:35:00 US/Eastern', smartComboRoutingParams: [{ tag: 'NonGuaranteed', value: '1' }] })));
+    expect(Object.fromEntries(ng.fields)).toMatchObject({ comboRouting: 'NonGuaranteed=1', lmtPrice: '1.25', goodAfterTime: '20261005 09:35:00 US/Eastern' });
   });
 });
 

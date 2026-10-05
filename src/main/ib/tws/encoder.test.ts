@@ -317,6 +317,36 @@ describe('encoder helpers', () => {
     expect(tokens).toContain('k=v;');
   });
 
+  it('sends the extended scale fields only for a real price increment, like EClient', () => {
+    const base: Order = { action: 'BUY', orderType: 'LMT', totalQuantity: 1, lmtPrice: 1 };
+    const len = (o: Partial<Order>) => encoder.placeOrder(193, 1, stk, { ...base, ...o }).length;
+    expect(len({ scalePriceIncrement: 0 })).toBe(len({}));
+    expect(len({ scalePriceIncrement: Number.MAX_VALUE })).toBe(len({}));
+    expect(len({ scalePriceIncrement: 0.05 })).toBe(len({}) + 7);
+  });
+
+  it('sends unset adjusted-order prices empty', () => {
+    const base: Order = { action: 'SELL', orderType: 'STP', totalQuantity: 1, auxPrice: 1 };
+    const tokens = encoder.placeOrder(193, 1, stk, { ...base, triggerPrice: Number.MAX_VALUE, lmtPriceOffset: Number.MAX_VALUE, adjustedStopPrice: Number.MAX_VALUE });
+    expect(tokens).toEqual(encoder.placeOrder(193, 1, stk, base));
+  });
+
+  it('refuses a control character in a text field (a NUL would split the field)', () => {
+    const base: Order = { action: 'BUY', orderType: 'LMT', totalQuantity: 1, lmtPrice: 1 };
+    let err: unknown;
+    try {
+      encoder.placeOrder(193, 9, stk, { ...base, orderRef: 'x\u0000INJECTED' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TwsEncodeError);
+    expect(err).toMatchObject({ reqId: 9, message: expect.stringContaining('control character') });
+    expect(() => encoder.placeOrder(193, 9, stk, { ...base, ocaGroup: 'g\u00001' })).toThrow(TwsEncodeError);
+    expect(() => encoder.placeOrder(193, 9, { ...stk, symbol: 'A\nB' }, base)).toThrow(TwsEncodeError);
+    expect(() => encoder.placeOrder(193, 9, stk, { ...base, orderRef: '备注 note' })).not.toThrow();
+    expect(() => encoder.checkFieldText(193, [1, 'ok', undefined, 2.5])).not.toThrow();
+  });
+
   it('rejects attributes newer than the server version', () => {
     expect(() => encoder.placeOrder(182, 7, stk, { action: 'BUY', orderType: 'MKT', customerAccount: 'C' })).toThrow(
       'Server Version 182: It does not support customer account parameter',

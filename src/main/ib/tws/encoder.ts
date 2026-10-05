@@ -50,6 +50,15 @@ export function toTokens(values: readonly unknown[]): Token[] {
 /** The text of a frame: fields joined by NUL (undefined / null become empty fields). */
 export const frameText = (tokens: readonly Token[]): string => tokens.join('\0');
 
+/**
+ * Refuses a frame with a control character in a text field: a NUL would split the field and
+ * shift every field after it (the request would carry fields its caller never set).
+ */
+export function checkFieldText(sv: number, tokens: readonly Token[], reqId: number = ErrorCode.NO_VALID_ID): void {
+  const bad = tokens.find((t) => typeof t === 'string' && /[\x00-\x1f]/.test(t));
+  if (bad !== undefined) throw new TwsEncodeError(sv, `A text field contains a control character: ${JSON.stringify(bad)}`, ErrorCode.FAIL_SEND, reqId);
+}
+
 // ---------------------------------------------------------------------------
 // Connection
 
@@ -516,7 +525,8 @@ export function placeOrder(sv: number, id: number, contract: Contract, order: Or
 
   // scale orders
   t.push(nullifyMax(order.scaleInitLevelSize), nullifyMax(order.scaleSubsLevelSize), nullifyMax(order.scalePriceIncrement));
-  if (order.scalePriceIncrement !== undefined) {
+  // EClient sends the extended scale fields only for a real increment (> 0 and not Double.MAX_VALUE).
+  if (order.scalePriceIncrement != null && order.scalePriceIncrement > 0 && order.scalePriceIncrement !== Number.MAX_VALUE) {
     t.push(
       nullifyMax(order.scalePriceAdjustValue),
       nullifyMax(order.scalePriceAdjustInterval),
@@ -572,11 +582,11 @@ export function placeOrder(sv: number, id: number, contract: Contract, order: Or
   // adjusted orders
   t.push(
     order.adjustedOrderType,
-    order.triggerPrice,
-    order.lmtPriceOffset,
-    order.adjustedStopPrice,
-    order.adjustedStopLimitPrice,
-    order.adjustedTrailingAmount,
+    nullifyMax(order.triggerPrice),
+    nullifyMax(order.lmtPriceOffset),
+    nullifyMax(order.adjustedStopPrice),
+    nullifyMax(order.adjustedStopLimitPrice),
+    nullifyMax(order.adjustedTrailingAmount),
     order.adjustableTrailingUnit,
   );
 
@@ -611,7 +621,9 @@ export function placeOrder(sv: number, id: number, contract: Contract, order: Or
   if (sv >= MIN_SERVER_VER.RFQ_FIELDS && sv < MIN_SERVER_VER.UNDO_RFQ_FIELDS) t.push('', INT_MAX);
   if (sv >= MIN_SERVER_VER.INCLUDE_OVERNIGHT) t.push(order.includeOvernight);
   if (sv >= MIN_SERVER_VER.CME_TAGGING_FIELDS) t.push(order.manualOrderIndicator);
-  return toTokens(t);
+  const tokens = toTokens(t);
+  checkFieldText(sv, tokens, id);
+  return tokens;
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +657,7 @@ export class Encoder {
     let tokens: Token[];
     try {
       tokens = encode(this.serverVersion);
+      checkFieldText(this.serverVersion, tokens);
     } catch (err) {
       if (!(err instanceof TwsEncodeError)) throw err;
       this.callback.emitError(err.message, err.code, err.reqId);

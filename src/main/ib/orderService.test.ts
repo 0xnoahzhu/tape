@@ -4,7 +4,7 @@ import { stock } from '@shared/contract';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { OrderRequest } from '@shared/types';
 import type { IbConnection, IbListener, MainContext } from '../context';
-import { CONNECTION_CHANGED_MESSAGE, createOrderService } from './orders';
+import { CONNECTION_CHANGED_MESSAGE, createOrderService, sameGoodAfter } from './orders';
 
 const CLIENT_ID = 101;
 
@@ -82,12 +82,13 @@ function setup() {
   const events: TapeEvent[] = [];
   const notices: NewNotification[] = [];
   let resolveContract = async (c: unknown) => ({ ...(c as object), conId: 265598 });
+  let info: object | null = null;
   const lock = { locked: false };
   const ctx = {
     lock: { isLocked: () => lock.locked },
     emit: (e: TapeEvent) => events.push(e),
     notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
-    contracts: { resolve: (c: unknown) => resolveContract(c), getInfo: async () => null },
+    contracts: { resolve: (c: unknown) => resolveContract(c), getInfo: async (c: { symbol?: string }) => (info ? { contract: c, ...info } : null) },
     account: { getPositions: () => [] },
     ib: f.ib,
   } as unknown as MainContext;
@@ -98,7 +99,9 @@ function setup() {
     resolveContract = (c: unknown) => new Promise((resolve) => held.push(() => resolve({ ...(c as object), conId: 265598 })));
     return () => held.splice(0).forEach((release) => release());
   };
-  return { ...f, svc, notices, events, holdLookups, lock };
+  /** ContractInfo fields getInfo returns from now on (order types, valid exchanges). */
+  const setInfo = (i: object | null) => void (info = i);
+  return { ...f, svc, notices, events, holdLookups, lock, setInfo };
 }
 
 /** Lets the deferred subscriptions and pending promises run. */
@@ -327,6 +330,8 @@ describe('OrderService', () => {
     await tick();
     expect(t.calls[0][3]).toMatchObject({ tif: 'GTD', goodTillDate: '20261012 16:00:00 US/Eastern' });
     t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'GTD' as never, goodTillDate: '20261012 16:00:00 US/Eastern' }), { status: 'PreSubmitted' });
+    // The echo cannot show a new expiry apart from IB's unchanged order: a refusal may follow.
+    await vi.advanceTimersByTimeAsync(500);
     await expect(m).resolves.toBeUndefined();
 
     t.emit('openOrder', 41, ibAapl, lmt(41), { status: 'PreSubmitted' });
@@ -334,6 +339,7 @@ describe('OrderService', () => {
     await tick();
     expect(t.calls.at(-1)?.[3]).toMatchObject({ tif: 'GTC' });
     t.emit('openOrder', 41, ibAapl, lmt(41, CLIENT_ID, { tif: 'GTC' as never }), { status: 'PreSubmitted' });
+    await vi.advanceTimersByTimeAsync(500);
     await expect(gtc).resolves.toBeUndefined();
     await expect(t.svc.modify(41, { ...req, tif: 'OPG' })).rejects.toThrow('from GTC to OPG');
   });
@@ -521,5 +527,269 @@ describe('OrderService', () => {
     expect(lookup?.[2]).toEqual({ conId: 756733 });
     t.emit('contractDetails', lookup?.[1], { contract: { conId: 756733, symbol: 'SPY' } });
     expect(t.svc.getOrders().find((o) => o.orderId === 41)?.condition?.symbol).toBe('SPY');
+    const cond = t.svc.getOrders().find((o) => o.orderId === 41)?.conditions?.items[0];
+    expect(cond && 'contract' in cond && cond.contract).toMatchObject({ symbol: 'SPY', conId: 756733 });
+  });
+
+  it('resolves every condition instrument and sends the conditions', async () => {
+    const t = await loaded();
+    const p = t.svc.place({
+      ...req,
+      conditions: {
+        items: [
+          { kind: 'price', contract: stock('AAPL'), operator: '>=', price: 400, join: 'or' },
+          { kind: 'percentChange', contract: stock('MSFT'), operator: '<=', percent: -5 },
+          { kind: 'time', time: '20261006 10:00:00 US/Eastern' },
+        ],
+        outsideRth: false,
+      },
+    });
+    await tick();
+    const sent = t.calls.find((c) => c[0] === 'placeOrder')?.[3] as Order;
+    expect(sent.conditions?.map((c) => (c as { conId?: number }).conId)).toEqual([265598, 265598, undefined]);
+    expect(sent.conditions?.[0].conjunctionConnection).toBe('o');
+    t.emit('openOrder', 50, ibAapl, { ...lmt(50), conditions: sent.conditions }, { status: 'PreSubmitted' });
+    await expect(p).resolves.toMatchObject({ orderId: 50 });
+    expect(t.svc.getOrders().find((o) => o.orderId === 50)?.conditions?.items.map((c) => c.kind)).toEqual(['price', 'percentChange', 'time']);
+  });
+
+  it('refuses what IB does not offer for the contract, before sending', async () => {
+    const t = await loaded();
+    t.setInfo({ orderTypes: ['LMT', 'MKT'], validExchanges: ['SMART', 'NASDAQ'] });
+    await expect(t.svc.place({ ...req, allOrNone: true })).rejects.toThrow('IB does not offer this order attribute for this contract');
+    await expect(t.svc.place({ ...req, route: 'ARCA' })).rejects.toThrow('The contract cannot be routed to this exchange');
+    expect(t.calls.filter((c) => c[0] === 'placeOrder')).toEqual([]);
+  });
+
+  describe('modify', () => {
+    const attrs = {
+      allOrNone: true,
+      algoStrategy: 'Adaptive',
+      algoParams: [{ tag: 'adaptivePriority', value: 'Normal' }],
+      ocaGroup: 'g1',
+      ocaType: 1,
+      orderRef: 'note',
+      conditions: [{ type: 1, conjunctionConnection: 'a', isMore: true, price: 500, conId: 265598, exchange: 'SMART', triggerMethod: 0 } as never],
+    };
+
+    it('keeps the attributes the request leaves out', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { ...attrs, allOrNone: true, algoStrategy: undefined, algoParams: undefined }), { status: 'Submitted' });
+      const m = t.svc.modify(40, { ...req, limitPrice: 225 });
+      await tick();
+      const sent = t.calls[0][3] as Order;
+      expect(sent).toMatchObject({ lmtPrice: 225, allOrNone: true, ocaGroup: 'g1', ocaType: 1, orderRef: 'note', conditionsCancelOrder: false });
+      expect(sent.conditions?.[0]).toMatchObject({ price: 500, conId: 265598 });
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { ...attrs, lmtPrice: 225 }), { status: 'Submitted' });
+      await expect(m).resolves.toBeUndefined();
+      // false turns all or none off.
+      const off = t.svc.modify(40, { ...req, limitPrice: 225, allOrNone: false });
+      await tick();
+      expect(t.calls.at(-1)?.[3]).not.toHaveProperty('allOrNone');
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { ...attrs, allOrNone: false }), { status: 'Submitted' });
+      await vi.advanceTimersByTimeAsync(500);
+      await off;
+    });
+
+    it("fails when IB answers with the unchanged order and then refuses the change", async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      // Paper: IB echoed #96 at its old price, then answered 201 Invalid Price.
+      const m = t.svc.modify(40, { ...req, limitPrice: 1000 });
+      const settled = expect(m).rejects.toThrow('Order rejected - reason:Invalid Price (201)');
+      await tick();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      t.emit('orderStatus', 40, 'Submitted', 0, 100, 0, 9040, 0, 0, CLIENT_ID, '');
+      t.error(40, 201, 'Order rejected - reason:Invalid Price');
+      await settled;
+    });
+
+    it('waits a moment for a refusal when the echo cannot show the change', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      const m = t.svc.modify(40, { ...req, orderRef: 'new note' });
+      const settled = expect(m).rejects.toThrow('Order rejected - reason:Modify Mismatch on field # 9822 (201)');
+      await tick();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      await vi.advanceTimersByTimeAsync(100);
+      t.error(40, 201, 'Order rejected - reason:Modify Mismatch on field # 9822');
+      await settled;
+      // A price change the echo shows is accepted at once.
+      const ok = t.svc.modify(40, { ...req, limitPrice: 225 });
+      await tick();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { lmtPrice: 225 }), { status: 'Submitted' });
+      await expect(ok).resolves.toBeUndefined();
+    });
+
+    it('refuses the changes IB refuses or ignores, without sending them', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, attrs), { status: 'Submitted' });
+      const msg = (what: string) => `Order #40 ${what} (IB refuses it); cancel it and place a new order`;
+      await expect(t.svc.modify(40, { ...req, algo: { strategy: 'Vwap', params: {} } })).rejects.toThrow(msg('cannot add, remove or change its algo (only the algo’s parameters change)'));
+      await expect(t.svc.modify(40, { ...req, oca: { group: 'g2', type: 1 } })).rejects.toThrow(msg('cannot join, leave or change a one-cancels-all group'));
+      await expect(t.svc.modify(40, { ...req, conditions: { items: [{ kind: 'margin', operator: '<=', percent: 20 }], outsideRth: false } })).rejects.toThrow(/cannot add or remove conditions/);
+      await expect(t.svc.modify(40, { ...req, orderType: 'MKT', limitPrice: undefined })).rejects.toThrow(msg('cannot change its order type'));
+      await expect(t.svc.modify(40, { ...req, route: 'NASDAQ' })).rejects.toThrow(msg('cannot change its destination'));
+      expect(t.calls).toEqual([]);
+    });
+
+    it('modifies an order on a stock traded on its own exchange (no directed route)', async () => {
+      const t = await loaded();
+      // SEHK stocks are not reached through SMART: the venue is the instrument's, not a route.
+      const ibHk: Contract = { conId: 265598, symbol: '700', secType: 'STK' as never, exchange: 'SEHK', currency: 'HKD' };
+      t.emit('openOrder', 40, ibHk, lmt(40, CLIENT_ID, { action: 'SELL' as never, orderType: 'TRAIL' as never, lmtPrice: undefined, trailingPercent: 2, trailStopPrice: 400 }), { status: 'PreSubmitted' });
+      const hk = { symbol: '700', secType: 'STK' as const, exchange: 'SEHK', currency: 'HKD', conId: 265598 };
+      const m = t.svc.modify(40, { ...req, contract: hk, action: 'SELL', orderType: 'TRAIL', limitPrice: undefined, trailingPercent: 3, trailStopPrice: 395 });
+      await tick();
+      expect(t.calls[0][0]).toBe('placeOrder');
+      expect(t.calls[0][2]).toMatchObject({ exchange: 'SEHK' });
+      expect(t.calls[0][3]).toMatchObject({ orderType: 'TRAIL', trailingPercent: 3, trailStopPrice: 395 });
+      t.emit('openOrder', 40, ibHk, lmt(40, CLIENT_ID, { action: 'SELL' as never, orderType: 'TRAIL' as never, lmtPrice: undefined, trailingPercent: 3, trailStopPrice: 395 }), { status: 'PreSubmitted' });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(m).resolves.toBeUndefined();
+    });
+
+    it('counts a MOC modify without an answer from IB as accepted', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { orderType: 'MOC' as never, lmtPrice: 0 }), { status: 'PreSubmitted' });
+      const m = t.svc.modify(40, { ...req, orderType: 'MOC', limitPrice: undefined, quantity: 2 });
+      let done = false;
+      void m.then(() => (done = true));
+      await tick();
+      expect(t.calls[0][3]).toMatchObject({ orderType: 'MOC', totalQuantity: 2 });
+      await vi.advanceTimersByTimeAsync(1_900);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      await expect(m).resolves.toBeUndefined();
+      // IB shows the change in this client's open orders.
+      expect(t.calls.at(-1)?.[0]).toBe('reqOpenOrders');
+      // A modify IB answered does not ask.
+      const m2 = t.svc.modify(40, { ...req, orderType: 'MOC', limitPrice: undefined, quantity: 3 });
+      await tick();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { orderType: 'MOC' as never, lmtPrice: 0, totalQuantity: 3 }), { status: 'PreSubmitted' });
+      await m2;
+      expect(t.calls.at(-1)?.[0]).toBe('placeOrder');
+    });
+  });
+
+  describe('preview', () => {
+    const whatIf = (orderId: number): Order => ({ ...lmt(orderId), whatIf: true });
+
+    it("returns IB's margin and commission estimate; the what-if order never becomes a working order", async () => {
+      const t = await loaded();
+      const p = t.svc.preview({ ...req, bracket: { takeProfit: 300, stopLoss: 100 } });
+      await tick();
+      const [name, id, , order] = t.calls[0] as [string, number, Contract, Order];
+      expect(name).toBe('placeOrder');
+      expect(order).toMatchObject({ whatIf: true, transmit: true, orderType: 'LMT' });
+      expect(t.calls).toHaveLength(1); // no bracket children
+      t.emit('openOrder', id, ibAapl, whatIf(id), { status: 'PreSubmitted', initMarginChange: 110.06, commission: 1, commissionCurrency: 'USD', warningText: '' });
+      await expect(p).resolves.toEqual({ commission: 1, commissionCurrency: 'USD', initMargin: { change: 110.06 } });
+      t.emit('orderStatus', id, 'PreSubmitted', 0, 100, 0, 0, 0, 0, CLIENT_ID, '');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(t.svc.getOrders().map((o) => o.orderId)).toEqual([7]);
+      expect(t.notices).toEqual([]);
+    });
+
+    it('merges the parts IB sends: commission and notice first, then the margin', async () => {
+      const t = await loaded();
+      const p = t.svc.preview({ ...req, limitPrice: 4 });
+      await tick();
+      const id = t.calls[0][1] as number;
+      t.emit('openOrder', id, ibAapl, whatIf(id), { status: 'PreSubmitted', commission: 0, commissionCurrency: 'USD', warningText: 'Price band notice' });
+      await vi.advanceTimersByTimeAsync(100);
+      t.emit('openOrder', id, ibAapl, whatIf(id), { status: 'PreSubmitted', initMarginBefore: 11005.5, initMarginChange: 110.06, initMarginAfter: 11115.56, warningText: '' });
+      await expect(p).resolves.toEqual({
+        commission: 0,
+        commissionCurrency: 'USD',
+        warningText: 'Price band notice',
+        initMargin: { before: 11005.5, change: 110.06, after: 11115.56 },
+      });
+    });
+
+    it("takes IB's commission range from the later part over the first part's placeholder 0", async () => {
+      const t = await loaded();
+      // Paper, BUY 1 AAPL LMT 1: part 1 comm=0 and the notice; part 2 min/max and the margin.
+      const p = t.svc.preview({ ...req, limitPrice: 1 });
+      await tick();
+      const id = t.calls[0][1] as number;
+      t.emit('openOrder', id, ibAapl, whatIf(id), { status: 'PreSubmitted', commission: 0, commissionCurrency: 'USD', warningText: 'If your order is not immediately executable' });
+      t.emit('openOrder', id, ibAapl, whatIf(id), { status: 'PreSubmitted', minCommission: 0.010003, maxCommission: 0.013003, initMarginBefore: 22011, initMarginChange: 110.06, initMarginAfter: 22121.06, warningText: '' });
+      const r = await p;
+      expect(r).not.toHaveProperty('commission');
+      expect(r).toMatchObject({ minCommission: 0.010003, maxCommission: 0.013003, commissionCurrency: 'USD', warningText: 'If your order is not immediately executable' });
+    });
+
+    it("fails with IB's error, or when IB does not answer", async () => {
+      const t = await loaded();
+      const p = t.svc.preview({ ...req, limitPrice: 2 });
+      await tick();
+      const id = t.calls[0][1] as number;
+      t.error(id, 399, 'Order Message: Warning: Your order will not be placed at the exchange until 2026-10-05 09:30:00 US/Eastern.');
+      t.error(id, 387, 'Unsupported order type for this exchange and security type.');
+      await expect(p).rejects.toThrow('Unsupported order type for this exchange and security type. (387)');
+      expect(t.notices).toEqual([]);
+      const slow = t.svc.preview({ ...req, limitPrice: 3 });
+      const failed = expect(slow).rejects.toThrow('IB did not answer the margin and commission preview in time');
+      await vi.advanceTimersByTimeAsync(8_100);
+      await failed;
+    });
+
+    it('sends one preview at a time and reuses the answer to the same request', async () => {
+      const t = await loaded();
+      const a = t.svc.preview(req);
+      const again = t.svc.preview(req);
+      const b = t.svc.preview({ ...req, limitPrice: 2 });
+      await tick();
+      expect(t.calls.filter((c) => c[0] === 'placeOrder')).toHaveLength(1);
+      const first = t.calls[0][1] as number;
+      t.emit('openOrder', first, ibAapl, whatIf(first), { status: 'PreSubmitted', commission: 1 });
+      // Without margin the answer waits a moment for IB's next part.
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(a).resolves.toEqual({ commission: 1 });
+      await expect(again).resolves.toEqual({ commission: 1 });
+      await tick();
+      const sent = t.calls.filter((c) => c[0] === 'placeOrder');
+      expect(sent).toHaveLength(2);
+      const second = sent[1][1] as number;
+      expect(second).not.toBe(first);
+      t.emit('openOrder', second, ibAapl, whatIf(second), { status: 'PreSubmitted', commission: 2 });
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(b).resolves.toEqual({ commission: 2 });
+      // Within 10 s the same request is answered without asking IB again.
+      await expect(t.svc.preview(req)).resolves.toEqual({ commission: 1 });
+      expect(t.calls.filter((c) => c[0] === 'placeOrder')).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(10_100);
+      void t.svc.preview(req).catch(() => undefined);
+      await tick();
+      expect(t.calls.filter((c) => c[0] === 'placeOrder')).toHaveLength(3);
+    });
+
+    it('is refused while locked or disconnected, and for invalid requests', async () => {
+      const t = await loaded();
+      t.lock.locked = true;
+      await expect(t.svc.preview(req)).rejects.toThrow('Tape is locked');
+      t.lock.locked = false;
+      await expect(t.svc.preview({ ...req, limitPrice: undefined })).rejects.toThrow('Limit price is required');
+      t.setConnected(false);
+      await expect(t.svc.preview(req)).rejects.toThrow('Not connected');
+      expect(t.calls).toEqual([]);
+    });
+  });
+});
+
+describe('sameGoodAfter', () => {
+  it('keeps IB’s good-after date when a modify leaves the time unchanged', () => {
+    expect(sameGoodAfter('20261005 09:35:00 US/Eastern', '09:35')).toBe('20261005 09:35:00 US/Eastern');
+    expect(sameGoodAfter('20261005 09:35:00 US/Eastern', '9:35')).toBe('20261005 09:35:00 US/Eastern');
+    // UTC form: 13:35 UTC is 09:35 New York time in October.
+    expect(sameGoodAfter('20261005-13:35:00', '09:35')).toBe('20261005-13:35:00');
+  });
+
+  it('builds a new good-after time when the time changed or none was set', () => {
+    expect(sameGoodAfter('20261005 09:35:00 US/Eastern', '10:00')).toBeUndefined();
+    expect(sameGoodAfter(undefined, '09:35')).toBeUndefined();
+    expect(sameGoodAfter('20261005 09:35:00 US/Eastern', undefined)).toBeUndefined();
+    expect(sameGoodAfter('garbage', '09:35')).toBeUndefined();
   });
 });

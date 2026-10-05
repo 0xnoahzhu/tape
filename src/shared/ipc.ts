@@ -23,6 +23,7 @@ import type {
   NavPoint,
   NotificationKind,
   OptionChainParams,
+  OrderPreview,
   OrderRequest,
   PlaceOrderResult,
   Position,
@@ -125,6 +126,12 @@ export interface TapeApi {
   // Orders -----------------------------------------------------------------
   placeOrder(req: OrderRequest): Promise<PlaceOrderResult>;
   modifyOrder(orderId: number, req: OrderRequest): Promise<void>;
+  /**
+   * IB's margin and commission estimate of an order (whatIf, the order without its bracket);
+   * nothing is placed. IB asks for few of these: an identical request within 10 s gets the
+   * previous answer.
+   */
+  previewOrder(req: OrderRequest): Promise<OrderPreview>;
   cancelOrder(orderId: number): Promise<void>;
   /** reqGlobalCancel: cancels every working order in the account. */
   cancelAllOrders(): Promise<void>;
@@ -204,6 +211,8 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   clearMarketDataCache: 'deny',
   placeOrder: 'deny',
   modifyOrder: 'deny',
+  // Sends a (what-if) order to IB like the other order calls, so it is refused while locked.
+  previewOrder: 'deny',
   cancelOrder: 'deny',
   cancelAllOrders: 'deny',
   refreshExecutions: 'allow',

@@ -456,6 +456,7 @@ export class IBApi extends EventEmitter {
     let tokens: Token[];
     try {
       tokens = req.encode(this._serverVersion);
+      encoder.checkFieldText(this._serverVersion, tokens, req.reqId);
     } catch (err) {
       if (err instanceof TwsEncodeError) {
         this.safe(() => this.emitError(err.message, err.code, err.reqId));

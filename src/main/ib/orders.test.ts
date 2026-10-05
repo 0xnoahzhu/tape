@@ -1,10 +1,37 @@
-import { ConjunctionConnection, Encoder, OrderConditionType, PriceCondition, TriggerMethod, type Contract, type Order, type OrderState } from './tws';
+import {
+  ConjunctionConnection,
+  Encoder,
+  ExecutionCondition,
+  MarginCondition,
+  OrderConditionType,
+  PercentChangeCondition,
+  PriceCondition,
+  TimeCondition,
+  TriggerMethod,
+  VolumeCondition,
+  type Contract,
+  type Order,
+  type OrderState,
+} from './tws';
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { createClock, resolveTimeTokens } from '@shared/timeFormat';
-import type { OrderRequest } from '@shared/types';
-import { buildOrders, goodAfterTime, validateOrderRequest } from './orderBuilder';
-import { applyOrderStatus, execBaseId, fillNotice, ibOrderSession, mapCompletedOrder, mapExecution, mapOpenOrder, orderKey, orderNotice } from './orderMapping';
+import { withOrderAttributes } from '@shared/orderRules';
+import type { ContractRef, OrderRequest } from '@shared/types';
+import { algoParams, buildOrders, buildPreviewOrder, goodAfterTime, validateOrderRequest } from './orderBuilder';
+import {
+  applyOrderStatus,
+  execBaseId,
+  fillNotice,
+  ibOrderSession,
+  mapCompletedOrder,
+  mapExecution,
+  mapOpenOrder,
+  mapPreview,
+  orderAlgo,
+  orderKey,
+  orderNotice,
+} from './orderMapping';
 
 const aapl = { ...stock('AAPL'), conId: 265598 };
 const base: OrderRequest = { contract: aapl, action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 226.5, tif: 'DAY', outsideRth: false };
@@ -104,7 +131,9 @@ describe('buildOrders', () => {
     const le = buildOrders({ ...req, condition: { ...req.condition!, operator: '<=', outsideRth: false } }, { orderId: 1, nextOrderId: ids(2), conditionConId: 1 })[0];
     expect((le.order.conditions?.[0] as PriceCondition).isMore).toBe(false);
     expect(le.order.conditionsIgnoreRth).toBe(false);
-    expect(() => buildOrders(req, { orderId: 1, nextOrderId: ids(2) })).toThrow(/price condition/);
+    // The watched instrument needs a conId: from the options, or the condition's own contract.
+    expect(() => buildOrders({ ...req, condition: { ...req.condition!, contract: stock('AAPL') } }, { orderId: 1, nextOrderId: ids(2) })).toThrow(/price condition/);
+    expect((buildOrders(req, { orderId: 1, nextOrderId: ids(2) })[0].order.conditions?.[0] as PriceCondition).conId).toBe(265598);
   });
 
   it('builds a bracket: parent held, children on the opposite side, last child transmits', () => {
@@ -242,6 +271,342 @@ describe('buildOrders: time in force and trading session', () => {
   });
 });
 
+describe('buildOrders: order types and attributes', () => {
+  // Monday 2026-10-05 10:00 New York (EDT, UTC-4).
+  const now = new Date(Date.UTC(2026, 9, 5, 14));
+  const one = (r: Partial<OrderRequest>, opts: Partial<Parameters<typeof buildOrders>[1]> = {}) => {
+    const [o] = buildOrders({ ...base, quantity: 1, ...r }, { orderId: 1, nextOrderId: ids(2), now, ...opts });
+    expect(encodes(o.contract, o.order)).toBe(true);
+    return o;
+  };
+  const fut: ContractRef = { symbol: 'MES', secType: 'FUT', exchange: 'CME', currency: 'USD', lastTradeDate: '20261218', conId: 815824257 };
+  const eur: ContractRef = { symbol: 'EUR', secType: 'CASH', exchange: 'IDEALPRO', currency: 'USD', conId: 12087792 };
+  const bag: ContractRef = {
+    symbol: 'AAPL',
+    secType: 'BAG',
+    exchange: 'SMART',
+    currency: 'USD',
+    comboLegs: [
+      { conId: 11, ratio: 1, action: 'BUY', exchange: 'SMART' },
+      { conId: 12, ratio: 1, action: 'SELL', exchange: 'SMART' },
+    ],
+  };
+
+  it('sends the prices of each order type in the IB fields', () => {
+    const at = (r: Partial<OrderRequest>) => one({ limitPrice: undefined, ...r }).order;
+    expect(at({ orderType: 'MIT', stopPrice: 400 })).toMatchObject({ orderType: 'MIT', auxPrice: 400 });
+    expect(at({ orderType: 'MIT', stopPrice: 400 })).not.toHaveProperty('lmtPrice');
+    expect(at({ orderType: 'LIT', stopPrice: 400, limitPrice: 401 })).toMatchObject({ orderType: 'LIT', auxPrice: 400, lmtPrice: 401 });
+    expect(at({ orderType: 'MOC' })).toEqual(expect.objectContaining({ orderType: 'MOC', tif: 'DAY', outsideRth: false }));
+    expect(at({ orderType: 'MOC' })).not.toHaveProperty('auxPrice');
+    expect(at({ orderType: 'LOC', limitPrice: 1 })).toMatchObject({ orderType: 'LOC', lmtPrice: 1 });
+    expect(at({ orderType: 'MTL' })).not.toHaveProperty('lmtPrice');
+    // TRAIL LIMIT: never lmtPrice (IB wants exactly one of price and offset), always the offset.
+    const tl = at({ orderType: 'TRAIL LIMIT', action: 'SELL', trailingAmount: 5, trailStopPrice: 300, limitOffset: 0.1 });
+    expect(tl).toMatchObject({ orderType: 'TRAIL LIMIT', auxPrice: 5, trailStopPrice: 300, lmtPriceOffset: 0.1 });
+    expect(tl).not.toHaveProperty('lmtPrice');
+    const tlp = at({ orderType: 'TRAIL LIMIT', action: 'SELL', trailingPercent: 2, trailStopPrice: 300, limitOffset: 0 });
+    expect(tlp).toMatchObject({ trailingPercent: 2, lmtPriceOffset: 0 });
+    expect(tlp).not.toHaveProperty('auxPrice');
+    expect(at({ orderType: 'TRAIL MIT', trailingAmount: 300, trailStopPrice: 1 })).toMatchObject({ orderType: 'TRAIL MIT', auxPrice: 300, trailStopPrice: 1 });
+    expect(at({ orderType: 'TRAIL LIT', trailingAmount: 300, trailStopPrice: 1, limitOffset: 0 })).toMatchObject({ orderType: 'TRAIL LIT', lmtPriceOffset: 0 });
+    expect(at({ orderType: 'MIDPRICE' })).not.toHaveProperty('lmtPrice');
+    expect(at({ orderType: 'MIDPRICE', limitPrice: 1 })).toMatchObject({ orderType: 'MIDPRICE', lmtPrice: 1 });
+    expect(at({ orderType: 'REL', offset: 0.01, limitPrice: 1 })).toMatchObject({ orderType: 'REL', auxPrice: 0.01, lmtPrice: 1 });
+    const pct = at({ orderType: 'REL', percentOffset: 0.01 });
+    expect(pct).toMatchObject({ percentOffset: 0.01 });
+    expect(pct).not.toHaveProperty('auxPrice');
+    expect(at({ orderType: 'SNAP MID' })).toMatchObject({ orderType: 'SNAP MID', auxPrice: 0 });
+    expect(at({ orderType: 'SNAP MKT', offset: 0.01 })).toMatchObject({ orderType: 'SNAP MKT', auxPrice: 0.01 });
+    expect(at({ orderType: 'PEG MID', offset: 0, limitPrice: 1 })).toMatchObject({ orderType: 'PEG MID', auxPrice: 0, lmtPrice: 1 });
+    // The lmtPriceOffset field reaches the frame (it is the third of the adjusted-order fields).
+    expect(frame(one({ orderType: 'TRAIL LIMIT', limitPrice: undefined, trailingAmount: 5, trailStopPrice: 300, limitOffset: 0.1 }).contract, tl)).toContain('0.1');
+  });
+
+  it('sends fill attributes, trigger method and note', () => {
+    expect(one({ allOrNone: true, hidden: true, sweepToFill: true, discretionaryAmt: 0.05, orderRef: ' note ' }).order).toMatchObject({
+      allOrNone: true,
+      hidden: true,
+      sweepToFill: true,
+      discretionaryAmt: 0.05,
+      orderRef: 'note',
+    });
+    const opt = one({ contract: { ...option('AAPL', '20261120', 400, 'C'), conId: 845042719 }, quantity: 10, minQty: 5, limitPrice: 0.05 });
+    expect(opt.order.minQty).toBe(5);
+    expect(one({ orderType: 'STP', limitPrice: undefined, stopPrice: 10000, triggerMethod: 8 }).order.triggerMethod).toBe(8);
+    // Nothing is sent for attributes that are off.
+    const plain = one({ allOrNone: false, minQty: 0, discretionaryAmt: 0, triggerMethod: 0, orderRef: '' }).order;
+    for (const k of ['allOrNone', 'minQty', 'discretionaryAmt', 'triggerMethod', 'orderRef', 'hidden', 'sweepToFill']) expect(plain).not.toHaveProperty(k);
+  });
+
+  it('sends IB algos with their parameters as tag / value strings', () => {
+    const o = one({ algo: { strategy: 'Vwap', params: { maxPctVol: 0.1, startTime: '09:30', endTime: '16:00', allowPastEndTime: true, noTakeLiq: false } } }).order;
+    expect(o.algoStrategy).toBe('Vwap');
+    expect(o.algoParams).toEqual([
+      { tag: 'maxPctVol', value: '0.1' },
+      { tag: 'startTime', value: '09:30:00 US/Eastern' },
+      { tag: 'endTime', value: '16:00:00 US/Eastern' },
+      { tag: 'allowPastEndTime', value: '1' },
+      { tag: 'noTakeLiq', value: '0' },
+    ]);
+    expect(one({ orderType: 'MKT', limitPrice: undefined, algo: { strategy: 'Adaptive', params: { adaptivePriority: 'Patient' } } }).order).toMatchObject({
+      algoStrategy: 'Adaptive',
+      algoParams: [{ tag: 'adaptivePriority', value: 'Patient' }],
+    });
+    // Accumulate / distribute takes its active times as UTC without a date (10315 otherwise).
+    expect(algoParams({ strategy: 'AD', params: { componentSize: 1, timeBetweenOrders: 60, activeTimeStart: '09:30', activeTimeEnd: '16:00' } }, now)).toEqual([
+      { tag: 'componentSize', value: '1' },
+      { tag: 'timeBetweenOrders', value: '60' },
+      { tag: 'activeTimeStart', value: '13:30:00' },
+      { tag: 'activeTimeEnd', value: '20:00:00' },
+    ]);
+    // Parameters the algo does not have are not sent.
+    expect(algoParams({ strategy: 'Twap', params: { strategyType: 'Marketable', startTime: '9:30' } }, now)).toEqual([{ tag: 'startTime', value: '09:30:00 US/Eastern' }]);
+    expect(() => one({ algo: { strategy: 'Adaptive', params: {} } })).toThrow(/adaptivePriority/);
+    expect(() => one({ session: 'extended', algo: { strategy: 'Adaptive', params: { adaptivePriority: 'Normal' } } })).toThrow(/regular trading hours/);
+  });
+
+  it('sends every kind of condition with its conjunction, and conditional cancel', () => {
+    const spx: ContractRef = { symbol: 'SPX', secType: 'IND', exchange: 'CBOE', currency: 'USD' };
+    const o = one(
+      {
+        conditions: {
+          items: [
+            { kind: 'price', contract: stock('AAPL'), operator: '>=', price: 400, triggerMethod: 2, join: 'or' },
+            { kind: 'price', contract: spx, operator: '<=', price: 5000 },
+            { kind: 'time', time: '20261006 10:00:00 US/Eastern' },
+            { kind: 'percentChange', contract: stock('MSFT'), operator: '<=', percent: -5 },
+            { kind: 'volume', contract: stock('MSFT'), operator: '>=', volume: 100_000_000, join: 'or' },
+          ],
+          outsideRth: true,
+          cancel: true,
+        },
+      },
+      { conditionConIds: [265598, 416904, undefined, 272093, 272093] },
+    ).order;
+    const c = o.conditions!;
+    expect(c[0]).toBeInstanceOf(PriceCondition);
+    expect(c[0]).toMatchObject({ price: 400, triggerMethod: 2, conId: 265598, exchange: 'SMART', isMore: true, conjunctionConnection: 'o' });
+    expect(c[1]).toMatchObject({ price: 5000, conId: 416904, exchange: 'CBOE', isMore: false, conjunctionConnection: 'a' });
+    expect(c[2]).toBeInstanceOf(TimeCondition);
+    expect(c[2]).toMatchObject({ time: '20261006 10:00:00 US/Eastern', isMore: true });
+    expect(c[3]).toBeInstanceOf(PercentChangeCondition);
+    expect(c[3]).toMatchObject({ percent: -5, conId: 272093, exchange: 'SMART', isMore: false });
+    // The last condition joins nothing: always AND.
+    expect(c[4]).toBeInstanceOf(VolumeCondition);
+    expect(c[4]).toMatchObject({ volume: 100_000_000, exchange: 'SMART', isMore: true, conjunctionConnection: 'a' });
+    expect(o).toMatchObject({ conditionsIgnoreRth: true, conditionsCancelOrder: true });
+    const margin = one({ conditions: { items: [{ kind: 'margin', operator: '<=', percent: 30 }], outsideRth: false } }).order;
+    expect(margin.conditions![0]).toBeInstanceOf(MarginCondition);
+    expect(margin.conditions![0]).toMatchObject({ percent: 30, isMore: false });
+    expect(margin.conditionsCancelOrder).toBe(false);
+    const exec = one({ conditions: { items: [{ kind: 'execution', symbol: 'msft', secType: 'STK' }], outsideRth: false } }).order.conditions![0];
+    expect(exec).toBeInstanceOf(ExecutionCondition);
+    expect(exec).toMatchObject({ symbol: 'MSFT', secType: 'STK', exchange: 'SMART' });
+    expect(() => one({ conditions: { items: [{ kind: 'volume', contract: stock('MSFT'), operator: '>=', volume: 1 }], outsideRth: false } })).toThrow(/Could not resolve MSFT/);
+    // IB refuses conditional stops (148); Tape no longer sends them.
+    expect(() => one({ orderType: 'STP', limitPrice: undefined, stopPrice: 400, condition: { contract: aapl, operator: '>=', price: 1, outsideRth: false } })).toThrow(/Conditional orders/);
+  });
+
+  it('builds stop-loss types and adjustable stops', () => {
+    const sl = (bracket: OrderRequest['bracket'], r: Partial<OrderRequest> = {}) => {
+      const out = buildOrders({ ...base, quantity: 1, bracket, ...r }, { orderId: 10, nextOrderId: ids(11), now });
+      for (const o of out) expect(encodes(o.contract, o.order)).toBe(true);
+      return out.at(-1)!.order;
+    };
+    expect(sl({ stopLoss: 0.5, stopType: 'STP LMT', stopLimit: 0.45 })).toMatchObject({ orderType: 'STP LMT', auxPrice: 0.5, lmtPrice: 0.45, parentId: 10, action: 'SELL' });
+    expect(sl({ stopLoss: 0.5, stopType: 'TRAIL', stopTrailAmount: 0.2 })).toMatchObject({ orderType: 'TRAIL', auxPrice: 0.2, trailStopPrice: 0.5 });
+    expect(sl({ stopLoss: 0.5, stopType: 'TRAIL', stopTrailPercent: 1 })).toMatchObject({ orderType: 'TRAIL', trailingPercent: 1, trailStopPrice: 0.5 });
+    expect(sl({ stopLoss: 0.5, stopType: 'TRAIL LIMIT', stopTrailAmount: 0.2, stopLimitOffset: 0.05 })).toMatchObject({ orderType: 'TRAIL LIMIT', auxPrice: 0.2, trailStopPrice: 0.5, lmtPriceOffset: 0.05 });
+    expect(sl({ stopLoss: 0.5, adjust: { trigger: 2, type: 'TRAIL', trailAmount: 0.5 } })).toMatchObject({
+      orderType: 'STP',
+      triggerPrice: 2,
+      adjustedOrderType: 'TRAIL',
+      adjustedTrailingAmount: 0.5,
+      adjustableTrailingUnit: 0,
+    });
+    expect(sl({ stopLoss: 0.5, adjust: { trigger: 2, type: 'STP LMT', stopPrice: 1, limitPrice: 0.9 } })).toMatchObject({ adjustedStopPrice: 1, adjustedStopLimitPrice: 0.9 });
+    // Bracket children never take the parent's all or none (10257).
+    const aon = buildOrders({ ...base, allOrNone: true, bracket: { takeProfit: 300, stopLoss: 100 } }, { orderId: 10, nextOrderId: ids(11), now });
+    expect(aon.map((o) => !!o.order.allOrNone)).toEqual([true, false, false]);
+    const stp = one({ orderType: 'STP', limitPrice: undefined, stopPrice: 10000, adjustStop: { trigger: 5000, type: 'STP', stopPrice: 9000 } }).order;
+    expect(stp).toMatchObject({ triggerPrice: 5000, adjustedOrderType: 'STP', adjustedStopPrice: 9000 });
+  });
+
+  it('sends OCA groups, directed routes, non-guaranteed combos and forex cash quantities', () => {
+    expect(one({ oca: { group: ' exits ', type: 3 } }).order).toMatchObject({ ocaGroup: 'exits', ocaType: 3 });
+    const directed = one({ route: 'NASDAQ', contract: { ...aapl, primaryExchange: 'NASDAQ' } });
+    expect(directed.contract).toMatchObject({ exchange: 'NASDAQ', primaryExch: 'NASDAQ', conId: 265598 });
+    expect(one({ route: 'SMART' }).contract.exchange).toBe('SMART');
+    const combo = one({ contract: bag, nonGuaranteed: true, limitPrice: 0.05 });
+    expect(combo.order.smartComboRoutingParams).toEqual([{ tag: 'NonGuaranteed', value: '1' }]);
+    expect(frame(combo.contract, combo.order).join('|')).toContain('NonGuaranteed|1');
+    const fx = one({ contract: eur, quantity: 0, cashQty: 10000, limitPrice: 0.5 });
+    expect(fx.order).toMatchObject({ totalQuantity: 0, cashQty: 10000 });
+    expect(validateOrderRequest({ ...base, quantity: 0.5 })).toMatch(/whole number/);
+  });
+
+  it("refuses what IB's list for the contract does not have", () => {
+    expect(() => one({ contract: fut, orderType: 'MOC', limitPrice: undefined })).toThrow(/not available/);
+    expect(() => one({ allOrNone: true }, { rules: { orderTypes: ['LMT'] } })).toThrow(/attribute/);
+    expect(one({ allOrNone: true }, { rules: { orderTypes: ['LMT', 'AON'] } }).order.allOrNone).toBe(true);
+  });
+
+  it('builds the what-if order of a request: the main order alone, transmitted', () => {
+    const p = buildPreviewOrder({ ...base, bracket: { takeProfit: 300, stopLoss: 100 } }, { orderId: 99, account: 'DU1', now });
+    expect(p.orderId).toBe(99);
+    expect(p.order).toMatchObject({ whatIf: true, transmit: true, orderType: 'LMT', account: 'DU1' });
+    expect(p.order).not.toHaveProperty('parentId');
+    expect(encodes(p.contract, p.order)).toBe(true);
+  });
+
+  it('maps every attribute back, so a modify can send the order again unchanged', () => {
+    const req: OrderRequest = {
+      ...base,
+      quantity: 10,
+      allOrNone: true,
+      hidden: true,
+      sweepToFill: true,
+      discretionaryAmt: 0.05,
+      orderRef: 'n1',
+      oca: { group: 'g', type: 2 },
+      conditions: {
+        items: [
+          { kind: 'price', contract: aapl, operator: '>=', price: 400, triggerMethod: 8, join: 'or' },
+          { kind: 'margin', operator: '<=', percent: 30 },
+        ],
+        outsideRth: true,
+      },
+    };
+    const [built] = buildOrders(req, { orderId: 5, nextOrderId: ids(6), now });
+    const wo = mapOpenOrder(5, built.contract, { ...built.order, orderId: 5 }, { status: 'PreSubmitted' } as OrderState, undefined, 0, () => 'AAPL');
+    expect(wo).toMatchObject({
+      allOrNone: true,
+      hidden: true,
+      sweepToFill: true,
+      discretionaryAmt: 0.05,
+      orderRef: 'n1',
+      oca: { group: 'g', type: 2 },
+      conditions: {
+        items: [
+          { kind: 'price', operator: '>=', price: 400, triggerMethod: 8, join: 'or', contract: { conId: 265598, secType: 'STK' } },
+          { kind: 'margin', operator: '<=', percent: 30 },
+        ],
+        outsideRth: true,
+      },
+    });
+    // A modify request with only the new price keeps every attribute.
+    const again = buildOrders(withOrderAttributes({ ...base, quantity: 10, limitPrice: 1.01 }, wo), { orderId: 5, nextOrderId: ids(6), now })[0].order;
+    const pick = (o: Order) => ({ ...o, lmtPrice: undefined, conditions: o.conditions?.map((c) => ({ ...c })) });
+    expect(pick(again)).toEqual(pick(built.order));
+    expect(again.lmtPrice).toBe(1.01);
+
+    // An algo: IB echoes Vwap with its own extra parameters and a dated start time.
+    const vwap: OrderRequest = { ...base, algo: { strategy: 'Vwap', params: { maxPctVol: 0.1, startTime: '09:30', allowPastEndTime: true } } };
+    const [v] = buildOrders(vwap, { orderId: 6, nextOrderId: ids(7), now });
+    const echo: Order = {
+      ...v.order,
+      algoParams: [...v.order.algoParams!.map((p) => (p.tag === 'startTime' ? { ...p, value: '20261005 09:30:00 US/Eastern' } : p)), { tag: 'optoutClosingAuction', value: '' }],
+    };
+    const vo = mapOpenOrder(6, v.contract, echo, undefined, undefined, 0, () => 'AAPL');
+    expect(vo.algo).toEqual(vwap.algo);
+    expect(buildOrders(withOrderAttributes({ ...base, limitPrice: 1.02 }, vo), { orderId: 6, nextOrderId: ids(7), now })[0].order.algoParams).toEqual(v.order.algoParams);
+  });
+
+  it('maps the remaining fields back: offsets, trigger method, adjusted stop, route, combos, cash quantity', () => {
+    const map = (c: Contract, o: Partial<Order>) => mapOpenOrder(1, c, { action: 'BUY' as never, totalQuantity: 1, tif: 'DAY' as never, orderType: 'LMT' as never, ...o }, undefined, undefined, 0, () => undefined);
+    const ib: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as never, exchange: 'SMART', currency: 'USD' };
+    expect(map(ib, { orderType: 'TRAIL LIMIT' as never, auxPrice: 5, trailStopPrice: 300, lmtPrice: 300.1, lmtPriceOffset: 0.1 })).toMatchObject({ limitOffset: 0.1, trailStopPrice: 300 });
+    expect(map(ib, { orderType: 'REL' as never, percentOffset: 0.01 })).toMatchObject({ percentOffset: 0.01 });
+    expect(map(ib, { percentOffset: 0.01, minQty: undefined })).not.toHaveProperty('percentOffset');
+    expect(map(ib, { orderType: 'STP' as never, auxPrice: 1, triggerMethod: 8 })).toMatchObject({ triggerMethod: 8 });
+    expect(map(ib, { orderType: 'STP' as never, auxPrice: 1, triggerMethod: 0 })).not.toHaveProperty('triggerMethod');
+    expect(map(ib, { orderType: 'STP' as never, auxPrice: 0.5, triggerPrice: 2, adjustedOrderType: 'TRAIL', adjustedTrailingAmount: 0.5, adjustableTrailingUnit: 1 }).adjustStop).toEqual({
+      trigger: 2,
+      type: 'TRAIL',
+      trailAmount: 0.5,
+      trailUnit: 'percent',
+    });
+    expect(map(ib, { adjustedOrderType: 'None' })).not.toHaveProperty('adjustStop');
+    const directed = map({ ...ib, exchange: 'NASDAQ' }, {});
+    expect(directed).toMatchObject({ route: 'NASDAQ', contract: { exchange: 'SMART' }, key: 'STK:AAPL' });
+    // A stock IB does not reach through SMART (SEHK) is traded on its own exchange: no route.
+    const sehk: Contract = { conId: 152791428, symbol: '700', secType: 'STK' as never, exchange: 'SEHK', currency: 'HKD' };
+    const hk = map(sehk, { action: 'SELL' as never, orderType: 'TRAIL' as never, trailingPercent: 2, trailStopPrice: 400 });
+    expect(hk).not.toHaveProperty('route');
+    expect(hk.contract.exchange).toBe('SEHK');
+    // Known routing wins over the currency guess both ways.
+    const known = (smart: boolean) => mapOpenOrder(1, sehk, { action: 'BUY' as never, totalQuantity: 1, tif: 'DAY' as never, orderType: 'LMT' as never }, undefined, undefined, 0, () => undefined, () => smart);
+    expect(known(false)).not.toHaveProperty('route');
+    expect(known(true)).toMatchObject({ route: 'SEHK', contract: { exchange: 'SMART' } });
+    const usOwn = mapOpenOrder(1, { ...ib, exchange: 'NASDAQ' }, { action: 'BUY' as never, totalQuantity: 1, tif: 'DAY' as never, orderType: 'LMT' as never }, undefined, undefined, 0, () => undefined, () => false);
+    expect(usOwn).not.toHaveProperty('route');
+    // IB reports ocaType 3 for orders without a group, and its own group for bracket children.
+    expect(map(ib, { ocaType: 3 })).not.toHaveProperty('oca');
+    expect(map(ib, { ocaGroup: '1112735838', ocaType: 3, parentId: 97 })).not.toHaveProperty('oca');
+    expect(map(ib, { ocaGroup: 'g', ocaType: 1 })).toMatchObject({ oca: { group: 'g', type: 1 } });
+    const combo = map({ symbol: 'AAPL', secType: 'BAG' as never, exchange: 'SMART', currency: 'USD' }, { smartComboRoutingParams: [{ tag: 'NonGuaranteed', value: '1' }] });
+    expect(combo.nonGuaranteed).toBe(true);
+    expect(map({ symbol: 'AAPL', secType: 'BAG' as never, exchange: 'SMART', currency: 'USD' }, { smartComboRoutingParams: [{ tag: 'NonGuaranteed', value: '0' }] })).not.toHaveProperty('nonGuaranteed');
+    expect(map({ conId: 12087792, symbol: 'EUR', secType: 'CASH' as never, exchange: 'IDEALPRO', currency: 'USD' }, { cashQty: 10000 })).toMatchObject({ cashQty: 10000 });
+    // Conditions IB names: the order's own instrument, or a stock on SMART / an index elsewhere.
+    const conds = map(ib, {
+      conditions: [
+        new PriceCondition(400, 0, 265598, 'SMART', true, ConjunctionConnection.AND),
+        new PriceCondition(5000, 0, 416904, 'CBOE', false, ConjunctionConnection.OR),
+        new TimeCondition('20261006 10:00:00 US/Eastern', true, ConjunctionConnection.AND),
+        new VolumeCondition(1000, 272093, 'SMART', true, ConjunctionConnection.AND),
+        new ExecutionCondition('ANY', 'STK', 'MSFT', ConjunctionConnection.AND),
+      ],
+      conditionsCancelOrder: true,
+    }).conditions!;
+    expect(conds.cancel).toBe(true);
+    expect(conds.items.map((c) => [c.kind, 'contract' in c ? `${c.contract.symbol}/${c.contract.secType}/${c.contract.exchange}` : '', c.join])).toEqual([
+      ['price', 'AAPL/STK/SMART', 'and'],
+      ['price', '416904/IND/CBOE', 'or'],
+      ['time', '', 'and'],
+      ['volume', '272093/STK/SMART', 'and'],
+      ['execution', '', undefined],
+    ]);
+  });
+
+  it('reads algo parameters back in the request form', () => {
+    const algo = (strategy: string, params: Array<[string, string]>) => orderAlgo({ orderType: 'LMT' as never, algoStrategy: strategy, algoParams: params.map(([tag, value]) => ({ tag, value })) }, now.getTime());
+    expect(algo('Adaptive', [['adaptivePriority', 'Urgent']])).toEqual({ strategy: 'Adaptive', params: { adaptivePriority: 'Urgent' } });
+    expect(
+      algo('Vwap', [
+        ['maxPctVol', '0.1'],
+        ['startTime', '20261005 09:30:00 US/Eastern'],
+        ['endTime', '20261005-20:00:00'],
+        ['noTakeLiq', '0'],
+        ['optoutClosingAuction', ''],
+      ]),
+    ).toEqual({ strategy: 'Vwap', params: { maxPctVol: 0.1, startTime: '09:30', endTime: '16:00', noTakeLiq: false } });
+    expect(algo('AD', [['activeTimeStart', '13:30:00']])).toEqual({ strategy: 'AD', params: { activeTimeStart: '09:30' } });
+    // Without an active window IB fills in both ends at the time of placement (paper: 03:12 / 03:12).
+    expect(algo('AD', [['componentSize', '1'], ['activeTimeStart', '07:12:00'], ['activeTimeEnd', '07:12:00']])).toEqual({ strategy: 'AD', params: { componentSize: 1 } });
+    expect(algo('AD', [['activeTimeStart', '13:30:00'], ['activeTimeEnd', '20:00:00']])).toEqual({ strategy: 'AD', params: { activeTimeStart: '09:30', activeTimeEnd: '16:00' } });
+    // An algo Tape does not offer (placed in TWS) keeps its raw parameters.
+    expect(algo('Jefferies', [['x', '1']])).toEqual({ strategy: 'Jefferies', params: { x: '1' } });
+    expect(orderAlgo({ orderType: 'LMT' as never })).toBeUndefined();
+  });
+
+  it("maps IB's what-if answer", () => {
+    const state = {
+      status: 'PreSubmitted',
+      initMarginBefore: 11005.5,
+      initMarginChange: 110.06,
+      initMarginAfter: 11115.56,
+      maintMarginBefore: undefined,
+      commission: 1.000003,
+      commissionCurrency: 'USD',
+      warningText: ' Price band ',
+    } as unknown as OrderState;
+    expect(mapPreview(state)).toEqual({ commission: 1.000003, commissionCurrency: 'USD', initMargin: { before: 11005.5, change: 110.06, after: 11115.56 }, warningText: 'Price band' });
+    expect(mapPreview({ status: 'PreSubmitted', commission: 0 } as OrderState)).toEqual({ commission: 0 });
+  });
+});
+
 describe('order mapping', () => {
   const ibAapl: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as never, exchange: 'SMART', currency: 'USD', localSymbol: 'AAPL', tradingClass: 'NMS' };
   const symbolOf = (conId: number) => (conId === 265598 ? 'AAPL' : undefined);
@@ -286,6 +651,10 @@ describe('order mapping', () => {
       outsideRth: false,
       session: 'regular',
       condition: { symbol: 'AAPL', operator: '>=', price: 235, outsideRth: false },
+      conditions: {
+        items: [{ kind: 'price', contract: { symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD', conId: 265598 }, operator: '>=', price: 235 }],
+        outsideRth: false,
+      },
       status: 'PreSubmitted',
       filled: 0,
       remaining: 10,
@@ -397,6 +766,23 @@ describe('notification texts', () => {
     expect(resolveTimeTokens(gtd.zh, createClock('12h', 'zh'))).toBe('限价 226.95 · GTD 10/09 下午 4:00 ET · 盘前盘后 · 等待成交');
     const opt = orderNotice({ ...order, contract: option('AAPL', '20261016', 230, 'C'), totalQuantity: 10, limitPrice: 3.1 }, 'submitted');
     expect(opt.title.en).toBe('Buy 10 AAPL 10/16 230 Call submitted');
+  });
+
+  it('describes the other order types, algos and all or none', () => {
+    const body = (o: Partial<typeof order> & Record<string, unknown>) => orderNotice({ ...order, ...o } as never, 'submitted').body.en;
+    expect(body({ orderType: 'MIT', limitPrice: undefined, auxPrice: 400 })).toBe('Market · If touched 400.00 · DAY · awaiting fill');
+    expect(body({ orderType: 'LIT', limitPrice: 401, auxPrice: 400 })).toBe('Limit 401.00 · If touched 400.00 · DAY · awaiting fill');
+    expect(body({ orderType: 'MOC', limitPrice: undefined })).toBe('Market · At the close · DAY · awaiting fill');
+    expect(body({ orderType: 'TRAIL LIMIT', limitPrice: 300.1, auxPrice: 5, limitOffset: 0.1 })).toBe('Trail 5.00 · limit offset 0.10 · DAY · awaiting fill');
+    expect(body({ orderType: 'MIDPRICE', limitPrice: undefined })).toBe('Midprice · DAY · awaiting fill');
+    expect(body({ orderType: 'MIDPRICE', limitPrice: 230 })).toBe('Midprice · cap 230.00 · DAY · awaiting fill');
+    expect(body({ orderType: 'REL', limitPrice: undefined, percentOffset: 0.5 })).toBe('Relative · offset 0.5% · DAY · awaiting fill');
+    expect(body({ algo: { strategy: 'Adaptive', params: {} }, allOrNone: true })).toBe('Limit 226.95 · Adaptive · AON · DAY · awaiting fill');
+    // Algo names as the ticket shows them, in both languages; a sell's limit is a floor.
+    expect(body({ algo: { strategy: 'ArrivalPx', params: {} } })).toBe('Limit 226.95 · Arrival price · DAY · awaiting fill');
+    expect(orderNotice({ ...order, algo: { strategy: 'Adaptive', params: {} } } as never, 'submitted').body.zh).toContain('自适应');
+    expect(body({ orderType: 'MIDPRICE', action: 'SELL' as 'BUY', limitPrice: 230 })).toBe('Midprice · floor 230.00 · DAY · awaiting fill');
+    expect(orderNotice({ ...order, orderType: 'MTL', limitPrice: undefined }, 'submitted').body.zh).toBe('市价转限价 · DAY · 等待成交');
   });
 
   it('describes fills like the design', () => {

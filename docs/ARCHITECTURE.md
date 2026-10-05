@@ -121,6 +121,86 @@ when the 2 s wait ends with the order still Inactive. IB may also acknowledge an
 notification waits up to 1 s for the reason, and a request is announced as rejected once (the
 order IB reported, or else the request).
 
+#### Order types and attributes
+
+Everything else about an order is checked by `shared/orderRules.ts`, again in the ticket and in
+`orderBuilder.ts` (which refuses for any caller): the prices each type needs, which instruments,
+sessions and TIFs a type takes, fill attributes, IB algos and their parameters, conditions,
+bracket stop types, adjustable stops, OCA groups, directed routing, combo routing and forex cash
+quantities. `orders.ts → prepare` also checks the contract's own list from IB
+(`ContractInfo.orderTypes`: `MIT`, `MIDPX`, `AON`, `ALGO`, `COND`, …; MES lists no `AON`, `MOC`,
+`LOC` or `MIDPX`, exactly what IB refused for it) and its valid exchanges. The list is not complete
+(stocks list `CASHQTY`, which the API refuses with 10244), so the static rules always apply. What IB
+answered on the paper account (DUP899854, server version 193, outside regular hours):
+
+| Item | IB fields | Paper account |
+| --- | --- | --- |
+| MIT / LIT | `auxPrice` trigger (+ `lmtPrice`) | stocks, options, futures, forex; MIT ignores outside RTH (2109), so regular hours only |
+| MOC / LOC | (+ `lmtPrice`) | stocks; DAY only (201 for GTC); a modify gets no `openOrder` back, so `modify()` then asks `reqOpenOrders` (the order shows PendingSubmit with the new values) |
+| MTL | – | stocks, options, futures; regular hours |
+| TRAIL LIMIT / TRAIL LIT | `auxPrice` or `trailingPercent`, `trailStopPrice`, `lmtPriceOffset` | the initial stop is required, and exactly one of limit price and offset (321); IB reports `lmtPrice` as stop + offset, so the offset is read back |
+| TRAIL MIT | as TRAIL | accepted |
+| MIDPRICE | optional cap in `lmtPrice` | US stocks only (387 for options, futures, the OVERNIGHT venue); regular hours only (321) |
+| REL | `auxPrice` offset or `percentOffset`, cap in `lmtPrice` | accepted (IB's docs say not on paper) |
+| SNAP MID / SNAP MKT | `auxPrice` offset | IB ignores a cap (echoes `lmtPrice` 0) |
+| PEG MID | `auxPrice` offset, cap | accepted on SMART (387 on NASDAQ); regular hours only (IB drops outside RTH: the echo has `outsideRth` false) |
+| MIT / LIT / TRAIL MIT / TRAIL LIT | `auxPrice` trigger (trailing: `trailStopPrice`) | a buy triggers below the market, a sell above: a trigger already through the market fills at once (a BUY forex TRAIL LIT with its trigger above filled on paper), so the ticket starts on the touched side and refuses the wrong one |
+| All or none | `allOrNone` | stocks and options; 10257 for futures, combos, bracket children and with an IB algo; 201 with an iceberg and in the overnight sessions |
+| Minimum quantity | `minQty` | options only (10256 for stocks and futures) |
+| Hidden | `hidden` | stocks (SMART, NASDAQ, ARCA); 10255 with a display size; 201 with TIF OPG ("Only DAY/LIMIT allowed for hidden order"; GTC and GTD accepted) |
+| Sweep to fill | `sweepToFill` | stock limit orders via SMART (10267 for options); not in the overnight sessions (10267 / 201) |
+| Discretionary | `discretionaryAmt` | stock and option limit orders; options at most 10 % of the limit (201); 201 with overnight + day, dropped without a word on the OVERNIGHT venue |
+| Iceberg | `displaySize` | limit orders; 10255 on stops and directed stock orders; stock icebergs on SMART answered 201 "multiple of lot size" at night (to be checked in regular hours) |
+| Trigger method | `triggerMethod`, `PriceCondition.triggerMethod` | 1–8 accepted on stops; IB also takes "last" for forex, where it can never trigger, so forex offers default, bid/ask and midpoint only |
+| IB algos | `algoStrategy`, `algoParams` (switches 1 / 0, times "HH:MM:SS US/Eastern") | regular hours only (201); a modify keeps the algo only when it is sent again, changes its parameters, but refuses dropping (440) or adding (439) one; TWAP refuses `strategyType` (443); accumulate / distribute wants its active times as "HH:MM:SS" UTC (10315), and without them IB fills in both ends at the time of placement (read back as no window); no hidden (152), sweep, discretion (201), display size (10255) or minimum quantity (10256); DAY only, GTC also for Adaptive and AD (201 for the others, GTD, IOC and OPG); no good-after time (201) |
+| Conditions | price (index on its exchange), time (after only), percent change, volume (int32), margin, execution; AND / OR; `conditionsCancelOrder` | conditional submission only for LMT, MKT, MIDPRICE, REL, SNAP (148: Tape allowed stop orders before); cancel only LMT and MIDPRICE; a modify changes values (price, time, trigger method, incl. ext. hours) but silently ignores adding, removing, switching submit / cancel, an operator or an AND / OR |
+| Bracket stop-loss | STP, STP LMT, TRAIL, TRAIL LIMIT child | trailing children only under LMT / STP LMT parents (328); children never take all or none; IB puts the children in its own OCA group (type 3), which is not shown as the user's |
+| Adjustable stop | `triggerPrice`, `adjustedOrderType`, `adjustedStopPrice`, `adjustedStopLimitPrice`, `adjustedTrailingAmount`, `adjustableTrailingUnit` | on a bracket stop-loss and on a standalone stop |
+| OCA | `ocaGroup`, `ocaType` 1 / 2 / 3 | one type per group (201); group or type cannot change on a working order (10326 / 10327) |
+| Directed routing | contract `exchange` | stock LMT / MKT / STP on NASDAQ, ARCA, IEX…; `validExchanges` names them ("NASDAQ", not "ISLAND": 464). An echo's venue is read back as a route only for a stock IB reaches through SMART (known from this client's own orders; otherwise US dollar stocks): a SEHK stock's venue is its own exchange (`orderMapping.ts → SmartRouted`) |
+| Combos | `smartComboRoutingParams` NonGuaranteed=1 | kept on modify; combos take LMT and MKT |
+| Forex cash quantity | `cashQty`, `totalQuantity` 0 | IB computes the quantity; stocks refuse it (10244) |
+| What-if | `whatIf`, `transmit` | `openOrder`s flagged whatIf, no `orderStatus`: for a stock limit order first one with a placeholder commission 0 and IB's price-band notice, then one with margin before / change / after and the commission (a min–max range for limit orders); `preview()` merges the parts, the later commission replacing the placeholder |
+
+Not offered, with IB's answer: MKT PRT / STP PRT (387 for stocks and MES), TIF AUC (201),
+`postToAts` (10274), AccuDistr (201), stock cash quantities and fractional shares (10244 / 10243),
+PEG MKT and PASSV REL (387), hedge children (10063 for a USD stock), crypto (no answer on paper).
+Not offered by choice: SNAP PRIM and the auction order (directed venues only), VOL, PEG STK and PEG
+BENCH (options-desk pricing models with many inputs), scale orders (ScaleTrader's dozen fields,
+408–449), per-leg combo prices and combo-only types such as REL + MKT, `autoCancelParent`,
+`manualOrderIndicator` (not required by IB for paper futures orders), the `advancedErrorOverride`
+"send anyway" (IB Gateway's precaution settings are the intended control), GTD by `duration`, DTC
+and the GTC active window (covered by GTD and good-after time), T+0 and pre-borrow, third-party
+algos (live accounts only), and every institutional, advisor (FA allocation, model code),
+regulatory (MiFID II, soft dollars) or deprecated field (`eTradeOnly`, `firmQuoteOnly`,
+`nbboPriceCap`: 10268–10270). Fields newer than server version 193 (`postOnly`,
+`seekPriceImprovement`, `deactivate`, …) need the handshake raised first. Exercising or lapsing
+options is a separate request (`exerciseOptions`), not part of an order, and has no client method
+yet.
+
+A modify replaces the whole order at IB: `orders.ts → modify` fills in the working order's attributes
+the request leaves out (`orderRules.ts → withOrderAttributes`; `false`, 0 and '' turn one off) and
+refuses, without sending, what IB refuses or ignores (`modifyProblems`: instrument, side, order type,
+algo, OCA group, conditions added / removed / switched or their operators and joins changed,
+destination, combo routing, trigger method (kept without a word), sweep to fill (off ignored, on
+201), a relative order's percent / amount offset (201), any change to a forex order sized by cash
+(10241), and dropping a discretionary amount, good-after time or note: an empty field keeps IB's
+value). IB answers a modify it refuses with the unchanged order first and its reason (201) right
+after: `modify()` does not take an echo that still shows the old quantity or price it changes, and
+after an echo that cannot show the change (only an attribute changed) waits 500 ms for a refusal.
+`orderMapping.ts` maps every attribute back into `WorkingOrder`, so lists, notifications and
+"Modify" keep them. A modify whose good-after time ("HH:MM") is unchanged sends IB's own date and
+time back (`sameGoodAfter`): rebuilt from "HH:MM" after that time has passed, it would hold an
+already active order until the next weekday.
+
+`previewOrder` (`orders.ts → preview`) sends the order without its bracket as a what-if under a
+fresh order id and returns IB's estimate (`OrderPreview`); the what-if `openOrder`s never become a
+working order. IB answers in parts (commission and notice, then margin, a few ms apart): they are
+merged, and the answer is complete with the margin or 400 ms after the last part. Previews go one at
+a time, an identical request within 10 s is answered from the previous one, and IB's answer is
+awaited 8 s. It sends an order to IB, so it is refused while Tape is
+locked (`LOCK_POLICY`).
+
 ### Notification sounds
 
 Each OS notification plays the sound of its category (`shared/notificationSounds.ts`): orders
@@ -153,7 +233,9 @@ names and listener arguments), built on `node:net` and `node:events` only.
   (`messageIds.ts`; TWS / IB Gateway 10.x) and length-prefixed frames of NUL-separated fields.
 * `encoder.ts` / `decoder.ts` — requests and messages; `client.ts` is `IBApi`. Requests made before
   `nextValidId` are held and flushed after it. Every frame sent and received is also emitted as
-  `sent` / `received` (the API log records them).
+  `sent` / `received` (the API log records them). A text field with a control character is refused
+  (`checkFieldText`, an `error` event; nothing is sent): a NUL would split the field and shift the
+  rest of the frame.
 * `sendQueue.ts` — every frame goes through one queue: at most 45 messages per second (IB allows
   50), a burst of 10 and then spread evenly, halved for 10 s after IB's error 100. Lanes: orders,
   then control / account, then market data (FIFO per lane; market data that waited 1 s goes ahead
@@ -389,6 +471,47 @@ delete open files):
 * Design tokens are CSS variables in `styles/tokens.css`. The root element carries
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
+
+### Order ticket (`features/ticket`)
+
+The ticket keeps the design's simple form: five order types, quantity and price, TIF, and a
+collapsed "Advanced" section. Everything else is one step away:
+
+* **More ▾** opens the other order types grouped as touched, trailing, auction (with market / limit
+  on open as MKT / LMT + OPG), midpoint & pegged, and other; each with IB's code and a one-line
+  hint. A chosen one is described under the type row, and its price fields replace the main ones
+  (trigger, trail with initial stop and limit offset, optional cap, offset by amount or percent).
+* **Advanced** keeps the trading session on top and puts the rest in collapsible sections that sum
+  up what is on when closed: take profit / stop loss (stop-loss type and adjustable stop),
+  conditions (up to five rows of price, time, % change, volume, margin cushion or execution, joined
+  by and / or; submit or cancel when met; incl. extended hours), fill (all or none, minimum
+  quantity, hidden, sweep, discretionary, iceberg, forex amount), trigger method (stops and touched
+  orders only, filtered by instrument), IB algo (offered per instrument, with a parameter form from
+  `orderRules.ts → ALGOS`), routing & OCA, good-after time and note. The toggle line lists what is
+  on ("Advanced · Extended hours · TP/SL · AON · Adaptive").
+
+`buildOrder.ts → composeOrder` turns the ticket into a request (always, noting the first problem);
+`buildOrderRequest` refuses a problem and then runs `orderProblems`. The same composed request
+decides what is greyed out: `choiceProblem(input, patch, field)` composes the ticket with the choice
+applied and returns the first rule problem involving that field (`problemsInvolving`), ignoring
+values still to be typed (a group name, an algo parameter). The ticket's current combination
+problem is shown in red under the TIF row. The contract's `orderTypes` and `validExchanges`
+(`useContractInfo`) feed the rules.
+
+"Modify" (`orders/model.ts → ticketPatchFromOrder`, used by the Orders page and the chart's
+activity panel) loads every attribute of the working order into the ticket and opens the sections
+it uses; a modify sends switched-off attributes explicitly (false / 0 / ''), since IB replaces the
+whole order. What IB does not change on a working order is locked with the reason: side, order
+type, algo (its parameters stay editable), OCA group, conditions' kinds, operators, joins and mode
+(their values stay editable), destination, adjustable stop, trigger method, sweep to fill, a
+relative order's offset mode, switching off a discretionary amount or good-after time the order has,
+and session / TIF as before; orders sized by cash are not offered for "Modify".
+
+The review (`layout/Dialogs.tsx`) lists every chosen attribute (`orders/attributes.ts`, shared with
+the lists, the cancel dialog and the CSV) and, for new single-instrument orders while connected,
+IB's estimate from `previewOrder`: asking, then commission, initial and maintenance margin change
+(before → after), equity with loan and IB's notice, or IB's refusal in red. Sending never waits for
+it.
 
 ### Watchlists
 

@@ -200,6 +200,7 @@ const handlers: TapeHandlers = {
   clearMarketDataCache: () => ctx.db.clearMarketData(),
   placeOrder: (req) => ctx.orders.place(req),
   modifyOrder: (id, req) => ctx.orders.modify(id, req),
+  previewOrder: (req) => ctx.orders.preview(req),
   cancelOrder: (id) => ctx.orders.cancel(id),
   cancelAllOrders: () => ctx.orders.cancelAll(),
   refreshExecutions: () => ctx.orders.refreshExecutions(),

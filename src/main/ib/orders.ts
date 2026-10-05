@@ -22,20 +22,34 @@
 // and modify() fail with that reason instead of resolving on the Inactive order, and the rejection
 // notice waits for it.
 //
+// IB replaces the whole order on a modify: modify() fills in the working order's attributes the
+// request leaves out (all or none, algo, conditions, OCA group, …; shared/orderRules.ts ›
+// withOrderAttributes) and refuses the changes IB refuses or ignores (modifyProblems) without
+// sending them. MOC / LOC modifies get no openOrder back from IB: the 2 s wait then ends without
+// an error, which counts as accepted.
+//
+// preview() asks IB for the margin and commission of an order (whatIf) under a fresh order id.
+// IB answers with openOrders flagged whatIf, which never become working orders: often one with the
+// commission and IB's notice, then one with the margin; the parts are merged, and the answer is
+// complete once the margin arrives or a moment after the last part. Previews run
+// one at a time, and an identical request within 10 s gets the same answer (IB asks for few
+// what-if requests).
+//
 // Every execution (with its commission) is written to the database's execution journal; on start
 // today's journaled fills are restored, since IB may not resend them after a Gateway restart.
 // Restored fills of accounts the connected login does not have are dropped on the handshake.
 
 import { EventName, type CommissionReport, type Contract, type ContractDetails, type Execution as IbExecution, type IBApi, type Order, type OrderState } from './tws';
 import { contractLabel } from '@shared/contract';
-import { sessionOf, tifChangeAllowed } from '@shared/orderTiming';
+import { modifyProblems, MODIFY_PROBLEM_TEXT, requestConditions, withOrderAttributes, type OrderRulesContext } from '@shared/orderRules';
+import { parseIbDateTime, sessionOf, tifChangeAllowed } from '@shared/orderTiming';
 import { nyClock } from '@shared/session';
-import { isOrderActive, type ContractRef, type Execution, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
+import { isOrderActive, type ContractRef, type Execution, type OrderConditions, type OrderPreview, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
 import { LOCKED_MESSAGE } from '@shared/ipc';
 import type { MainContext, OrderService } from '../context';
 import { cleanIbMessage, isErrorCode } from './errorCodes';
 import { num } from './ibContract';
-import { buildOrders, validateOrderRequest } from './orderBuilder';
+import { buildOrders, buildPreviewOrder, validateOrderRequest } from './orderBuilder';
 import {
   applyOrderStatus,
   execBaseId,
@@ -43,6 +57,7 @@ import {
   mapCompletedOrder,
   mapExecution,
   mapOpenOrder,
+  mapPreview,
   orderKey,
   orderNotice,
   type NoticeOrder,
@@ -53,15 +68,24 @@ import {
 /** How long place / modify wait for IB to accept or reject an order. */
 const ACK_MS = 2_000;
 const CANCEL_ACK_MS = 1_500;
+/** How long a modify answered with an echo that cannot show the change waits for IB's refusal. */
+const MODIFY_REFUSAL_WAIT_MS = 500;
 /** How long a rejection notice waits for IB's reason, which follows the Inactive openOrder. */
 const REJECT_REASON_WAIT_MS = 1_000;
 /** A fill is announced when its commission report arrives, or after this delay without one. */
 const FILL_NOTICE_WAIT_MS = 3_000;
 const EMIT_MS = 100;
 const CONTRACT_LOOKUP_TIMEOUT_MS = 10_000;
+/** How long a what-if preview waits for IB's answer. */
+const PREVIEW_TIMEOUT_MS = 8_000;
+/** An identical preview request within this time gets the previous answer. */
+const PREVIEW_REUSE_MS = 10_000;
+/** How long a what-if answer without margin waits for IB's next part (the margin follows within ms). */
+const PREVIEW_SETTLE_MS = 400;
 
 export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
 export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
+export const PREVIEW_TIMEOUT_MESSAGE = 'IB did not answer the margin and commission preview in time';
 
 interface Waiter {
   ids: Set<number>;
@@ -87,6 +111,41 @@ function nyDayStart(now: number): number {
 /** Order errors that do not mean the order was rejected. */
 const isOrderWarning = (code: number, message: string) => !isErrorCode(code) || /warning/i.test(message);
 
+const samePrice = (a: number | undefined, b: number | undefined) => a != null && b != null && Math.abs(a - b) < 1e-9;
+
+/**
+ * How to read IB's answer to a modify: the quantity and prices the modify changes, an echo still
+ * showing an old value (IB's unchanged order ahead of its refusal), or one showing the new values.
+ */
+export function modifyEcho(existing: WorkingOrder, sent: Order): { stale(o: WorkingOrder): boolean; applied(o: WorkingOrder): boolean } {
+  const usable = (n: number | undefined) => (n != null && Number.isFinite(n) && n !== Number.MAX_VALUE ? n : undefined);
+  const fields: Array<{ from: number | undefined; to: number; of: (o: WorkingOrder) => number | undefined }> = [];
+  const add = (from: number | undefined, to: number | undefined, of: (o: WorkingOrder) => number | undefined) => {
+    const t = usable(to);
+    if (t != null && !samePrice(from, t)) fields.push({ from, to: t, of });
+  };
+  add(existing.totalQuantity, sent.totalQuantity, (o) => o.totalQuantity);
+  add(existing.limitPrice, sent.lmtPrice, (o) => o.limitPrice);
+  add(existing.auxPrice, sent.auxPrice, (o) => o.auxPrice);
+  return {
+    stale: (o) => fields.some((f) => samePrice(f.of(o), f.from) && !samePrice(f.of(o), f.to)),
+    applied: (o) => fields.length > 0 && fields.every((f) => samePrice(f.of(o), f.to)),
+  };
+}
+
+/**
+ * A modify carries its good-after time as "HH:MM", which orderBuilder places on the next weekday
+ * once that time has passed today: an order already active would be held for another day. When
+ * the time is unchanged, IB's own good-after date and time (`existing`) is sent back instead.
+ */
+export function sameGoodAfter(existing: string | undefined, hhmm: string | undefined): string | undefined {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm?.trim() ?? '');
+  if (!m || !existing) return undefined;
+  const at = parseIbDateTime(existing);
+  if (at == null) return undefined;
+  return nyClock(new Date(at)).minutes === Number(m[1]) * 60 + Number(m[2]) ? existing : undefined;
+}
+
 export function createOrderService(ctx: MainContext): OrderService {
   const orders = new Map<string, WorkingOrder>();
   /** permId -> key in `orders`, to match completedOrder and TWS orders. */
@@ -99,6 +158,8 @@ export function createOrderService(ctx: MainContext): OrderService {
   const execAvgPrice = new Map<string, number>();
   const commissions = new Map<string, CommissionReport>();
   const symbols = new Map<number, string>();
+  /** Stocks this client has sent orders for: whether IB reaches them through SMART (see SmartRouted). */
+  const smartStocks = new Map<number, boolean>();
   const symbolLookups = new Map<number, number>(); // reqId -> conId
   const symbolsRequested = new Set<number>();
 
@@ -115,6 +176,13 @@ export function createOrderService(ctx: MainContext): OrderService {
   const rejectionNoticed = new Set<string>();
   /** IB's last error (not a warning) per order key since the order was sent: a rejection's reason. */
   const orderErrors = new Map<string, string>();
+  /** openOrder messages per order key so far (a modify IB does not echo asks for the open orders). */
+  const echoes = new Map<string, number>();
+  /** What-if requests waiting for IB's answer, by order id. */
+  const previews = new Map<number, { resolve(p: OrderPreview): void; reject(err: Error): void; part?: OrderPreview; settle?: ReturnType<typeof setTimeout> }>();
+  /** The preview queue (one at a time) and recent answers by request. */
+  let previewChain: Promise<unknown> = Promise.resolve();
+  const previewCache = new Map<string, { at: number; result: Promise<OrderPreview> }>();
 
   /** Executions (by base id) to write to the journal, and the JSON last written per base id. */
   const journalDirty = new Set<string>();
@@ -234,6 +302,10 @@ export function createOrderService(ctx: MainContext): OrderService {
   // ---------------------------------------------------------------------------
   // Condition symbols (price conditions only carry a conId)
 
+  function smartRouted(conId: number): boolean | undefined {
+    return smartStocks.get(conId);
+  }
+
   function symbolOf(conId: number): string | undefined {
     const known = symbols.get(conId);
     if (known) return known;
@@ -277,12 +349,29 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   function onOpenOrder(orderId: number, contract: Contract, order: Order, state: OrderState): void {
+    // A what-if answer is an estimate, not an order.
+    if (order.whatIf) {
+      const p = previews.get(orderId || order.orderId || 0);
+      if (!p) return;
+      // IB sends the estimate in parts (commission and notice, then margin): merge them. A limit
+      // order's first part has a placeholder commission of 0, the later one IB's min–max range.
+      const next = mapPreview(state);
+      const part: OrderPreview = { ...p.part, ...next };
+      if (next.commission == null && (next.minCommission != null || next.maxCommission != null)) delete part.commission;
+      if (p.part?.warningText && !part.warningText) part.warningText = p.part.warningText;
+      p.part = part;
+      if (p.settle) clearTimeout(p.settle);
+      if (part.initMargin) p.resolve(part);
+      else p.settle = setTimeout(() => p.resolve(part), PREVIEW_SETTLE_MS);
+      return;
+    }
     const key = orderKey(order.clientId, orderId, order.permId);
+    echoes.set(key, (echoes.get(key) ?? 0) + 1);
     const byPerm = findByPermId(order.permId);
     const prevKey = orders.has(key) ? key : byPerm?.[0];
     const prev = prevKey ? orders.get(prevKey) : undefined;
     rememberSymbol(contract);
-    let next = mapOpenOrder(orderId, contract, order, state, prev, Date.now(), symbolOf);
+    let next = mapOpenOrder(orderId, contract, order, state, prev, Date.now(), symbolOf, smartRouted);
     const early = earlyStatus.get(key);
     if (early) {
       earlyStatus.delete(key);
@@ -303,6 +392,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     clientId?: number,
     whyHeld?: string,
   ): void {
+    if (previews.has(orderId) && (clientId == null || clientId === myClientId())) return;
     const update: StatusUpdate = { status, filled, remaining, avgFillPrice, permId, parentId, whyHeld };
     const key = orderKey(clientId ?? myClientId(), orderId, permId);
     const found = orders.has(key) ? ([key, orders.get(key)!] as const) : findByPermId(permId);
@@ -319,7 +409,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     const key = found?.[0] ?? orderKey(order.clientId, order.orderId, order.permId);
     const prev = found?.[1] ?? orders.get(key);
     rememberSymbol(contract);
-    const next = mapCompletedOrder(contract, order, state, prev, Date.now(), symbolOf);
+    const next = mapCompletedOrder(contract, order, state, prev, Date.now(), symbolOf, smartRouted);
     // reqCompletedOrders is a snapshot of the day: record the state, announce nothing.
     store(key, prev, next, { snapshot: true });
   }
@@ -478,6 +568,11 @@ export function createOrderService(ctx: MainContext): OrderService {
   function onRequestError(e: { reqId: number; code: number; message: string }): void {
     const message = cleanIbMessage(e.message);
     const warning = isOrderWarning(e.code, e.message);
+    const preview = previews.get(e.reqId);
+    if (preview) {
+      if (!warning) preview.reject(new Error(`${message} (${e.code})`));
+      return;
+    }
     // Only orders of this client have errors with their id.
     const key = orderKey(myClientId(), e.reqId, undefined);
     if (!warning) {
@@ -541,21 +636,53 @@ export function createOrderService(ctx: MainContext): OrderService {
     return primaryExchange ? { ...c, primaryExchange } : c;
   }
 
-  async function prepare(req: OrderRequest): Promise<{ req: OrderRequest; conditionConId?: number }> {
+  interface Prepared {
+    req: OrderRequest;
+    conditionConIds?: Array<number | undefined>;
+    rules: OrderRulesContext;
+  }
+
+  /** What IB says the contract takes (cached contract details); nothing when unknown. */
+  async function rulesContext(c: ContractRef): Promise<OrderRulesContext> {
+    if (c.secType === 'BAG') return {};
+    const info = await Promise.resolve(ctx.contracts.getInfo?.(c)).catch(() => null);
+    return info ? { orderTypes: info.orderTypes, validExchanges: info.validExchanges } : {};
+  }
+
+  /** Resolves the conIds of the instruments the conditions watch, by position. */
+  async function conditionConIds(conds: OrderConditions | undefined, contract: ContractRef): Promise<Array<number | undefined> | undefined> {
+    if (!conds) return undefined;
+    const out: Array<number | undefined> = [];
+    for (const c of conds.items) {
+      if (!('contract' in c)) {
+        out.push(undefined);
+        continue;
+      }
+      const cond = c.contract;
+      const resolved = cond.conId ? cond : contract.conId && cond.symbol === contract.symbol && cond.secType === contract.secType ? contract : await resolve(cond);
+      rememberSymbol(resolved);
+      if (!resolved.conId) throw new Error(`Could not resolve ${contractLabel(cond)} for the ${c.kind === 'price' ? 'price ' : ''}condition`);
+      out.push(resolved.conId);
+    }
+    return out;
+  }
+
+  async function prepare(req: OrderRequest): Promise<Prepared> {
     const problem = validateOrderRequest(req);
     if (problem) throw new Error(problem);
     let contract = await resolve(req.contract);
     if (sessionOf(req) === 'overnight') contract = await withPrimaryExchange(contract);
     rememberSymbol(contract);
-    let conditionConId: number | undefined;
-    if (req.condition) {
-      const cond = req.condition.contract;
-      const resolved = contract.conId && cond.symbol === contract.symbol && cond.secType === contract.secType ? contract : await resolve(cond);
-      conditionConId = resolved.conId;
-      rememberSymbol(resolved);
-      if (!conditionConId) throw new Error(`Could not resolve ${contractLabel(cond)} for the price condition`);
+    const ids = await conditionConIds(requestConditions(req), contract);
+    const rules = await rulesContext(contract);
+    if (contract.secType === 'STK' && contract.conId && sessionOf(req) !== 'overnight') {
+      smartStocks.set(contract.conId, rules.validExchanges?.length ? rules.validExchanges.includes('SMART') : contract.exchange === 'SMART');
     }
-    return { req: { ...req, contract }, conditionConId };
+    const next = { ...req, contract };
+    // Checked again with what IB says the contract takes (order types, attributes, venues).
+    const refused = validateOrderRequest(next, Date.now(), rules);
+    if (refused) throw new Error(refused);
+    return { req: next, conditionConIds: ids, rules };
   }
 
   /**
@@ -575,8 +702,12 @@ export function createOrderService(ctx: MainContext): OrderService {
       totalQuantity: req.quantity,
       orderType: req.orderType,
       limitPrice: req.limitPrice,
-      auxPrice: req.orderType === 'TRAIL' ? req.trailingAmount : req.stopPrice,
+      auxPrice: req.orderType.startsWith('TRAIL') ? req.trailingAmount : (req.stopPrice ?? req.offset),
       trailingPercent: req.trailingPercent,
+      limitOffset: req.limitOffset,
+      percentOffset: req.percentOffset,
+      algo: req.algo,
+      allOrNone: req.allOrNone,
       tif: req.tif,
       session: sessionOf(req),
       goodTillDate: req.goodTillDate,
@@ -589,7 +720,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     requireUnlocked();
     const checked = requireApi();
     const clientId = myClientId();
-    const { req, conditionConId } = await prepare(input);
+    const { req, conditionConIds, rules } = await prepare(input);
     // A Gateway or client id switched to meanwhile (perhaps another account) does not get it.
     const api = sameSession(checked, clientId);
     const orderId = ctx.ib.nextOrderId();
@@ -597,7 +728,8 @@ export function createOrderService(ctx: MainContext): OrderService {
       orderId,
       nextOrderId: () => ctx.ib.nextOrderId(),
       account: ctx.ib.getState().account,
-      conditionConId,
+      conditionConIds,
+      rules,
     });
     const ids = built.map((b) => b.orderId);
     const ack = awaitOrders(ids, ACK_MS, { failInactive: true });
@@ -664,14 +796,23 @@ export function createOrderService(ctx: MainContext): OrderService {
     throw new Error(`Order #${existing.orderId} cannot change its time in force from ${existing.tif} to ${req.tif} (IB refuses it); cancel it and place a new order`);
   }
 
+  /** The changes IB refuses or ignores on a working order (see the header). */
+  function checkChanges(existing: WorkingOrder, req: OrderRequest): void {
+    const [problem] = modifyProblems(existing, req);
+    if (problem) throw new Error(`Order #${existing.orderId} ${MODIFY_PROBLEM_TEXT[problem]} (IB refuses it); cancel it and place a new order`);
+  }
+
   async function modify(orderId: number, input: OrderRequest): Promise<void> {
     requireUnlocked();
     const checked = requireApi();
     const clientId = myClientId();
     const current = modifiable(orderId);
-    checkSession(current, input);
-    checkTif(current, input);
-    const { req, conditionConId } = await prepare({ ...input, bracket: undefined });
+    // IB replaces the whole order: attributes the request leaves out keep the order's own.
+    const full = withOrderAttributes({ ...input, bracket: undefined }, current);
+    checkSession(current, full);
+    checkTif(current, full);
+    checkChanges(current, full);
+    const { req, conditionConIds, rules } = await prepare(full);
     // While the contract was resolved, the connection may have changed (the order id would name
     // another client's order, or a new one) and the order may have been filled or cancelled.
     const api = sameSession(checked, clientId);
@@ -682,14 +823,86 @@ export function createOrderService(ctx: MainContext): OrderService {
         throw new Error('Brackets cannot be added when modifying an order');
       },
       account: existing.account ?? ctx.ib.getState().account,
-      conditionConId,
+      conditionConIds,
+      rules,
       parentId: existing.parentId,
     });
-    const ack = awaitOrders([orderId], ACK_MS, { failInactive: true });
-    orderErrors.delete(orderKey(clientId, orderId, undefined));
+    const keptGoodAfter = sameGoodAfter(existing.goodAfterTime, req.goodAfterTime);
+    if (keptGoodAfter) main.order.goodAfterTime = keptGoodAfter;
+    // IB answers a modify it refuses with the unchanged order first and its reason (201) right
+    // after: an echo still showing the old value of a field this modify changes is not the answer.
+    const echo = modifyEcho(existing, main.order);
+    let applied = false;
+    const ack = awaitOrders([orderId], ACK_MS, {
+      failInactive: true,
+      accept: (o) => {
+        if (echo.stale(o)) return false;
+        applied = echo.applied(o);
+        return true;
+      },
+    });
+    const key = orderKey(clientId, orderId, undefined);
+    orderErrors.delete(key);
     const order = sessionOf(req) === 'overnight' ? { ...main.order, tif: '' as Order['tif'] } : main.order;
+    const echoed = echoes.get(key) ?? 0;
     api.placeOrder(orderId, main.contract, order);
     await ack;
+    const answered = (echoes.get(key) ?? 0) !== echoed;
+    // An echo that cannot show the change (only an attribute changed) may still be followed by
+    // IB's refusal: wait a moment for it.
+    if (answered && !applied) await awaitOrders([orderId], MODIFY_REFUSAL_WAIT_MS, { accept: () => false });
+    // IB sends no openOrder back for some modifies (MOC / LOC); this client's open orders show the change.
+    if (!answered && ctx.ib.api === api && ctx.ib.isConnected()) api.reqOpenOrders();
+  }
+
+  /** IB's margin and commission estimate of a request (whatIf); see the header. */
+  async function preview(input: OrderRequest): Promise<OrderPreview> {
+    requireUnlocked();
+    requireApi();
+    const key = `${myClientId()}|${JSON.stringify({ ...input, bracket: undefined })}`;
+    const now = Date.now();
+    for (const [k, v] of previewCache) if (now - v.at > PREVIEW_REUSE_MS) previewCache.delete(k);
+    const cached = previewCache.get(key);
+    if (cached) return cached.result;
+    const result = previewChain.then(() => sendPreview(input));
+    previewChain = result.catch(() => undefined);
+    previewCache.set(key, { at: now, result });
+    // A failed preview is not reused.
+    result.catch(() => previewCache.delete(key));
+    return result;
+  }
+
+  async function sendPreview(input: OrderRequest): Promise<OrderPreview> {
+    requireUnlocked();
+    const checked = requireApi();
+    const clientId = myClientId();
+    const { req, conditionConIds, rules } = await prepare({ ...input, bracket: undefined });
+    const api = sameSession(checked, clientId);
+    const orderId = ctx.ib.nextOrderId();
+    const built = buildPreviewOrder(req, { orderId, account: ctx.ib.getState().account, conditionConIds, rules });
+    return new Promise<OrderPreview>((resolve, reject) => {
+      const done = () => {
+        clearTimeout(timer);
+        const settle = previews.get(orderId)?.settle;
+        if (settle) clearTimeout(settle);
+        previews.delete(orderId);
+      };
+      const timer = setTimeout(() => {
+        done();
+        reject(new Error(PREVIEW_TIMEOUT_MESSAGE));
+      }, PREVIEW_TIMEOUT_MS);
+      previews.set(orderId, {
+        resolve: (p) => {
+          done();
+          resolve(p);
+        },
+        reject: (err) => {
+          done();
+          reject(err);
+        },
+      });
+      api.placeOrder(orderId, built.contract, built.order);
+    });
   }
 
   async function cancel(orderId: number): Promise<void> {
@@ -728,6 +941,7 @@ export function createOrderService(ctx: MainContext): OrderService {
 
   function onClosed(): void {
     for (const w of [...waiters]) w.reject(new Error('Connection to TWS / IB Gateway closed'));
+    for (const p of [...previews.values()]) p.reject(new Error('Connection to TWS / IB Gateway closed'));
     symbolLookups.clear();
     symbolsRequested.clear();
   }
@@ -758,7 +972,10 @@ export function createOrderService(ctx: MainContext): OrderService {
       if (!symbol) return;
       symbols.set(conId, symbol);
       for (const [key, o] of orders) {
-        if (o.condition?.symbol === String(conId)) orders.set(key, { ...o, condition: { ...o.condition, symbol } });
+        const named = (c: ContractRef) => (c.conId === conId && c.symbol === String(conId) ? { ...c, symbol } : c);
+        const conditions = o.conditions && { ...o.conditions, items: o.conditions.items.map((c) => ('contract' in c ? { ...c, contract: named(c.contract) } : c)) };
+        const condition = o.condition?.symbol === String(conId) ? { ...o.condition, symbol } : o.condition;
+        if (condition !== o.condition || JSON.stringify(conditions) !== JSON.stringify(o.conditions)) orders.set(key, { ...o, condition, conditions } as WorkingOrder);
       }
       markDirty(true, false);
     });
@@ -769,6 +986,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     getExecutions: executionList,
     place,
     modify,
+    preview,
     cancel,
     cancelAll,
     refreshExecutions,

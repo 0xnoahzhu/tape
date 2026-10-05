@@ -22,6 +22,7 @@ import type {
   HistoryRequest,
   NavPoint,
   OptionChainParams,
+  OrderPreview,
   OrderRequest,
   PlaceOrderResult,
   Position,
@@ -156,6 +157,8 @@ export interface OrderService {
   getExecutions(): Execution[];
   place(req: OrderRequest): Promise<PlaceOrderResult>;
   modify(orderId: number, req: OrderRequest): Promise<void>;
+  /** IB's margin and commission estimate of an order (whatIf); nothing is placed. */
+  preview(req: OrderRequest): Promise<OrderPreview>;
   cancel(orderId: number): Promise<void>;
   cancelAll(): Promise<void>;
   refreshExecutions(): Promise<void>;

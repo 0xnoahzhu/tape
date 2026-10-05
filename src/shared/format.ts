@@ -115,6 +115,13 @@ export function parseNum(s: string): number {
 export function roundToTick(price: number, minTick = 0.01): number {
   if (!minTick || minTick <= 0) return price;
   const r = Math.round(price / minTick) * minTick;
-  const decimals = Math.max(0, Math.ceil(-Math.log10(minTick)));
-  return Number(r.toFixed(decimals));
+  return Number(r.toFixed(tickDecimals(minTick)));
+}
+
+/** Decimal places a tick needs: 0.25 → 2, 0.125 → 3, 5e-5 → 5. */
+function tickDecimals(minTick: number): number {
+  const s = String(minTick);
+  const exp = /e-(\d+)$/.exec(s);
+  if (exp) return Math.min(20, Number(exp[1]) + (s.split('e')[0].split('.')[1]?.length ?? 0));
+  return Math.min(20, s.split('.')[1]?.length ?? 0);
 }

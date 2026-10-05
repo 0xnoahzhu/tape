@@ -156,6 +156,13 @@ export class FieldReader {
     for (const n of names) this.f(n);
   }
 
+  /** Names the next token only when it is set (not empty, 0 or unset). */
+  set(name: string): string {
+    const v = this.str();
+    if (!BLANK.has(v) && !isUnset(v)) this.add(name, v);
+    return v;
+  }
+
   /** Consumes tokens without listing them (they stay visible in the raw frame). */
   skip(n = 1): void {
     this.pos = Math.min(this.tokens.length, this.pos + Math.max(0, n));
@@ -484,22 +491,31 @@ function placeOrder(r: FieldReader): void {
   r.fs('lmtPrice', 'auxPrice', 'tif', 'ocaGroup', 'account');
   r.skip(2); // openClose, origin
   r.fs('orderRef', 'transmit', 'parentId');
-  r.skip(2); // blockOrder, sweepToFill
+  r.skip(); // blockOrder
+  r.set('sweepToFill');
   r.f('displaySize');
-  r.skip(); // triggerMethod
+  r.set('triggerMethod');
   r.f('outsideRth');
-  r.skip(); // hidden
+  r.set('hidden');
   if (secType === 'BAG') {
     comboLegs(r, 8);
     r.skip(r.int()); // per-leg prices
-    r.skip(r.int() * 2); // smart combo routing params
+    const params: string[] = [];
+    for (let i = r.int(); i > 0; i--) params.push(`${r.str()}=${r.str()}`);
+    if (params.length) r.add('comboRouting', params.join(','));
   }
-  r.skip(2); // deprecated sharesAllocation, discretionaryAmt
+  r.skip(); // deprecated sharesAllocation
+  r.set('discretionaryAmt');
   r.fs('goodAfterTime', 'goodTillDate');
   r.skip(r.sv < 177 ? 4 : 3); // FA group / method / percentage (/ profile)
   r.skip(); // modelCode
   r.skip(3); // shortSaleSlot, designatedLocation, exemptCode
-  r.skip(15); // ocaType, rule80A … stockRangeUpper
+  r.set('ocaType');
+  r.skip(2); // rule80A, settlingFirm
+  r.set('allOrNone');
+  r.set('minQty');
+  r.set('percentOffset');
+  r.skip(9); // eTradeOnly … stockRangeUpper
   r.skip(3); // overridePercentageConstraints, volatility, volatilityType
   const deltaNeutralType = r.str();
   r.skip(); // deltaNeutralAuxPrice
@@ -513,9 +529,14 @@ function placeOrder(r: FieldReader): void {
   if (r.str()) r.skip(); // hedgeType (+ hedgeParam)
   r.skip(4); // optOutSmartRouting, clearingAccount, clearingIntent, notHeld
   if (r.str() === '1') r.skip(3); // delta neutral contract
-  if (r.str()) r.skip(r.int() * 2); // algoStrategy (+ params)
+  const algo = r.str();
+  if (algo) {
+    const params: string[] = [];
+    for (let i = r.int(); i > 0; i--) params.push(`${r.str()}=${r.str()}`);
+    r.add('algoStrategy', params.length ? `${algo} (${params.join(', ')})` : algo);
+  }
   r.skip(); // algoId
-  r.f('whatIf');
+  r.set('whatIf');
   r.skip(4); // orderMiscOptions, solicited, randomizeSize, randomizePrice
   if (orderType === 'PEG BENCH') r.skip(5);
   const conditions = orderConditions(r);
