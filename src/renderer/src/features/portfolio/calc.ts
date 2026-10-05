@@ -4,7 +4,7 @@
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2, MINUS, pct } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { AccountSummary, ContractRef, NavPoint, Position, Quote, SecType } from '@shared/types';
+import type { AccountSummary, ContractRef, Execution, NavPoint, Position, Quote, SecType } from '@shared/types';
 
 export type RangeKey = '7D' | 'MTD' | 'YTD' | '1Y' | 'ALL';
 export const RANGES: readonly RangeKey[] = ['7D', 'MTD', 'YTD', '1Y', 'ALL'];
@@ -519,14 +519,26 @@ export interface AccountTotals {
   stockValue?: number;
   optionValue?: number;
   gross?: number;
+  /**
+   * Stocks + options, shorts negative (the header's Market Value): the rows' values, so it moves
+   * with the same prices as the positions table; IB's stock + option market values when a row
+   * has no value.
+   */
+  marketValue?: number;
+  /** P&L of positions closed today (the header's Realized Today). */
+  realized?: number;
 }
 
-/** Account figures, falling back to sums over the positions when IB did not report them. */
-export function accountTotals(a: AccountSummary | null, rows: readonly PositionRow[]): AccountTotals {
+/**
+ * Account figures, falling back to sums over the positions when IB did not report them.
+ * `executions` (today's) are the fallback of the realized P&L before reqPnL has answered.
+ */
+export function accountTotals(a: AccountSummary | null, rows: readonly PositionRow[], executions?: readonly Execution[]): AccountTotals {
   if (!a) return {};
   const ofType = (t: SecType) => (r: PositionRow) => r.position.contract.secType === t;
   // IB's account P&L is computed at the P&L engine's marks; re-mark it to the prices the rows show.
   const adjust = rows.reduce((sum, r) => sum + remark(r.position, r.value), 0);
+  const ibMarketValue = finite(a.stockMarketValue) || finite(a.optionMarketValue) ? (a.stockMarketValue ?? 0) + (a.optionMarketValue ?? 0) : undefined;
   return {
     // Positions closed today only show up in the account figure, so there is no fallback without positions.
     dayPnl: finite(a.dailyPnL) ? a.dailyPnL + adjust : rows.length ? sumRows(rows, 'dayPnl') : undefined,
@@ -534,7 +546,14 @@ export function accountTotals(a: AccountSummary | null, rows: readonly PositionR
     stockValue: a.stockMarketValue ?? sumRows(rows, 'value', ofType('STK')),
     optionValue: a.optionMarketValue ?? sumRows(rows, 'value', ofType('OPT')),
     gross: a.grossPositionValue ?? grossValue(rows),
+    marketValue: sumRows(rows, 'value', (r) => r.position.contract.secType === 'STK' || r.position.contract.secType === 'OPT') ?? ibMarketValue,
+    realized: finite(a.realizedPnL) ? a.realizedPnL : executions ? realizedFromExecutions(executions) : undefined,
   };
+}
+
+/** Realized P&L of executions (IB's commission reports; opening fills carry none). */
+export function realizedFromExecutions(executions: readonly Execution[]): number {
+  return executions.reduce((sum, e) => sum + (finite(e.realizedPnL) ? e.realizedPnL : 0), 0);
 }
 
 /** Gross position value / net liquidation. */

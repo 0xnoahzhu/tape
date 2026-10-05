@@ -485,15 +485,47 @@ describe('positionRow', () => {
     );
     const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, updatedAt: 0 };
     expect(accountTotals(null, [stk])).toEqual({});
-    expect(accountTotals(account, [stk, opt])).toEqual({ dayPnl: undefined, unrealized: 2_100, stockValue: 22_000, optionValue: -500, gross: 22_500 });
-    expect(accountTotals({ ...account, dailyPnL: -5, unrealizedPnL: 7, stockMarketValue: 1, optionMarketValue: 2, grossPositionValue: 3 }, [stk])).toEqual({
+    expect(accountTotals(account, [stk, opt])).toEqual({
+      dayPnl: undefined,
+      unrealized: 2_100,
+      stockValue: 22_000,
+      optionValue: -500,
+      gross: 22_500,
+      marketValue: 21_500,
+      realized: undefined,
+    });
+    expect(accountTotals({ ...account, dailyPnL: -5, unrealizedPnL: 7, stockMarketValue: 1, optionMarketValue: 2, grossPositionValue: 3, realizedPnL: 4 }, [stk])).toEqual({
       dayPnl: -5,
       unrealized: 7,
       stockValue: 1,
       optionValue: 2,
       gross: 3,
+      marketValue: 22_000,
+      realized: 4,
     });
-    expect(accountTotals(account, [])).toEqual({ dayPnl: undefined, unrealized: 0, stockValue: 0, optionValue: 0, gross: 0 });
+    expect(accountTotals(account, [])).toEqual({ dayPnl: undefined, unrealized: 0, stockValue: 0, optionValue: 0, gross: 0, marketValue: 0, realized: undefined });
+  });
+
+  it('values the market value at the rows, falling back to IB per instrument type', () => {
+    const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, stockMarketValue: 20_000, optionMarketValue: -400, updatedAt: 0 };
+    const stk = positionRow(position({ key: 'a', marketValue: 22_000 }), undefined, 1e6, 'x');
+    const unknown = positionRow(position({ key: 'c', marketValue: undefined, marketPrice: undefined }), undefined, 1e6, 'x');
+    const fut = positionRow(position({ key: 'f', contract: { symbol: 'MES', secType: 'FUT', exchange: 'CME', currency: 'USD' }, marketValue: 5 }), undefined, 1e6, 'x');
+    // Live values of the rows (futures are not part of it) …
+    expect(accountTotals(account, [stk, fut]).marketValue).toBe(22_000);
+    // … IB's figures when a row has no value.
+    expect(accountTotals(account, [stk, unknown]).marketValue).toBe(19_600);
+    expect(accountTotals({ ...account, stockMarketValue: undefined, optionMarketValue: undefined }, [unknown]).marketValue).toBeUndefined();
+  });
+
+  it('takes today’s realized P&L from reqPnL, else from the executions', () => {
+    const account = { account: 'DU1', currency: 'USD', updatedAt: 0 };
+    const fill = (realizedPnL?: number) => ({ execId: String(realizedPnL), orderId: 1, key: 'STK:AAPL', contract: stock('AAPL'), side: 'SELL' as const, shares: 1, price: 1, time: 0, realizedPnL });
+    const executions = [fill(120.5), fill(undefined), fill(-20)];
+    expect(accountTotals({ ...account, realizedPnL: 0 }, [], executions).realized).toBe(0);
+    expect(accountTotals(account, [], executions).realized).toBeCloseTo(100.5);
+    expect(accountTotals(account, [], []).realized).toBe(0);
+    expect(accountTotals(account, []).realized).toBeUndefined();
   });
 
   it('computes leverage', () => {
