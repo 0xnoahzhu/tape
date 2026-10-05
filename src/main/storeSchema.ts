@@ -6,6 +6,7 @@
 // and entries that cannot be repaired are skipped.
 
 import { NOTIFICATION_KINDS } from '@shared/defaults';
+import { KNOWN_SOUNDS } from '@shared/notificationSounds';
 import { TIME_FORMATS } from '@shared/timeFormat';
 import type {
   AppNotification,
@@ -109,7 +110,13 @@ const SETTINGS_SPEC: Spec<Settings> = {
     showAccountId: bool,
   },
   features: { depth: bool, options: bool, flow: bool },
-  notifications: { system: notificationRules, sound: bool, dnd: bool },
+  notifications: {
+    system: notificationRules,
+    sound: bool,
+    // Any platform's id loads (a profile may move between machines); unknown ids keep the fallback.
+    sounds: { order: oneOf(KNOWN_SOUNDS), fill: oneOf(KNOWN_SOUNDS), other: oneOf(KNOWN_SOUNDS) },
+    dnd: bool,
+  },
   apiLog: { writeFile: bool, keepDays: nearest(KEEP_DAYS) },
   lock: {
     autoLock: oneOf(['15', '30', '60', 'custom', 'never']),

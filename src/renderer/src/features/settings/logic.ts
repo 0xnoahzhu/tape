@@ -3,7 +3,77 @@
 
 import { DEFAULT_PORTS } from '@shared/defaults';
 import { DASH, hmsMs } from '@shared/format';
+import { CATEGORY_KINDS, NO_SOUND, PLATFORM_SOUNDS, soundPlatform, type SoundCategory } from '@shared/notificationSounds';
 import type { ApiLogEntry, ConnectionState, DepthBook, MarketDataType, Quote, Settings } from '@shared/types';
+
+// ---------------------------------------------------------------------------
+// Notification sounds
+
+/** The picker's choices on `platform`: None first, then the platform's sounds. */
+export function soundChoices(platform: string): string[] {
+  return [NO_SOUND, ...PLATFORM_SOUNDS[soundPlatform(platform)]];
+}
+
+/** True when every kind of the category is kept out of the OS notification center (so it is never heard). */
+export function soundCategoryOff(system: Settings['notifications']['system'], category: SoundCategory): boolean {
+  return CATEGORY_KINDS[category].every((kind) => !system[kind]);
+}
+
+/** A sound's name as the picker shows it: translated where there is a name for it, else the system name. */
+export function soundLabel(id: string, names: Record<string, string>): string {
+  return Object.hasOwn(names, id) ? names[id] : id;
+}
+
+/** Linux has no per-category sounds: Electron cannot set (or silence) the notification server's sound. */
+export function hasSoundChoice(platform: string): boolean {
+  return soundPlatform(platform) !== 'linux';
+}
+
+export const SOUND_ROW_H = 30;
+/** The list's vertical padding (top + bottom). */
+export const SOUND_LIST_PAD = 12;
+export const SOUND_LIST_MAX_H = 296;
+export const SOUND_LIST_MIN_H = 180;
+/** Space kept between the list and the edge of the visible area (includes the 4 px gap to the button). */
+export const SOUND_LIST_MARGIN = 12;
+
+/**
+ * Where the sound list opens: below the button when it fits in the visible area (`bounds`, the
+ * scrolling pane within the window), else on the side with more room, with its height capped
+ * to that room, so opening it never scrolls or overflows the pane.
+ */
+export function soundListPlace(button: { top: number; bottom: number }, bounds: { top: number; bottom: number }, count: number): { up: boolean; maxH: number } {
+  const want = Math.min(SOUND_LIST_MAX_H, count * SOUND_ROW_H + SOUND_LIST_PAD);
+  const below = bounds.bottom - button.bottom - SOUND_LIST_MARGIN;
+  const above = button.top - bounds.top - SOUND_LIST_MARGIN;
+  if (below >= want) return { up: false, maxH: want };
+  if (above > below) return { up: true, maxH: Math.max(Math.min(SOUND_LIST_MIN_H, want), Math.min(want, above)) };
+  return { up: false, maxH: Math.max(Math.min(SOUND_LIST_MIN_H, want), below) };
+}
+
+export type SoundListKey = { kind: 'focus'; index: number } | { kind: 'select' } | { kind: 'close' };
+
+/** Listbox keys of the open sound list: ↑ ↓ Home End move, Enter / Space pick, Escape / Tab close. */
+export function soundListKey(key: string, index: number, count: number): SoundListKey | undefined {
+  switch (key) {
+    case 'ArrowDown':
+      return { kind: 'focus', index: Math.min(count - 1, index + 1) };
+    case 'ArrowUp':
+      return { kind: 'focus', index: Math.max(0, index - 1) };
+    case 'Home':
+      return { kind: 'focus', index: 0 };
+    case 'End':
+      return { kind: 'focus', index: count - 1 };
+    case 'Enter':
+    case ' ':
+      return { kind: 'select' };
+    case 'Escape':
+    case 'Tab':
+      return { kind: 'close' };
+    default:
+      return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Connection inputs

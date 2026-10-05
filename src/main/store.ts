@@ -64,9 +64,9 @@ export function createStore(): AppStore {
     (raw) => {
       if (!isObject(raw)) return null;
       readOnlyRemoved = hadReadOnlyMode(raw);
-      return loadSettings(raw, defaultSettings(provisionalLanguage));
+      return loadSettings(raw, defaultSettings(provisionalLanguage, process.platform));
     },
-    () => defaultSettings(provisionalLanguage),
+    () => defaultSettings(provisionalLanguage, process.platform),
   );
   const watchlists = file<Watchlist[]>('watchlists.json', (raw) => sanitizeWatchlists(raw, defaultWatchlists()), defaultWatchlists);
   const alerts = file<PriceAlert[]>('alerts.json', sanitizeAlerts, () => []);

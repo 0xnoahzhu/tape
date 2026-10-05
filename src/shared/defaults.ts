@@ -1,6 +1,7 @@
 // Defaults for first launch.
 
 import { index, stock } from './contract';
+import { defaultSounds } from './notificationSounds';
 import { DEFAULT_TIME_FORMAT } from './timeFormat';
 import type { Lang, NotificationKind, Settings, Watchlist } from './types';
 
@@ -8,7 +9,8 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['fill', 'order',
 
 export const DEFAULT_PORTS = { tws: { live: 7496, paper: 7497 }, gateway: { live: 4001, paper: 4002 } } as const;
 
-export function defaultSettings(language: Lang = 'en'): Settings {
+/** `platform` (process.platform) picks the default notification sounds. */
+export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Settings {
   return {
     connection: {
       mode: 'gateway',
@@ -24,6 +26,7 @@ export function defaultSettings(language: Lang = 'en'): Settings {
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },
       sound: true,
+      sounds: defaultSounds(platform),
       dnd: false,
     },
     apiLog: { writeFile: true, keepDays: 7 },

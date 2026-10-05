@@ -2,6 +2,7 @@
 // The preload script exposes an object implementing `TapeApi` as `window.tape`.
 // Every method maps 1:1 to an `ipcMain.handle` channel named `tape:<method>`.
 
+import type { SoundCategory } from './notificationSounds';
 import type {
   AccountSummary,
   ApiLogEntry,
@@ -138,7 +139,8 @@ export interface TapeApi {
   /** For notifications raised by the renderer (e.g. option risk alerts). */
   notify(n: NewNotification): Promise<void>;
   markNotificationsRead(ids: string[] | 'all'): Promise<void>;
-  testNotification(): Promise<void>;
+  /** The test notification, or with a category a sample of that category's sound (Settings › Notifications). */
+  testNotification(category?: SoundCategory): Promise<void>;
 
   // API log ----------------------------------------------------------------
   getApiLog(): Promise<ApiLogEntry[]>;

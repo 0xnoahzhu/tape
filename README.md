@@ -41,7 +41,10 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
 
 **Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
 events appear in the bell; each kind can also be pushed to the system notification center, with sound and
-do-not-disturb switches. Clicking a notification about an instrument opens it.
+do-not-disturb switches. On macOS and Windows, orders, fills and everything else each play their own
+system sound (chosen in Settings › Notifications, with a sample button; None mutes a category). On macOS
+Tape plays the sound itself, so a Focus mode does not mute it; use Tape's do-not-disturb. On Linux the
+notification server decides the sound. Clicking a notification about an instrument opens it.
 
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
 daily log files, retention and export.

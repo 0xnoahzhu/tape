@@ -559,7 +559,10 @@ export interface Settings {
   notifications: {
     /** Whether each kind is also pushed to the OS notification center. */
     system: Record<NotificationKind, boolean>;
+    /** Play a sound with system notifications. */
     sound: boolean;
+    /** Sound id per category (shared/notificationSounds.ts): orders, fills, everything else. */
+    sounds: Record<'order' | 'fill' | 'other', string>;
     dnd: boolean;
   };
   apiLog: {

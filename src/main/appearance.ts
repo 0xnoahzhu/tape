@@ -36,6 +36,12 @@ export function iconFile(dark: boolean, use: IconUse): string {
   return use === 'dock' ? `icon-${theme}.png` : `icon-${theme}-256.png`;
 }
 
+/** Absolute path of the icon file, or null when it is missing (e.g. before `pnpm icons`). */
+export function iconPath(dark: boolean, use: IconUse): string | null {
+  const path = join(iconDir(), iconFile(dark, use));
+  return existsSync(path) ? path : null;
+}
+
 const images = new Map<string, NativeImage>();
 
 /** Cached icon image; null (with a warning) when the file is missing, e.g. before `pnpm icons`. */

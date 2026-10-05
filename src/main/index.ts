@@ -210,7 +210,7 @@ const handlers: TapeHandlers = {
   savePriceAlerts: async (alerts) => ctx.alerts.save(alerts),
   notify: async (n) => void ctx.notifier.notify(n),
   markNotificationsRead: async (ids) => ctx.notifier.markRead(ids),
-  testNotification: async () => ctx.notifier.test(),
+  testNotification: async (category) => ctx.notifier.test(category),
   getApiLog: async () => ctx.apiLog.getEntries(),
   // `this` is the calling renderer (see below): a reload or a closed window ends its stream.
   setApiLogStreaming: async function (this: WebContents, on) {

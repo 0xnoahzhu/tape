@@ -255,7 +255,7 @@ export function initialTicket(settings: Settings): TicketState {
   };
 }
 
-const settings0 = defaultSettings();
+const settings0 = defaultSettings('en', typeof window !== 'undefined' ? (window.tapePlatform ?? 'darwin') : 'darwin');
 
 let toastSeq = 1;
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiLogEntry, DepthBook, Quote } from '@shared/types';
 import {
+  hasSoundChoice,
+  soundCategoryOff,
+  soundChoices,
+  soundLabel,
+  soundListKey,
+  soundListPlace,
   comboLabel,
   countNewSince,
   customMinutesInput,
@@ -324,5 +330,65 @@ describe('custom auto-lock duration', () => {
     expect(customMinutesInput('')).toEqual({ text: '', minutes: null });
     expect(customMinutesInput('0')).toEqual({ text: '0', minutes: null });
     expect(customMinutesInput('007')).toEqual({ text: '007', minutes: 7 });
+  });
+});
+
+describe('notification sound helpers', () => {
+  it('soundChoices lists None first, then the platform sounds', () => {
+    expect(soundChoices('darwin')).toEqual(['none', 'Basso', 'Blow', 'Bottle', 'Frog', 'Funk', 'Glass', 'Hero', 'Morse', 'Ping', 'Pop', 'Purr', 'Sosumi', 'Submarine', 'Tink']);
+    expect(soundChoices('win32')).toEqual(['none', 'Notification.Default', 'Notification.IM', 'Notification.Mail', 'Notification.Reminder']);
+    expect(soundChoices('linux')).toEqual(['none', 'default']);
+  });
+
+  it('soundCategoryOff when every kind of the category stays out of the OS', () => {
+    const system = { fill: true, order: false, price: false, opt: false, conn: false, sys: true };
+    expect(soundCategoryOff(system, 'order')).toBe(true);
+    expect(soundCategoryOff(system, 'fill')).toBe(false);
+    expect(soundCategoryOff(system, 'other')).toBe(false);
+    expect(soundCategoryOff({ ...system, sys: false }, 'other')).toBe(true);
+  });
+
+  it('soundLabel translates known ids and shows system names as they are', () => {
+    const names = { none: 'None', 'Notification.IM': 'Instant message' };
+    expect(soundLabel('none', names)).toBe('None');
+    expect(soundLabel('Notification.IM', names)).toBe('Instant message');
+    expect(soundLabel('Glass', names)).toBe('Glass');
+    expect(soundLabel('constructor', names)).toBe('constructor');
+  });
+
+  it('hasSoundChoice: not on Linux, where the notification server decides', () => {
+    expect(hasSoundChoice('darwin')).toBe(true);
+    expect(hasSoundChoice('win32')).toBe(true);
+    expect(hasSoundChoice('linux')).toBe(false);
+    expect(hasSoundChoice('freebsd')).toBe(false);
+  });
+
+  it('soundListPlace opens below when it fits, else on the roomier side, capped to the room', () => {
+    const pane = { top: 60, bottom: 900 };
+    // 15 choices want 296 px.
+    expect(soundListPlace({ top: 200, bottom: 230 }, pane, 15)).toEqual({ up: false, maxH: 296 });
+    // Near the bottom (the default window, the Other row): upward, full height.
+    expect(soundListPlace({ top: 700, bottom: 730 }, pane, 15)).toEqual({ up: true, maxH: 296 });
+    // Little room either way: the roomier side, capped to it.
+    expect(soundListPlace({ top: 300, bottom: 330 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: false, maxH: 258 });
+    expect(soundListPlace({ top: 330, bottom: 360 }, { top: 60, bottom: 600 }, 15)).toEqual({ up: true, maxH: 258 });
+    // Never smaller than the minimum (the window has a minimum size).
+    expect(soundListPlace({ top: 100, bottom: 130 }, { top: 60, bottom: 200 }, 15)).toEqual({ up: false, maxH: 180 });
+    // A short list (Windows: 5 choices) is only as tall as its rows.
+    expect(soundListPlace({ top: 600, bottom: 630 }, pane, 5)).toEqual({ up: false, maxH: 162 });
+    expect(soundListPlace({ top: 730, bottom: 760 }, pane, 5)).toEqual({ up: true, maxH: 162 });
+  });
+
+  it('soundListKey: arrows, Home / End, Enter / Space, Escape / Tab', () => {
+    expect(soundListKey('ArrowDown', 3, 15)).toEqual({ kind: 'focus', index: 4 });
+    expect(soundListKey('ArrowDown', 14, 15)).toEqual({ kind: 'focus', index: 14 });
+    expect(soundListKey('ArrowUp', 0, 15)).toEqual({ kind: 'focus', index: 0 });
+    expect(soundListKey('Home', 7, 15)).toEqual({ kind: 'focus', index: 0 });
+    expect(soundListKey('End', 7, 15)).toEqual({ kind: 'focus', index: 14 });
+    expect(soundListKey('Enter', 7, 15)).toEqual({ kind: 'select' });
+    expect(soundListKey(' ', 7, 15)).toEqual({ kind: 'select' });
+    expect(soundListKey('Escape', 7, 15)).toEqual({ kind: 'close' });
+    expect(soundListKey('Tab', 7, 15)).toEqual({ kind: 'close' });
+    expect(soundListKey('a', 7, 15)).toBeUndefined();
   });
 });

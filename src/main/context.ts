@@ -7,6 +7,7 @@
 import type { BrowserWindow } from 'electron';
 import type { IBApi } from './ib/tws';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
+import type { SoundCategory } from '@shared/notificationSounds';
 import type {
   AccountSummary,
   ApiLogEntry,
@@ -103,7 +104,12 @@ export interface Notifier {
   /** Adds to the in-app list and, depending on settings, shows an OS notification. */
   notify(n: NewNotification): AppNotification;
   markRead(ids: string[] | 'all'): void;
-  test(): void;
+  /**
+   * Without a category: the test notification (added to the list). With one (it may come from
+   * the renderer, so it is checked): a sample OS notification of that sound category with its
+   * sound, not added to the list.
+   */
+  test(category?: SoundCategory): void;
 }
 
 export interface ContractService {

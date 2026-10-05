@@ -53,7 +53,8 @@ through the shared `MainContext` (never inside their factory).
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
 | `market/alerts.ts` | Price alert evaluation |
-| `notifications.ts` | In-app notification list + OS notifications |
+| `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
+| `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
 | `appearance.ts` | Theme (`nativeTheme.themeSource`) and theme-matched dock/window icon |
 | `menu.ts` | Application menu (localized), menu commands |
 | `lock/` | `ctx.lock`: lock state, PIN, idle auto-lock, biometrics, Forgot-PIN reset (see *Lock screen*) |
@@ -119,6 +120,29 @@ when the 2 s wait ends with the order still Inactive. IB may also acknowledge an
 "Modified" toast with the failure (`state/orderActions.ts → watchLateRejection`). The rejection
 notification waits up to 1 s for the reason, and a request is announced as rejected once (the
 order IB reported, or else the request).
+
+### Notification sounds
+
+Each OS notification plays the sound of its category (`shared/notificationSounds.ts`): orders
+(kind `order`: submitted, modified, cancelled, rejected), fills (`fill`, partial fills too) and
+other (`price`, `opt`, `conn`, `sys`). `settings.notifications.sounds` holds one sound id per
+category; defaults are distinct per platform (macOS Tink / Glass / Purr; Windows the IM, Reminder
+and Default sound events). A sound only goes with a notification that is shown: none when Tape's
+do-not-disturb is on or the kind's system switch is off, and none with the Sound switch off or the
+category set to None (`main/notificationSound.ts`):
+
+| Platform | How the sound plays |
+| --- | --- |
+| macOS | The notification is `silent: true`; once it is posted (its `show` event, so not when notifications are not allowed) Tape plays `/System/Library/Sounds/<name>.aiff` with `/usr/bin/afplay` (`main/soundPlayer.ts`, one sound at a time). Electron 44 passes `sound` to `UNNotificationSound soundNamed:`, which does not look in `/System/Library/Sounds` (only the app's `Library/Sounds` and its bundle), and the notification daemon on current macOS rejects any name that is not one of its ToneLibrary tones, bundled files included; every category would play the default sound. Trade-off: the OS Focus modes and the per-app "Play sound for notifications" switch do not mute Tape's sound (Tape's own do-not-disturb and Sound switch do) |
+| Windows | `toastXml`: the toast Electron would generate (ToastGeneric, title, body, the theme's icon file as app logo; XML-escaped) plus `<audio src="ms-winsoundevent:Notification.*"/>` or `<audio silent="true"/>`, played by the toast itself, so Focus assist applies. Electron still creates the toast with `id` / `groupId` and its event handlers: a body click (no `arguments`) emits `click`, so opening the instrument works as before. `Notification.SMS` is not offered (the default scheme plays the IM file for it); a saved one resolves to the category default |
+| Linux | No choice: Electron's libnotify backend ignores `silent` and `sound`, so the notification server decides. Settings shows no per-category rows |
+
+Every platform's ids pass the settings schema, so a profile copied between machines loads; an id
+the running platform lacks resolves to its default for the category (`resolveSound`). The ▶ in
+Settings › Notifications calls `testNotification(category)`: a sample OS notification of that
+category with its sound ("Sound sample: …"), not added to the bell (do-not-disturb still wins);
+the sample is closed after 6 s or when the next one is posted, so it does not stay in
+Notification Center / Action Center looking like a real order or fill.
 
 ### TWS API client (`src/main/ib/tws`)
 

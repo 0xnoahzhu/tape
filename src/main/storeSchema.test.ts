@@ -19,6 +19,21 @@ import {
 describe('loadSettings', () => {
   const defaults = defaultSettings('en');
 
+  it('notification sounds: saved ids of any platform load, missing or unknown ones take the default', () => {
+    // Settings saved before the sound choices existed.
+    expect(loadSettings({ notifications: { sound: false, dnd: true } }, defaults).notifications).toEqual({
+      ...defaults.notifications,
+      sound: false,
+      dnd: true,
+    });
+    const s = loadSettings({ notifications: { sounds: { order: 'none', fill: 'Notification.Mail', other: 'Bogus' } } }, defaults);
+    expect(s.notifications.sounds).toEqual({ order: 'none', fill: 'Notification.Mail', other: 'Purr' });
+    const w = defaultSettings('en', 'win32');
+    expect(loadSettings({ notifications: { sounds: { fill: 42, other: null } } }, w).notifications.sounds).toEqual(w.notifications.sounds);
+    expect(applySettingsPatch(defaults, { notifications: { sounds: { fill: 'Hero' } } }).notifications.sounds).toEqual({ order: 'Tink', fill: 'Hero', other: 'Purr' });
+    expect(applySettingsPatch(defaults, { notifications: { sounds: { fill: '../../evil' } } }).notifications.sounds).toEqual(defaults.notifications.sounds);
+  });
+
   it('returns the defaults for empty or non-object input', () => {
     expect(loadSettings({}, defaults)).toEqual(defaults);
     expect(loadSettings(null, defaults)).toEqual(defaults);
