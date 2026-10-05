@@ -76,10 +76,17 @@ a:hover {
   font-family: var(--mono);
 }
 
+/* One line, cut with an ellipsis at the content edge. With a tight line-height (font: 13px/1)
+   descenders (g, p, y), accents and some CJK glyphs reach past the line box, which `hidden`
+   would cut off; `clip` with a small margin lets them paint. `clip` is not a scroll container,
+   so the zero minimum size flex and grid items had with `hidden` is set explicitly. */
 .ellipsis {
   white-space: nowrap;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 0.2em;
   text-overflow: ellipsis;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Hover helpers that replace the design's style-hover attributes. */
