@@ -79,7 +79,12 @@ a:hover {
 /* One line, cut with an ellipsis at the content edge. With a tight line-height (font: 13px/1)
    descenders (g, p, y), accents and some CJK glyphs reach past the line box, which `hidden`
    would cut off; `clip` with a small margin lets them paint. `clip` is not a scroll container,
-   so the zero minimum size flex and grid items had with `hidden` is set explicitly. */
+   so the zero minimum size flex and grid items had with `hidden` is set explicitly.
+   Two traps: up to 0.2em of the cut text still counts as overflow of the ancestors, so a
+   scrolling box an `.ellipsis` touches on its inner edge can scroll by that much (keep padding
+   between them); and the scrollWidth of a padded `.ellipsis` leaves out its end padding, so it
+   misses text cut within the padding (to test for truncation, compare the text's range width
+   with the content box). */
 .ellipsis {
   white-space: nowrap;
   overflow: clip;
