@@ -896,7 +896,7 @@ describe('the renderer copy', () => {
     expect(batch.quotes['STK:AAPL']).toMatchObject({ last: 333.5, close: 333.69, marketDataType: 1 });
   });
 
-  it('never sends a close IB marks not available', async () => {
+  it('keeps the close a line sent when IB then marks it not available', async () => {
     const { fake, svc, events } = await setup();
     fake.ready();
     svc.setRendererSubscriptions('watchlist', basic('NVDA'));
@@ -962,6 +962,49 @@ describe('a missing previous close', () => {
     expect(requests()).toBe(3);
     vi.advanceTimersByTime(1);
     expect(requests()).toBe(4);
+  });
+
+  it('takes the close of a new line that is delayed where the old one was live', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    const spx = index('SPX', 'CBOE');
+    svc.setRendererSubscriptions('watchlist', [{ contract: spx, profile: 'basic' }]);
+    reconciled();
+    let id = reqIdOf(fake, 'SPX');
+    fake.emit('marketDataType', id, 1);
+    fake.emit('tickPrice', id, TICK.LAST, 7700);
+    fake.emit('tickPrice', id, TICK.CLOSE, 7600);
+    // The next day, after the Gateway's restart: the new line is delayed, and IB sends its first
+    // ticks, the close included, before its data type (seen in API logs).
+    fake.close();
+    fake.ready();
+    id = reqIdOf(fake, 'SPX');
+    fake.emit('tickPrice', id, TICK.DELAYED_LAST, 7750);
+    fake.emit('tickPrice', id, TICK.DELAYED_CLOSE, 7722);
+    fake.emit('marketDataType', id, 3);
+    expect(svc.getQuote(contractKey(spx))).toMatchObject({ marketDataType: 3, last: 7750, close: 7722 });
+  });
+
+  it('does not keep an older line\'s close that a new line marks not available', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('NVDA'), profile: 'basic' }]);
+    reconciled();
+    fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.LAST, 236.59);
+    fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.CLOSE, 233.95);
+    vi.advanceTimersByTime(100);
+    fake.close();
+    fake.ready();
+    const n = fake.callsOf('reqMktData').length;
+    fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.LAST, 238);
+    fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.CLOSE, -1);
+    vi.advanceTimersByTime(100);
+    // '—' rather than a change against a close that may be a session old; the line is then requested again.
+    expect(svc.getQuote('STK:NVDA')?.close).toBeUndefined();
+    const patch = quoteEvents(events).at(-1)!.quotes['STK:NVDA'];
+    expect('close' in patch && patch.close === undefined).toBe(true);
+    vi.advanceTimersByTime(CLOSE_WAIT_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(n + 1);
   });
 
   it('leaves options, lingering lines, main-process owners and a new session alone', async () => {

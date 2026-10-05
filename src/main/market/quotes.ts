@@ -21,10 +21,11 @@
 // never asked for market data.
 //
 // Previous close. IB sends it (tick 9, or 75 delayed) with a request's first ticks and otherwise
-// only when it changes; tickMap.ts never lets a "not available" close erase a known one. A line
-// that streams prices without a close CLOSE_WAIT_MS after its first price (it started without its
-// subscription image, e.g. during a competing session) is requested again, which brings the close:
-// at most once per CLOSE_RETRY_MS per contract (doubling), for instruments that have a close.
+// only when it changes; tickMap.ts never lets a "not available" close erase the close its line
+// sent. A line that streams prices without a close CLOSE_WAIT_MS after its first price (it started
+// without its subscription image, e.g. during a competing session) is requested again, which
+// brings the close: at most once per CLOSE_RETRY_MS per contract (doubling), for instruments that
+// have a close.
 //
 // Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
 // while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
@@ -609,6 +610,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         console.error('[quotes] cancelMktData failed:', err);
       }
     }
+    // Same tick context: a close the old line sent stays the reference for the same session's data.
     const next: Line = { ...line, reqId: side.reqId, contract: side.contract, dead: false, resolved: true, route: side.target };
     lines.set(next.key, next);
     byReqId.set(next.reqId, next);

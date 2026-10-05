@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Quote } from '@shared/types';
-import { applyTick, lastOrMid, midPrice, parseDividends, TICK } from './tickMap';
+import { applyTick, lastOrMid, midPrice, parseDividends, TICK, type TickContext } from './tickMap';
 
-const stock = { isOption: false };
+/** One stock line per test (applyTick keeps per-line state in its context). */
+let stock: TickContext;
+beforeEach(() => {
+  stock = { isOption: false };
+});
 const opt = { isOption: true };
 const q0 = (): Quote => ({ key: 'STK:AAPL', updatedAt: 0 });
 
@@ -70,7 +74,7 @@ describe('applyTick prices', () => {
     expect(q.ask).toBe(0);
   });
 
-  it('keeps a known close when IB marks it not available, and takes a new one', () => {
+  it('keeps the close a line sent when IB marks it not available, and takes a new one', () => {
     const q = q0();
     applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 233.95 }, stock);
     for (const value of [-1, 0, Number.MAX_VALUE, undefined]) {
@@ -83,8 +87,23 @@ describe('applyTick prices', () => {
     expect(q.close).toBe(236.59);
     // Without a close, a "not available" one leaves the quote as it was.
     const none = q0();
-    expect(applyTick(none, { kind: 'price', field: TICK.CLOSE, value: -1 }, stock)).toBe(false);
+    expect(applyTick(none, { kind: 'price', field: TICK.CLOSE, value: -1 }, { isOption: false })).toBe(false);
     expect(none).toEqual(q0());
+  });
+
+  it('does not keep an older line\'s close that the new line marks not available', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 233.95 }, stock);
+    // A new line (a reconnect, maybe the next session) that marks its close not available clears it ...
+    const next: TickContext = { isOption: false };
+    applyTick(q, { kind: 'price', field: TICK.LAST, value: 236.59 }, next);
+    expect(q.close).toBe(233.95);
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: -1 }, next)).toBe(true);
+    expect(q.close).toBeUndefined();
+    // ... and once it sends one, keeps it.
+    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 236.1 }, next);
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 0 }, next)).toBe(false);
+    expect(q.close).toBe(236.1);
   });
 
   it('keeps a combo close of zero or below but not the -1 marker', () => {
@@ -98,22 +117,15 @@ describe('applyTick prices', () => {
     expect(q.close).toBe(0);
   });
 
-  it('does not let a delayed close replace the close of a live quote', () => {
-    const q: Quote = { ...q0(), marketDataType: 1 };
-    // A live quote without a close takes the delayed one.
-    applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 333.6 }, stock);
-    expect(q.close).toBe(333.6);
-    applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 333.69 }, stock);
-    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(false);
-    expect(q.close).toBe(333.69);
-    q.marketDataType = 2; // frozen is live data too
-    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(false);
-    // The line turned delayed: its delayed close is the quote's now; a live one still applies.
-    q.marketDataType = 3;
-    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 330 }, stock)).toBe(true);
-    expect(q.close).toBe(330);
-    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 333.69 }, stock)).toBe(true);
-    expect(q.close).toBe(333.69);
+  it('takes a line\'s delayed close although the quote still reports the previous line\'s live data', () => {
+    // Yesterday's live line set the close; after a reconnect the new line is delayed, and IB sends
+    // its first ticks, the close included, before its marketDataType (seen in API logs).
+    const q: Quote = { ...q0(), marketDataType: 1, close: 7600 };
+    expect(applyTick(q, { kind: 'price', field: TICK.DELAYED_CLOSE, value: 7722 }, stock)).toBe(true);
+    expect(q.close).toBe(7722);
+    // Live and delayed lines send the same previous close; the latest is taken either way.
+    expect(applyTick(q, { kind: 'price', field: TICK.CLOSE, value: 7722.5 }, stock)).toBe(true);
+    expect(q.close).toBe(7722.5);
   });
 
   it('reports no change for repeated values and unknown fields', () => {

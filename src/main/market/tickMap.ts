@@ -111,6 +111,8 @@ export interface TickContext {
   right?: 'C' | 'P';
   /** Combos can legitimately quote zero or negative prices. */
   isCombo?: boolean;
+  /** Per-line state kept by applyTick: the line has sent a previous close (see applyClose). */
+  hasClose?: boolean;
 }
 
 /** Rejects IB's "no value" markers: undefined, NaN, Double.MAX and other absurd magnitudes. */
@@ -144,21 +146,21 @@ function applyPrice(q: Quote, field: number, value: number | undefined, ctx: Tic
   const key = PRICE_FIELDS[field];
   if (!key) return false;
   const v = priceValue(key, value, ctx);
-  return key === 'close' ? applyClose(q, field, v) : set(q, key, v);
+  return key === 'close' ? applyClose(q, v, ctx) : set(q, key, v);
 }
 
-const isLive = (q: Quote): boolean => q.marketDataType === 1 || q.marketDataType === 2;
-
 /**
- * The previous close, the reference of every change. IB sends it with a request's first ticks and
- * then only when it changes (a new session's close replaces it). Its "not available" markers (-1,
- * 0, Double.MAX) do not mean the instrument has no close, so they never erase a known one (IB does
- * not send it again). A delayed close (75) lags the live one, so it does not replace the close of a
- * quote that reports live data (type 1 / 2); a delayed quote takes it.
+ * The previous close (9, or 75 on a delayed line), the reference of every change. IB sends it with
+ * a request's first ticks, often before the line's marketDataType, and then only when it changes (a
+ * new session's close replaces it). A line's close is taken whether live or delayed: both are the
+ * same number, and the quote's data type may still be the previous line's. IB's "not available"
+ * markers (-1, 0, Double.MAX) never erase a close the same line has sent (IB does not send it
+ * again); on a new line (a reconnect, maybe a new session) they do, so a close from an older line
+ * is not kept as this one's reference.
  */
-function applyClose(q: Quote, field: number, v: number | undefined): boolean {
-  if (v === undefined) return false;
-  if (field === TICK.DELAYED_CLOSE && q.close !== undefined && isLive(q)) return false;
+function applyClose(q: Quote, v: number | undefined, ctx: TickContext): boolean {
+  if (v === undefined) return ctx.hasClose ? false : set(q, 'close', undefined);
+  ctx.hasClose = true;
   return set(q, 'close', v);
 }
 
