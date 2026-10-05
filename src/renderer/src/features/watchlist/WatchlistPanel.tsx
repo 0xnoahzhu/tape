@@ -8,6 +8,7 @@ import type { ContractRef, WatchItem, Watchlist } from '@shared/types';
 import { useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
+import { DoubleChevronIcon } from '../../ui/icons';
 import { AddSymbol } from './AddSymbol';
 import { GroupList } from './GroupList';
 import { GroupMenu, type GroupMenuTarget } from './GroupMenu';
@@ -67,7 +68,7 @@ export function WatchlistPanel() {
           boxShadow: '1px 0 0 var(--ln), 0 1px 0 var(--ln), 0 -1px 0 var(--ln), 4px 4px 12px rgba(0,0,0,.10)',
         }}
       >
-        <div style={{ fontSize: 11 }}>»</div>
+        <DoubleChevronIcon dir="right" size={13} />
         <div style={{ writingMode: 'vertical-rl', letterSpacing: '.04em', whiteSpace: 'nowrap' }}>{name}</div>
       </div>
     );
@@ -175,9 +176,9 @@ function ExpandedPanel({
           onClick={onCollapse}
           title={m.collapse}
           className="hover-tx hover-p2"
-          style={{ width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, cursor: 'pointer', color: 'var(--dm)' }}
+          style={{ width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--dm)' }}
         >
-          «
+          <DoubleChevronIcon dir="left" size={14} />
         </div>
         <div
           onClick={() => setAdding((a) => !a)}
