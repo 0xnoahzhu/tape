@@ -3,6 +3,7 @@ import { stock } from '@shared/contract';
 import type { LockState } from '@shared/types';
 import { requestLock } from '../features/lock/actions';
 import { usePanels } from '../features/panels/panelStore';
+import { useDashboardLayout } from '../features/portfolio/dashboard/layoutStore';
 import { applyLockState } from './lockActions';
 import { isCovered, useStore } from './store';
 
@@ -31,6 +32,12 @@ describe('lock state in the renderer', () => {
     const s = useStore.getState();
     expect(s).toMatchObject({ bellOpen: false, pendingOrder: null, confirm: null, alertForm: null, pinDialog: null });
     expect(isCovered(s)).toBe(true);
+  });
+
+  it('closes the dashboard catalog and leaves edit mode when locking', () => {
+    useDashboardLayout.setState({ edit: true, pickerOpen: true, drag: 'eq', over: 'alloc' });
+    applyLockState(state({ locked: true }));
+    expect(useDashboardLayout.getState()).toMatchObject({ edit: false, pickerOpen: false, drag: null, over: null });
   });
 
   it('collapses floating panels to their bars, and they stay so after the unlock', () => {

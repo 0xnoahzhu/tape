@@ -13,6 +13,12 @@ type OrdersTab = 'work' | 'fill';
 // The page remounts on every visit; remember the last tab for the session.
 let lastTab: OrdersTab = 'work';
 
+/** Opens the Orders page on today's trades (the dashboard's "All ›"). */
+export function showOrderTrades(): void {
+  lastTab = 'fill';
+  useStore.getState().setPage('ord');
+}
+
 export function OrdersPage() {
   const m = useOrdersMessages();
   const orders = useStore((s) => s.orders);
