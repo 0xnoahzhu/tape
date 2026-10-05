@@ -122,6 +122,8 @@ export function ChartView() {
   const symbol = useStore((s) => s.symbol);
   const symbolName = useStore((s) => s.symbolName);
   const connected = useMarketDataAvailable();
+  // 10197: IB sends no market data while the login has a live session elsewhere.
+  const feedIssue = useStore((s) => s.connection.marketDataIssue?.code === 10197);
   const openAlertForm = useStore((s) => s.openAlertForm);
   const alertsAll = useStore((s) => s.priceAlerts);
   const { timeframe, range, mas, showVol, clearRange, toggleMa, toggleVol } = useChartPrefs();
@@ -246,13 +248,15 @@ export function ChartView() {
     ? common.notConnected
     : sq.price != null
       ? undefined
-      : quote?.error
-        ? `${quote.error.message} (${quote.error.code})`
-        : !quote
-          ? m.waitingQuote
-          : sq.refs.length
-            ? undefined
-            : m.noQuote;
+      : quote?.error?.code === 10197 || (feedIssue && !quote?.error)
+        ? m.competingSession
+        : quote?.error
+          ? `${quote.error.message} (${quote.error.code})`
+          : !quote
+            ? m.waitingQuote
+            : sq.refs.length
+              ? undefined
+              : m.noQuote;
   const dataType = quote?.marketDataType && quote.marketDataType !== 1 ? m.dataType[quote.marketDataType] : undefined;
   // Seconds bars do not move with delayed quotes: only the reloads bring them.
   const delayedSeconds = isSecondsTimeframe(timeframe) && (quote?.marketDataType === 3 || quote?.marketDataType === 4);

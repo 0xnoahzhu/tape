@@ -166,6 +166,10 @@ describe('IbConnection', () => {
     t.api().emit('error', new Error('No market data during competing live session'), 10197, 1001);
     expect(reqErrors).toHaveBeenCalledWith({ reqId: 1001, code: 10197, message: 'No market data during competing live session' });
     expect(t.last().marketDataIssue).toEqual({ code: 10197, message: 'No market data during competing live session' });
+    // One notice for the episode, however many lines IB refuses.
+    t.api().emit('error', new Error('No market data during competing live session'), 10197, 1002);
+    expect(t.notices.map((n) => n.title.en)).toEqual(['No market data: your IB login is in use elsewhere']);
+    expect(t.notices[0].body.zh).toContain('IBKR Mobile');
     t.api().emit('tickPrice', 1001, 4, 227.5);
     expect(ticks).toHaveBeenCalledWith(1001, 4, 227.5);
     expect(t.last().marketDataIssue).toBeUndefined();

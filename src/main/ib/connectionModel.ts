@@ -55,6 +55,9 @@ const m = createMessages({
     refused: (addr: string) => `Connection refused at ${addr}`,
     noResponse: (addr: string) => `No response from ${addr}`,
     clientIdInUse: (id: number) => `Client ID ${id} is already in use`,
+    competingTitle: 'No market data: your IB login is in use elsewhere',
+    competingBody:
+      'Your IB username is logged in to a live session in TWS, IBKR Mobile or Client Portal, so IB sends no quotes to this connection (10197). Log out there and quotes resume by themselves; orders and positions are not affected.',
   },
   zh: {
     tws: 'TWS',
@@ -78,6 +81,8 @@ const m = createMessages({
     refused: (addr: string) => `${addr} 拒绝连接`,
     noResponse: (addr: string) => `${addr} 无响应`,
     clientIdInUse: (id: number) => `Client ID ${id} 已被占用`,
+    competingTitle: '行情暂停：IB 账号正在别处登录',
+    competingBody: '你的 IB 用户名正在 TWS、IBKR Mobile 或 Client Portal 中登录实盘会话，IB 不向本连接推送行情（10197）。在那边退出登录后行情会自动恢复；订单和持仓不受影响。',
   },
 });
 
@@ -140,5 +145,10 @@ export const connectionNotices = {
   restored: (mode: Mode, dataLost: boolean): NoticeText => ({
     title: m.both((t) => t.restoredTitle(appName(t, mode))),
     body: m.both((t) => (dataLost ? t.restoredLost : t.restoredKept)),
+  }),
+  /** 10197: IB serves market data to one session per username. */
+  competingSession: (): NoticeText => ({
+    title: m.both((t) => t.competingTitle),
+    body: m.both((t) => t.competingBody),
   }),
 };

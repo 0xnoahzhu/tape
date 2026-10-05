@@ -401,7 +401,11 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     if (api !== inst) return;
     const message = err instanceof Error ? err.message : String(err ?? '');
     if (typeof id === 'number' && id >= 0) {
-      if (code === 10197) setState({ marketDataIssue: { code, message } });
+      if (code === 10197) {
+        // One notice per episode: the issue clears with the next real price tick.
+        if (!state.marketDataIssue) notify(connectionNotices.competingSession());
+        setState({ marketDataIssue: { code, message } });
+      }
       const e: RequestError = { reqId: id, code, message };
       if (adv != null) e.advancedOrderReject = typeof adv === 'string' ? adv : JSON.stringify(adv);
       for (const l of [...requestErrorListeners]) safely(() => l(e), 'request error');
