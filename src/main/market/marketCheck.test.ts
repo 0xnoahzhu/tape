@@ -95,7 +95,12 @@ async function setup(opts: { lines?: Lines; book?: DepthBook | null; depthLine?:
       if (answer.first) fake.error(reqId, ...answer.first);
       for (const [code, message] of answer.errors ?? []) fake.error(reqId, code, message);
       if (answer.type) fake.emit('marketDataType', reqId, answer.type);
-      if (answer.last) fake.emit('tickPrice', reqId, answer.type && answer.type > 2 ? TICK.DELAYED_LAST : TICK.LAST, answer.last);
+      const delayed = !!answer.type && answer.type > 2;
+      if (answer.last) {
+        fake.emit('tickPrice', reqId, delayed ? TICK.DELAYED_LAST : TICK.LAST, answer.last);
+        // IB sends the previous close with a line's first ticks.
+        fake.emit('tickPrice', reqId, delayed ? TICK.DELAYED_CLOSE : TICK.CLOSE, answer.last - 1);
+      }
     }, 50);
   };
   await settle();

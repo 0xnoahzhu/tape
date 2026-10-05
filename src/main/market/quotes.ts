@@ -20,6 +20,12 @@
 // owners, within the same line budget. In demo mode the quotes come from the simulator and IB is
 // never asked for market data.
 //
+// Previous close. IB sends it (tick 9, or 75 delayed) with a request's first ticks and otherwise
+// only when it changes; tickMap.ts never lets a "not available" close erase a known one. A line
+// that streams prices without a close CLOSE_WAIT_MS after its first price (it started without its
+// subscription image, e.g. during a competing session) is requested again, which brings the close:
+// at most once per CLOSE_RETRY_MS per contract (doubling), for instruments that have a close.
+//
 // Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
 // while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
 // type 3, on NASDAQ type 1, with the same subscriptions). For a SMART-routed US dollar stock whose
@@ -44,7 +50,7 @@
 
 import { EventName } from '../ib/tws';
 import { contractLabel } from '@shared/contract';
-import type { ContractRef, MarketDataType, Quote, QuoteSubscription } from '@shared/types';
+import type { ContractRef, MarketDataType, Quote, QuoteSubscription, SecType } from '@shared/types';
 import type { FallbackFinding, MainContext, ProbeEvent, QuoteService } from '../context';
 import { DEMO_TICK_MS, demoMarket } from './demo';
 import { toIbContract } from './ibContract';
@@ -87,6 +93,12 @@ const NO_LINE_RETRY_MS = 60_000;
 const SIDE_BUFFER = 64;
 /** The end of a 10197 episode re-probes routes at most this often. */
 export const COMPETING_END_MIN_MS = 60_000;
+/** A line whose quote has prices but no previous close this long after the first one is requested again. */
+export const CLOSE_WAIT_MS = 12_000;
+/** The first wait before a contract's line is requested again for its close a second time; it doubles after each. */
+export const CLOSE_RETRY_MS = 15 * 60_000;
+/** Instruments that have a previous close (an option may never have traded, a combo has none of its own). */
+const CLOSE_TYPES: ReadonlySet<SecType> = new Set(['STK', 'IND', 'FUT', 'CASH', 'CFD']);
 
 interface Line {
   key: string;
@@ -155,6 +167,8 @@ function hasData(q: Quote): boolean {
   return false;
 }
 
+const hasPrice = (q: Quote): boolean => q.last !== undefined || q.bid !== undefined || q.ask !== undefined;
+
 /**
  * What the renderer needs to bring its copy (`prev`, the last batch sent for the key) up to `q`:
  * the changed fields (cleared ones as undefined, so the renderer's merge clears them too), or
@@ -192,6 +206,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const listeners = new Set<(q: Quote) => void>();
   const noticeListeners = new Set<(key: string, code: number, message: string) => void>();
   const dirty = new Set<string>();
+  /** Pending checks for a priced quote without a previous close (checkClose). */
+  const closeChecks = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Lines requested again for their close, per contract: the last time and how often (for the back-off). */
+  const closeRetries = new Map<string, { at: number; count: number }>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let sweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -236,6 +254,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
 
   const deleteQuote = (key: string) => {
     forgetRoute(key);
+    clearCloseCheck(key);
     quotes.delete(key);
     sent.delete(key);
     dirty.delete(key);
@@ -343,6 +362,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     };
     lines.set(line.key, line);
     byReqId.set(line.reqId, line);
+    // Its first ticks bring the close; a check starts again with its first price if they do not.
+    clearCloseCheck(w.key);
     // A fresh request starts without the previous line's error; IB repeats it if it still applies.
     if (quotes.get(w.key)?.error) setError(w.key, undefined);
     else ensureQuote(w.key);
@@ -682,6 +703,56 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   };
 
   // ---------------------------------------------------------------------------
+  // Previous close (see the header)
+
+  const clearCloseCheck = (key: string) => {
+    const timer = closeChecks.get(key);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    closeChecks.delete(key);
+  };
+
+  const armCloseCheck = (key: string, ms: number) => {
+    clearCloseCheck(key);
+    closeChecks.set(
+      key,
+      setTimeout(() => {
+        closeChecks.delete(key);
+        checkClose(key);
+      }, ms),
+    );
+  };
+
+  /**
+   * A tick left a line's quote with prices but no previous close: it is checked CLOSE_WAIT_MS later.
+   * Only quotes the renderer shows (not a lingering line, nor one only main-process owners want).
+   */
+  const watchClose = (line: Line, q: Quote) => {
+    if (closeChecks.has(line.key) || !hasPrice(q) || !CLOSE_TYPES.has(line.contract.secType) || !book.published(line.key)) return;
+    armCloseCheck(line.key, CLOSE_WAIT_MS);
+  };
+
+  /** Requests a line again when its quote still streams prices without a previous close (see the header). */
+  const checkClose = (key: string) => {
+    const line = lines.get(key);
+    const q = quotes.get(key);
+    if (!line || line.dead || !q || q.close !== undefined || !hasPrice(q) || !book.published(key)) return;
+    const now = Date.now();
+    const last = closeRetries.get(key);
+    const due = last ? last.at + CLOSE_RETRY_MS * 2 ** (last.count - 1) : now;
+    // Not before the back-off ends, nor while the fallback tests another route (a switch brings a new line).
+    if (due > now || routes.get(key)?.side) {
+      armCloseCheck(key, Math.max(due - now, CLOSE_WAIT_MS));
+      return;
+    }
+    const w = book.wanted().find((x) => x.key === key);
+    if (!w || !liveApi()) return;
+    closeRetries.set(key, { at: now, count: (last?.count ?? 0) + 1 });
+    cancelLine(line);
+    requestLine(w);
+  };
+
+  // ---------------------------------------------------------------------------
   // Demo feed
 
   const demoPublish = (w: WantedContract) => {
@@ -782,6 +853,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       q.error = undefined; // data is flowing again
       changed = true;
     }
+    if (q.close === undefined) watchClose(line, q);
     if (changed) publish(q);
   };
 
@@ -834,6 +906,9 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const forgetLines = () => {
     lines.clear();
     byReqId.clear();
+    // Every line is requested again, with its close.
+    for (const timer of closeChecks.values()) clearTimeout(timer);
+    closeChecks.clear();
     // Every line starts on SMART again (a reconnect is a reason to try it).
     for (const r of routes.values()) clearRouteTimer(r);
     for (const side of sides.values()) clearTimeout(side.timer);

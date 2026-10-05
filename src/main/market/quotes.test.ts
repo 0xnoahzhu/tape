@@ -4,7 +4,17 @@ import type { TapeEvent } from '@shared/ipc';
 import type { ContractRef, Quote } from '@shared/types';
 import type { ContractService } from '../context';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
-import { LINGER_MS, createQuoteService, PRIMARY_GIVE_UP_MS, quotePatch, RECONCILE_MS, SIDE_TIMEOUT_MS, SMART_RETRY_MS } from './quotes';
+import {
+  CLOSE_RETRY_MS,
+  CLOSE_WAIT_MS,
+  LINGER_MS,
+  createQuoteService,
+  PRIMARY_GIVE_UP_MS,
+  quotePatch,
+  RECONCILE_MS,
+  SIDE_TIMEOUT_MS,
+  SMART_RETRY_MS,
+} from './quotes';
 import { TICK } from './tickMap';
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -761,6 +771,22 @@ describe('primary-exchange fallback', () => {
     expect(svc.fallbacks()).toEqual([]);
   });
 
+  it('requests a quote served by its exchange again on that exchange when it has no close', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    fake.emit('tickPrice', primaryId, TICK.LAST, 333.42);
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
+    const [againId, again] = lastReq(fake) as [number, { exchange: string }];
+    expect(again.exchange).toBe('NASDAQ');
+    fake.emit('marketDataType', againId, 1);
+    fake.emit('tickPrice', againId, TICK.CLOSE, 333.69);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ close: 333.69, last: 333.42, source: { kind: 'primary', exchange: 'NASDAQ' } });
+  });
+
   it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {
     const { fake, svc, smartId } = await fallbackSetup('PINK');
     fake.emit('marketDataType', smartId, 3);
@@ -884,6 +910,87 @@ describe('the renderer copy', () => {
     vi.advanceTimersByTime(100);
     expect('close' in quoteEvents(events).at(-1)!.quotes['STK:NVDA']).toBe(false);
     expect(svc.getQuote('STK:NVDA')?.close).toBe(233.95);
+  });
+});
+
+describe('a missing previous close', () => {
+  it('requests a line again that streams prices without a close, and then leaves it alone', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('NVDA'), profile: 'dividends' }]);
+    reconciled();
+    const first = reqIdOf(fake, 'NVDA');
+    // Data without the subscription image (a line opened during a competing session).
+    fake.emit('tickPrice', first, TICK.BID, 236.58);
+    fake.emit('tickPrice', first, TICK.ASK, 236.6);
+    vi.advanceTimersByTime(CLOSE_WAIT_MS - 1);
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(fake.callsOf('cancelMktData')).toEqual([[first]]);
+    const [again, contract, ticks] = fake.callsOf('reqMktData')[1] as [number, { symbol: string }, string];
+    expect([contract.symbol, ticks]).toEqual(['NVDA', '318,456']);
+    // The quote keeps its prices meanwhile, and the new request brings the close.
+    expect(svc.getQuote('STK:NVDA')).toMatchObject({ bid: 236.58, ask: 236.6 });
+    fake.emit('tickPrice', again, TICK.LAST, 236.59);
+    fake.emit('tickPrice', again, TICK.CLOSE, 233.95);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:NVDA']).toMatchObject({ last: 236.59, close: 233.95 });
+    fake.emit('tickPrice', again, TICK.LAST, 236.7);
+    vi.advanceTimersByTime(4 * CLOSE_RETRY_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    expect(fake.callsOf('cancelMktData')).toHaveLength(1);
+  });
+
+  it('backs off for an instrument that has no close', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('NEWCO'), profile: 'basic' }]);
+    reconciled();
+    const priced = () => fake.emit('tickPrice', reqIdOf(fake, 'NEWCO'), TICK.LAST, 20);
+    const requests = () => fake.callsOf('reqMktData').length;
+    priced();
+    vi.advanceTimersByTime(CLOSE_WAIT_MS);
+    expect(requests()).toBe(2);
+    // Its first trading day: still no close. The next request comes CLOSE_RETRY_MS later, then twice that.
+    priced();
+    vi.advanceTimersByTime(CLOSE_RETRY_MS - 1);
+    expect(requests()).toBe(2);
+    vi.advanceTimersByTime(1);
+    expect(requests()).toBe(3);
+    priced();
+    vi.advanceTimersByTime(2 * CLOSE_RETRY_MS - 1);
+    expect(requests()).toBe(3);
+    vi.advanceTimersByTime(1);
+    expect(requests()).toBe(4);
+  });
+
+  it('leaves options, lingering lines, main-process owners and a new session alone', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    const call = option('NVDA', '20261016', 240, 'C');
+    svc.setRendererSubscriptions('options-chain', [{ contract: call, profile: 'option' }]);
+    svc.setRendererSubscriptions('chart', [{ contract: stock('AMD'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setSubscriptions('alerts', [{ contract: stock('TSLA'), profile: 'basic' }]);
+    reconciled();
+    fake.emit('tickPrice', fake.callsOf('reqMktData')[0][0], TICK.BID, 1.2);
+    for (const s of ['AMD', 'TSLA']) fake.emit('tickPrice', reqIdOf(fake, s), TICK.LAST, 100);
+    // The chart moves on before the check: AMD lingers.
+    vi.advanceTimersByTime(1_000);
+    svc.setRendererSubscriptions('chart', []);
+    reconciled();
+    vi.advanceTimersByTime(CLOSE_WAIT_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(4);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    // A reconnect requests every line again before MSFT's check is due.
+    fake.emit('tickPrice', reqIdOf(fake, 'MSFT'), TICK.LAST, 517);
+    vi.advanceTimersByTime(1_000);
+    fake.close();
+    fake.ready();
+    const n = fake.callsOf('reqMktData').length;
+    vi.advanceTimersByTime(CLOSE_RETRY_MS);
+    expect(fake.callsOf('reqMktData')).toHaveLength(n);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
   });
 });
 
