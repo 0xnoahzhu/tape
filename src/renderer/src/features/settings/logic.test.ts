@@ -237,7 +237,7 @@ describe('market data check', () => {
       { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }, checkedAt: at },
     ]);
     // The SMART line's 10167 belongs to the fallback note, not to the subscription one.
-    expect(checkReasons(r)).toEqual([{ kind: 'notSubscribed', codes: [354] }, { kind: 'fallback', exchange: 'NASDAQ' }, { kind: 'depthPerm' }]);
+    expect(checkReasons(r)).toEqual([{ kind: 'notSubscribed', codes: [354] }, { kind: 'fallback', exchanges: ['NASDAQ'], symbols: [] }, { kind: 'depthPerm' }]);
     const competing = result([
       stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: 10197, message: 'x' } }),
       { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 309, message: 'x' }, checkedAt: at },

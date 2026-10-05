@@ -113,8 +113,9 @@ const en = {
   depthPartialText: (missing: string) =>
     `IB sends no book from ${missing} (2152): those need depth subscriptions such as NASDAQ TotalView (NASDAQ), NYSE OpenBook (NYSE) or NYSE ArcaBook (ARCA), enabled for the API.`,
   fallbackTitle: (x: string) => `SMART delayed, ${x} live`,
-  fallbackText: (x: string) =>
-    `IB sends this account SMART (consolidated) quotes delayed but ${x}’s own quotes live. Quotes marked “Live · ${x}” are the best bid and ask on ${x}, not the consolidated quote across all exchanges.`,
+  fallbackText: (x: string, symbols: string[]) =>
+    `IB sends this account SMART (consolidated) quotes delayed but ${x}’s own quotes live${symbols.length ? ` (now: ${symbols.join(', ')})` : ''}. Tape then shows the exchange’s quote, marked “Live · ${x}”: the best bid and ask on ${x}, not the consolidated quote across all exchanges. Every 10 minutes it tries SMART again.`,
+  fallbackInUse: (list: string) => `Exchange quotes in use: ${list}`,
   markets: {
     stk: { l: 'US equities NASDAQ / NYSE', d: 'Network A/B/C · incl. extended hours' },
     opt: { l: 'US options OPRA', d: 'Option quotes and trades' },
@@ -407,7 +408,9 @@ const zh: typeof en = {
   depthPartialText: (missing: string) =>
     `IB 不提供 ${missing} 的盘口（2152）：需要相应的深度订阅，例如 NASDAQ TotalView（NASDAQ）、NYSE OpenBook（NYSE）或 NYSE ArcaBook（ARCA），并为 API 开通。`,
   fallbackTitle: (x: string) => `SMART 延迟，${x} 实时`,
-  fallbackText: (x: string) => `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但 ${x} 自己的报价是实时的。标为“实时 · ${x}”的报价是 ${x} 上的最优买卖价，不是全市场合并报价。`,
+  fallbackText: (x: string, symbols: string[]) =>
+    `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但 ${x} 自己的报价是实时的${symbols.length ? `（目前：${symbols.join('、')}）` : ''}。Tape 此时改用该交易所的报价，标为“实时 · ${x}”：这是 ${x} 上的最优买卖价，不是全市场合并报价。每 10 分钟会重新尝试 SMART。`,
+  fallbackInUse: (list: string) => `正在使用交易所报价：${list}`,
   markets: {
     stk: { l: '美股 NASDAQ / NYSE', d: 'Network A/B/C · 含盘前盘后' },
     opt: { l: '美股期权 OPRA', d: '期权报价与成交' },

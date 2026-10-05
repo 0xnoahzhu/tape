@@ -95,7 +95,7 @@ function reasonText(r: CheckReason, m: SettingsMessages, paper: boolean): { t: s
     case 'notSubscribed':
       return { t: m.notSubscribedTitle, d: m.notSubscribedText(r.codes, paper) };
     case 'fallback':
-      return { t: m.fallbackTitle(r.exchange), d: m.fallbackText(r.exchange) };
+      return { t: m.fallbackTitle(r.exchanges.join(', ')), d: m.fallbackText(r.exchanges.join(', '), r.symbols) };
     case 'depthPartial':
       return { t: m.depthPartialTitle(r.depth.join(', ')), d: m.depthPartialText(r.missing.join(', ')) };
     default:
@@ -215,6 +215,11 @@ export function MarketDataSection() {
                     {sub}
                   </div>
                 )}
+                {item?.fallback?.length ? (
+                  <div className="ellipsis" style={{ fontSize: 12, color: 'var(--dm)' }}>
+                    {m.fallbackInUse(item.fallback.map((f) => `${f.symbol} (${f.exchange})`).join(', '))}
+                  </div>
+                ) : null}
                 {item && session && (
                   <div className="ellipsis" style={{ fontSize: 12, color: 'var(--dm)' }}>
                     {m.inSession(session)}

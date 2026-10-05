@@ -290,7 +290,8 @@ export function checkTag(item: MarketCheckItem): ObservedTag {
 export type CheckReason =
   | { kind: 'competing' }
   | { kind: 'notSubscribed'; codes: number[] }
-  | { kind: 'fallback'; exchange: string }
+  /** SMART delayed but the exchange live: in the check (`via`) and for the quotes now served by their exchange. */
+  | { kind: 'fallback'; exchanges: string[]; symbols: string[] }
   | { kind: 'depthPerm' }
   | { kind: 'depthPartial'; depth: string[]; missing: string[] }
   | { kind: 'depthLimit' }
@@ -315,10 +316,15 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
   if (!result) return [];
   const has = new Set<CheckReason['kind']>();
   const codes = new Set<number>();
-  let fallback: string | undefined;
+  const exchanges = new Set<string>();
+  const symbols = new Set<string>();
   let partial: { depth: string[]; missing: string[] } | null = null;
   for (const item of result.items) {
-    if (item.via && item.market !== 'depth') fallback ??= item.via;
+    if (item.via && item.market !== 'depth') exchanges.add(item.via);
+    for (const f of item.fallback ?? []) {
+      exchanges.add(f.exchange);
+      symbols.add(f.symbol);
+    }
     for (const p of probesOf(item)) {
       if (p.code === COMPETING) has.add('competing');
       if (p.own === 'timeout') has.add('noAnswer');
@@ -345,7 +351,7 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
   const out: CheckReason[] = [];
   if (has.has('competing')) out.push({ kind: 'competing' });
   if (has.has('notSubscribed')) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b) });
-  if (fallback) out.push({ kind: 'fallback', exchange: fallback });
+  if (exchanges.size) out.push({ kind: 'fallback', exchanges: [...exchanges], symbols: [...symbols] });
   if (has.has('depthPerm')) out.push({ kind: 'depthPerm' });
   if (partial?.missing.length) out.push({ kind: 'depthPartial', ...partial });
   if (has.has('depthLimit')) out.push({ kind: 'depthLimit' });
