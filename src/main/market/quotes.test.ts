@@ -576,7 +576,7 @@ describe('primary-exchange fallback', () => {
     svc.setSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
     reconciled();
     const [, contract, ticks] = lastReq(fake) as [number, { exchange: string }, string];
-    expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,104,106,165,318']);
+    expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,104,106,165,318,456']);
     expect(svc.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
     // Options, an index and a stock routed to its exchange already are never moved.
     const n = resolved.length;
