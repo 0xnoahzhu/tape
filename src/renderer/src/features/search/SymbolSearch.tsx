@@ -52,8 +52,10 @@ function ResultRow({ match, tag, selected, onPick }: { match: SymbolMatch; tag: 
   const otherCurrency = last != null && priceUnit(match.contract, 1) !== undefined;
   const magnifier = usePriceMagnifier(otherCurrency ? match.contract : null);
   const unit = last != null ? priceUnit(match.contract, magnifier) : undefined;
+  const rowRef = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={rowRef}
       onMouseDown={(e) => {
         e.preventDefault();
         onPick();
@@ -73,7 +75,7 @@ function ResultRow({ match, tag, selected, onPick }: { match: SymbolMatch; tag: 
       }}
     >
       <div style={{ font: '600 13px/1 var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden' }}>{match.contract.symbol}</div>
-      <ListingName name={match.description} tag={tag} />
+      <ListingName name={match.description} tag={tag} row={rowRef} />
       <div style={{ font: '13px/1 var(--num)', whiteSpace: 'nowrap', textAlign: 'right' }}>
         {px(last)}
         {unit && <span style={{ ...listingTagStyle, marginLeft: 4 }}>{unit}</span>}
