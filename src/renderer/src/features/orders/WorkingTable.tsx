@@ -1,6 +1,6 @@
-// Working orders table (design "ordRows" for the work tab).
+// Working orders table (design "ordRows" for the work tab), with a Last column beside the order price.
 
-import { contractLabel } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
 import { f0 } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
@@ -10,6 +10,7 @@ import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useOrdersMessages, type OrdersMessages } from './messages';
 import { openTicket } from '../panels/actions';
+import { distanceText, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
 import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
 import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
@@ -18,11 +19,12 @@ import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 // it gets the largest flexible share here so "Waiting · AAPL ≥ 235.00" and the TIF with its
 // session or GTD expiry ("Pre-submitted · DAY · Overnight + Day", "Pre-submitted · GTD 10/09
 // 04:00 PM ET", about 248px) stay readable at the minimum window width before IB's messages.
-// Contract gets the next share, for option labels ("AAPL 10/16 230 Call"); Price keeps room for
-// a stop-limit "240.00 / 239.50", Qty and Filled for "100,000". The time column is sized for the
-// clock format (timeColumn).
+// Contract gets the next share, for option labels ("AAPL 10/16 230 Call"); at that width Price
+// keeps room for "12,300.25", Last, beside it, for "1,234.56", Qty and Filled for "1,000" (a
+// stop-limit's "240.00 / 239.50" is in full on hover). The time column is sized for the clock
+// format (timeColumn).
 export const workingColumns = (time: string): string =>
-  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.7fr) minmax(0,1.25fr) minmax(0,0.7fr) minmax(70px,2.55fr) 120px`;
+  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.45fr) minmax(0,1.2fr) minmax(0,0.7fr) minmax(0,0.45fr) minmax(70px,2.75fr) 120px`;
 
 function modify(o: WorkingOrder): void {
   const s = useStore.getState();
@@ -44,6 +46,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
   const columns = workingColumns(timeColumn(clock));
   const myClientId = useStore((s) => s.connection.clientId);
   const connected = useStore((s) => s.connection.status === 'connected');
+  const quotes = useOrderQuotes(ORDERS_QUOTE_OWNER, orders);
 
   return (
     <TableBody
@@ -55,6 +58,9 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
           <div>{m.type}</div>
           <div style={{ textAlign: 'right' }}>{m.qty}</div>
           <div style={{ textAlign: 'right' }}>{m.price}</div>
+          <div style={{ textAlign: 'right' }} title={m.lastTitle}>
+            {m.last}
+          </div>
           <div style={{ textAlign: 'right' }}>{m.filled}</div>
           <div>{m.statusTif}</div>
           <div />
@@ -69,6 +75,9 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
         const child = isChildRow(o, orders);
         const title = (own ? m.ownOrder(o.orderId, o.clientId) : m.otherOrder(o.orderId, o.clientId)) + (o.message ? `\n${o.message}` : '');
         const price = orderPriceText(o);
+        const quote = quotes[contractKey(o.contract)];
+        const last = orderLastPrice(o.contract, quote);
+        const lastTitle = last == null ? quote?.error?.message : distanceText(o, last, m);
         return (
           <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title}>
             <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
@@ -87,6 +96,9 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             </div>
             <div className="num ellipsis" style={{ textAlign: 'right' }} title={o.orderType === 'STP LMT' ? `${m.stopLimitTitle}: ${price}` : price}>
               {price}
+            </div>
+            <div className="num ellipsis" style={{ textAlign: 'right' }} title={lastTitle || undefined}>
+              {lastPriceText(last)}
             </div>
             <div className="num" style={{ textAlign: 'right', color: 'var(--mu)' }}>
               {f0(o.filled)}

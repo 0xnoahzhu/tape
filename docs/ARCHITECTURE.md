@@ -123,6 +123,17 @@ when the 2 s wait ends with the order still Inactive. IB may also acknowledge an
 notification waits up to 1 s for the reason, and a request is announced as rejected once (the
 order IB reported, or else the request).
 
+**Last price.** Portfolio › Orders shows the current price of each order's instrument in a Last
+column beside the order price (`orders/lastPrice.ts`): an option's mark, else its midpoint (as the
+Positions tab values it), else its last trade; a combo's net midpoint, else its last; anything else
+its last trade, else `lastPrice`'s fallbacks; "—" without a quote. Its tooltip says how far the
+limit or trigger (a trailing order's current stop) is from it, in percent of it ("Limit −0.43% from
+last"; nothing for market and offset-priced orders, or when either price is not positive, as a
+combo's net can be), or, without a price, the line's error. The orders' own instruments are quoted
+(an option its own quote, a combo its combo quote, a pair its rate; one line per instrument, shared
+with any other owner) only while the tab shows, under the `orders` owner, which counts as visible
+(`subscriptions.ts`).
+
 #### Order types and attributes
 
 Everything else about an order is checked by `shared/orderRules.ts`, again in the ticket and in

@@ -37,7 +37,8 @@ Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   Earnings dates come from Wall Street Horizon when the account has that IBKR subscription; otherwise
   Tape estimates them from IB's market scanner (US stocks: the date and before the open / after the
   close, marked *Est.*, since IB marks none as confirmed).
-- **Orders**: working orders with their attributes (modify, cancel, cancel all).
+- **Orders**: working orders with their attributes and each instrument's last price beside the order price
+  (how far the limit or trigger is from it on hover; modify, cancel, cancel all).
 - **Trades**: today's executions with commissions.
 
 **Trade**
