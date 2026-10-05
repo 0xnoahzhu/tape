@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CATALOG, defaultLayout, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type Layout } from './layout';
+import { CATALOG, defaultLayout, dropSide, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type Layout } from './layout';
 
 const ids = (l: Layout) => l.map((w) => w.id);
 
@@ -25,13 +25,33 @@ describe('dashboard layout', () => {
     ]);
   });
 
-  it('moves the dragged widget before the target (the design rule)', () => {
+  it('moves the dragged widget into the place of the target', () => {
     const l = defaultLayout();
+    // Backwards: before the target.
     expect(ids(moveWidget(l, 'bench', 'eq')).slice(0, 2)).toEqual(['bench', 'eq']);
-    // Dragging forward lands before the target in the list without the dragged widget.
-    expect(ids(moveWidget(l, 'eq', 'greeks')).slice(0, 4)).toEqual(['alloc', 'margin', 'eq', 'greeks']);
+    // Forwards: after the target, so a widget can step past its right neighbour.
+    expect(ids(moveWidget(l, 'eq', 'alloc')).slice(0, 2)).toEqual(['alloc', 'eq']);
+    expect(ids(moveWidget(l, 'eq', 'greeks')).slice(0, 4)).toEqual(['alloc', 'margin', 'greeks', 'eq']);
+    // The "Add widget" tile: after the last widget.
+    expect(ids(moveWidget(l, 'eq', 'end')).at(-1)).toBe('eq');
+    expect(moveWidget(l, 'bench', 'end')).toBe(l);
     expect(moveWidget(l, 'eq', 'eq')).toBe(l);
     expect(moveWidget(l, 'eq', 'nope' as never)).toBe(l);
+    expect(moveWidget(l, 'nope' as never, 'eq')).toBe(l);
+    // Every move keeps the widgets and their spans.
+    const moved = moveWidget(l, 'contrib', 'alloc');
+    expect([...moved].sort((a, b) => a.id.localeCompare(b.id))).toEqual([...l].sort((a, b) => a.id.localeCompare(b.id)));
+  });
+
+  it('says on which side of the target the drop lands', () => {
+    const l = defaultLayout();
+    expect(dropSide(l, 'bench', 'eq')).toBe('before');
+    expect(dropSide(l, 'eq', 'alloc')).toBe('after');
+    expect(dropSide(l, 'eq', 'end')).toBe('after');
+    expect(dropSide(l, 'bench', 'end')).toBeNull();
+    expect(dropSide(l, 'eq', 'eq')).toBeNull();
+    expect(dropSide(l, null, 'eq')).toBeNull();
+    expect(dropSide(l, 'eq', null)).toBeNull();
   });
 
   it('changes spans, removes and toggles widgets without touching the input', () => {

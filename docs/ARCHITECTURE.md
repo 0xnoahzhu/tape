@@ -616,8 +616,9 @@ own remembered position (first: the bottom-right corner of the content area).
 
 The Dashboard tab is a 3-column grid of widgets the user arranges in edit mode.
 `layout.ts` is the catalog (ten widgets with their default spans; the default layout shows all of
-them) and the pure edits (move before the drop target, S / M / L span, remove, add at the default
-span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
+them) and the pure edits (move into the drop target's place: before it when dragged backwards,
+after it when dragged forwards, or to the end on the "Add widget" tile; S / M / L span, remove, add
+at the default span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
 `{ id, span }`, read and written in try/catch; unknown ids dropped, a missing or invalid value is
 the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
 locking ends them (`state/lockActions.ts`).

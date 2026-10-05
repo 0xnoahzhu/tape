@@ -5,7 +5,7 @@
 // (state/lockActions.ts).
 
 import { create } from 'zustand';
-import { defaultLayout, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type Layout, type Span, type WidgetId } from './layout';
+import { defaultLayout, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type DropTarget, type Layout, type Span, type WidgetId } from './layout';
 
 export const LAYOUT_STORAGE_KEY = 'tape.dash.v1';
 
@@ -35,17 +35,17 @@ interface DashboardLayoutStore {
   edit: boolean;
   /** The "Add widget" catalog is open. */
   pickerOpen: boolean;
-  /** The widget being dragged, and the one under the pointer. */
+  /** The widget being dragged, and the drop target under the pointer. */
   drag: WidgetId | null;
-  over: WidgetId | null;
+  over: DropTarget | null;
   setEdit(edit: boolean): void;
   setPickerOpen(open: boolean): void;
   setDrag(id: WidgetId | null): void;
-  setOver(id: WidgetId | null): void;
+  setOver(id: DropTarget | null): void;
   /** Ends a drag (drop or cancel). */
   endDrag(): void;
-  /** Drops the dragged widget onto `to` (before it). */
-  move(from: WidgetId, to: WidgetId): void;
+  /** Drops the dragged widget into the place of `to` (see moveWidget). */
+  move(from: WidgetId, to: DropTarget): void;
   setSpan(id: WidgetId, span: Span): void;
   remove(id: WidgetId): void;
   /** Adds a widget at its default span, or removes it (the catalog's button). */

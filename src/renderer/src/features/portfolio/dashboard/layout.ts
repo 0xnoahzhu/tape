@@ -68,18 +68,34 @@ export function sanitizeLayout(raw: unknown): Layout | null {
   return out;
 }
 
+/** Where a drag ends: on a widget, or on the "Add widget" tile after the last one. */
+export type DropTarget = WidgetId | 'end';
+
 /**
- * Moves the widget `from` to where the widget `to` is (the design's rule: take the dragged item
- * out, then insert it at the target's index in what is left, i.e. before the target). Unknown ids
- * or the same id leave the layout unchanged.
+ * Moves the widget `from` into the place of the widget `to`: dragged backwards it lands before
+ * the target, dragged forwards after it (so a widget can move by one place either way; the
+ * design's "always before the target" could not move a widget past its right neighbour). 'end'
+ * moves it after the last widget. Unknown ids or the same id leave the layout unchanged.
  */
-export function moveWidget(layout: Layout, from: WidgetId, to: WidgetId): Layout {
+export function moveWidget(layout: Layout, from: WidgetId, to: DropTarget): Layout {
   if (from === to) return layout;
   const i = layout.findIndex((w) => w.id === from);
-  if (i < 0 || !layout.some((w) => w.id === to)) return layout;
+  const j = to === 'end' ? layout.length - 1 : layout.findIndex((w) => w.id === to);
+  if (i < 0 || j < 0 || i === j) return layout;
   const rest = layout.filter((w) => w.id !== from);
-  const j = rest.findIndex((w) => w.id === to);
   return [...rest.slice(0, j), layout[i], ...rest.slice(j)];
+}
+
+/**
+ * The side of the drop target the dragged widget lands on (the drop indicator): 'before' when
+ * dragged backwards, 'after' when dragged forwards; null when the drop changes nothing.
+ */
+export function dropSide(layout: Layout, from: WidgetId | null, to: DropTarget | null): 'before' | 'after' | null {
+  if (!from || !to || from === to) return null;
+  const i = layout.findIndex((w) => w.id === from);
+  const j = to === 'end' ? layout.length : layout.findIndex((w) => w.id === to);
+  if (i < 0 || j < 0 || (to === 'end' && i === layout.length - 1)) return null;
+  return j < i ? 'before' : 'after';
 }
 
 export function setSpan(layout: Layout, id: WidgetId, span: Span): Layout {
