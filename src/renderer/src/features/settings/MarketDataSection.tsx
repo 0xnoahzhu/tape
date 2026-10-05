@@ -21,6 +21,7 @@ import {
   checkReasons,
   checkTag,
   depthNote,
+  depthSwitchPatch,
   MARKET_ROWS,
   observeMarkets,
   type CheckReason,
@@ -94,7 +95,7 @@ function checkedTip(item: MarketCheckItem, m: SettingsMessages, clock: Clock): s
 
 function depthNoteText(item: MarketCheckItem | undefined, features: Settings['features'], m: SettingsMessages): string {
   const note = depthNote(item, features);
-  return note.kind === 'partial' ? m.depthNote.partial(note.via) : m.depthNote[note.kind];
+  return note.kind === 'partial' ? m.depthNote.partial(note.depth) : m.depthNote[note.kind];
 }
 
 function reasonText(r: CheckReason, m: SettingsMessages, paper: boolean): { t: string; d: string } {
@@ -253,14 +254,14 @@ export function MarketDataSection() {
           </div>
         )}
       </div>
-      <SubHeader title={m.ftTitle} desc={m.ftDesc} />
+      <SubHeader title={m.depthTitle} desc={m.depthDesc} />
       <div style={{ display: 'flex', flexDirection: 'column', marginTop: -14 }}>
         {/* Setting the switch here is the user's choice: a check no longer turns it on (marketCheck.ts). */}
         <div
           data-md="depth-switch"
           role="switch"
           aria-checked={features.depth}
-          onClick={() => saveSettings({ features: { depth: !features.depth, depthSetByUser: true } })}
+          onClick={() => saveSettings(depthSwitchPatch(!features.depth))}
           style={{ minHeight: 60, display: 'flex', alignItems: 'center', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', cursor: 'pointer' }}
         >
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 0' }}>

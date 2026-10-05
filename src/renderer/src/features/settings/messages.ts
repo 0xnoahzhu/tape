@@ -108,7 +108,7 @@ const en = {
     },
     depthLimit: {
       t: 'No free depth line (309)',
-      d: 'IB allows 3 depth lines per user, and TWS or other API clients use them all. Close a depth window there and check again.',
+      d: 'IB allows 3 depth lines per user by default, and TWS or other API clients use them all. Close a depth window there and check again.',
     },
     noAnswer: { t: 'No answer from IB', d: 'IB did not answer within 8 seconds. Look at the data farms in Settings › Connection and check again.' },
     lines: { t: 'No free market data line', d: 'All of Tape’s market data lines are in use (IB allows 100). Close some watchlists or option chains and check again.' },
@@ -152,17 +152,26 @@ const en = {
   obsDelayed: (n: number) => `${n} delayed`,
   obsError: (code: number | undefined, n: number) => `error ${code ?? '?'}${n > 1 ? ` ×${n}` : ''}`,
   obsDepth: (sym: string, n: number) => `${sym} · ${n} levels`,
-  ftTitle: 'Features',
-  ftDesc:
-    'Market depth shows a 10-level book on the Trade page (Depth tab) and 5 levels a side in the floating order ticket. It holds one of the account’s 3 depth lines, which TWS and IBKR Mobile share.',
-  depthSwitch: 'Market depth (Level 2)',
-  /** The line under the Level 2 switch (logic.ts → depthNote). */
+  depthTitle: 'Market Depth',
+  depthDesc:
+    'Shows a 10-level book on the Trade page (Depth tab) and 5 levels a side in the floating order ticket. While a book is open it uses one of the depth lines IB allows per user (3 by default), shared with TWS and other API clients.',
+  depthSwitch: 'Show Level 2',
+  /** The line under the Level 2 switch (logic.ts → depthNote); `depth`: the exchanges IB sends a book from. */
   depthNote: {
-    partial: (via: string) =>
-      `IB sends this account only the ${via} book${via === 'IEX' ? ' (IEX trades a few percent of US stock volume)' : ''}: it shows part of the orders and can mislead. A full book needs NASDAQ TotalView or NYSE OpenBook.`,
+    partial: (depth: string[]) =>
+      `IB sends this account only ${
+        !depth.length
+          ? 'the books of some exchanges'
+          : `the ${depth.join(', ')} book${depth.length > 1 ? 's' : ''}${depth.length === 1 && depth[0] === 'IEX' ? ' (IEX trades a few percent of US stock volume)' : ''}`
+      }: Level 2 shows only part of the orders and can mislead.`,
+    limit: 'No free depth line: TWS or other API clients use them all.',
+    noSub: 'IB sends no book: Level 2 needs NASDAQ TotalView or NYSE OpenBook, enabled for the API.',
+    noBook: 'IB sent no book in the last check. Level 2 needs NASDAQ TotalView or NYSE OpenBook.',
+    unconfirmed: 'IB sends a book, not yet confirmed as the full book: IB can still report that it comes from some exchanges only.',
     auto: 'Turned on automatically: the market data check found a full book from IB.',
+    autoEarlier: 'Turned on automatically by an earlier market data check.',
     full: 'IB sends this account a full book.',
-    needs: 'Requires NASDAQ TotalView or NYSE OpenBook. Check now tests what IB sends.',
+    notChecked: 'Requires NASDAQ TotalView or NYSE OpenBook. Check now tests what IB sends.',
   },
   fieldsT: 'Quote field sources',
   /** Rows of the quote field table (the close time in the user's clock format). */
@@ -424,7 +433,7 @@ const zh: typeof en = {
       d: '此 IB 用户在其他地方登录了实盘会话（TWS、IBKR Mobile 或 Client Portal），IB 同一时间只向一个会话推送行情。退出那个会话后再检测，Tape 的报价会自动恢复；期间账户、持仓和订单不受影响。',
     },
     depthPerm: { t: '未订阅深度行情', d: '深度行情需要单独订阅，例如 NASDAQ TotalView 或 NYSE OpenBook，并同样为 API 开通。' },
-    depthLimit: { t: '没有空闲的深度线路（309）', d: 'IB 每个用户最多 3 条深度线路，已被 TWS 或其他 API 程序占满。关闭那边的深度窗口后再检测。' },
+    depthLimit: { t: '没有空闲的深度线路（309）', d: 'IB 默认每个用户 3 条深度线路，已被 TWS 或其他 API 程序占满。关闭那边的深度窗口后再检测。' },
     noAnswer: { t: 'IB 没有回应', d: 'IB 在 8 秒内没有回应。请在 设置 › 连接 查看数据农场状态后再检测。' },
     lines: { t: '没有空闲的行情线路', d: 'Tape 的行情线路已全部占用（IB 上限 100 条）。关闭部分自选或期权链后再检测。' },
     noOption: { t: '未检测期权', d: '无法加载 SPY 期权链，未能检测期权。请稍后再检测。' },
@@ -467,15 +476,20 @@ const zh: typeof en = {
   obsDelayed: (n: number) => `延迟 ${n}`,
   obsError: (code: number | undefined, n: number) => `错误 ${code ?? '?'}${n > 1 ? ` ×${n}` : ''}`,
   obsDepth: (sym: string, n: number) => `${sym} · ${n} 档`,
-  ftTitle: '功能',
-  ftDesc: '深度行情在交易页的“盘口”标签显示 10 档，在浮动下单面板显示买卖各 5 档。它会占用账户的 3 条深度线路之一，这些线路与 TWS 和 IBKR Mobile 共用。',
-  depthSwitch: '深度行情（Level 2）',
+  depthTitle: '深度行情',
+  depthDesc: '在交易页的“盘口”标签显示 10 档盘口，在浮动下单面板显示买卖各 5 档。显示盘口时占用 IB 给每个用户的一条深度线路（默认 3 条，与 TWS 和其他 API 程序共用）。',
+  depthSwitch: '显示 Level 2 盘口',
   depthNote: {
-    partial: (via: string) =>
-      `IB 只向此账户提供 ${via} 的盘口${via === 'IEX' ? '（IEX 只占美股成交量的几个百分点）' : ''}，显示的只是部分挂单，容易误导。完整盘口需要 NASDAQ TotalView 或 NYSE OpenBook。`,
+    partial: (depth: string[]) =>
+      `IB 只向此账户提供${depth.length ? ` ${depth.join('、')} ` : '部分交易所'}的盘口${depth.length === 1 && depth[0] === 'IEX' ? '（IEX 只占美股成交量的几个百分点）' : ''}，深度行情显示的只是部分挂单，容易误导。`,
+    limit: '没有空闲的深度线路：已被 TWS 或其他 API 程序占满。',
+    noSub: 'IB 没有提供盘口：深度行情需要 NASDAQ TotalView 或 NYSE OpenBook，并为 API 开通。',
+    noBook: '上次检测 IB 没有发来盘口。深度行情需要 NASDAQ TotalView 或 NYSE OpenBook。',
+    unconfirmed: 'IB 已提供盘口，但尚未确认是完整盘口：IB 仍可能说明它只来自部分交易所。',
     auto: '已自动开启：行情检测发现 IB 提供完整盘口。',
+    autoEarlier: '已由之前的行情检测自动开启。',
     full: 'IB 向此账户提供完整盘口。',
-    needs: '需要 NASDAQ TotalView 或 NYSE OpenBook。点“立即检测”可查看 IB 实际提供的盘口。',
+    notChecked: '需要 NASDAQ TotalView 或 NYSE OpenBook。点“立即检测”可查看 IB 实际提供的盘口。',
   },
   fieldsT: '报价字段来源',
   fields: (c: Clock) => [

@@ -6,6 +6,7 @@ import {
   checkNeeded,
   checkReasons,
   depthNote,
+  depthSwitchPatch,
   STALE_CHECK_MS,
   hasSoundChoice,
   soundCategoryOff,
@@ -287,34 +288,64 @@ describe('market data check', () => {
   });
 
   it('says under the Level 2 switch what the check found and why the switch is on', () => {
-    const depth = (probe: MarketCheckItem['probe'], via?: string): MarketCheckItem => ({
+    const depth = (probe: MarketCheckItem['probe'], extra: Partial<MarketCheckItem> = {}): MarketCheckItem => ({
       market: 'depth',
       status: probe.status,
       instrument: 'SPY',
       probe,
       checkedAt: at,
-      ...(via ? { via } : {}),
+      ...extra,
     });
-    const iex = depth({ status: 'live', exchange: 'SMART', code: 2152, message: 'Exchanges - Depth: IEX; Need additional market data permissions - Depth: NASDAQ; ' }, 'IEX');
+    const partial = (exchanges: string) =>
+      depth({ status: 'live', exchange: 'SMART', code: 2152, message: `Exchanges - Depth: ${exchanges}; Need additional market data permissions - Depth: ARCA; NYSE; ` }, { via: exchanges.replace('; ', ', ') });
     const full = depth({ status: 'live', exchange: 'SMART' });
+    const unconfirmed = depth({ status: 'live', exchange: 'SMART' }, { unconfirmed: true });
+    const nodata = (code: number, own?: MarketCheckItem['probe']['own']) => depth({ status: 'nodata', exchange: 'SMART', code, message: 'x', ...(own ? { own } : {}) });
     const off = { depth: false, depthSetByUser: false };
     const auto = { depth: true, depthSetByUser: false };
     const mine = { depth: true, depthSetByUser: true };
-    // Some exchanges only: said whatever the switch is.
-    for (const f of [off, auto, mine]) expect(depthNote(iex, f)).toEqual({ kind: 'partial', via: 'IEX' });
-    // On without the user: a check turned it on.
+    const mineOff = { depth: false, depthSetByUser: true };
+    // Some exchanges only: said whatever the switch is, with the exchanges IB sends a book from.
+    for (const f of [off, auto, mine]) expect(depthNote(partial('IEX'), f)).toEqual({ kind: 'partial', depth: ['IEX'] });
+    expect(depthNote(partial('IEX; NASDAQ'), mine)).toEqual({ kind: 'partial', depth: ['IEX', 'NASDAQ'] });
+    expect(depthNote(depth({ status: 'live', exchange: 'SMART', code: 2152, message: 'unexpected' }), mine)).toEqual({ kind: 'partial', depth: [] });
+    // No book: what is in the way, whatever the switch is (a check's earlier auto-on is not cited).
+    for (const f of [off, auto, mine]) {
+      expect(depthNote(nodata(309), f)).toEqual({ kind: 'limit' });
+      expect(depthNote(nodata(354), f)).toEqual({ kind: 'noSub' });
+      expect(depthNote(nodata(10092), f)).toEqual({ kind: 'noSub' });
+      expect(depthNote(nodata(-1, 'timeout'), f)).toEqual({ kind: 'noBook' });
+      expect(depthNote(nodata(10197), f)).toEqual({ kind: 'noBook' });
+    }
+    // A book IB may still limit (2152): not called full, nor the reason the switch is on.
+    for (const f of [off, auto, mine]) expect(depthNote(unconfirmed, f)).toEqual({ kind: 'unconfirmed' });
+    expect(depthNote(depth({ status: 'live', exchange: 'SMART', code: 2119, message: 'x' }), mine)).toEqual({ kind: 'unconfirmed' });
+    // A confirmed full book: the reason the switch is on, else just what IB sends.
     expect(depthNote(full, auto)).toEqual({ kind: 'auto' });
-    expect(depthNote(undefined, auto)).toEqual({ kind: 'auto' });
     expect(depthNote(full, mine)).toEqual({ kind: 'full' });
-    expect(depthNote(full, { depth: false, depthSetByUser: true })).toEqual({ kind: 'full' });
-    // Not checked, no data, or a 2152 Tape cannot read: what Level 2 needs.
-    expect(depthNote(undefined, off)).toEqual({ kind: 'needs' });
-    expect(depthNote(depth({ status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }), off)).toEqual({ kind: 'needs' });
-    expect(depthNote(depth({ status: 'live', exchange: 'SMART', code: 2152, message: 'unexpected' }), mine)).toEqual({ kind: 'needs' });
-    // The share of US volume is only named for IEX.
+    expect(depthNote(full, mineOff)).toEqual({ kind: 'full' });
+    // No Level 2 answer for this account.
+    expect(depthNote(undefined, auto)).toEqual({ kind: 'autoEarlier' });
+    for (const f of [off, mine, mineOff]) expect(depthNote(undefined, f)).toEqual({ kind: 'notChecked' });
+    // The copy: plural books, per-language lists, the share of US volume only for IEX alone, no subscription advice.
     const en = useSettingsMessages.for('en');
-    expect(en.depthNote.partial('IEX')).toMatch(/only the IEX book \(IEX trades a few percent of US stock volume\)/);
-    expect(en.depthNote.partial('NASDAQ')).not.toMatch(/percent/);
+    const zh = useSettingsMessages.for('zh');
+    expect(en.depthNote.partial(['IEX'])).toBe(
+      'IB sends this account only the IEX book (IEX trades a few percent of US stock volume): Level 2 shows only part of the orders and can mislead.',
+    );
+    expect(en.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^IB sends this account only the IEX, NASDAQ books: /);
+    expect(en.depthNote.partial([])).toMatch(/^IB sends this account only the books of some exchanges: /);
+    expect(zh.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^IB 只向此账户提供 IEX、NASDAQ 的盘口，/);
+    expect(zh.depthNote.partial(['IEX'])).toContain('几个百分点');
+    for (const m of [en, zh]) {
+      expect(m.depthNote.partial(['IEX', 'NASDAQ'])).not.toMatch(/percent|百分点|TotalView|OpenBook/);
+      expect(m.depthNote.partial(['IEX'])).not.toMatch(/TotalView|OpenBook/);
+    }
+  });
+
+  it('records the Level 2 switch set in Settings as the user’s choice', () => {
+    expect(depthSwitchPatch(true)).toEqual({ features: { depth: true, depthSetByUser: true } });
+    expect(depthSwitchPatch(false)).toEqual({ features: { depth: false, depthSetByUser: true } });
   });
 
   it('says how long ago a check ran', () => {

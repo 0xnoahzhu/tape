@@ -2,7 +2,7 @@
 // market data observation, API log filtering/formatting and shortcut labels.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
-import { depthPermissions, isFullBook } from '@shared/depthPermissions';
+import { DEPTH_PARTIAL, depthPermissions, isFullBook } from '@shared/depthPermissions';
 import { DASH, hmsMs } from '@shared/format';
 import { CATEGORY_KINDS, NO_SOUND, PLATFORM_SOUNDS, soundPlatform, type SoundCategory } from '@shared/notificationSounds';
 import type {
@@ -341,6 +341,8 @@ export type CheckReason =
 /** IB's answers that mean the account has no live entitlement for the API. */
 const NOT_SUBSCRIBED = new Set([354, 10089, 10090, 10091, 10167, 10168, 10186]);
 const COMPETING = 10197;
+/** No free depth line ("Max number (3) of market depth requests has been reached"). */
+const DEPTH_LIMIT = 309;
 
 function probesOf(item: MarketCheckItem): MarketCheckProbe[] {
   return item.primary ? [item.probe, item.primary] : [item.probe];
@@ -379,7 +381,7 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
     const p = item.probe;
     if (item.market === 'depth') {
       if (item.via) partial = depthPermissions(p.message);
-      if (p.code === 309) has.add('depthLimit');
+      if (p.code === DEPTH_LIMIT) has.add('depthLimit');
       else if (item.status === 'nodata' && p.code !== undefined && p.code !== COMPETING && !p.own) has.add('depthPerm');
       continue;
     }
@@ -409,16 +411,35 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
 }
 
 /**
- * The line under the Level 2 switch: IB sends the book of some exchanges only (2152); the switch is
- * on without the user having set it (a check found a full book, main/market/marketCheck.ts); a full
- * book; else (not checked, no data) what Level 2 needs.
+ * The line under the Level 2 switch, from this account's Level 2 answer (`item`) and the switch:
+ * - partial: IB sends the book of these exchanges only (2152; none listed when Tape cannot read it);
+ * - limit: no free depth line (309);
+ * - noSub: IB sends no book (a subscription answer: 354, 10092, …);
+ * - noBook: no book otherwise (no answer in time, the session closed, a competing session);
+ * - unconfirmed: a book, but IB may still send a 2152 (main/market/marketCheck.ts watches for one);
+ * - auto: switched on by a check that found a full book; autoEarlier: by an earlier one (no answer now);
+ * - full: a full book; notChecked: Level 2 not checked for this account.
  */
-export type DepthNote = { kind: 'partial'; via: string } | { kind: 'auto' } | { kind: 'full' } | { kind: 'needs' };
+export type DepthNote =
+  | { kind: 'partial'; depth: string[] }
+  | { kind: 'limit' | 'noSub' | 'noBook' | 'unconfirmed' | 'auto' | 'autoEarlier' | 'full' | 'notChecked' };
 
 export function depthNote(item: MarketCheckItem | undefined, features: Settings['features']): DepthNote {
-  if (item?.via) return { kind: 'partial', via: item.via };
-  if (features.depth && !features.depthSetByUser) return { kind: 'auto' };
-  return item && isFullBook(item.probe) ? { kind: 'full' } : { kind: 'needs' };
+  const auto = features.depth && !features.depthSetByUser;
+  if (!item) return { kind: auto ? 'autoEarlier' : 'notChecked' };
+  const p = item.probe;
+  if (p.status === 'live' && p.code === DEPTH_PARTIAL) return { kind: 'partial', depth: depthPermissions(p.message)?.depth ?? [] };
+  if (p.status !== 'live') {
+    if (p.code === DEPTH_LIMIT) return { kind: 'limit' };
+    return { kind: p.code !== undefined && p.code !== COMPETING && !p.own ? 'noSub' : 'noBook' };
+  }
+  if (item.unconfirmed || !isFullBook(p)) return { kind: 'unconfirmed' };
+  return { kind: auto ? 'auto' : 'full' };
+}
+
+/** Settings' patch for the Level 2 switch: the user's choice, which a market data check then leaves alone. */
+export function depthSwitchPatch(on: boolean): { features: Settings['features'] } {
+  return { features: { depth: on, depthSetByUser: true } };
 }
 
 /** How long ago a check ran, for "checked 2 min ago" (null: show the date and time instead). */
