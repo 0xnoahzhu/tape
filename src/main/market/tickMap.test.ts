@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Quote } from '@shared/types';
-import { applyTick, lastOrMid, midPrice, TICK } from './tickMap';
+import { applyTick, lastOrMid, midPrice, parseDividends, TICK } from './tickMap';
 
 const stock = { isOption: false };
 const opt = { isOption: true };
@@ -141,6 +141,30 @@ describe('applyTick generic and string', () => {
     // Unreported trade: no price, volume still updates.
     applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: ';0;1759500123999;48123999;227.1;false' }, stock);
     expect(q).toMatchObject({ last: 227.48, volume: 48_123_999 });
+  });
+
+  it('parses IB dividends (tick 59) as seen on the paper account', () => {
+    expect(parseDividends('3.64,3.92,20261119,0.98')).toEqual({ past12m: 3.64, next12m: 3.92, nextDate: '20261119', nextAmount: 0.98 });
+    expect(parseDividends('0.52,1.00,20261203,0.25')).toEqual({ past12m: 0.52, next12m: 1, nextDate: '20261203', nextAmount: 0.25 });
+    // TSLA: no dividend at all.
+    expect(parseDividends(',,,')).toEqual({});
+    expect(parseDividends('1.2,1.3,,')).toEqual({ past12m: 1.2, next12m: 1.3 });
+    expect(parseDividends('')).toBeUndefined();
+    expect(parseDividends('garbage')).toBeUndefined();
+    expect(parseDividends('x,y,2026-11-19,z')).toEqual({});
+  });
+
+  it('keeps the dividends object until a value changes', () => {
+    const q = q0();
+    expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: '3.64,3.92,20261119,0.98' }, stock)).toBe(true);
+    const first = q.dividends;
+    expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: '3.64,3.92,20261119,0.98' }, stock)).toBe(false);
+    expect(q.dividends).toBe(first);
+    expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: '3.64,3.92,20270219,0.98' }, stock)).toBe(true);
+    expect(q.dividends?.nextDate).toBe('20270219');
+    expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: 'bad' }, stock)).toBe(false);
+    expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: ',,,' }, stock)).toBe(true);
+    expect(q.dividends).toEqual({});
   });
 });
 

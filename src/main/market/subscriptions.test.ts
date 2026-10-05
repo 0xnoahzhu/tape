@@ -11,6 +11,13 @@ describe('genericTicksFor', () => {
     expect(genericTicksFor(index('SPX', 'CBOE'), ['underlying'])).toBe('100,101,104,106,165');
   });
 
+  it('adds IB dividends (456) to stocks only', () => {
+    expect(genericTicksFor(stock('AAPL'), ['dividends'])).toBe('318,456');
+    expect(genericTicksFor(stock('AAPL'), ['underlying', 'dividends'])).toBe('100,101,104,106,165,318,456');
+    expect(genericTicksFor(index('SPX', 'CBOE'), ['dividends'])).toBe('');
+    expect(genericTicksFor(option('AAPL', '20261016', 230, 'C'), ['option', 'dividends'])).toBe('100,101,106,221');
+  });
+
   it('unions the ticks of several profiles', () => {
     expect(genericTicksFor(stock('AAPL'), ['basic', 'underlying'])).toBe('100,101,104,106,165,318');
   });

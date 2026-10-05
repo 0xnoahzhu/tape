@@ -14,6 +14,7 @@ import type {
   DepthLevel,
   OptionChainParams,
   Quote,
+  QuoteDividends,
   QuoteProfile,
   SecType,
   SymbolMatch,
@@ -257,6 +258,8 @@ export interface DemoBook {
 
 export class DemoMarket {
   private readonly instruments = new Map<string, Instrument>();
+  /** One object per symbol, so a republished quote does not resend an unchanged summary. */
+  private readonly dividendCache = new Map<string, QuoteDividends>();
 
   constructor(private readonly clock: () => number = Date.now) {}
 
@@ -379,7 +382,28 @@ export class DemoMarket {
       });
       if (c.secType !== 'IND') q.avgVolume = inst.avgVolume;
     }
+    if (profiles.includes('dividends') && c.secType === 'STK') q.dividends = this.dividends(c.symbol);
     return q;
+  }
+
+  /**
+   * IB-style dividend summary (tick 59): about two thirds of the symbols pay quarterly, with an
+   * ex-date 5 to 80 days ahead; the others report none (an empty summary, like IB's ",,,").
+   */
+  dividends(symbol: string): QuoteDividends {
+    const sym = symbol.toUpperCase();
+    const cached = this.dividendCache.get(sym);
+    if (cached) return cached;
+    const r = new Rng(hashString(sym + ':div'));
+    let out: QuoteDividends = {};
+    if (r.next() < 0.67) {
+      const price = this.instrument(sym).anchor;
+      const quarterly = round(price * (0.001 + 0.006 * r.next()), 2) || 0.01;
+      const day = addDays(nyDay(this.clock()), 5 + Math.floor(r.next() * 76));
+      out = { past12m: round(quarterly * 3.9, 2), next12m: round(quarterly * 4, 2), nextDate: yyyymmdd(day), nextAmount: quarterly };
+    }
+    this.dividendCache.set(sym, out);
+    return out;
   }
 
   private optionModel(c: ContractRef, underlyingPrice?: number, extraDays = 0) {

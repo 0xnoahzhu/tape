@@ -1,7 +1,7 @@
 // Maps IB market data callbacks (tickPrice, tickSize, tickGeneric, tickString,
 // tickOptionComputation) onto Tape's Quote. Pure and unit-tested.
 
-import type { Quote } from '@shared/types';
+import type { Quote, QuoteDividends } from '@shared/types';
 
 /** IB tick type ids (see TickType in ib/tws) used by the mapping. */
 export const TICK = {
@@ -31,6 +31,7 @@ export const TICK = {
   RT_VOLUME: 48,
   HALTED: 49,
   LAST_RTH_TRADE: 57,
+  IB_DIVIDENDS: 59,
   DELAYED_BID: 66,
   DELAYED_ASK: 67,
   DELAYED_LAST: 68,
@@ -184,6 +185,33 @@ function applyGeneric(q: Quote, field: number, value: number | undefined): boole
   }
 }
 
+/**
+ * IB's dividend summary (tick 59): "past12m,next12m,nextDate,nextAmount", e.g.
+ * "3.64,3.92,20261119,0.98". IB sends ",,," for an instrument without dividends, which becomes
+ * an empty object (known: none); a value that is not four fields is ignored (undefined).
+ */
+export function parseDividends(value: string | undefined): QuoteDividends | undefined {
+  const parts = (value ?? '').split(',');
+  if (parts.length !== 4) return undefined;
+  const amount = (s: string) => {
+    const n = Number(s.trim());
+    return s.trim() !== '' && finite(n) && n >= 0 ? n : undefined;
+  };
+  const date = parts[2].trim();
+  const out: QuoteDividends = {};
+  const past12m = amount(parts[0]);
+  const next12m = amount(parts[1]);
+  const nextAmount = amount(parts[3]);
+  if (past12m !== undefined) out.past12m = past12m;
+  if (next12m !== undefined) out.next12m = next12m;
+  if (/^\d{8}$/.test(date)) out.nextDate = date;
+  if (nextAmount !== undefined) out.nextAmount = nextAmount;
+  return out;
+}
+
+const sameDividends = (a: QuoteDividends | undefined, b: QuoteDividends | undefined): boolean =>
+  a === b || (!!a && !!b && a.past12m === b.past12m && a.next12m === b.next12m && a.nextDate === b.nextDate && a.nextAmount === b.nextAmount);
+
 function applyString(q: Quote, field: number, value: string | undefined): boolean {
   switch (field) {
     case TICK.LAST_TIMESTAMP:
@@ -206,6 +234,11 @@ function applyString(q: Quote, field: number, value: string | undefined): boolea
       const v = Number(total);
       if (total && finite(v) && v >= 0) changed = set(q, 'volume', v) || changed;
       return changed;
+    }
+    case TICK.IB_DIVIDENDS: {
+      // A new object only when a value changed: the renderer patch compares fields by reference.
+      const d = parseDividends(value);
+      return d !== undefined && !sameDividends(q.dividends, d) ? set(q, 'dividends', d) : false;
     }
     default:
       return false;

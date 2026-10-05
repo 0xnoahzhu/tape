@@ -53,11 +53,14 @@ export function ownerPriority(owner: string): number {
  * - options: option volume / open interest, implied volatility and the mark price (221 -> tick
  *   37; model greeks always arrive)
  * - indices: no generic ticks for plain quotes; the underlying profile adds the option statistics
+ * - dividends (stocks only): basic + 456, IB's dividend summary (tick 59). IB sends it on live
+ *   lines only (a delayed line gets none); other instruments get their basic ticks
  */
 function ticksFor(secType: SecType, profile: QuoteProfile): number[] {
   switch (secType) {
     case 'STK':
-      return profile === 'underlying' ? [100, 101, 104, 106, 165, 318] : [318];
+      if (profile === 'underlying') return [100, 101, 104, 106, 165, 318];
+      return profile === 'dividends' ? [318, 456] : [318];
     case 'OPT':
     case 'FOP':
       return [100, 101, 106, 221];

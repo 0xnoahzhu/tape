@@ -24,6 +24,23 @@ describe('demo quotes', () => {
     expect(spx.volume).toBeUndefined();
   });
 
+  it('adds an IB-style dividend summary to stocks for the dividends profile', () => {
+    const m = new DemoMarket(() => OPEN);
+    expect(m.quote(stock('AAPL'), ['basic'])!.dividends).toBeUndefined();
+    expect(m.quote(index('SPX', 'CBOE'), ['dividends'])!.dividends).toBeUndefined();
+    const syms = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'META', 'KO', 'JPM', 'XOM', 'AMZN', 'GOOGL'];
+    const all = syms.map((s) => m.quote(stock(s), ['dividends'])!.dividends!);
+    // The same object every time, so republished quotes do not resend it.
+    expect(m.quote(stock('AAPL'), ['dividends'])!.dividends).toBe(all[0]);
+    const paying = all.filter((d) => d.nextDate);
+    expect(paying.length).toBeGreaterThan(0);
+    expect(all.some((d) => Object.keys(d).length === 0)).toBe(true);
+    for (const d of paying) {
+      expect(d.nextDate! > '20261006').toBe(true);
+      expect(d.nextAmount).toBeGreaterThan(0);
+    }
+  });
+
   it('adds underlying statistics only for that profile', () => {
     const m = new DemoMarket(() => OPEN);
     expect(m.quote(stock('NVDA'), ['basic'])!.impliedVol).toBeUndefined();

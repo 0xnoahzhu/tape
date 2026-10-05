@@ -74,8 +74,9 @@ export type MarketDataType = 1 | 2 | 3 | 4; // live, frozen, delayed, delayed-fr
  * - basic:      quotes for watchlists, positions, ticket (318 = last RTH trade on stocks)
  * - underlying: basic + option volume/OI, historical and implied volatility, 52w stats
  * - option:     option contract quotes with model greeks, volume and open interest
+ * - dividends:  basic + IB's dividend summary (generic tick 456, stocks only; live data only)
  */
-export type QuoteProfile = 'basic' | 'underlying' | 'option';
+export type QuoteProfile = 'basic' | 'underlying' | 'option' | 'dividends';
 
 export interface QuoteSubscription {
   contract: ContractRef;
@@ -122,6 +123,11 @@ export interface Quote {
   putVolume?: number; // tick 30
   callOpenInterest?: number; // tick 27
   putOpenInterest?: number; // tick 28
+  /**
+   * IB's dividend summary (profile 'dividends', tick 59). An empty object: IB reports no
+   * dividend for the instrument. Absent: not asked, or not sent (delayed lines carry none).
+   */
+  dividends?: QuoteDividends;
   marketDataType?: MarketDataType;
   /**
    * Last error for this subscription (e.g. 10197 competing live session, 354 not subscribed).
@@ -130,6 +136,18 @@ export interface Quote {
    */
   error?: { code: number; message: string; final?: boolean };
   updatedAt: number;
+}
+
+/** IB's dividend summary of an instrument (generic tick 456 → tick 59 "IB Dividends"). */
+export interface QuoteDividends {
+  /** Dividends paid over the past 12 months, per share. */
+  past12m?: number;
+  /** Dividends expected over the next 12 months, per share. */
+  next12m?: number;
+  /** Next ex-dividend date, YYYYMMDD. */
+  nextDate?: string;
+  /** Next dividend amount, per share. */
+  nextAmount?: number;
 }
 
 /**
