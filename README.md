@@ -96,6 +96,8 @@ on NASDAQ). Tape then quotes that stock from its primary exchange, marked "Live 
 the watchlist and in the order ticket: the bid, ask and last on that exchange, not the national best bid
 and offer. It tries SMART again every 10 minutes, after a reconnect and when a competing session ends, and
 goes back to the consolidated quote as soon as SMART is live (or when the exchange turns delayed too).
+Settings › Market data lists the stocks quoted this way during the session, also after you have left their
+page.
 
 ## Requirements
 

@@ -390,19 +390,16 @@ includes 456 too, so the stock tick lists nest (basic ⊂ dividends ⊂ underlyi
 open for a stock is requested again once with the wider tick list and then kept when a page with a
 narrower profile takes over (options view ↔ dashboard).
 
-### Corporate events
-
-`getEarnings(underlyings)` (`market/corporateEvents.ts`) asks Wall Street Horizon for the
-holdings' earnings from today to 90 days ahead: `reqWshMetaData` once per connection (IB wants it
-first), then one `reqWshEventData` per conId, one at a time, cached per conId for the New York
-day. Option-only underlyings are resolved to their conId first. The answer has a status: `ok`,
-`unsubscribed` (IB refused with 10276 "News feed is not allowed" or 10277: the account has no WSH
-subscription, as on the paper account; remembered until the next handshake, so IB is not asked
-again) or `unavailable` (not connected, a timeout or another error). IB documents the event JSON
-only by example and the paper account cannot receive any, so `parseWshEarnings` reads it
-defensively (an array, `{ events }` or arrays keyed by event type; earnings types `wshe_ed` /
-`earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an answer it cannot read is
-logged once. Dividends do not come from WSH but from the dividend tick above. The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3).
+The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3 per
+account, TWS and other clients included); the market data check may hold one more for a few seconds
+(`DepthService.openLine` / `closeLine`). IB can take 10 s and more to start a depth stream (SPY SMART
+depth, seen live: first updates after 6–13 s), and a `cancelMktDepth` that arrives before the stream
+has started is ignored: the stream starts anyway, a later cancel answers 310, and the line streams
+unheard and holds one of the account's 3 until the session ends. So `depth.ts` cancels a line only once
+it has answered (a book update or a 317 reset): a line released before that is cancelled on its first
+update, dropped on an error that ended it, and cancelled anyway 60 s after the request
+(`CANCEL_CAP_MS`). A 309 for the view while another line of this client is open or being cancelled, or
+right after a cancel, is retried once, when those lines are gone.
 
 Main-process owners in `subscriptions.ts → QUIET_OWNERS` (the market data check, `md-check`) get lines
 like any other owner, but a contract only they want is never sent to the renderer. `probe()` opens a line
@@ -437,6 +434,12 @@ A 10197 episode starts only on an owner line (a side line's 10197 is a failed pr
 (not delayed) price on a line that reported it, at most once a minute (`COMPETING_END_MIN_MS`), so a
 competing session never makes delayed stocks open side line after side line.
 
+Two things outlive a contract's route, which goes with its line (a stock left for 30 s): the give-up
+times (a stock wanted again within its 30 min does not probe its exchange again; they end with a new
+session) and the fallback's findings (`QuoteService.fallbacks()`: stocks found SMART delayed and live on
+their exchange, kept across reconnects, cleared when the account changes; an entry goes when SMART
+answers live or the exchange delayed). The market data check reports the findings.
+
 The primary exchange comes from contract details (`primaryExch`); IB serves market data directly on the
 codes it reports (checked live: NASDAQ for AAPL, NYSE for IBM, ARCA for SPY, AMEX for IMO, BATS for CBOE;
 `US_PRIMARY_EXCHANGES`). The side line has the line's generic ticks; its ticks are held until it wins and
@@ -455,10 +458,10 @@ seconds:
 
 | Market | Lines | Result |
 | --- | --- | --- |
-| US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the quotes the fallback serves from their exchange at the time |
+| US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the stocks the fallback found SMART delayed and live on their exchange this session (`fallbacks()`, also when their line has gone) |
 | US options | an option line a view already holds with an answer, else the SPY call of the first expiration after today with the whole strike nearest SPY's price (chain → contract details) | its status |
 | Indices | SPX on CBOE via the owner | its status |
-| Level 2 | only on *Check now*: the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one `reqMktDepth` (SPY, SMART depth, 5 rows), cancelled at once; this client never holds two depth lines | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354 no data |
+| Level 2 | only on *Check now*: the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one depth line of its own (SPY, SMART depth, 5 rows, `DepthService.openLine`), released when it answers | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354, or no update within 20 s (`DEPTH_TIMEOUT_MS`), no data |
 
 Contracts another owner holds, or whose line lingers, answer at once from their quote (their type or
 error; nothing is requested). Otherwise a line's answer is its `marketDataType` (1 live, 2 frozen, 3 / 4
@@ -469,9 +472,12 @@ outcomes carry code −1 and `own`: `timeout`, `lines` (no free line), `closed`,
 found). A session that closes midway fails the check and keeps the previous result.
 
 IB may send the 2152 of a depth request seconds after the first book update (seen live: 12 s after the
-request, after the cancel). The depth line's errors are therefore watched for 15 s from the request
-(`DEPTH_NOTICE_MS`): a late 2152 patches the stored result (persisted and pushed again). Until then the
-account's previous 2152 stands; when none comes it is dropped.
+request, after the cancel). The depth line is therefore watched on: for a 2152 15 s from the request and
+at least 10 s from the first update (`DEPTH_NOTICE_MS`, `DEPTH_LATE_NOTICE_MS`), and after a timeout for
+a first update or an error until the depth service's cancel cap. Each later answer patches the stored
+result (persisted and pushed again). Until then the account's previous 2152 stands; when none comes it
+is dropped. The check's own depth line is released when it answers; the depth service cancels it once
+IB has started it (see Quote subscriptions), so a slow start never leaves it streaming.
 
 The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
 messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
@@ -493,6 +499,20 @@ SPY was delayed on SMART), a missing or partial depth subscription (2152 lists t
 depth line (309), no answer, no free line, no option found. Opening the section checks again when the
 result is older than 5 minutes or belongs to another account; *Check now* includes Level 2. While not
 connected the last result stays, muted, with "not connected".
+
+### Corporate events
+
+`getEarnings(underlyings)` (`market/corporateEvents.ts`) asks Wall Street Horizon for the
+holdings' earnings from today to 90 days ahead: `reqWshMetaData` once per connection (IB wants it
+first), then one `reqWshEventData` per conId, one at a time, cached per conId for the New York
+day. Option-only underlyings are resolved to their conId first. The answer has a status: `ok`,
+`unsubscribed` (IB refused with 10276 "News feed is not allowed" or 10277: the account has no WSH
+subscription, as on the paper account; remembered until the next handshake, so IB is not asked
+again) or `unavailable` (not connected, a timeout or another error). IB documents the event JSON
+only by example and the paper account cannot receive any, so `parseWshEarnings` reads it
+defensively (an array, `{ events }` or arrays keyed by event type; earnings types `wshe_ed` /
+`earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an answer it cannot read is
+logged once. Dividends do not come from WSH but from the dividend tick above.
 
 ### API log
 
