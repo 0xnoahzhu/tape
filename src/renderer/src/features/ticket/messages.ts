@@ -331,6 +331,9 @@ export const useTicketM = createMessages({
     modify: (id: number) => `Modify #${id}`,
     cancelModify: 'Cancel modify',
     noMarketData: (code: number) => `No market data (${code})`,
+    /** Bid / ask from the stock's primary exchange (SMART is delayed for it): "Live · NASDAQ: …". */
+    quoteVia: (x: string, type: number | undefined) =>
+      `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}: ${x}’s own bid/ask, not the consolidated quote (NBBO)`,
     extras: {
       bracket: ' · with bracket',
       conditional: ' · conditional',
@@ -677,6 +680,8 @@ export const useTicketM = createMessages({
     modify: (id: number) => `改单 #${id}`,
     cancelModify: '取消改单',
     noMarketData: (code: number) => `无行情数据（${code}）`,
+    quoteVia: (x: string, type: number | undefined) =>
+      `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}：${x} 自己的买卖价，不是全市场合并报价（NBBO）`,
     extras: {
       bracket: ' · 附止盈止损',
       conditional: ' · 条件单',

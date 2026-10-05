@@ -317,14 +317,19 @@ const WatchRow = memo(function WatchRow({
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <div style={{ fontWeight: 600 }}>{contractLabel(item.contract)}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, flexShrink: 0 }}>{contractLabel(item.contract)}</div>
           {/* Non-USD listings look like the US one otherwise ("IBM" on IBIS is quoted in EUR). */}
           {currency && currency !== 'USD' && <div style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>{currency}</div>}
-          {/* Served by its primary exchange because SMART is delayed for this account. */}
+          {/* Served by its primary exchange because SMART is delayed for this stock: "Live · NASDAQ". */}
           {q?.source && (
-            <div data-wl="via" title={m.viaTip(q.source.exchange)} style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>
-              {q.source.exchange}
+            <div
+              data-wl="via"
+              className="ellipsis"
+              title={m.viaTip(q.source.exchange, contractLabel(item.contract))}
+              style={{ fontSize: 11, lineHeight: 1, color: 'var(--dm)', minWidth: 0 }}
+            >
+              {m.via(q.source.exchange, q.marketDataType)}
             </div>
           )}
         </div>
@@ -334,7 +339,7 @@ const WatchRow = memo(function WatchRow({
       </div>
       <div
         className="num"
-        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange) : undefined}
+        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange, contractLabel(item.contract)) : undefined}
         style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', flexShrink: 0, paddingLeft: 8 }}
       >
         <div>{px(last)}</div>

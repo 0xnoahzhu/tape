@@ -70,10 +70,10 @@ export const useChartMessages = createMessages({
     refs: { close: 'Close', prev: 'Prev close', ext: 'After-hours last' } as Record<RefKind, string>,
     et: (t: string) => `${t} ET`,
     dataType: { 2: 'Frozen', 3: 'Delayed', 4: 'Delayed frozen' } as Record<number, string>,
-    /** The quote comes from the primary exchange (SMART is delayed for this account). */
-    via: (x: string, frozen: boolean) => `${frozen ? 'Frozen' : 'Live'} · ${x}`,
-    viaTip: (x: string) =>
-      `${x}'s own best bid and ask, not the consolidated quote: IB sends this account SMART (consolidated) data delayed but ${x}'s live. Tape tries SMART again every 10 minutes.`,
+    /** The quote comes from the primary exchange (SMART is delayed for this stock): "Live · NASDAQ". */
+    via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}`,
+    viaTip: (x: string, symbol: string) =>
+      `${x}’s own quotes and trades (bid/ask and last), not the consolidated quote. For this account IB sends ${symbol}’s SMART data delayed and ${x}’s live. Tape tries SMART again every 10 minutes.`,
     open: 'O',
     high: 'H',
     low: 'L',
@@ -158,8 +158,9 @@ export const useChartMessages = createMessages({
     refs: { close: '收盘', prev: '昨收', ext: '盘后最新' } as Record<RefKind, string>,
     et: (t: string) => `美东 ${t}`,
     dataType: { 2: '冻结', 3: '延迟', 4: '延迟冻结' } as Record<number, string>,
-    via: (x: string, frozen: boolean) => `${frozen ? '冻结' : '实时'} · ${x}`,
-    viaTip: (x: string) => `${x} 自己的最优买卖价，不是全市场合并报价：IB 向本账户推送的 SMART（合并）行情是延迟的，而 ${x} 的是实时的。Tape 每 10 分钟重新尝试 SMART。`,
+    via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}`,
+    viaTip: (x: string, symbol: string) =>
+      `${x} 自己的报价和成交（买卖价、最新价），不是全市场合并行情：IB 向本账户推送的 ${symbol} SMART 行情是延迟的，${x} 的是实时的。Tape 每 10 分钟重新尝试 SMART。`,
     open: '开',
     high: '高',
     low: '低',

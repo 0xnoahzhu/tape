@@ -155,6 +155,8 @@ export function NotTradableNote({ T }: { T: TicketCtl }) {
  */
 export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketScale; onPick?: (which: 'bid' | 'ask') => void; title?: (which: 'bid' | 'ask') => string | undefined }) {
   const { m, q, market, minTick, buy, sideLock } = T;
+  const via = q?.source?.kind === 'primary' ? m.quoteVia(q.source.exchange, q.marketDataType) : undefined;
+  const tip = (which: 'bid' | 'ask') => (title ? title(which) : sideLock && (which === 'bid') === buy ? sideLock : via);
   const pick = (which: 'bid' | 'ask') => (onPick ? () => onPick(which) : sideLock ? undefined : () => T.setSide(which === 'bid' ? 'SELL' : 'BUY'));
   const box = (which: 'bid' | 'ask'): CSSProperties => ({
     padding: S.quotePad,
@@ -168,7 +170,7 @@ export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketSca
   });
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontVariantNumeric: 'tabular-nums', ...lockStyle(T) }}>
-      <div onClick={pick('bid')} title={title ? title('bid') : sideLock && buy ? sideLock : undefined} style={box('bid')}>
+      <div onClick={pick('bid')} title={tip('bid')} style={box('bid')}>
         <div style={S.label}>
           {m.bid} × {sizeText(q?.bidSize)}
         </div>
@@ -176,7 +178,7 @@ export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketSca
           {priceText(market.bid, minTick)}
         </div>
       </div>
-      <div onClick={pick('ask')} title={title ? title('ask') : sideLock && !buy ? sideLock : undefined} style={box('ask')}>
+      <div onClick={pick('ask')} title={tip('ask')} style={box('ask')}>
         <div style={S.label}>
           {m.ask} × {sizeText(q?.askSize)}
         </div>
@@ -188,10 +190,21 @@ export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketSca
   );
 }
 
-/** "No market data (354) · …" under the quote boxes. */
+/**
+ * "No market data (354) · …" under the quote boxes; otherwise, for a quote served by the stock's
+ * primary exchange, "Live · NASDAQ: NASDAQ's own bid/ask, not the consolidated quote (NBBO)".
+ */
 export function MarketIssue({ T }: { T: TicketCtl }) {
-  const { showIssue, issue, m } = T;
-  if (!showIssue || !issue) return null;
+  const { showIssue, issue, m, q } = T;
+  if (!showIssue || !issue) {
+    if (q?.source?.kind !== 'primary') return null;
+    const text = m.quoteVia(q.source.exchange, q.marketDataType);
+    return (
+      <div data-ticket="quote-via" className="ellipsis" title={text} style={{ fontSize: 11, color: 'var(--dm)', marginTop: -8 }}>
+        {text}
+      </div>
+    );
+  }
   return (
     <div className="ellipsis" title={issue.message} style={{ fontSize: 11, color: 'var(--dm)', marginTop: -8 }}>
       {m.noMarketData(issue.code)} · {issue.message}

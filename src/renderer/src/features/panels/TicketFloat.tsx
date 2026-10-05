@@ -202,7 +202,11 @@ function MarketColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
   return (
     <>
       <NotTradableNote T={T} />
-      <QuoteBoxes T={T} S={S} onPick={pick} title={(w) => pm.fillFromQuote(w === 'bid' ? pm.quickBid : pm.quickAsk)} />
+      <QuoteBoxes T={T} S={S} onPick={pick} title={(w) =>
+          [pm.fillFromQuote(w === 'bid' ? pm.quickBid : pm.quickAsk), T.q?.source?.kind === 'primary' ? T.m.quoteVia(T.q.source.exchange, T.q.marketDataType) : '']
+            .filter(Boolean)
+            .join('\n')
+        } />
       <MarketIssue T={T} />
       <DepthBlock T={T} />
       <PositionBlock T={T} m={pm} />

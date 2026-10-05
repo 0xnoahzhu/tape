@@ -259,7 +259,7 @@ export function ChartView() {
               : m.noQuote;
   const via = quote?.source?.kind === 'primary' ? quote.source.exchange : undefined;
   const dataType = via
-    ? m.via(via, quote?.marketDataType === 2)
+    ? m.via(via, quote?.marketDataType)
     : quote?.marketDataType && quote.marketDataType !== 1
       ? m.dataType[quote.marketDataType]
       : undefined;
@@ -362,7 +362,7 @@ export function ChartView() {
         {dataType && (
           <div
             data-chart="data-type"
-            title={via ? m.viaTip(via) : undefined}
+            title={via ? m.viaTip(via, contractLabel(symbol)) : undefined}
             style={{ padding: '3px 6px', font: '600 11px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}
           >
             {dataType}
