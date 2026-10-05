@@ -360,7 +360,7 @@ export interface AllocSlice {
   value: number;
   /** Signed share of net liquidation in percent; undefined without net liquidation. */
   pctOfNetLiq?: number;
-  /** Arc length in percent of the circle. */
+  /** Arc length in percent of the circle (positive slices only; 0 for a short sector or a margin loan). */
   len: number;
   /** stroke-dashoffset (negative cumulative length). */
   offset: number;
@@ -369,7 +369,8 @@ export interface AllocSlice {
 
 /**
  * Donut slices: sectors by absolute market value (shades of the accent with decreasing opacity),
- * then cash. Sectors beyond `maxSectors` are merged into Other.
+ * then cash. Sectors beyond `maxSectors` are merged into Other. The arcs divide the circle among
+ * the positive slices; negative ones (net-short sectors, borrowed cash) get no arc.
  */
 export function allocation(
   items: ReadonlyArray<{ sector: string; value: number | undefined }>,
@@ -390,10 +391,12 @@ export function allocation(
   const step = sectors.length > 1 ? Math.min(0.25, 0.7 / (sectors.length - 1)) : 0;
   const src = sectors.map(([key, value], i) => ({ key, value, opacity: +(1 - i * step).toFixed(3) }));
   if (finite(cash) && cash !== 0) src.push({ key: CASH_KEY, value: cash, opacity: 0.55 });
-  const absSum = src.reduce((a, s) => a + Math.abs(s.value), 0);
+  // The ring shows what is held: a net-short sector or a margin loan (negative cash) has no arc
+  // (it would read as a holding); the legend still lists it with its signed share.
+  const posSum = src.reduce((a, s) => a + Math.max(0, s.value), 0);
   let cum = 0;
   return src.map((s) => {
-    const len = absSum ? (Math.abs(s.value) / absSum) * 100 : 0;
+    const len = posSum && s.value > 0 ? (s.value / posSum) * 100 : 0;
     const slice: AllocSlice = {
       ...s,
       len,
@@ -549,6 +552,14 @@ export function accountTotals(a: AccountSummary | null, rows: readonly PositionR
     marketValue: sumRows(rows, 'value', (r) => r.position.contract.secType === 'STK' || r.position.contract.secType === 'OPT') ?? ibMarketValue,
     realized: finite(a.realizedPnL) ? a.realizedPnL : executions ? realizedFromExecutions(executions) : undefined,
   };
+}
+
+/**
+ * Executions of the current New York day (`dayStart`, `nyDayStart`). The main process keeps
+ * every fill of the session, so after New York midnight the list still holds yesterday's.
+ */
+export function todaysExecutions(executions: readonly Execution[], dayStart: number): Execution[] {
+  return executions.filter((e) => e.time >= dayStart);
 }
 
 /** Realized P&L of executions (IB's commission reports; opening fills carry none). */

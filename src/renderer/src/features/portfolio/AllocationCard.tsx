@@ -23,31 +23,37 @@ export function AllocationCard({ rows, cash, netLiq, symbol }: { rows: PositionR
         <div style={{ position: 'relative', width: 140, height: 140, flexShrink: 0 }}>
           <svg viewBox="0 0 42 42" width={140} height={140} style={{ display: 'block', transform: 'rotate(-90deg)' }}>
             <circle cx={21} cy={21} r={R} fill="none" style={{ stroke: 'var(--p2)' }} strokeWidth={5} />
-            {slices.map((s) => (
-              <circle
-                key={s.key}
-                cx={21}
-                cy={21}
-                r={R}
-                fill="none"
-                strokeWidth={5}
-                strokeDasharray={`${s.len.toFixed(3)} ${(100 - s.len).toFixed(3)}`}
-                strokeDashoffset={s.offset.toFixed(3)}
-                style={{ stroke: s.key === CASH_KEY ? 'var(--mu)' : 'var(--ac)', opacity: s.opacity }}
-              />
-            ))}
+            {slices
+              .filter((s) => s.len > 0)
+              .map((s) => (
+                <circle
+                  key={s.key}
+                  cx={21}
+                  cy={21}
+                  r={R}
+                  fill="none"
+                  strokeWidth={5}
+                  strokeDasharray={`${s.len.toFixed(3)} ${(100 - s.len).toFixed(3)}`}
+                  strokeDashoffset={s.offset.toFixed(3)}
+                  style={{ stroke: s.key === CASH_KEY ? 'var(--mu)' : 'var(--ac)', opacity: s.opacity }}
+                />
+              ))}
           </svg>
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <div style={{ fontSize: 11, color: 'var(--dm)' }}>{m.netLiqShort}</div>
             <div style={{ font: '600 14px/1 var(--num)' }}>{moneyShort(netLiq, symbol)}</div>
           </div>
         </div>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Capped so a wide (M / L) card keeps each figure next to its label. */}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {slices.map((s) => {
-            const label = sectorLabel(m, s.key);
+            const label = s.key === CASH_KEY && s.value < 0 ? m.marginLoan : sectorLabel(m, s.key);
+            const color = s.key === CASH_KEY ? 'var(--mu)' : 'var(--ac)';
+            // A negative slice (not in the ring) gets a hollow swatch.
+            const swatch = s.value < 0 ? { background: 'transparent', boxShadow: `inset 0 0 0 1.5px ${color}` } : { background: color };
             return (
               <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <div style={{ width: 8, height: 8, flexShrink: 0, background: s.key === CASH_KEY ? 'var(--mu)' : 'var(--ac)', opacity: s.opacity }} />
+                <div style={{ width: 8, height: 8, flexShrink: 0, ...swatch, opacity: s.opacity }} />
                 <div title={label} style={{ flex: 1, minWidth: 0, color: 'var(--mu)', lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {label}
                 </div>

@@ -38,6 +38,8 @@ export const usePortfolioMessages = createMessages({
     netLiqShort: 'Net liq',
     noAllocation: 'No account data',
     noPositionsHint: 'No positions yet. Holdings will show here by sector.',
+    /** Negative cash in the allocation legend. */
+    marginLoan: 'Margin loan',
     /** Display names of IB industries and the special buckets (@etf, @other, @cash). */
     sectorNames: {
       '@etf': 'ETF / Index',
@@ -123,6 +125,7 @@ export const usePortfolioMessages = createMessages({
     netLiqShort: '净清算值',
     noAllocation: '暂无账户数据',
     noPositionsHint: '暂无持仓，买入后这里会按行业显示分布。',
+    marginLoan: '融资负债',
     sectorNames: {
       '@etf': 'ETF / 指数',
       '@other': '其他',

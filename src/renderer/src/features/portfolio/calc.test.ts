@@ -336,10 +336,23 @@ describe('allocation', () => {
     );
     expect(s.map((x) => x.key)).toEqual(['Technology', 'Consumer, Cyclical', ETF_SECTOR, CASH_KEY]);
     expect(s.map((x) => x.opacity)).toEqual([1, 0.75, 0.5, 0.55]);
+    // Net-short sectors have no arc; the held slices fill the ring.
+    expect(s[1].len).toBe(0);
+    expect(s[2].len).toBe(0);
     expect(s.reduce((a, x) => a + x.len, 0)).toBeCloseTo(100);
+    expect(s[0].len).toBeCloseTo((164_250 / (164_250 + 1_134_456)) * 100);
     expect(s[0].offset).toBe(0);
-    expect(s[1].offset).toBeCloseTo(-s[0].len);
+    expect(s[3].offset).toBeCloseTo(-s[0].len);
     expect(s[1].pctOfNetLiq).toBeCloseTo((-12_551 / 1_284_530) * 100);
+  });
+
+  it('gives a margin loan (negative cash) no arc', () => {
+    const s = allocation([{ sector: 'Technology', value: 150 }], -50, 100);
+    expect(s.map((x) => [x.key, x.len, x.pctOfNetLiq])).toEqual([
+      ['Technology', 100, 150],
+      [CASH_KEY, 0, -50],
+    ]);
+    expect(s[1].offset).toBeCloseTo(-100);
   });
 
   it('merges small sectors into Other and keeps opacities visible', () => {
