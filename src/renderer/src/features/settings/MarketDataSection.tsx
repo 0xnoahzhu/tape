@@ -86,6 +86,7 @@ function checkedTip(item: MarketCheckItem, m: SettingsMessages, clock: Clock): s
     const head = `${item.instrument} ${p.exchange}: ${m.stWord[p.status]}${p.marketDataType ? ` (marketDataType ${p.marketDataType})` : ''}`;
     lines.push(p.message ? `${head} · ${p.code !== undefined && p.code >= 0 ? `${p.code} ` : ''}${p.message}` : head);
   }
+  if (item.fallback?.length) lines.push(m.fallbackInUse(item.fallback));
   lines.push(m.checkedAt(clock.time(item.checkedAt, { date: 'md' })));
   return lines.join('\n');
 }
@@ -93,11 +94,11 @@ function checkedTip(item: MarketCheckItem, m: SettingsMessages, clock: Clock): s
 function reasonText(r: CheckReason, m: SettingsMessages, paper: boolean): { t: string; d: string } {
   switch (r.kind) {
     case 'notSubscribed':
-      return { t: m.notSubscribedTitle, d: m.notSubscribedText(r.codes, paper) };
+      return { t: m.notSubscribedTitle(r.markets), d: m.notSubscribedText(r.codes, r.markets, paper, r.othersLive) };
     case 'fallback':
-      return { t: m.fallbackTitle(r.exchanges.join(', ')), d: m.fallbackText(r.exchanges.join(', '), r.symbols) };
+      return { t: m.fallbackTitle(r), d: m.fallbackText(r) };
     case 'depthPartial':
-      return { t: m.depthPartialTitle(r.depth.join(', ')), d: m.depthPartialText(r.missing.join(', ')) };
+      return { t: m.depthPartialTitle(r.depth), d: m.depthPartialText(r.missing) };
     default:
       return m.reasons[r.kind];
   }
@@ -128,11 +129,10 @@ export function MarketDataSection() {
   const runCheck = () => {
     window.tape.checkMarketData({ depth: true }).catch((err: unknown) => showToast(m.checkFailed(errorText(err)), 'error'));
   };
-  const checkedLine = check.running
-    ? m.checking
-    : shown
-      ? m.checkedAgo(checkAge(shown.checkedAt, now), clock.time(shown.checkedAt, { date: 'md' }))
-      : m.notCheckedYet;
+  // While disconnected the last result stays, muted: it is not what IB delivers now.
+  const offline = status !== 'connected';
+  const ago = shown ? m.checkedAgo(checkAge(shown.checkedAt, now), clock.time(shown.checkedAt, { date: 'md' })) : null;
+  const checkedLine = check.running ? m.checking : ago ? (offline ? m.checkedOffline(ago) : ago) : m.notCheckedYet;
 
   const featureRows: Array<{ key: keyof typeof features; obs: MarketRow }> = [
     { key: 'depth', obs: 'depth' },
@@ -155,15 +155,17 @@ export function MarketDataSection() {
             </div>
             <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.6, textWrap: 'pretty' }}>{m.checkDesc}</div>
           </div>
-          <Button
-            kind="secondary"
-            height={32}
-            disabled={check.running || status !== 'connected'}
-            onClick={runCheck}
-            style={{ padding: '0 14px', fontSize: 13, flexShrink: 0, whiteSpace: 'nowrap' }}
-          >
-            <span data-md="check-now">{check.running ? m.checking : m.checkNow}</span>
-          </Button>
+          <span title={offline ? m.connectToCheck : undefined} style={{ display: 'flex', flexShrink: 0 }}>
+            <Button
+              kind="secondary"
+              height={32}
+              disabled={check.running || offline}
+              onClick={runCheck}
+              style={{ padding: '0 14px', fontSize: 13, flexShrink: 0, whiteSpace: 'nowrap' }}
+            >
+              <span data-md="check-now">{check.running ? m.checking : m.checkNow}</span>
+            </Button>
+          </span>
         </div>
         <div
           style={{
@@ -189,7 +191,7 @@ export function MarketDataSection() {
           if (item) {
             main = checkedText(item, m);
             sub = checkedDetail(item, m);
-          } else if (check.running) {
+          } else if (check.running && (row !== 'depth' || check.depth)) {
             main = m.checking;
           } else if (row === 'depth' && status === 'connected') {
             main = m.depthNotChecked;
@@ -207,18 +209,17 @@ export function MarketDataSection() {
             >
               <LabelBlock label={m.markets[row].l} desc={m.markets[row].d} />
               <div title={item ? checkedTip(item, m, clock) : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                <div className="ellipsis" style={{ fontSize: 13, color: item ? 'var(--tx)' : 'var(--mu)' }}>
+                <div className="ellipsis" style={{ fontSize: 13, color: item && !offline ? 'var(--tx)' : 'var(--mu)' }}>
                   {main}
                 </div>
+                {item && offline && <div style={{ fontSize: 12, color: 'var(--mu)' }}>{m.lastCheckOffline}</div>}
                 {sub && (
                   <div className="ellipsis" style={{ fontSize: 12, color: 'var(--dm)' }}>
                     {sub}
                   </div>
                 )}
                 {item?.fallback?.length ? (
-                  <div className="ellipsis" style={{ fontSize: 12, color: 'var(--dm)' }}>
-                    {m.fallbackInUse(item.fallback.map((f) => `${f.symbol} (${f.exchange})`).join(', '))}
-                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--dm)', textWrap: 'pretty' }}>{m.fallbackInUse(item.fallback)}</div>
                 ) : null}
                 {item && session && (
                   <div className="ellipsis" style={{ fontSize: 12, color: 'var(--dm)' }}>
@@ -227,7 +228,7 @@ export function MarketDataSection() {
                 )}
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <ObservedTagBox tag={tag} via={item?.via} title={item ? checkedTip(item, m, clock) : undefined} />
+                <ObservedTagBox tag={tag} via={item?.via} muted={!!item && offline} title={item ? checkedTip(item, m, clock) : undefined} />
               </div>
             </div>
           );
@@ -269,7 +270,7 @@ export function MarketDataSection() {
                 <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.features[key].d}</div>
               </div>
               {item ? (
-                <ObservedTagBox tag={checkTag(item)} via={item.via} title={checkedTip(item, m, clock)} />
+                <ObservedTagBox tag={checkTag(item)} via={item.via} muted={offline} title={checkedTip(item, m, clock)} />
               ) : (
                 <ObservedTagBox tag={obs?.[row].tag ?? 'none'} title={observedText(row, obs?.[row], m)} />
               )}

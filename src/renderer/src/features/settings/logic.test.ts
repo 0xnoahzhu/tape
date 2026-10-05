@@ -237,7 +237,30 @@ describe('market data check', () => {
       { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }, checkedAt: at },
     ]);
     // The SMART line's 10167 belongs to the fallback note, not to the subscription one.
-    expect(checkReasons(r)).toEqual([{ kind: 'notSubscribed', codes: [354] }, { kind: 'fallback', exchanges: ['NASDAQ'], symbols: [] }, { kind: 'depthPerm' }]);
+    expect(checkReasons(r)).toEqual([
+      {
+        kind: 'notSubscribed',
+        codes: [354],
+        markets: [
+          { market: 'opt', instrument: 'SPY 10/06 670 Call' },
+          { market: 'ind', instrument: 'SPX' },
+        ],
+        othersLive: true,
+      },
+      { kind: 'fallback', smartDelayed: true, pairs: [{ symbol: 'SPY', exchange: 'NASDAQ' }] },
+      { kind: 'depthPerm' },
+    ]);
+    // Only some stocks on their exchange while SPY is live on SMART; SPX delayed with every other market live.
+    const some = result([
+      stk({ fallback: [{ symbol: 'AAPL', exchange: 'NASDAQ' }] }),
+      { market: 'ind', status: 'delayed', instrument: 'SPX', probe: { status: 'delayed', exchange: 'CBOE', marketDataType: 4 }, checkedAt: at },
+    ]);
+    expect(checkReasons(some)).toEqual([
+      { kind: 'notSubscribed', codes: [], markets: [{ market: 'ind', instrument: 'SPX' }], othersLive: true },
+      { kind: 'fallback', smartDelayed: false, pairs: [{ symbol: 'AAPL', exchange: 'NASDAQ' }], liveOnSmart: 'SPY' },
+    ]);
+    const none = result([stk({ status: 'delayed', probe: { status: 'delayed', exchange: 'SMART', marketDataType: 3, code: 10167 } })]);
+    expect(checkReasons(none)).toEqual([{ kind: 'notSubscribed', codes: [10167], markets: [{ market: 'stk', instrument: 'SPY' }], othersLive: false }]);
     const competing = result([
       stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: 10197, message: 'x' } }),
       { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 309, message: 'x' }, checkedAt: at },

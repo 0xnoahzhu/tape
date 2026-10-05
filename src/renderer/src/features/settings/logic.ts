@@ -286,12 +286,26 @@ export function checkTag(item: MarketCheckItem): ObservedTag {
   return item.status;
 }
 
+/** A stock served by its primary exchange: "AAPL via NASDAQ". */
+export interface ExchangePair {
+  symbol: string;
+  exchange: string;
+}
+
 /** Why a market has no live data, and what to do about it (one note per reason). */
 export type CheckReason =
   | { kind: 'competing' }
-  | { kind: 'notSubscribed'; codes: number[] }
-  /** SMART delayed but the exchange live: in the check (`via`) and for the quotes now served by their exchange. */
-  | { kind: 'fallback'; exchanges: string[]; symbols: string[] }
+  /**
+   * Delayed / not subscribed: the markets concerned, IB's codes, and whether another market of the
+   * same check is live (then a paper account already shares the live account's data).
+   */
+  | { kind: 'notSubscribed'; codes: number[]; markets: Array<{ market: MarketRow; instrument: string }>; othersLive: boolean }
+  /**
+   * SMART delayed but the exchange live: the check's own stock (`smartDelayed`: SMART was delayed
+   * for it, so likely for the account's stocks in general) and the quotes now served by their
+   * exchange. `liveOnSmart`: the check's stock when it was live on SMART (only some stocks fall back).
+   */
+  | { kind: 'fallback'; smartDelayed: boolean; pairs: ExchangePair[]; liveOnSmart?: string }
   | { kind: 'depthPerm' }
   | { kind: 'depthPartial'; depth: string[]; missing: string[] }
   | { kind: 'depthLimit' }
@@ -316,15 +330,21 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
   if (!result) return [];
   const has = new Set<CheckReason['kind']>();
   const codes = new Set<number>();
-  const exchanges = new Set<string>();
-  const symbols = new Set<string>();
+  const pairs = new Map<string, ExchangePair>();
+  const notLive: Array<{ market: MarketRow; instrument: string }> = [];
+  let smartDelayed = false;
+  let liveOnSmart: string | undefined;
+  let anyLive = false;
   let partial: { depth: string[]; missing: string[] } | null = null;
   for (const item of result.items) {
-    if (item.via && item.market !== 'depth') exchanges.add(item.via);
-    for (const f of item.fallback ?? []) {
-      exchanges.add(f.exchange);
-      symbols.add(f.symbol);
+    if (item.market !== 'depth' && (item.status === 'live' || item.status === 'frozen')) anyLive = true;
+    if (item.via && item.market !== 'depth') {
+      smartDelayed = true;
+      pairs.set(item.instrument, { symbol: item.instrument, exchange: item.via });
+    } else if (item.market === 'stk' && (item.probe.status === 'live' || item.probe.status === 'frozen')) {
+      liveOnSmart = item.instrument;
     }
+    for (const f of item.fallback ?? []) if (!pairs.has(f.symbol)) pairs.set(f.symbol, { symbol: f.symbol, exchange: f.exchange });
     for (const p of probesOf(item)) {
       if (p.code === COMPETING) has.add('competing');
       if (p.own === 'timeout') has.add('noAnswer');
@@ -344,14 +364,16 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
     if (p.code !== undefined && NOT_SUBSCRIBED.has(p.code)) {
       has.add('notSubscribed');
       codes.add(p.code);
+      notLive.push({ market: item.market, instrument: item.instrument });
     } else if (p.status === 'delayed' && p.code !== COMPETING) {
       has.add('notSubscribed');
+      notLive.push({ market: item.market, instrument: item.instrument });
     }
   }
   const out: CheckReason[] = [];
   if (has.has('competing')) out.push({ kind: 'competing' });
-  if (has.has('notSubscribed')) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b) });
-  if (exchanges.size) out.push({ kind: 'fallback', exchanges: [...exchanges], symbols: [...symbols] });
+  if (has.has('notSubscribed')) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b), markets: notLive, othersLive: anyLive });
+  if (pairs.size) out.push({ kind: 'fallback', smartDelayed, pairs: [...pairs.values()], ...(!smartDelayed && liveOnSmart ? { liveOnSmart } : {}) });
   if (has.has('depthPerm')) out.push({ kind: 'depthPerm' });
   if (partial?.missing.length) out.push({ kind: 'depthPartial', ...partial });
   if (has.has('depthLimit')) out.push({ kind: 'depthLimit' });

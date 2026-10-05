@@ -86,10 +86,11 @@ export function LabelBlock({ label, desc }: { label: ReactNode; desc?: ReactNode
 
 /**
  * Outlined mono tag showing what was observed (LIVE / DELAYED / FROZEN / NO DATA / —). `via`: live
- * only on that exchange ("LIVE · NASDAQ"), drawn with the plain ring.
+ * only on that exchange ("LIVE · NASDAQ"), drawn with the plain ring; `muted`: a past answer.
  */
-export function ObservedTagBox({ tag, title, via }: { tag: ObservedTag; title?: string; via?: string }) {
-  const { fg, bd } = tagColors(tag);
+export function ObservedTagBox({ tag, title, via, muted }: { tag: ObservedTag; title?: string; via?: string; muted?: boolean }) {
+  // Muted: a past answer (not connected now), in the colours of "—".
+  const { fg, bd } = tagColors(muted ? 'none' : tag);
   return (
     <div
       title={title}

@@ -4,13 +4,20 @@ import { compact, f0 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
 import { createMessages } from '../../i18n';
 import type { BiometricKind, LockBiometrics, MarketCheckStatus } from '@shared/types';
-import type { ShortcutId } from './logic';
+import type { CheckReason, ExchangePair, MarketRow, ShortcutId } from './logic';
 
 const BIO: Record<BiometricKind, string> = { touchId: 'Touch ID', windowsHello: 'Windows Hello' };
 
 type Pair = { l: string; d: string };
 type Age = { unit: 'now' | 'min' | 'h'; n: number } | null;
 type ReasonText = { t: string; d: string };
+type Fallback = Extract<CheckReason, { kind: 'fallback' }>;
+type NotLive = Array<{ market: MarketRow; instrument: string }>;
+
+const MARKET_SHORT_EN: Record<MarketRow, string> = { stk: 'US stocks', opt: 'US options', depth: 'Level 2', ind: 'Indices' };
+const MARKET_SHORT_ZH: Record<MarketRow, string> = { stk: '美股', opt: '美股期权', depth: '深度行情', ind: '指数' };
+const pairsEn = (pairs: ExchangePair[]) => pairs.map((p) => `${p.symbol} via ${p.exchange}`).join(', ');
+const pairsZh = (pairs: ExchangePair[]) => pairs.map((p) => `${p.symbol} 经 ${p.exchange}`).join('、');
 
 const en = {
   nav: {
@@ -66,7 +73,7 @@ const en = {
   reqD: 'Subscribed markets return live data; others fall back to 15–20 min delayed data, and a closed market shows its last values (frozen). The actual type comes from TWS marketDataType callbacks, so there is nothing to switch manually.',
   hSrc: 'Market',
   hObs: 'Checked',
-  hNow: 'Now',
+  hNow: 'Result',
   checkNow: 'Check now',
   checking: 'Checking…',
   checkDesc: 'Tape asks IB for SPY (through SMART and on its own exchange), an SPY option and SPX for a few seconds and shows what comes back. Check now also tests Level 2.',
@@ -76,6 +83,9 @@ const en = {
   checkedAt: (at: string) => `Checked ${at}`,
   notCheckedYet: 'Not checked yet',
   checkFailed: (msg: string) => `Market data check failed: ${msg}`,
+  checkedOffline: (text: string) => `${text} · not connected`,
+  lastCheckOffline: 'Last check · not connected',
+  connectToCheck: 'Connect to IB to check',
   st: { live: 'Live', frozen: 'Frozen (market closed)', delayed: 'Delayed', nodata: 'No data' } as Record<MarketCheckStatus, string>,
   stWord: { live: 'live', frozen: 'frozen', delayed: 'delayed', nodata: 'no data' } as Record<MarketCheckStatus, string>,
   /** Only the primary exchange is live: "Live · NASDAQ only". */
@@ -104,18 +114,30 @@ const en = {
     lines: { t: 'No free market data line', d: 'All of Tape’s market data lines are in use (IB allows 100). Close some watchlists or option chains and check again.' },
     noOption: { t: 'No option tested', d: 'The SPY option chain could not be loaded, so no option was tested. Check again in a moment.' },
   } as Record<'competing' | 'depthPerm' | 'depthLimit' | 'noAnswer' | 'lines' | 'noOption', ReasonText>,
-  notSubscribedTitle: 'Live data not enabled for the API',
-  notSubscribedText: (codes: number[], paper: boolean) =>
-    `IB answered ${codes.length ? codes.join(' / ') : 'with delayed data'}: this account may not use live data for these markets through the API. In Client Portal › Settings › Market Data Subscriptions, check that the subscription is active and that the market data API acknowledgement and your non-professional status are confirmed.` +
-    (paper ? ' For a paper account, also turn on sharing of the live account’s market data with the paper account (Settings › Paper Trading Account); it can take up to a day to apply.' : ''),
+  notSubscribedTitle: (ms: NotLive) => `No live data: ${ms.map((x) => `${MARKET_SHORT_EN[x.market]} (${x.instrument})`).join(', ')}`,
+  notSubscribedText: (codes: number[], ms: NotLive, paper: boolean, othersLive: boolean) =>
+    `IB answered ${codes.length ? codes.join(' / ') : 'with delayed data'} for ${ms.map((x) => x.instrument).join(', ')}: this account has no live subscription for ${ms.length > 1 ? 'these markets' : 'this market'}, or it is not enabled for the API. In Client Portal › Settings › Market Data Subscriptions, check that the subscription is active and that the market data API acknowledgement and your non-professional status are confirmed.` +
+    (!paper
+      ? ''
+      : othersLive
+        ? ` Other markets are live, so the paper account already shares the live account’s data; ${ms.length > 1 ? 'these markets need their own subscriptions' : 'this market needs its own subscription'}.`
+        : ' For a paper account, also turn on sharing of the live account’s market data with the paper account (Settings › Paper Trading Account); it can take up to a day to apply.'),
   depthViaTip: (x: string) => `Level 2 arrives from ${x} only; the other exchanges' books need their own subscriptions.`,
-  depthPartialTitle: (x: string) => `Level 2 from ${x} only`,
-  depthPartialText: (missing: string) =>
-    `IB sends no book from ${missing} (2152): those need depth subscriptions such as NASDAQ TotalView (NASDAQ), NYSE OpenBook (NYSE) or NYSE ArcaBook (ARCA), enabled for the API.`,
-  fallbackTitle: (x: string) => `SMART delayed, ${x} live`,
-  fallbackText: (x: string, symbols: string[]) =>
-    `IB sends this account SMART (consolidated) quotes delayed but ${x}’s own quotes live${symbols.length ? ` (now: ${symbols.join(', ')})` : ''}. Tape then shows the exchange’s quote, marked “Live · ${x}”: the best bid and ask on ${x}, not the consolidated quote across all exchanges. Every 10 minutes it tries SMART again.`,
-  fallbackInUse: (list: string) => `Exchange quotes in use: ${list}`,
+  depthPartialTitle: (x: string[]) => `Level 2 from ${x.join(', ')} only`,
+  depthPartialText: (missing: string[]) =>
+    `IB sends no book from ${missing.join(', ')} (2152): those need depth subscriptions such as NASDAQ TotalView (NASDAQ), NYSE OpenBook (NYSE) or NYSE ArcaBook (ARCA), enabled for the API.`,
+  fallbackTitle: (r: Fallback) =>
+    r.smartDelayed
+      ? 'SMART delayed, exchange quotes live'
+      : r.pairs.length > 1
+        ? `${r.pairs.map((p) => p.symbol).join(', ')}: SMART delayed, exchange quotes live`
+        : `${r.pairs[0].symbol}: SMART delayed, ${r.pairs[0].exchange} live`,
+  fallbackText: (r: Fallback) =>
+    (r.smartDelayed
+      ? `IB sends this account SMART (consolidated) quotes delayed but the exchanges’ own quotes live (${pairsEn(r.pairs)}).`
+      : `IB sends this account the consolidated (SMART) quote of ${r.pairs.map((p) => p.symbol).join(', ')} delayed but the exchange’s own quote live (${pairsEn(r.pairs)})${r.liveOnSmart ? `; other stocks such as ${r.liveOnSmart} are live on SMART` : ''}.`) +
+    ` Tape then shows the exchange’s quote, marked “Live · <exchange>” (e.g. “Live · ${r.pairs[0].exchange}”): the bid, ask and last on that exchange, not the consolidated quote across all exchanges. Every 10 minutes it tries SMART again.`,
+  fallbackInUse: (pairs: ExchangePair[]) => `Exchange quotes in use: ${pairs.map((p) => `${p.symbol} (${p.exchange})`).join(', ')}`,
   markets: {
     stk: { l: 'US equities NASDAQ / NYSE', d: 'Network A/B/C · incl. extended hours' },
     opt: { l: 'US options OPRA', d: 'Option quotes and trades' },
@@ -370,7 +392,7 @@ const zh: typeof en = {
   reqD: '已订阅的市场返回实时数据，未订阅的自动退回 15–20 分钟延迟数据；休市时显示最后的数值（冻结）。实际类型以 TWS 的 marketDataType 回报为准，不需要手动切换。',
   hSrc: '市场',
   hObs: '检测结果',
-  hNow: '当前',
+  hNow: '结果',
   checkNow: '立即检测',
   checking: '检测中…',
   checkDesc: 'Tape 向 IB 请求几秒钟 SPY（经 SMART 和在其本交易所）、一个 SPY 期权和 SPX 的行情，显示 IB 实际返回的结果。点“立即检测”时还会检测深度行情。',
@@ -379,6 +401,9 @@ const zh: typeof en = {
   checkedAt: (at: string) => `${at} 检测`,
   notCheckedYet: '尚未检测',
   checkFailed: (msg: string) => `行情检测失败：${msg}`,
+  checkedOffline: (text: string) => `${text} · 未连接`,
+  lastCheckOffline: '上次检测 · 未连接',
+  connectToCheck: '连接 IB 后才能检测',
   st: { live: '实时', frozen: '冻结（休市）', delayed: '延迟', nodata: '无数据' },
   stWord: { live: '实时', frozen: '冻结', delayed: '延迟', nodata: '无数据' },
   via: (x: string, frozen: boolean) => `${frozen ? '冻结' : '实时'} · 仅 ${x}`,
@@ -399,18 +424,30 @@ const zh: typeof en = {
     lines: { t: '没有空闲的行情线路', d: 'Tape 的行情线路已全部占用（IB 上限 100 条）。关闭部分自选或期权链后再检测。' },
     noOption: { t: '未检测期权', d: '无法加载 SPY 期权链，未能检测期权。请稍后再检测。' },
   },
-  notSubscribedTitle: '未为 API 开通实时行情',
-  notSubscribedText: (codes: number[], paper: boolean) =>
-    `IB 回复${codes.length ? ` ${codes.join(' / ')}` : '延迟行情'}：此账户不能通过 API 使用这些市场的实时行情。请在 Client Portal › 设置 › 市场数据订阅 中确认订阅已生效，并已完成行情 API 确认和非专业用户身份声明。` +
-    (paper ? '模拟账户还需在 设置 › 模拟交易账户 中打开“与模拟账户共享实盘账户的市场数据”，生效最长需要一天。' : ''),
+  notSubscribedTitle: (ms: NotLive) => `无实时行情：${ms.map((x) => `${MARKET_SHORT_ZH[x.market]}（${x.instrument}）`).join('、')}`,
+  notSubscribedText: (codes: number[], ms: NotLive, paper: boolean, othersLive: boolean) =>
+    `IB 对 ${ms.map((x) => x.instrument).join('、')} 回复${codes.length ? ` ${codes.join(' / ')}` : '延迟行情'}：此账户没有${ms.length > 1 ? '这些市场' : '这个市场'}的实时订阅，或未为 API 开通。请在 Client Portal › 设置 › 市场数据订阅 中确认订阅已生效，并已完成行情 API 确认和非专业用户身份声明。` +
+    (!paper
+      ? ''
+      : othersLive
+        ? `其他市场是实时的，说明模拟账户已共享实盘行情；${ms.length > 1 ? '这些市场' : '这个市场'}需要单独订阅。`
+        : '模拟账户还需在 设置 › 模拟交易账户 中打开“与模拟账户共享实盘账户的市场数据”，生效最长需要一天。'),
   depthViaTip: (x: string) => `仅 ${x} 提供深度行情；其他交易所的盘口需要另外订阅。`,
-  depthPartialTitle: (x: string) => `深度行情仅来自 ${x}`,
-  depthPartialText: (missing: string) =>
-    `IB 不提供 ${missing} 的盘口（2152）：需要相应的深度订阅，例如 NASDAQ TotalView（NASDAQ）、NYSE OpenBook（NYSE）或 NYSE ArcaBook（ARCA），并为 API 开通。`,
-  fallbackTitle: (x: string) => `SMART 延迟，${x} 实时`,
-  fallbackText: (x: string, symbols: string[]) =>
-    `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但 ${x} 自己的报价是实时的${symbols.length ? `（目前：${symbols.join('、')}）` : ''}。Tape 此时改用该交易所的报价，标为“实时 · ${x}”：这是 ${x} 上的最优买卖价，不是全市场合并报价。每 10 分钟会重新尝试 SMART。`,
-  fallbackInUse: (list: string) => `正在使用交易所报价：${list}`,
+  depthPartialTitle: (x: string[]) => `深度行情仅来自 ${x.join('、')}`,
+  depthPartialText: (missing: string[]) =>
+    `IB 不提供 ${missing.join('、')} 的盘口（2152）：需要相应的深度订阅，例如 NASDAQ TotalView（NASDAQ）、NYSE OpenBook（NYSE）或 NYSE ArcaBook（ARCA），并为 API 开通。`,
+  fallbackTitle: (r: Fallback) =>
+    r.smartDelayed
+      ? 'SMART 延迟，交易所报价实时'
+      : r.pairs.length > 1
+        ? `${r.pairs.map((p) => p.symbol).join('、')}：SMART 延迟，交易所报价实时`
+        : `${r.pairs[0].symbol}：SMART 延迟，${r.pairs[0].exchange} 实时`,
+  fallbackText: (r: Fallback) =>
+    (r.smartDelayed
+      ? `IB 向本账户推送的 SMART（全市场合并）报价是延迟的，但交易所自己的报价是实时的（${pairsZh(r.pairs)}）。`
+      : `IB 向本账户推送的 ${r.pairs.map((p) => p.symbol).join('、')} SMART（全市场合并）报价是延迟的，但交易所自己的报价是实时的（${pairsZh(r.pairs)}）${r.liveOnSmart ? `；${r.liveOnSmart} 等其他股票的 SMART 报价是实时的` : ''}。`) +
+    `Tape 此时改用该交易所的报价，标为“实时 · <交易所>”（如“实时 · ${r.pairs[0].exchange}”）：这是该交易所上的买卖价和最新价，不是全市场合并报价。每 10 分钟会重新尝试 SMART。`,
+  fallbackInUse: (pairs: ExchangePair[]) => `正在使用交易所报价：${pairs.map((p) => `${p.symbol}（${p.exchange}）`).join('、')}`,
   markets: {
     stk: { l: '美股 NASDAQ / NYSE', d: 'Network A/B/C · 含盘前盘后' },
     opt: { l: '美股期权 OPRA', d: '期权报价与成交' },
