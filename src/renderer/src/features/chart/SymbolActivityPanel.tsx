@@ -1,14 +1,15 @@
 // Bottom-left panel of the Trade page, under the chart and under the options desk: positions and
 // open orders of the current symbol (the stock and its derivatives), with Modify / Cancel for this
-// app's working orders. The rows are valued like the Portfolio page (calc.ts → positionRow: one price
-// for value and P&L) from the panel's own quote lines ('symbol-activity', a visible owner; options
-// with their model greeks).
+// app's working orders and, where the panel is wide enough, each order's last price beside its price.
+// The rows are valued like the Portfolio page (calc.ts → positionRow: one price for value and P&L)
+// from the panel's own quote lines ('symbol-activity', a visible owner; options with their model
+// greeks); the open orders' lines are held only while their tab shows ('symbol-orders').
 // Under the options desk (`options`) the panel adds the underlying's exposure (Δ, $Δ, Γ, Θ, Vega:
 // exposure.ts → portfolioGreeks, as on the Positions toolbar), DTE and Δ cells on the rows, and a
 // click on an option row opens its expiry in the chain. An order just placed from a floating panel
 // flashes in the open orders (activityModel.ts → isFreshOrder).
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
@@ -22,6 +23,8 @@ import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
 import { useDesk } from '../options/deskStore';
+import { distanceText, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
+import { useOrdersMessages } from '../orders/messages';
 import { modifyOrderInTicket } from '../panels/actions';
 import { livePrice, positionRow, quoteContract, type PositionRow } from '../portfolio/calc';
 import { useMinute } from '../portfolio/data';
@@ -31,8 +34,9 @@ import { showPortfolio } from '../portfolio/uiState';
 import { byInstrument, isFreshOrder } from './activityModel';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
-import { canModifyInTicket, orderPriceText, orderStatusText } from './orderModel';
+import { canModifyInTicket, lastColumnFits, orderColumns, orderPriceText, orderStatusText } from './orderModel';
 import { useNow } from './useNow';
+import { useSize } from './useSize';
 
 /** The panel's quote owner (main/market/subscriptions.ts counts it as visible). */
 const QUOTE_OWNER = 'symbol-activity';
@@ -44,10 +48,10 @@ const isOption = (c: ContractRef) => c.secType === 'OPT' || c.secType === 'FOP';
 const POS_GRID = 'minmax(0,2fr) repeat(6,minmax(0,1fr))';
 /** Under the options desk: DTE and Δ after Qty. */
 const POS_GRID_OPT = 'minmax(0,2fr) repeat(8,minmax(0,1fr))';
-// The time column is sized for the clock format (timeColumn). "qty @ price" keeps room for
-// "100 @ 226.50" and grows little beyond it; the rest goes to contract and status (with its
-// good-after and GTD times, the larger share), which clip first in a narrow window.
-const orderGrid = (clock: Parameters<typeof timeColumn>[0]) => `${timeColumn(clock)} 48px minmax(0,1.2fr) minmax(96px,0.5fr) minmax(0,2fr) 110px`;
+/** With the Last column where it fits (orderModel.ts → orderColumns, lastColumnFits). */
+const orderGrid = (clock: Parameters<typeof timeColumn>[0], withLast: boolean) => orderColumns(timeColumn(clock), withLast);
+/** Where the Last column's name is in orderHeaders. */
+const LAST_HEADER = 4;
 
 /**
  * The column names above the rows: [label, full name on hover]; `right` marks the numeric columns.
@@ -142,13 +146,19 @@ function HoldingRow({ r, netLiq, opt }: { r: PositionRow; netLiq: number | undef
   );
 }
 
-/** Only orders placed by this API client can be modified or cancelled here (as on Portfolio › Orders). */
-function OrderRow({ o, own, fresh }: { o: WorkingOrder; own: boolean; fresh: boolean }) {
+/**
+ * Only orders placed by this API client can be modified or cancelled here (as on Portfolio › Orders).
+ * `withLast`: the Last cell after "qty @ price"; without it the last price is in that cell's tooltip.
+ */
+function OrderRow({ o, own, fresh, quote, withLast }: { o: WorkingOrder; own: boolean; fresh: boolean; quote: Quote | undefined; withLast: boolean }) {
   const m = useChartMessages();
+  const om = useOrdersMessages();
   const common = useCommon();
   const clock = useClock();
   const st = orderStatusText(o, m.status, clock);
   const buy = o.action === 'BUY';
+  const last = orderLastPrice(o.contract, quote);
+  const distance = distanceText(o, last, om);
   const modify = () => {
     // The order's own contract is selected first (and the chart shown); a floating ticket collapsed to its bar expands.
     modifyOrderInTicket(o);
@@ -160,7 +170,7 @@ function OrderRow({ o, own, fresh }: { o: WorkingOrder; own: boolean; fresh: boo
       data-fresh={fresh || undefined}
       style={{
         display: 'grid',
-        gridTemplateColumns: orderGrid(clock),
+        gridTemplateColumns: orderGrid(clock, withLast),
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -173,9 +183,23 @@ function OrderRow({ o, own, fresh }: { o: WorkingOrder; own: boolean; fresh: boo
       <div style={{ font: '13px/1 var(--num)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{clock.time(o.createdAt, { seconds: true })}</div>
       <div style={{ color: buy ? 'var(--up)' : 'var(--dn)', fontWeight: 500 }}>{buy ? common.buyShort : common.sellShort}</div>
       <div className="ellipsis">{contractLabel(o.contract)}</div>
-      <div className="ellipsis" style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
+      <div
+        className="ellipsis"
+        style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}
+        title={withLast ? undefined : [`${om.last} ${lastPriceText(last)}`, distance].filter(Boolean).join(' · ')}
+      >
         {f0(o.totalQuantity)} @ {orderPriceText(o)}
       </div>
+      {withLast && (
+        <div
+          className="ellipsis"
+          data-cell="last"
+          style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}
+          title={(last == null ? quote?.error?.message : distance) || undefined}
+        >
+          {lastPriceText(last)}
+        </div>
+      )}
       <div className="ellipsis" title={o.message ?? o.whyHeld ?? st.text} style={{ color: st.accent ? 'var(--ac)' : 'var(--mu)' }}>
         {st.text}
       </div>
@@ -198,16 +222,21 @@ function OrderRow({ o, own, fresh }: { o: WorkingOrder; own: boolean; fresh: boo
   );
 }
 
-/** The open orders with their column names; the order a floating panel just placed flashes (for FRESH_MS). */
-function OrderList({ orders, myClientId }: { orders: WorkingOrder[]; myClientId: number }) {
+/**
+ * The open orders with their column names; the order a floating panel just placed flashes (for
+ * FRESH_MS). Their quotes are held while the list shows (the stock's line is the chart's or the desk's).
+ */
+function OrderList({ orders, myClientId, withLast }: { orders: WorkingOrder[]; myClientId: number; withLast: boolean }) {
   const m = useChartMessages();
   const clock = useClock();
   const sent = useOrderFeedback((s) => s.sent);
   const now = useNow(5_000).getTime();
+  const quotes = useOrderQuotes(SYMBOL_ORDERS_QUOTE_OWNER, orders);
+  const headers = withLast ? m.orderHeaders : m.orderHeaders.filter((_, i) => i !== LAST_HEADER);
   return (
     <div>
       {/* The actions column has no name. */}
-      <HeaderRow grid={orderGrid(clock)} headers={[...m.orderHeaders, ['', '']]} right={(i) => i === 3} ruled />
+      <HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} ruled />
       {/* orderId is unique per API client only (TWS orders all have 0). */}
       {orders.map((o) => (
         <OrderRow
@@ -215,6 +244,8 @@ function OrderList({ orders, myClientId }: { orders: WorkingOrder[]; myClientId:
           o={o}
           own={o.clientId === myClientId}
           fresh={isFreshOrder(o, sent.ticket, now) || isFreshOrder(o, sent.strategy, now)}
+          quote={quotes[contractKey(o.contract)]}
+          withLast={withLast}
         />
       ))}
     </div>
@@ -334,9 +365,13 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
     return { dte: line?.dte != null ? { days: line.dte, soon: line.soon } : undefined, delta: positionDelta(r, quotes), expiry };
   };
   const posHeaders = options ? [m.posHeaders[0], m.posHeaders[1], m.dteHeader, m.deltaHeader, ...m.posHeaders.slice(2)] : m.posHeaders;
+  const clock = useClock();
+  const root = useRef<HTMLDivElement>(null);
+  const { w } = useSize(root);
+  const withLast = lastColumnFits(w, timeColumn(clock));
 
   return (
-    <div data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
+    <div ref={root} data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div
           style={{
@@ -376,7 +411,7 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
         </div>
         {tab === 'open' ? (
           orders.length ? (
-            <OrderList orders={orders} myClientId={myClientId} />
+            <OrderList orders={orders} myClientId={myClientId} withLast={withLast} />
           ) : (
             <div style={{ padding: '10px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.noOrders(sym)}</div>
           )

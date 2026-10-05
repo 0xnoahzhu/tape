@@ -123,16 +123,17 @@ when the 2 s wait ends with the order still Inactive. IB may also acknowledge an
 notification waits up to 1 s for the reason, and a request is announced as rejected once (the
 order IB reported, or else the request).
 
-**Last price.** Portfolio › Orders shows the current price of each order's instrument in a Last
-column beside the order price (`orders/lastPrice.ts`): an option's mark, else its midpoint (as the
-Positions tab values it), else its last trade; a combo's net midpoint, else its last; anything else
-its last trade, else `lastPrice`'s fallbacks; "—" without a quote. Its tooltip says how far the
-limit or trigger (a trailing order's current stop) is from it, in percent of it ("Limit −0.43% from
-last"; nothing for market and offset-priced orders, or when either price is not positive, as a
-combo's net can be), or, without a price, the line's error. The orders' own instruments are quoted
-(an option its own quote, a combo its combo quote, a pair its rate; one line per instrument, shared
-with any other owner) only while the tab shows, under the `orders` owner, which counts as visible
-(`subscriptions.ts`).
+**Last price.** Portfolio › Orders and the Trade page's activity panel show the current price of
+each order's instrument in a Last column beside the order price (`orders/lastPrice.ts`): an
+option's mark, else its midpoint (as the Positions tab values it), else its last trade; a combo's
+net midpoint, else its last; anything else its last trade, else `lastPrice`'s fallbacks; "—"
+without a quote. Its tooltip says how far the limit or trigger (a trailing order's current stop) is
+from it, in percent of it ("Limit −0.43% from last"; nothing for market and offset-priced orders,
+or when either price is not positive, as a combo's net can be), or, without a price, the line's
+error. The orders' own instruments are quoted (an option its own quote, a combo its combo quote, a
+pair its rate; one line per instrument, shared with any other owner) only while the list shows,
+under the owners `orders` and `symbol-orders` (the panel's Open orders tab), which count as
+visible (`subscriptions.ts`).
 
 #### Order types and attributes
 
@@ -875,11 +876,15 @@ above it differs: 200px of chart, 320px under the options desk (its header, tabs
 **Activity panel.** The current symbol's positions (the stock and its derivatives: stock first, then
 options by expiry, strike and right, `activityModel.ts → byInstrument`) and its open orders (newest
 first), each under column names, with Modify / Cancel for this client's orders and "All orders ›"
-(Portfolio › Orders). Rows are valued like the Portfolio page (`portfolio/calc.ts → positionRow`, one
-price for value and P&L) from the panel's own quote owner, `symbol-activity` (visible; options with the
-`option` profile: their lines are mostly open already for the options risk watcher, and the stock's for
-the chart or the desk). Under the options desk it adds the underlying's exposure in its header while an
-option is held (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`, as on the
+(Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price" where
+contract and status keep 100px each beside it (`orderModel.ts → lastColumnFits`: from about 758px
+of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window); narrower, the
+column and its name are left out and the last price is in the tooltip of "qty @ price". Rows are
+valued like the Portfolio page (`portfolio/calc.ts → positionRow`, one price for value and P&L) from
+the panel's own quote owner, `symbol-activity` (visible; options with the `option` profile: their
+lines are mostly open already for the options risk watcher, and the stock's for the chart or the
+desk). Under the options desk it adds the underlying's exposure in its header while an option is
+held (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`, as on the
 Positions toolbar: Δ sh, $Δ, Γ, Θ/day, Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New
 York days, `optionLine`, in the accent within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares,
 so the column adds up to the exposure's Δ) after Qty, and a click on an option row selects its expiry

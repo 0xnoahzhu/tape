@@ -55,7 +55,8 @@ Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   delayed data keeps seconds bars from being live), session status, the watchlist star and price-alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity, average
   cost, value, % of net liquidation, unrealized and day P&L) and open orders (time, side, contract, quantity
-  @ price, status, Modify / Cancel), under column names; a splitter resizes it and it collapses to a bar.
+  @ price, last price where the panel is wide enough, status, Modify / Cancel), under column names; a
+  splitter resizes it and it collapses to a bar.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
   market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
   on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force

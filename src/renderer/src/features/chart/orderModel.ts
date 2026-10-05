@@ -1,5 +1,6 @@
-// Working-order presentation for the symbol activity panel (design: stOf / ordMap); "Modify"
-// loads the order into the ticket as on Portfolio › Orders. Pure so it can be unit tested.
+// Working-order presentation for the symbol activity panel (design: stOf / ordMap) and the layout
+// of its rows; "Modify" loads the order into the ticket as on Portfolio › Orders. Pure so it can be
+// unit tested.
 
 import { DASH, f0, px } from '@shared/format';
 import { timingText } from '@shared/orderTiming';
@@ -63,6 +64,45 @@ export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock):
 export function orderPriceText(o: WorkingOrder): string {
   const p = listPriceText(o);
   return p === DASH ? o.orderType : p;
+}
+
+// ---------------------------------------------------------------------------
+// Row layout
+
+// Fixed widths of an order row (px): side, the least of "qty @ price" (room for "100 @ 226.50"),
+// the least of Last ("12,345.67") and Modify / Cancel; its side padding and the gap between cells
+// (SymbolActivityPanel).
+const SIDE_W = 48;
+const QTY_PRICE_W = 96;
+const LAST_W = 72;
+const ACTIONS_W = 110;
+const ROW_PAD = 24;
+const GAP = 12;
+/** Least width the contract and the status keep beside the Last column. */
+const TEXT_MIN_W = 100;
+
+/**
+ * Columns of an order row and of the names above it. The time column is sized for the clock format
+ * (timeColumn). "qty @ price" grows little beyond its least width, as does Last; the rest goes to
+ * contract and status (with its good-after and GTD times), which clip first in a narrow window.
+ * Without the Last column the status gets the larger share; beside it the contract keeps room for an
+ * option ("AAPL 10/16 230 Call") in a 1440px window.
+ */
+export function orderColumns(time: string, withLast: boolean): string {
+  const qtyPrice = `minmax(${QTY_PRICE_W}px,0.5fr)`;
+  return withLast
+    ? `${time} ${SIDE_W}px minmax(0,1.5fr) ${qtyPrice} minmax(${LAST_W}px,0.6fr) minmax(0,1.3fr) ${ACTIONS_W}px`
+    : `${time} ${SIDE_W}px minmax(0,1.2fr) ${qtyPrice} minmax(0,2fr) ${ACTIONS_W}px`;
+}
+
+/**
+ * Whether a panel `width` px wide has room for the Last column: the fixed columns, "qty @ price", Last
+ * and TEXT_MIN_W for contract and status, with the gaps and the side padding. Narrower, the last
+ * price is in the tooltip of "qty @ price".
+ */
+export function lastColumnFits(width: number, time: string): boolean {
+  const fixed = parseFloat(time) + SIDE_W + QTY_PRICE_W + LAST_W + ACTIONS_W;
+  return width >= 2 * ROW_PAD + fixed + 2 * TEXT_MIN_W + 6 * GAP;
 }
 
 // Modify loads the order the same way from here and from Portfolio › Orders.

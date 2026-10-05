@@ -117,6 +117,8 @@ export const useChartMessages = createMessages({
       ['Side', 'Buy or sell'],
       ['Contract', 'Contract'],
       ['Qty @ Price', 'Quantity @ limit or stop price'],
+      // Left out where the panel is too narrow for the column (its price is then in the tooltip of Qty @ Price).
+      ['Last', 'Last price of the order’s contract'],
       ['Status', 'Order status at IB'],
     ] as Array<[string, string]>,
     /** The cells the panel adds after Qty under the options desk. */
@@ -215,6 +217,7 @@ export const useChartMessages = createMessages({
       ['方向', '买入或卖出'],
       ['合约', '合约'],
       ['数量 @ 价格', '数量 @ 限价或止损价'],
+      ['现价', '订单合约的最新价'],
       ['状态', 'IB 的订单状态'],
     ] as Array<[string, string]>,
     dteHeader: ['剩余天数', '距到期天数（按纽约日历）'] as [string, string],
