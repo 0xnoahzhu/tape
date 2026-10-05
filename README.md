@@ -92,10 +92,10 @@ used.
 
 **Exchange quotes when SMART is delayed** — IBKR can send an account a stock's consolidated (SMART) quote
 delayed while the stock's own exchange sends live data (seen on a paper account: AAPL delayed on SMART, live
-on NASDAQ). Tape then quotes that stock from its primary exchange, marked "Live · NASDAQ" on the chart and
-"NASDAQ" in the watchlist: the best bid and ask on that exchange, not the national best bid and offer. It
-tries SMART again every 10 minutes, after a reconnect and when a competing session ends, and goes back to
-the consolidated quote as soon as SMART is live.
+on NASDAQ). Tape then quotes that stock from its primary exchange, marked "Live · NASDAQ" on the chart, in
+the watchlist and in the order ticket: the bid, ask and last on that exchange, not the national best bid
+and offer. It tries SMART again every 10 minutes, after a reconnect and when a competing session ends, and
+goes back to the consolidated quote as soon as SMART is live (or when the exchange turns delayed too).
 
 ## Requirements
 

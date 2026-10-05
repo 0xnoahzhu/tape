@@ -408,7 +408,9 @@ Main-process owners in `subscriptions.ts → QUIET_OWNERS` (the market data chec
 like any other owner, but a contract only they want is never sent to the renderer. `probe()` opens a line
 outside the owners (the check's primary-exchange line); probes and fallback side lines count against the
 95-line budget like owner lines, and a contract that finds no free line while they are open carries the
-line-limit error until they close (closing one reconciles again).
+line-limit error until they close (closing a probe or a side line reconciles again). Side lines only take
+free lines, never a lingering one. A contract that changes from "quiet owners only" to "published" (a
+renderer owner joins) is reconciled, which sends its quote to the renderer at once.
 
 #### Primary-exchange fallback
 
@@ -423,19 +425,26 @@ smart ──delayed (type 3 / 4, 10167, 354, 10168)──▶ side line on the pr
                        quote.source = { kind: 'primary', exchange }
   side: type 3 / 4, 10167, an error, nothing in 10 s ──▶ stay on SMART; no probe for 30 min, then one
                        if the line is still delayed
-primary ──every 10 min; at once when a 10197 episode ends (a real price) or the exchange goes delayed──▶
-                       side line on SMART: type 1 / 2 → back to SMART (exchange line cancelled,
-                       source cleared); otherwise next retry in 10 min
+primary ──every 10 min; at once when a 10197 episode ends──▶ side line on SMART: type 1 / 2 → back to
+                       SMART (exchange line cancelled, source cleared); otherwise next retry in 10 min
+primary ──the exchange line turns delayed──▶ side line on SMART: live → back to SMART; delayed → back to
+                       SMART anyway (the side line becomes the line); an error or nothing in 10 s → a new
+                       SMART line; then no exchange probe for 30 min
 handshake (reconnect, 1101) ──▶ every line starts on SMART again
 ```
+
+A 10197 episode starts only on an owner line (a side line's 10197 is a failed probe) and ends with a live
+(not delayed) price on a line that reported it, at most once a minute (`COMPETING_END_MIN_MS`), so a
+competing session never makes delayed stocks open side line after side line.
 
 The primary exchange comes from contract details (`primaryExch`); IB serves market data directly on the
 codes it reports (checked live: NASDAQ for AAPL, NYSE for IBM, ARCA for SPY, AMEX for IMO, BATS for CBOE;
 `US_PRIMARY_EXCHANGES`). The side line has the line's generic ticks; its ticks are held until it wins and
 then applied. A side line lives at most 10 s, so the steady state holds one line per contract; a line
 re-requested for new profiles stays on the exchange; lingering lines are not probed. The renderer marks
-such quotes: the chart header reads "Live · NASDAQ" and watchlist rows show the exchange, with a tooltip
-that the bid / ask are that exchange's best, not the national best bid and offer.
+such quotes by their data type: the chart header and the watchlist row read "Live · NASDAQ" ("Delayed ·
+NASDAQ" for delayed data), the order ticket shows "Live · NASDAQ: NASDAQ's own bid/ask, not the
+consolidated quote (NBBO)" under its bid / ask, and the tooltips name the stock.
 
 ### Market data check
 
@@ -449,7 +458,7 @@ seconds:
 | US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the quotes the fallback serves from their exchange at the time |
 | US options | an option line a view already holds with an answer, else the SPY call of the first expiration after today with the whole strike nearest SPY's price (chain → contract details) | its status |
 | Indices | SPX on CBOE via the owner | its status |
-| Level 2 | only on *Check now*: the depth view's book when it has levels, else one `reqMktDepth` (SPY, SMART depth, 5 rows), cancelled at once | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354 no data |
+| Level 2 | only on *Check now*: the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one `reqMktDepth` (SPY, SMART depth, 5 rows), cancelled at once; this client never holds two depth lines | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354 no data |
 
 Contracts another owner holds, or whose line lingers, answer at once from their quote (their type or
 error; nothing is requested). Otherwise a line's answer is its `marketDataType` (1 live, 2 frozen, 3 / 4
@@ -459,9 +468,15 @@ type 3 and 10167); no answer in 8 s is no data. 10197 overrides everything (noth
 outcomes carry code −1 and `own`: `timeout`, `lines` (no free line), `closed`, `contract` (no option
 found). A session that closes midway fails the check and keeps the previous result.
 
+IB may send the 2152 of a depth request seconds after the first book update (seen live: 12 s after the
+request, after the cancel). The depth line's errors are therefore watched for 15 s from the request
+(`DEPTH_NOTICE_MS`): a late 2152 patches the stored result (persisted and pushed again). Until then the
+account's previous 2152 stands; when none comes it is dropped.
+
 The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
 messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
-data cache) and pushed as `marketDataCheck` events (`running` too; snapshot field `marketDataCheck`). A
+data cache) and pushed as `marketDataCheck` events (`running`, and `depth` while a check with Level 2
+runs; snapshot field `marketDataCheck`). A
 check without Level 2 keeps the previous Level 2 answer of the same account. Concurrent calls join the
 running check; a request with Level 2 during one without runs right after it. A quiet check (no Level 2)
 runs 8 s after every handshake unless one ran for the account in the last 5 minutes.
@@ -470,12 +485,14 @@ runs 8 s after every handshake unless one ran for the account in the last 5 minu
 Settings › Market data (`MarketDataSection.tsx`, `logic.ts → checkNeeded / checkItems / checkReasons`)
 shows per market the checked status ("Live", "Live · NASDAQ only", "Delayed", "No data", "Frozen (market
 closed)"), the instrument with the SMART / exchange split or IB's code, "checked 2 min ago", the quotes of
-this session as a second line, and one note per reason: a competing session (10197), live data not
-enabled for the API (354 / 10089 / 10090 / 10091 / 10167 / 10168 / 10186 or plain delayed data; for a paper
-account the market data sharing setting, which takes up to a day), SMART delayed but the exchange live, a
-missing or partial depth subscription (2152 lists the exchanges), no free depth line (309), no answer, no
-free line, no option found. Opening the section checks again when the result is older than 5 minutes or
-belongs to another account; *Check now* includes Level 2.
+this session as a second line, and one note per reason: a competing session (10197), no live data for the
+markets it names (354 / 10089 / 10090 / 10091 / 10167 / 10168 / 10186 or plain delayed data; for a paper
+account the market data sharing setting, which takes up to a day, only when no market of the check is
+live), SMART delayed but the exchange live (per stock and exchange; "in general" only when the check's own
+SPY was delayed on SMART), a missing or partial depth subscription (2152 lists the exchanges), no free
+depth line (309), no answer, no free line, no option found. Opening the section checks again when the
+result is older than 5 minutes or belongs to another account; *Check now* includes Level 2. While not
+connected the last result stays, muted, with "not connected".
 
 ### API log
 
