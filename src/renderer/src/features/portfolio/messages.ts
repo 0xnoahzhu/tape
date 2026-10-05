@@ -9,6 +9,13 @@ export const usePortfolioMessages = createMessages({
     unrealizedPnl: 'Unrealized P&L',
     buyingPower: 'Buying Power',
     cash: 'Cash',
+    // Header metrics added in v6: [label, tooltip]
+    marketValue: 'Market Value',
+    marketValueHint: 'Stocks + options, shorts negative',
+    realizedToday: 'Realized Today',
+    realizedTodayHint: 'P&L from positions closed today',
+    excessLiquidityHd: 'Excess Liquidity',
+    excessLiquidityHint: 'Liquidation risk below zero',
     tabDash: 'Dashboard',
     tabPos: 'Positions',
     tabPerf: 'Performance',
@@ -40,12 +47,6 @@ export const usePortfolioMessages = createMessages({
       'Consumer, Cyclical': 'Consumer Cyclical',
       'Consumer, Non-cyclical': 'Consumer Non-cyclical',
     } as Record<string, string>,
-
-    // Account overview
-    accountOverview: 'Account overview',
-    marginUsage: 'Margin usage',
-    marginUsageHint: 'Initial margin as a share of net liquidation',
-    availableFunds: 'Available funds',
 
     // Positions table: [label, full name]
     headers: [
@@ -96,6 +97,12 @@ export const usePortfolioMessages = createMessages({
     unrealizedPnl: '未实现盈亏',
     buyingPower: '购买力',
     cash: '现金',
+    marketValue: '持仓市值',
+    marketValueHint: '股票 + 期权市值（空头为负）',
+    realizedToday: '今日已实现',
+    realizedTodayHint: '今日平仓产生的盈亏',
+    excessLiquidityHd: '剩余流动性',
+    excessLiquidityHint: '低于 0 会触发强平',
     tabDash: '概览',
     tabPos: '持仓',
     tabPerf: '业绩',
@@ -132,11 +139,6 @@ export const usePortfolioMessages = createMessages({
       Diversified: '多元化',
       Government: '政府',
     } as Record<string, string>,
-
-    accountOverview: '账户概况',
-    marginUsage: '保证金占用',
-    marginUsageHint: '初始保证金占净清算值的比例',
-    availableFunds: '可用资金',
 
     headers: [
       ['代码', '代码'],

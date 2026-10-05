@@ -1,4 +1,4 @@
-// Equity curve (design: portfolio dashboard, left card). Built only from NAV samples that the
+// Equity curve (design: the dashboard's "Net liquidation" widget). Built only from NAV samples that the
 // main process recorded plus the live net liquidation; missing history is shown, never filled in.
 
 import { useMemo } from 'react';
@@ -25,7 +25,8 @@ import { usePortfolioUi } from './uiState';
 
 const GRID_Y = [60, 150, 240];
 
-function spanLabel(m: PortfolioMessages, range: RangeKey, covered: boolean, first: NavPoint | undefined): string {
+/** The range's span label ("Year to date"), or "Since …" when the history starts later. */
+export function spanLabel(m: PortfolioMessages, range: RangeKey, covered: boolean, first: NavPoint | undefined): string {
   if (range === 'ALL' || !covered) return first ? m.since(ymd(first.t)) : '';
   return { '7D': m.span7D, MTD: m.spanMTD, YTD: m.spanYTD, '1Y': m.span1Y }[range];
 }
@@ -65,8 +66,9 @@ export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: str
   const note = thin ? (series.length ? m.historyNote(ymd(series[0].t)) : m.noHistory) : null;
 
   return (
-    <div style={{ background: 'var(--p)', padding: '22px 28px 18px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+    <div style={{ flex: 1, background: 'var(--p)', padding: '22px 28px 18px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+      {/* The controls wrap under the figures when the widget is one column wide. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px 16px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
           <div style={{ fontWeight: 600 }}>{perf ? m.titlePerf : m.titleValue}</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>

@@ -565,22 +565,3 @@ export function leverage(gross: number | undefined, netLiq: number | undefined):
 export function leverageLabel(lev: number | undefined): string {
   return finite(lev) ? `${f2(lev)}×` : DASH;
 }
-
-/** Margin usage (percent) above which the usage bar turns red. */
-export const MARGIN_WARN = 80;
-
-export interface MarginUsage {
-  /** Initial margin in percent of net liquidation. */
-  pct: number;
-  /** Bar fill in percent, clamped to 0–100. */
-  fill: number;
-  /** Above MARGIN_WARN. */
-  warn: boolean;
-}
-
-/** Initial margin / net liquidation; null when either is unknown or net liquidation is not positive. */
-export function marginUsage(initMargin: number | undefined, netLiq: number | undefined): MarginUsage | null {
-  if (!finite(initMargin) || !finite(netLiq) || netLiq <= 0) return null;
-  const pct = (initMargin / netLiq) * 100;
-  return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct > MARGIN_WARN };
-}

@@ -89,3 +89,12 @@ export function PlusIcon({ size = 18 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Drag grip (the design's "⠿"): six square dots in two columns. */
+export function GripIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 14 14" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      {[3, 7, 11].flatMap((y) => [4, 8].map((x) => <rect key={`${x}-${y}`} x={x} y={y - 1} width="2" height="2" fill="currentColor" />))}
+    </svg>
+  );
+}

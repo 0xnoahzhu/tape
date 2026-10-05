@@ -19,7 +19,6 @@ import {
   leverage,
   leverageLabel,
   livePrice,
-  marginUsage,
   maxDrawdown,
   modeValues,
   moneyShort,
@@ -540,20 +539,5 @@ describe('positionRow', () => {
     expect(leverageLabel(12.346)).toBe('12.35×');
     expect(leverageLabel(undefined)).toBe('—');
     expect(leverageLabel(NaN)).toBe('—');
-  });
-
-  it('computes margin usage', () => {
-    expect(marginUsage(159_000, 1_284_530)).toEqual({ pct: expect.closeTo(12.378, 3), fill: expect.closeTo(12.378, 3), warn: false });
-    expect(marginUsage(0, 50_000)).toEqual({ pct: 0, fill: 0, warn: false });
-    // At the threshold it is not a warning yet; above it is.
-    expect(marginUsage(80, 100)?.warn).toBe(false);
-    expect(marginUsage(80.5, 100)?.warn).toBe(true);
-    // The bar never overflows its track or goes negative.
-    expect(marginUsage(150, 100)).toEqual({ pct: 150, fill: 100, warn: true });
-    expect(marginUsage(-5, 100)).toEqual({ pct: -5, fill: 0, warn: false });
-    expect(marginUsage(undefined, 100)).toBeNull();
-    expect(marginUsage(10, undefined)).toBeNull();
-    expect(marginUsage(10, 0)).toBeNull();
-    expect(marginUsage(10, -100)).toBeNull();
   });
 });

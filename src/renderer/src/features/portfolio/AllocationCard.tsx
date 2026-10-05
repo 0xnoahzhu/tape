@@ -1,4 +1,4 @@
-// Sector allocation donut (design: portfolio dashboard, top of the 380px right column).
+// Sector allocation donut (design: the dashboard's "Sector allocation" widget).
 
 import { useMemo } from 'react';
 import { useCommon } from '../../i18n/common';
@@ -17,7 +17,7 @@ export function AllocationCard({ rows, cash, netLiq, symbol }: { rows: PositionR
   const empty = !rows.length && netLiq != null;
 
   return (
-    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+    <div style={{ flex: 1, minWidth: 0, background: 'var(--p)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '22px 28px 4px', fontWeight: 600 }}>{m.allocation}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '12px 28px 16px' }}>
         <div style={{ position: 'relative', width: 140, height: 140, flexShrink: 0 }}>
