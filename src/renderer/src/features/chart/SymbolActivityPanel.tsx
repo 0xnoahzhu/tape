@@ -11,6 +11,7 @@ import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
+import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
 import { livePrice, positionRow } from '../portfolio/calc';
 import { useChartPrefs } from './chartPrefs';
@@ -125,23 +126,75 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
   );
 }
 
-export function SymbolActivityPanel() {
-  const m = useChartMessages();
+/** The current symbol's positions (stock first) and working orders (newest first). */
+function useSymbolActivity() {
   const symbol = useStore((s) => s.symbol);
   const allPositions = useStore((s) => s.positions);
   const allOrders = useStore((s) => s.orders);
-  const netLiq = useStore((s) => s.account?.netLiquidation);
-  const myClientId = useStore((s) => s.connection.clientId);
-  const setPage = useStore((s) => s.setPage);
-  const tab = useChartPrefs((s) => s.activityTab);
-  const setTab = useChartPrefs((s) => s.setActivityTab);
-
   const sym = symbol.symbol;
   const positions = useMemo(() => allPositions.filter((p) => p.contract.symbol === sym && p.quantity !== 0).sort(byInstrument), [allPositions, sym]);
   const orders = useMemo(
     () => allOrders.filter((o) => isOrderActive(o.status) && o.contract.symbol === sym).sort((a, b) => b.createdAt - a.createdAt),
     [allOrders, sym],
   );
+  return { sym, positions, orders };
+}
+
+/** 28px icon button in the panel's header and bar. */
+function PanelIconButton({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="hover-tx hover-p2"
+      style={{ width: 28, height: 28, alignSelf: 'center', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, border: 'none', background: 'transparent', color: 'var(--dm)', cursor: 'pointer' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Height of the collapsed bar (TradePage reserves this row). */
+export const ACTIVITY_BAR_H = 32;
+
+/** The collapsed panel: counts of the symbol's positions and working orders, click to expand. */
+export function SymbolActivityBar({ onExpand }: { onExpand: () => void }) {
+  const m = useChartMessages();
+  const { positions, orders } = useSymbolActivity();
+  return (
+    <div
+      onClick={onExpand}
+      title={m.expandPanel}
+      className="hover-tx"
+      style={{ height: ACTIVITY_BAR_H, display: 'flex', alignItems: 'center', gap: 16, padding: '0 10px 0 24px', background: 'var(--p)', color: 'var(--mu)', fontSize: 12, cursor: 'pointer', minWidth: 0 }}
+    >
+      <div>
+        {m.position} <span className="num">{positions.length}</span>
+      </div>
+      <div>
+        {m.openOrders} <span className="num">{orders.length}</span>
+      </div>
+      <div style={{ flex: 1 }} />
+      <PanelIconButton title={m.expandPanel} onClick={onExpand}>
+        <DoubleChevronIcon dir="up" size={14} />
+      </PanelIconButton>
+    </div>
+  );
+}
+
+export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void }) {
+  const m = useChartMessages();
+  const netLiq = useStore((s) => s.account?.netLiquidation);
+  const myClientId = useStore((s) => s.connection.clientId);
+  const setPage = useStore((s) => s.setPage);
+  const tab = useChartPrefs((s) => s.activityTab);
+  const setTab = useChartPrefs((s) => s.setActivityTab);
+  const { sym, positions, orders } = useSymbolActivity();
 
   return (
     <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
@@ -152,7 +205,7 @@ export function SymbolActivityPanel() {
             display: 'flex',
             alignItems: 'stretch',
             gap: 22,
-            padding: '0 24px',
+            padding: onCollapse ? '0 10px 0 24px' : '0 24px',
             fontSize: 13,
             flexShrink: 0,
             boxShadow: 'inset 0 -1px 0 var(--ln2)',
@@ -170,6 +223,11 @@ export function SymbolActivityPanel() {
           <div onClick={() => setPage('ord')} style={{ display: 'flex', alignItems: 'center', color: 'var(--ac)', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
             {m.allOrders}
           </div>
+          {onCollapse && (
+            <PanelIconButton title={m.collapsePanel} onClick={onCollapse}>
+              <DoubleChevronIcon dir="down" size={14} />
+            </PanelIconButton>
+          )}
         </div>
         {tab === 'open' ? (
           orders.length ? (

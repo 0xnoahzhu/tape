@@ -71,9 +71,16 @@ export function SearchIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-/** Double chevron « / »: collapse and expand the watchlist. */
-export function DoubleChevronIcon({ dir, size = 18 }: { dir: 'left' | 'right'; size?: number }) {
-  const d = dir === 'left' ? 'M9 4.5 L4.5 9 L9 13.5 M13.5 4.5 L9 9 L13.5 13.5' : 'M4.5 4.5 L9 9 L4.5 13.5 M9 4.5 L13.5 9 L9 13.5';
+const DOUBLE_CHEVRON = {
+  left: 'M9 4.5 L4.5 9 L9 13.5 M13.5 4.5 L9 9 L13.5 13.5',
+  right: 'M4.5 4.5 L9 9 L4.5 13.5 M9 4.5 L13.5 9 L9 13.5',
+  up: 'M4.5 9 L9 4.5 L13.5 9 M4.5 13.5 L9 9 L13.5 13.5',
+  down: 'M4.5 4.5 L9 9 L13.5 4.5 M4.5 9 L9 13.5 L13.5 9',
+};
+
+/** Double chevron « » ︽ ︾: collapse and expand side and bottom panels. */
+export function DoubleChevronIcon({ dir, size = 18 }: { dir: keyof typeof DOUBLE_CHEVRON; size?: number }) {
+  const d = DOUBLE_CHEVRON[dir];
   return (
     <svg viewBox="0 0 18 18" width={size} height={size} style={{ display: 'block' }} aria-hidden>
       <path d={d} stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="square" />
