@@ -5,7 +5,8 @@
 //   TAPE_CAPTURE_QUIT=1 electron .
 //
 // Each step runs `js` in the renderer (where `window.__tape.store` is the zustand store),
-// waits `delay` ms, then writes `<dir>/<name>.png`. Without steps a single "app.png" is taken.
+// waits `delay` ms, then writes `<dir>/<name>.png` (a value the js evaluates to is logged).
+// Without steps a single "app.png" is taken.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,7 +39,10 @@ export function setupDevCapture(win: BrowserWindow): void {
         // Focus events (inputs, dropdowns) only fire in a focused window.
         win.focus();
         win.webContents.focus();
-        if (step.js) await win.webContents.executeJavaScript(step.js, true);
+        if (step.js) {
+          const value: unknown = await win.webContents.executeJavaScript(step.js, true);
+          if (value !== undefined) console.log(`[capture] ${step.name}: ${JSON.stringify(value)}`);
+        }
         await sleep(step.delay ?? 800);
         const image = await win.webContents.capturePage();
         writeFileSync(join(dir, `${step.name}.png`), image.toPNG());
