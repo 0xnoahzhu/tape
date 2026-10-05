@@ -608,6 +608,7 @@ describe('primary-exchange fallback', () => {
     expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
     expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 3 });
     expect(svc.getQuote('STK:AAPL')?.source).toBeUndefined();
+    expect(svc.fallbacks()).toEqual([]); // the exchange is no longer live
     // No new exchange probe until the give-up time has passed.
     const n = fake.callsOf('reqMktData').length;
     fake.emit('marketDataType', retryId, 3);
@@ -693,6 +694,71 @@ describe('primary-exchange fallback', () => {
     reconciled();
     expect(fake.callsOf('reqMktData').some((c) => (c[1] as { symbol: string }).symbol === 'MSFT')).toBe(true);
     expect(svc.getQuote('STK:MSFT')?.error).toBeUndefined();
+  });
+
+  it('keeps the give-up when the line goes, so a stock wanted again does not probe its exchange again', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    fake.emit('marketDataType', lastReq(fake)[0], 3); // the exchange is delayed too: give up
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    // Released and swept (route and quote go), then wanted again: SMART only, no side line.
+    svc.setSubscriptions('watchlist', []);
+    reconciled();
+    vi.advanceTimersByTime(LINGER_MS);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([smartId]);
+    expect(svc.getQuote('STK:AAPL')).toBeUndefined();
+    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    reconciled();
+    const again = lastReq(fake)[0];
+    fake.emit('marketDataType', again, 3);
+    await flushAsync();
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(PRIMARY_GIVE_UP_MS - LINGER_MS - 1_000);
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    // At the end of the give-up the still delayed line probes once.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.callsOf('reqMktData')).toHaveLength(4);
+    expect((lastReq(fake)[1] as { exchange: string }).exchange).toBe('NASDAQ');
+  });
+
+  it('remembers what the fallback found after the line goes and across reconnects, per account', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    expect(svc.fallbacks()).toEqual([]);
+    fake.emit('marketDataType', smartId, 3);
+    await flushAsync();
+    const primaryId = lastReq(fake)[0];
+    fake.emit('marketDataType', primaryId, 1);
+    expect(svc.fallbacks()).toEqual([{ symbol: 'AAPL', exchange: 'NASDAQ', at: Date.now(), active: true }]);
+    // The user leaves the page: the exchange line goes after lingering, the finding stays.
+    svc.setSubscriptions('watchlist', []);
+    reconciled();
+    vi.advanceTimersByTime(LINGER_MS);
+    expect(fake.callsOf('cancelMktData').at(-1)).toEqual([primaryId]);
+    expect(svc.wanted()).toEqual([]);
+    expect(svc.fallbacks()).toMatchObject([{ symbol: 'AAPL', exchange: 'NASDAQ', active: false }]);
+    fake.close();
+    fake.ready();
+    expect(svc.fallbacks()).toHaveLength(1);
+    // SMART answers live: the finding no longer holds.
+    svc.setSubscriptions('watchlist', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    reconciled();
+    fake.emit('marketDataType', lastReq(fake)[0], 1);
+    expect(svc.fallbacks()).toEqual([]);
+    // A finding goes when the exchange answers delayed, and with another account.
+    fake.emit('marketDataType', lastReq(fake)[0], 3);
+    await flushAsync();
+    fake.emit('marketDataType', lastReq(fake)[0], 1);
+    expect(svc.fallbacks()).toHaveLength(1);
+    const state = fake.ib.getState();
+    fake.ib.getState = () => ({ ...state, account: 'DU111', accounts: ['DU111'] });
+    fake.close();
+    fake.ready();
+    expect(svc.fallbacks()).toHaveLength(1); // the first account seen
+    fake.ib.getState = () => ({ ...state, account: 'DU222', accounts: ['DU222'] });
+    fake.close();
+    fake.ready();
+    expect(svc.fallbacks()).toEqual([]);
   });
 
   it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {

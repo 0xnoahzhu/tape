@@ -126,6 +126,15 @@ export interface ContractService {
   search(pattern: string): Promise<SymbolMatch[]>;
 }
 
+/** A stock found SMART delayed and live on its primary exchange (QuoteService.fallbacks). */
+export interface FallbackFinding {
+  /** The stock's label (its symbol). */
+  symbol: string;
+  exchange: string;
+  /** Epoch ms when the quote moved to the exchange. */
+  at: number;
+}
+
 /** What a probe line reports (QuoteService.probe). */
 export type ProbeEvent =
   | { kind: 'type'; type: MarketDataType }
@@ -144,6 +153,12 @@ export interface QuoteService {
   onNotice(listener: (key: string, code: number, message: string) => void): Unsubscribe;
   /** The contracts owners want now and those whose line still lingers, with their quotes. */
   wanted(): Array<{ contract: ContractRef; quote?: Quote }>;
+  /**
+   * The stocks the fallback found SMART delayed and live on their exchange in this app session
+   * (reconnects included, cleared when the account changes; an entry goes when SMART answers live or
+   * the exchange delayed). `active`: the quote is on the exchange now (its line may be gone).
+   */
+  fallbacks(): Array<FallbackFinding & { active: boolean }>;
   /**
    * Opens a market data line outside the owners (the market data check's primary exchange line).
    * It counts against the line budget like any other: null when no line is free or there is no

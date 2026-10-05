@@ -33,10 +33,15 @@
 // line budget (they only take free lines, never a lingering one) and live at most SIDE_TIMEOUT_MS,
 // so the steady state keeps one line per contract. A 10197 episode ends with a live price on an
 // owner line that reported it (side lines never start one), at most once per COMPETING_END_MIN_MS.
+// Two things outlive a contract's route (which goes with its line): the give-up times (no primary
+// probe before then, until a new session) and the fallback findings of this account (a stock found
+// SMART delayed and its exchange live, until SMART or the exchange says otherwise), which the
+// market data check reports.
 
 import { EventName } from '../ib/tws';
+import { contractLabel } from '@shared/contract';
 import type { ContractRef, MarketDataType, Quote, QuoteSubscription } from '@shared/types';
-import type { MainContext, ProbeEvent, QuoteService } from '../context';
+import type { FallbackFinding, MainContext, ProbeEvent, QuoteService } from '../context';
 import { DEMO_TICK_MS, demoMarket } from './demo';
 import { toIbContract } from './ibContract';
 import { afterStartup, isIbConnected, isWarningCode } from './ibRequest';
@@ -116,9 +121,7 @@ interface Route {
   /** The SMART contract to go back to. */
   smart?: ContractRef;
   side?: Side;
-  /** No primary-exchange probe before this time. */
-  quietUntil?: number;
-  /** The next SMART retry (on primary) or primary probe (after a give-up). */
+  /** The next SMART retry (on primary) or primary probe (after a give-up, see `quietUntil`). */
   timer?: ReturnType<typeof setTimeout>;
   resolving?: boolean;
 }
@@ -195,6 +198,15 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const probes = new Map<number, Probe>();
   const routes = new Map<string, Route>();
   const sides = new Map<number, Side>();
+  /**
+   * No primary-exchange probe for a contract before this time (Infinity: not a US listing IB serves
+   * directly). Kept when the contract's line and route go, so a stock wanted again after lingering
+   * does not probe again; cleared by its expiry or a new session.
+   */
+  const quietUntil = new Map<string, number>();
+  /** Stocks found SMART delayed and live on their exchange, for this account (QuoteService.fallbacks). */
+  const fallbacks = new Map<string, FallbackFinding>();
+  let fallbacksAccount: string | undefined;
   /** A 10197 was seen; the next live price on a line that reported it ends it (then SMART is tried again). */
   let competing = false;
   /** Owner lines that reported 10197 in this episode. */
@@ -277,6 +289,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   // IB lines
 
   const liveApi = () => (ready && !ctx.demo ? ctx.ib.api : null);
+
+  const accountNow = (): string | undefined => {
+    const s = ctx.ib.getState();
+    return s.account ?? s.accounts?.[0];
+  };
 
   const cancelLine = (line: Line) => {
     const side = routes.get(line.key)?.side;
@@ -455,7 +472,16 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const probePrimary = async (line: Line) => {
     if (line.route !== 'smart' || !fallbackEligible(line.contract) || line.releasedAt !== undefined) return;
     const r = routeOf(line.key);
-    if (r.side || r.resolving || r.primary || (r.quietUntil ?? 0) > Date.now()) return;
+    if (r.side || r.resolving || r.primary) return;
+    const until = quietUntil.get(line.key);
+    if (until !== undefined) {
+      if (until > Date.now()) {
+        // Given up before the line went: probe at the end of it (if still delayed then).
+        if (!r.timer && until !== Infinity) armQuiet(line.key, until - Date.now());
+        return;
+      }
+      quietUntil.delete(line.key);
+    }
     let c = line.contract;
     if (!c.primaryExchange || !c.conId) {
       r.resolving = true;
@@ -471,7 +497,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     const exchange = c.primaryExchange?.toUpperCase();
     if (!exchange || !US_PRIMARY_EXCHANGES.has(exchange)) {
-      r.quietUntil = Infinity; // not a US listing IB serves directly
+      quietUntil.set(line.key, Infinity); // not a US listing IB serves directly
       return;
     }
     r.smart = line.contract;
@@ -480,16 +506,24 @@ export function createQuoteService(ctx: MainContext): QuoteService {
 
   /** No primary probe for `ms`; then one, if the SMART line is still delayed. */
   const quiet = (key: string, ms: number) => {
+    quietUntil.set(key, Date.now() + ms);
+    armQuiet(key, ms);
+  };
+
+  /** The route's timer for the end of a give-up. */
+  const armQuiet = (key: string, ms: number) => {
     const r = routeOf(key);
-    r.quietUntil = Date.now() + ms;
     clearRouteTimer(r);
     r.timer = setTimeout(() => {
       r.timer = undefined;
-      r.quietUntil = undefined;
+      if ((quietUntil.get(key) ?? 0) <= Date.now()) quietUntil.delete(key);
       const line = lines.get(key);
       if (line && isDelayed(quotes.get(key))) void probePrimary(line);
     }, ms);
   };
+
+  /** The fallback no longer holds for this stock (SMART live, or its exchange not live). */
+  const dropFinding = (key: string) => void fallbacks.delete(key);
 
   const isDelayed = (q: Quote | undefined): boolean =>
     !!q && (q.marketDataType === 3 || q.marketDataType === 4 || (q.error != null && DELAYED_SIGNALS.has(q.error.code)));
@@ -517,6 +551,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     // The exchange line turned delayed and SMART is not live either: back to the consolidated quote.
     if (line && side.target === 'smart' && line.route === 'primary' && isDelayed(quotes.get(side.key))) {
+      dropFinding(side.key);
       if (!side.dead && (type === 3 || type === 4)) switchTo(line, side, type);
       else backToSmart(line, side);
       if (lines.has(side.key)) quiet(side.key, PRIMARY_GIVE_UP_MS);
@@ -524,8 +559,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     closeSide(side);
     if (!line) return;
-    if (side.target === 'primary') quiet(side.key, PRIMARY_GIVE_UP_MS);
-    else scheduleSmartRetry(side.key, SMART_RETRY_MS);
+    if (side.target === 'primary') {
+      // A delayed exchange answer says the exchange is not live (a silent or failed probe says nothing).
+      if (type === 3 || type === 4) dropFinding(side.key);
+      quiet(side.key, PRIMARY_GIVE_UP_MS);
+    } else scheduleSmartRetry(side.key, SMART_RETRY_MS);
   };
 
   /** The side line becomes the contract's line; the old one is cancelled. */
@@ -551,12 +589,15 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       r.primary = side.contract.exchange;
       r.primaryContract = side.contract;
       q.source = { kind: 'primary', exchange: side.contract.exchange };
+      fallbacks.set(next.key, { symbol: contractLabel(r.smart ?? line.contract), exchange: side.contract.exchange, at: Date.now() });
+      fallbacksAccount ??= accountNow();
       scheduleSmartRetry(next.key, SMART_RETRY_MS);
     } else {
       r.primary = undefined;
-      r.quietUntil = undefined;
+      quietUntil.delete(next.key);
       clearRouteTimer(r);
       q.source = undefined;
+      if (type === 1 || type === 2) dropFinding(next.key);
     }
     q.marketDataType = type;
     q.error = undefined;
@@ -587,9 +628,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     competingEndedAt = now;
     competing = false;
     competingIds.clear();
-    for (const [key, r] of routes) {
-      if (r.primary) scheduleSmartRetry(key, 0);
-      else if (r.quietUntil !== undefined && r.quietUntil !== Infinity) quiet(key, 0);
+    for (const [key, r] of routes) if (r.primary) scheduleSmartRetry(key, 0);
+    for (const [key, until] of [...quietUntil]) {
+      if (until === Infinity || routes.get(key)?.primary) continue;
+      if (lines.has(key)) quiet(key, 0);
+      else quietUntil.delete(key);
     }
   };
 
@@ -789,6 +832,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     for (const side of sides.values()) clearTimeout(side.timer);
     routes.clear();
     sides.clear();
+    // Give-ups end with the session; the fallback findings stay (the market data check reports them).
+    quietUntil.clear();
     competing = false;
     competingIds.clear();
     // The session is gone and its probes with it.
@@ -808,6 +853,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     if (ctx.demo) return;
     forgetLines();
     ready = true;
+    // Findings belong to the account they were made for.
+    const account = accountNow();
+    if (account && fallbacksAccount && account !== fallbacksAccount) fallbacks.clear();
+    if (account) fallbacksAccount = account;
     try {
       // Delayed-frozen fallback: live where subscribed, delayed otherwise, last values when closed.
       ctx.ib.api?.reqMarketDataType(4);
@@ -851,7 +900,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       if (type === 3 || type === 4) {
         if (line.route === 'smart') void probePrimary(line);
         else scheduleSmartRetry(line.key, 0); // the exchange went delayed: back to SMART if it is live
-      }
+      } else if (line.route === 'smart') dropFinding(line.key);
       const q = ensureQuote(line.key);
       if (q.marketDataType === type) return;
       q.marketDataType = type as MarketDataType;
@@ -880,6 +929,9 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       const out = book.wanted().map((w) => ({ contract: w.contract, quote: quotes.get(w.key) }));
       for (const line of lines.values()) if (line.releasedAt !== undefined && !line.dead) out.push({ contract: line.contract, quote: quotes.get(line.key) });
       return out;
+    },
+    fallbacks() {
+      return [...fallbacks].map(([key, f]) => ({ ...f, active: routes.get(key)?.primary != null }));
     },
     probe(contract, genericTicks, listener) {
       const api = liveApi();
