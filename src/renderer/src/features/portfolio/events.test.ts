@@ -100,7 +100,7 @@ describe('next events', () => {
     expect(etClock(960)).toBe('16:00');
     expect(etClock(0)).toBe('00:00');
     expect(monthDay('20261023')).toBe('10/23');
-    expect(monthDay('20260105')).toBe('1/5');
+    expect(monthDay('20260105')).toBe('01/05');
   });
 
   it('says where earnings dates come from, or why there are none', () => {

@@ -97,8 +97,8 @@ export function etClock(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
-/** "10/23" from YYYYMMDD. */
-export const monthDay = (yyyymmdd: string): string => `${Number(yyyymmdd.slice(4, 6))}/${Number(yyyymmdd.slice(6, 8))}`;
+/** "10/23", "01/05" from YYYYMMDD. */
+export const monthDay = (yyyymmdd: string): string => `${yyyymmdd.slice(4, 6)}/${yyyymmdd.slice(6, 8)}`;
 
 /** A dividend per share: "$0.24" in US dollars, else "0.24 EUR". */
 export function dividendAmount(amount: number, currency: string | undefined): string {
