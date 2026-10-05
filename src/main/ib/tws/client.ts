@@ -41,6 +41,7 @@ import type {
   OrderCancel,
   OrderState,
   TagValue,
+  WshEventData,
 } from './types.ts';
 
 /** Listener signatures of the events this client emits (argument order of @stoqey/ib). */
@@ -155,6 +156,10 @@ export interface IBApiEventMap {
     accountName?: string,
   ) => void;
   updateMktDepth: (reqId: number, position: number, operation: number, side: number, price: number, size: number) => void;
+  /** Wall Street Horizon: the JSON of the meta data (event types, filters). */
+  wshMetaData: (reqId: number, dataJson: string) => void;
+  /** Wall Street Horizon: the JSON of the events. */
+  wshEventData: (reqId: number, dataJson: string) => void;
   updateMktDepthL2: (
     reqId: number,
     position: number,
@@ -554,6 +559,26 @@ export class IBApi extends EventEmitter {
 
   reqSecDefOptParams(reqId: number, underlyingSymbol: string, futFopExchange: string, underlyingSecType: string, underlyingConId: number): this {
     return this.request((sv) => encoder.reqSecDefOptParams(sv, reqId, underlyingSymbol, futFopExchange, underlyingSecType, underlyingConId));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wall Street Horizon
+
+  /** The event types and filters IB offers (wshMetaData); IB wants it before event data. */
+  reqWshMetaData(reqId: number): this {
+    return this.request((sv) => encoder.reqWshMetaData(sv, reqId), reqId);
+  }
+
+  cancelWshMetaData(reqId: number): this {
+    return this.request((sv) => encoder.cancelWshMetaData(sv, reqId), reqId);
+  }
+
+  reqWshEventData(reqId: number, data: WshEventData): this {
+    return this.request((sv) => encoder.reqWshEventData(sv, reqId, data), reqId);
+  }
+
+  cancelWshEventData(reqId: number): this {
+    return this.request((sv) => encoder.cancelWshEventData(sv, reqId), reqId);
   }
 
   // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 import { isPegBenchOrder, isPegBestOrder, isPegMidOrder, COMPETE_AGAINST_BEST_OFFSET_UP_TO_MID, OrderConditionType } from './enums.ts';
 import { ErrorCode, TwsEncodeError } from './errors.ts';
 import { MIN_SERVER_VER, OUT_MSG_ID } from './messageIds.ts';
-import type { ComboLeg, Contract, ExecutionFilter, Order, OrderCancel, OrderCondition, TagValue } from './types.ts';
+import type { ComboLeg, Contract, ExecutionFilter, Order, OrderCancel, OrderCondition, TagValue, WshEventData } from './types.ts';
 
 /** One field of an outgoing frame. undefined and null are sent as empty fields. */
 export type Token = string | number | undefined | null;
@@ -277,6 +277,47 @@ export function reqSecDefOptParams(
   underlyingConId: number,
 ): Token[] {
   return toTokens([OUT_MSG_ID.REQ_SEC_DEF_OPT_PARAMS, reqId, underlyingSymbol, futFopExchange, underlyingSecType, underlyingConId]);
+}
+
+// ---------------------------------------------------------------------------
+// Wall Street Horizon (corporate event calendar; needs the account's WSH subscription)
+
+/** Unset integers (conId, total limit) are sent as empty fields. */
+const intOrEmpty = (n: number | undefined): number | undefined => (n === undefined || n === INT_MAX || !Number.isFinite(n) ? undefined : n);
+
+export function reqWshMetaData(_sv: number, reqId: number): Token[] {
+  return toTokens([OUT_MSG_ID.REQ_WSH_META_DATA, reqId]);
+}
+
+export function cancelWshMetaData(_sv: number, reqId: number): Token[] {
+  return toTokens([OUT_MSG_ID.CANCEL_WSH_META_DATA, reqId]);
+}
+
+/**
+ * Every supported server version (176+) carries the filter fields (171+) and the date range and
+ * limit (173+), so they are always sent. IB wants either a conId or a filter, not both.
+ */
+export function reqWshEventData(sv: number, reqId: number, data: WshEventData): Token[] {
+  const conId = intOrEmpty(data.conId);
+  if (conId !== undefined && data.filter) {
+    throw new TwsEncodeError(sv, 'reqWshEventData: a conId and a filter cannot be combined', ErrorCode.FAIL_SEND, reqId);
+  }
+  return toTokens([
+    OUT_MSG_ID.REQ_WSH_EVENT_DATA,
+    reqId,
+    conId,
+    data.filter ?? '',
+    !!data.fillWatchlist,
+    !!data.fillPortfolio,
+    !!data.fillCompetitors,
+    data.startDate ?? '',
+    data.endDate ?? '',
+    intOrEmpty(data.totalLimit),
+  ]);
+}
+
+export function cancelWshEventData(_sv: number, reqId: number): Token[] {
+  return toTokens([OUT_MSG_ID.CANCEL_WSH_EVENT_DATA, reqId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +753,18 @@ export class Encoder {
   }
   reqSecDefOptParams(reqId: number, underlyingSymbol: string, futFopExchange: string, underlyingSecType: string, underlyingConId: number): void {
     this.send((sv) => reqSecDefOptParams(sv, reqId, underlyingSymbol, futFopExchange, underlyingSecType, underlyingConId));
+  }
+  reqWshMetaData(reqId: number): void {
+    this.send((sv) => reqWshMetaData(sv, reqId));
+  }
+  cancelWshMetaData(reqId: number): void {
+    this.send((sv) => cancelWshMetaData(sv, reqId));
+  }
+  reqWshEventData(reqId: number, data: WshEventData): void {
+    this.send((sv) => reqWshEventData(sv, reqId, data));
+  }
+  cancelWshEventData(reqId: number): void {
+    this.send((sv) => cancelWshEventData(sv, reqId));
   }
   reqAccountUpdates(subscribe: boolean, acctCode: string): void {
     this.send((sv) => reqAccountUpdates(sv, subscribe, acctCode));

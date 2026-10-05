@@ -442,6 +442,8 @@ const IN_SCHEMAS: Record<string, Schema> = {
   rerouteMktDataReq: withId('reqId', 'reqId', 'conId', 'exchange'),
   realtimeBar: withId('reqId', 'version', 'reqId', 'time', 'open', 'high', 'low', 'close', 'volume', 'wap', 'count'),
   userInfo: withId('reqId', 'reqId', 'whiteBrandingId'),
+  wshMetaData: withId('reqId', 'reqId', 'dataJson'),
+  wshEventData: withId('reqId', 'reqId', 'dataJson'),
 };
 
 // ---------------------------------------------------------------------------
@@ -635,6 +637,10 @@ const OUT_SCHEMAS: Record<string, Schema> = {
   reqCurrentTime: plain('version'),
   reqMatchingSymbols: withId('reqId', 'reqId', 'pattern'),
   reqSecDefOptParams: withId('reqId', 'reqId', 'underlyingSymbol', 'futFopExchange', 'underlyingSecType', 'underlyingConId'),
+  reqWshMetaData: withId('reqId', 'reqId'),
+  cancelWshMetaData: withId('reqId', 'reqId'),
+  reqWshEventData: withId('reqId', 'reqId', 'conId', 'filter', 'fillWatchlist', 'fillPortfolio', 'fillCompetitors', 'startDate', 'endDate', 'totalLimit'),
+  cancelWshEventData: withId('reqId', 'reqId'),
 };
 
 // ---------------------------------------------------------------------------

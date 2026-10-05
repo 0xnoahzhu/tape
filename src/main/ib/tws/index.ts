@@ -67,4 +67,5 @@ export type {
   OrderState,
   SoftDollarTier,
   TagValue,
+  WshEventData,
 } from './types.ts';

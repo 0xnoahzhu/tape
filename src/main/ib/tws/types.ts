@@ -404,6 +404,23 @@ export interface ExecutionFilter {
   side?: string;
 }
 
+/**
+ * Wall Street Horizon event request (reqWshEventData; EClient's WshEventData). Either `conId`
+ * (one instrument) or `filter` (IB's JSON filter, e.g. {"watchlist":["8314"],"wshe_ed":"true"})
+ * selects the events; the fill flags add the account's watchlist, portfolio or competitors.
+ * Dates are "yyyyMMdd"; `totalLimit` caps the number of events.
+ */
+export interface WshEventData {
+  conId?: number;
+  filter?: string;
+  fillWatchlist?: boolean;
+  fillPortfolio?: boolean;
+  fillCompetitors?: boolean;
+  startDate?: string;
+  endDate?: string;
+  totalLimit?: number;
+}
+
 export interface CommissionReport {
   execId?: string;
   commission?: number;

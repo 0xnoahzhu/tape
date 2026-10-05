@@ -1200,6 +1200,21 @@ const commissionReport: Decode = (r, emit) => {
 };
 
 // ---------------------------------------------------------------------------
+// Wall Street Horizon
+
+const wshMetaData: Decode = (r, emit) => {
+  const reqId = r.int();
+  const dataJson = r.str();
+  emit(EventName.wshMetaData, reqId, dataJson);
+};
+
+const wshEventData: Decode = (r, emit) => {
+  const reqId = r.int();
+  const dataJson = r.str();
+  emit(EventName.wshEventData, reqId, dataJson);
+};
+
+// ---------------------------------------------------------------------------
 
 const DECODERS: ReadonlyMap<number, Decode> = new Map<number, Decode>([
   [IN_MSG_ID.TICK_PRICE, tickPrice],
@@ -1248,6 +1263,8 @@ const DECODERS: ReadonlyMap<number, Decode> = new Map<number, Decode>([
   [IN_MSG_ID.ORDER_BOUND, orderBound],
   [IN_MSG_ID.COMPLETED_ORDER, completedOrder],
   [IN_MSG_ID.COMPLETED_ORDERS_END, completedOrdersEnd],
+  [IN_MSG_ID.WSH_META_DATA, wshMetaData],
+  [IN_MSG_ID.WSH_EVENT_DATA, wshEventData],
 ]);
 
 /** True when decodeMessage() understands the message id (others are skipped). */
