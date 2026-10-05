@@ -828,6 +828,9 @@ formatter, pure and used by both processes:
   (`orderTiming.ts`).
 * Instruments are `ContractRef`; use `contractKey()` for map keys and `contractLabel()` for display.
 * No border radius anywhere; borders are `box-shadow: inset 0 0 0 1px var(--ln)`.
+* Prefer the `.ellipsis` class (`styles/global.css`) for one-line truncation over inline
+  `overflow: hidden`: it clips with a small `overflow-clip-margin`, so descenders (g, p, y) and CJK
+  glyphs stay whole with tight line-heights such as `font: 13px/1`.
 * No npm runtime dependencies: `dependencies` stays empty; renderer libraries are devDependencies
   bundled by Vite.
 
