@@ -30,6 +30,7 @@ describe('IPC dispatch while locked', () => {
         'getContractInfo',
         'setDepthSubscription',
         'getOptionChainParams',
+        'getEarnings',
         'getCacheStats',
         'refreshExecutions',
         'notify',

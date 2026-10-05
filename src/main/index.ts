@@ -17,6 +17,7 @@ import { createQuoteService } from './market/quotes';
 import { createHistoryService } from './market/history';
 import { createDepthService } from './market/depth';
 import { createOptionsService } from './market/options';
+import { createCorporateEventsService } from './market/corporateEvents';
 import { createAlertService } from './market/alerts';
 import { createAccountService } from './ib/account';
 import { createOrderService } from './ib/orders';
@@ -101,6 +102,7 @@ ctx.quotes = createQuoteService(ctx);
 ctx.history = createHistoryService(ctx);
 ctx.depth = createDepthService(ctx);
 ctx.options = createOptionsService(ctx);
+ctx.corporateEvents = createCorporateEventsService(ctx);
 ctx.alerts = createAlertService(ctx);
 ctx.account = createAccountService(ctx);
 ctx.orders = createOrderService(ctx);
@@ -196,6 +198,7 @@ const handlers: TapeHandlers = {
   getContractInfo: (c) => ctx.contracts.getInfo(c),
   setDepthSubscription: (c) => ctx.depth.set(c),
   getOptionChainParams: (c) => ctx.options.getChainParams(c),
+  getEarnings: (underlyings) => ctx.corporateEvents.getEarnings(underlyings),
   getCacheStats: () => ctx.db.stats(),
   clearMarketDataCache: () => ctx.db.clearMarketData(),
   placeOrder: (req) => ctx.orders.place(req),

@@ -150,6 +150,31 @@ export interface QuoteDividends {
   nextAmount?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Corporate events (Wall Street Horizon)
+
+/**
+ * - ok: IB answered (the list may be empty)
+ * - unsubscribed: the account has no Wall Street Horizon subscription (IB error 10276 and kin)
+ * - unavailable: not connected, or IB did not answer
+ */
+export type CorporateEventsStatus = 'ok' | 'unsubscribed' | 'unavailable';
+
+export interface EarningsEvent {
+  /** Contract key of the underlying (contractKey of the ContractRef passed to getEarnings). */
+  key: string;
+  /** Earnings date, YYYYMMDD. */
+  date: string;
+  /** Before market open, after market close, during market hours; absent when unknown. */
+  time?: 'bmo' | 'amc' | 'dmh';
+}
+
+export interface CorporateEarnings {
+  status: CorporateEventsStatus;
+  /** Upcoming earnings, soonest first (empty unless status is 'ok'). */
+  events: EarningsEvent[];
+}
+
 /**
  * Chart intervals (bar sizes). Daily and longer keys keep their original names ('1D' … '1Y'),
  * which persisted preferences and cached series use; the UI labels them D, W, M, Q, Y.

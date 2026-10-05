@@ -16,6 +16,7 @@ import type {
   ConnectionState,
   ContractInfo,
   ContractRef,
+  CorporateEarnings,
   DeepPartial,
   Execution,
   HistoryPage,
@@ -142,6 +143,12 @@ export interface OptionsService {
   getChainParams(underlying: ContractRef): Promise<OptionChainParams[]>;
 }
 
+/** Corporate events of the holdings (Wall Street Horizon, see market/corporateEvents.ts). */
+export interface CorporateEventsService {
+  /** Upcoming earnings of these underlyings (stocks; other instruments are ignored). */
+  getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
+}
+
 /** Evaluates price alerts against live quotes and keeps their instruments subscribed. */
 export interface AlertService {
   save(alerts: PriceAlert[]): void;
@@ -195,6 +202,7 @@ export interface MainContext {
   history: HistoryService;
   depth: DepthService;
   options: OptionsService;
+  corporateEvents: CorporateEventsService;
   alerts: AlertService;
   account: AccountService;
   orders: OrderService;

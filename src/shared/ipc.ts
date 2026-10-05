@@ -13,6 +13,7 @@ import type {
   ConnectionState,
   ContractInfo,
   ContractRef,
+  CorporateEarnings,
   DeepPartial,
   DepthBook,
   Execution,
@@ -112,6 +113,12 @@ export interface TapeApi {
   /** Level 2 book for one instrument at a time; null stops it. Updates arrive as `depth` events. */
   setDepthSubscription(contract: ContractRef | null): Promise<void>;
   getOptionChainParams(underlying: ContractRef): Promise<OptionChainParams[]>;
+  /**
+   * Upcoming earnings of these underlyings from Wall Street Horizon (stocks only). Answers
+   * `unsubscribed` when the account has no WSH subscription and `unavailable` when not connected;
+   * results are kept per instrument for the New York day.
+   */
+  getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
 
   // Local cache ------------------------------------------------------------
   /** Size and contents of tape.db (bars, series, journaled executions). */
@@ -207,6 +214,8 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   getContractInfo: 'allow',
   setDepthSubscription: 'allow',
   getOptionChainParams: 'allow',
+  // The dashboard's events widget keeps its data feed while locked, like quotes and history.
+  getEarnings: 'allow',
   getCacheStats: 'allow',
   clearMarketDataCache: 'deny',
   placeOrder: 'deny',
