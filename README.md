@@ -11,7 +11,12 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 **Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; an equity curve built from
 sampled net liquidation values (kept locally); a positions table with
-average cost, last price, market value and P&L; a sector allocation chart; a performance view.
+average cost, last price, market value and P&L; a sector allocation chart; a performance view. The
+Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's P&L by position, option
+expirations, today's trades, a benchmark comparison and **earnings & dividends** for the holdings.
+Ex-dividend dates and amounts come with IB's quotes. Earnings dates come from Wall Street Horizon when
+the account has that IBKR subscription; otherwise Tape estimates them from IB's market scanner (US stocks:
+the date and before the open / after the close, marked *Est.*, since IB marks none as confirmed).
 
 **Trade**
 

@@ -87,12 +87,13 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
   const dividends = useHoldingDividends(underlyings);
   const earnings = useEarnings(underlyings);
   const events = useMemo(() => upcomingEvents(underlyings, dividends, earnings, new Date()), [underlyings, dividends, earnings]);
-  // The note says where earnings dates come from, or why the list holds dividends only.
+  // The source is picked automatically (WSH, else the scanner; "Est." marks scanner dates), so the
+  // note only says why earnings dates are missing or still coming.
   const state = earningsState(earnings, connected);
-  const note = {
-    ok: m.eventsNote,
-    estimated: m.eventsNoteEstimated,
-    estimatedUs: m.eventsNoteEstimatedUs,
+  const note: string | undefined = {
+    ok: undefined,
+    estimated: undefined,
+    estimatedUs: undefined,
     searching: m.eventsNoteSearching,
     unsubscribed: m.eventsNoteUnsubscribed,
     unavailable: m.eventsNoteUnavailable,
@@ -136,7 +137,7 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
         ))}
         {!events.length && <EmptyLine>{empty}</EmptyLine>}
       </List>
-      <Note>{note}</Note>
+      {note && <Note>{note}</Note>}
     </WidgetCard>
   );
 }
