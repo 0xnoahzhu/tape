@@ -7,7 +7,7 @@ import { currentLang, nameOf } from '../../i18n';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useWatchlistMessages } from './messages';
-import { canDeleteGroup, deleteGroup, neighborGroupId, removeFromList, removeItem, setItemName } from './model';
+import { canDeleteGroup, deleteGroup, neighborGroupId, removeItem, setItemName } from './model';
 
 export function commitWatchlists(next: Watchlist[]): void {
   if (next === useStore.getState().watchlists) return;
@@ -71,11 +71,8 @@ export function askDeleteGroup(listId: string, groupId: string, onDeleted?: (nei
   });
 }
 
-/**
- * Removes an instrument from a list after a confirmation (a row menu's Remove, the chart star's
- * "Remove from <list>"). `groupId`: from that group only; otherwise from every group holding it.
- */
-export function askRemoveItem(listId: string, contract: ContractRef, groupId?: string): void {
+/** Removes an instrument from one group of a list after a confirmation (a row menu's Remove). */
+export function askRemoveItem(listId: string, contract: ContractRef, groupId: string): void {
   const list = useStore.getState().watchlists.find((l) => l.id === listId);
   if (!list) return;
   const m = useWatchlistMessages.now();
@@ -88,7 +85,7 @@ export function askRemoveItem(listId: string, contract: ContractRef, groupId?: s
     ],
     label: m.removeLabel,
     danger: true,
-    run: () => updateList(listId, (l) => (groupId ? removeItem(l, groupId, key) : removeFromList(l, key))),
+    run: () => updateList(listId, (l) => removeItem(l, groupId, key)),
   });
 }
 
