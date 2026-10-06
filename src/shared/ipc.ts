@@ -127,9 +127,13 @@ export interface TapeApi {
   setDepthSubscription(contract: ContractRef | null): Promise<void>;
   getOptionChainParams(underlying: ContractRef): Promise<OptionChainParams[]>;
   /**
-   * Upcoming earnings of these underlyings from Wall Street Horizon (stocks only). Answers
-   * `unsubscribed` when the account has no WSH subscription and `unavailable` when not connected;
-   * results are kept per instrument for the New York day.
+   * Upcoming earnings of these underlyings (stocks only) from Wall Street Horizon, else estimated
+   * from IB's market scanner (`source: 'scanner'`, events marked `estimated`). The scanner's
+   * searches run in the background: until they end the answer has what is known and
+   * `pending: true`, and `retryInMs` while a stock waits to be searched again. The scanner covers
+   * US dollar stocks only (`partial` when others are left without a date). Answers `unsubscribed`
+   * when IB refuses both (or only stocks the scanner does not cover remain) and `unavailable`
+   * when not connected; results are kept per instrument for the New York day.
    */
   getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
   /**

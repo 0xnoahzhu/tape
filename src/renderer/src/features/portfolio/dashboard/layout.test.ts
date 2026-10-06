@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CATALOG, defaultLayout, dropSide, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type Layout } from './layout';
+import { defaultLayout, dropSide, moveWidget, removeWidget, sanitizeLayout, setSpan, toggleWidget, type Layout } from './layout';
 
 const ids = (l: Layout) => l.map((w) => w.id);
 
@@ -9,7 +9,6 @@ describe('dashboard layout', () => {
     expect(ids(l)).toEqual(['eq', 'alloc', 'margin', 'greeks', 'conc', 'contrib', 'expiry', 'fills', 'events', 'bench']);
     expect(l.map((w) => w.span)).toEqual([2, 1, 1, 1, 1, 2, 1, 1, 1, 1]);
     expect(l.reduce((n, w) => n + w.span, 0)).toBe(12);
-    expect(CATALOG.filter((c) => c.subscription).map((c) => c.id)).toEqual(['events']);
   });
 
   it('sanitizes a stored layout', () => {

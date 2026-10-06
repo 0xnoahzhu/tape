@@ -421,6 +421,35 @@ export interface WshEventData {
   totalLimit?: number;
 }
 
+/**
+ * Market scanner request (reqScannerSubscription; EClient's ScannerSubscription). Unset fields
+ * are sent as empty ones; `instrument`, `locationCode` and `scanCode` are names from IB's scanner
+ * parameters (e.g. 'STK', 'STK.US.MAJOR', 'TOP_PERC_GAIN'). Market caps are in millions of USD.
+ */
+export interface ScannerSubscription {
+  numberOfRows?: number;
+  instrument?: string;
+  locationCode?: string;
+  scanCode?: string;
+  abovePrice?: number;
+  belowPrice?: number;
+  aboveVolume?: number;
+  marketCapAbove?: number;
+  marketCapBelow?: number;
+  moodyRatingAbove?: string;
+  moodyRatingBelow?: string;
+  spRatingAbove?: string;
+  spRatingBelow?: string;
+  maturityDateAbove?: string;
+  maturityDateBelow?: string;
+  couponRateAbove?: number;
+  couponRateBelow?: number;
+  excludeConvertible?: boolean;
+  averageOptionVolumeAbove?: number;
+  scannerSettingPairs?: string;
+  stockTypeFilter?: string;
+}
+
 export interface CommissionReport {
   execId?: string;
   commission?: number;

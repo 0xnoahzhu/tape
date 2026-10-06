@@ -131,6 +131,77 @@ describe('ibRequest', () => {
     await expect(p).rejects.toThrow('Search: connection closed');
   });
 
+  describe('cancelWhenDone (subscriptions IB keeps until cancelled)', () => {
+    const scan = (ctx: ReturnType<typeof setup>['ctx'], opts: { cancelWhenDone?: boolean; signal?: AbortSignal } = {}) => {
+      let id = 0;
+      const p = ibRequest<string>(ctx, {
+        label: 'Scan',
+        timeoutMs: 20,
+        cancelWhenDone: opts.cancelWhenDone ?? true,
+        signal: opts.signal,
+        send: (_api, r) => void (id = r),
+        cancel: (api, r) => api.cancelScannerSubscription(r),
+        events: { rows: (_args, ctl) => ctl.resolve('rows') },
+      });
+      p.catch(() => undefined);
+      return { p, id: () => id };
+    };
+    const cancels = (fake: ReturnType<typeof setup>['fake']) => fake.callsOf('cancelScannerSubscription').map(([id]) => id);
+
+    it('cancels once however the request ends: answer, IB error, timeout, abort', async () => {
+      const { fake, ctx } = setup();
+      fake.ready();
+      const answered = scan(ctx);
+      fake.emit('rows', answered.id());
+      await expect(answered.p).resolves.toBe('rows');
+      expect(cancels(fake)).toEqual([answered.id()]);
+
+      const refused = scan(ctx);
+      fake.error(refused.id(), 162, 'Historical Market Data Service error message:Scanner filter usdMarketCapAbove is disabled.');
+      await expect(refused.p).rejects.toBeInstanceOf(IbRequestError);
+      expect(cancels(fake)).toEqual([answered.id(), refused.id()]);
+
+      const late = scan(ctx);
+      await expect(late.p).rejects.toThrow('Scan timed out after 0 s');
+      const ac = new AbortController();
+      const aborted = scan(ctx, { signal: ac.signal });
+      ac.abort(new Error('stop'));
+      await expect(aborted.p).rejects.toThrow('stop');
+      expect(cancels(fake)).toEqual([answered.id(), refused.id(), late.id(), aborted.id()]);
+
+      // Rows after the end change nothing.
+      fake.emit('rows', answered.id());
+      expect(cancels(fake)).toHaveLength(4);
+    });
+
+    it('sends no cancel when the connection closed', async () => {
+      const { fake, ctx } = setup();
+      fake.ready();
+      // The API object stays reachable while the close listeners run.
+      const api = fake.ib.api;
+      ctx.ib = { ...fake.ib, api, isConnected: () => true };
+      const closed = scan(ctx);
+      fake.close();
+      await expect(closed.p).rejects.toThrow('Scan: connection closed');
+      expect(cancels(fake)).toEqual([]);
+    });
+
+    it('without the flag cancels only on a timeout or an abort', async () => {
+      const { fake, ctx } = setup();
+      fake.ready();
+      const answered = scan(ctx, { cancelWhenDone: false });
+      fake.emit('rows', answered.id());
+      await answered.p;
+      const refused = scan(ctx, { cancelWhenDone: false });
+      fake.error(refused.id(), 162, 'refused');
+      await refused.p.catch(() => undefined);
+      expect(cancels(fake)).toEqual([]);
+      const late = scan(ctx, { cancelWhenDone: false });
+      await late.p.catch(() => undefined);
+      expect(cancels(fake)).toEqual([late.id()]);
+    });
+  });
+
   it('classifies warnings', () => {
     expect([2104, 2152, 2176, 10167, 10090].every(isWarningCode)).toBe(true);
     expect([162, 200, 354, 10197, 10092].some(isWarningCode)).toBe(false);

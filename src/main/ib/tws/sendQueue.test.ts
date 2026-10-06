@@ -272,6 +272,8 @@ describe('SendQueue lanes', () => {
       M.REQ_HEAD_TIMESTAMP,
       M.CANCEL_HEAD_TIMESTAMP,
       M.REQ_MATCHING_SYMBOLS,
+      M.REQ_SCANNER_SUBSCRIPTION,
+      M.CANCEL_SCANNER_SUBSCRIPTION,
     ])
       expect(laneOf(id)).toBe(Lane.MarketData);
   });
@@ -470,6 +472,7 @@ describe('SendQueue elision of unsent pairs', () => {
       [M.REQ_PNL_SINGLE, M.CANCEL_PNL_SINGLE],
       [M.REQ_PNL, M.CANCEL_PNL],
       [M.REQ_ACCOUNT_SUMMARY, M.CANCEL_ACCOUNT_SUMMARY],
+      [M.REQ_SCANNER_SUBSCRIPTION, M.CANCEL_SCANNER_SUBSCRIPTION],
     ];
     for (const [req, can] of pairs) {
       expect(pairingOf(req, 42)).toEqual({ key: `${req}:42`, cancel: false });

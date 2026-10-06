@@ -1215,6 +1215,42 @@ const wshEventData: Decode = (r, emit) => {
 };
 
 // ---------------------------------------------------------------------------
+// Market scanner
+
+/**
+ * One snapshot of a scan: a scannerData event per row (rank order), then scannerDataEnd. IB sends
+ * no separate end message; an empty snapshot is a count of 0. Version 3 (every server Tape
+ * supports) carries the conId and the legs: 16 fields per row.
+ */
+const scannerData: Decode = (r, emit) => {
+  const version = r.int();
+  const reqId = r.int();
+  const n = r.int();
+  for (let i = 0; i < n; i++) {
+    const rank = r.int();
+    const contract: Contract = {};
+    if (version >= 3) contract.conId = r.int();
+    contract.symbol = r.str();
+    contract.secType = r.str() as SecType;
+    contract.lastTradeDateOrContractMonth = r.str();
+    contract.strike = r.double();
+    contract.right = validateOptionType(r.str());
+    contract.exchange = r.str();
+    contract.currency = r.str();
+    contract.localSymbol = r.str();
+    const marketName = r.str();
+    contract.tradingClass = r.str();
+    const distance = r.str();
+    const benchmark = r.str();
+    const projection = r.str();
+    const legsStr = version >= 2 ? r.str() : undefined;
+    const details: ContractDetails = { contract, marketName };
+    emit(EventName.scannerData, reqId, rank, details, distance, benchmark, projection, legsStr);
+  }
+  emit(EventName.scannerDataEnd, reqId);
+};
+
+// ---------------------------------------------------------------------------
 
 const DECODERS: ReadonlyMap<number, Decode> = new Map<number, Decode>([
   [IN_MSG_ID.TICK_PRICE, tickPrice],
@@ -1265,6 +1301,7 @@ const DECODERS: ReadonlyMap<number, Decode> = new Map<number, Decode>([
   [IN_MSG_ID.COMPLETED_ORDERS_END, completedOrdersEnd],
   [IN_MSG_ID.WSH_META_DATA, wshMetaData],
   [IN_MSG_ID.WSH_EVENT_DATA, wshEventData],
+  [IN_MSG_ID.SCANNER_DATA, scannerData],
 ]);
 
 /** True when decodeMessage() understands the message id (others are skipped). */

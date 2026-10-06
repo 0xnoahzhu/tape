@@ -40,6 +40,7 @@ import type {
   Order,
   OrderCancel,
   OrderState,
+  ScannerSubscription,
   TagValue,
   WshEventData,
 } from './types.ts';
@@ -160,6 +161,18 @@ export interface IBApiEventMap {
   wshMetaData: (reqId: number, dataJson: string) => void;
   /** Wall Street Horizon: the JSON of the events. */
   wshEventData: (reqId: number, dataJson: string) => void;
+  /** Market scanner: one row of a snapshot, in rank order (`contractDetails` holds the contract and its market name). */
+  scannerData: (
+    reqId: number,
+    rank: number,
+    contractDetails: ContractDetails,
+    distance: string,
+    benchmark: string,
+    projection: string,
+    legsStr?: string,
+  ) => void;
+  /** Market scanner: the rows of this snapshot are complete; IB keeps the subscription open until it is cancelled. */
+  scannerDataEnd: (reqId: number) => void;
   updateMktDepthL2: (
     reqId: number,
     position: number,
@@ -579,6 +592,29 @@ export class IBApi extends EventEmitter {
 
   cancelWshEventData(reqId: number): this {
     return this.request((sv) => encoder.cancelWshEventData(sv, reqId), reqId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Market scanner
+
+  /**
+   * A market scan: scannerData rows (at most 50), then scannerDataEnd, repeated while the
+   * subscription is open. IB caps active API scans at 10: cancel each one when done.
+   */
+  reqScannerSubscription(
+    reqId: number,
+    subscription: ScannerSubscription,
+    scannerSubscriptionOptions: TagValue[] = [],
+    scannerSubscriptionFilterOptions: TagValue[] = [],
+  ): this {
+    return this.request(
+      (sv) => encoder.reqScannerSubscription(sv, reqId, subscription, scannerSubscriptionOptions, scannerSubscriptionFilterOptions),
+      reqId,
+    );
+  }
+
+  cancelScannerSubscription(reqId: number): this {
+    return this.request((sv) => encoder.cancelScannerSubscription(sv, reqId), reqId);
   }
 
   // ---------------------------------------------------------------------------

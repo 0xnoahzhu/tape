@@ -41,6 +41,27 @@ describe('demo quotes', () => {
     }
   });
 
+  it('gives each symbol a fixed next earnings date, some pre-open ones with an exact time', () => {
+    const m = new DemoMarket(() => OPEN);
+    // The dates of the simulator before exact times existed.
+    expect(m.earnings('AAPL')).toEqual({ date: '20261128', time: 'amc' });
+    expect(m.earnings('NVDA').date).toBe('20261130');
+    expect(m.earnings('XOM').date).toBe('20261106');
+    expect(m.earnings('JPM').date).toBe('20261220');
+    const syms = Array.from({ length: 60 }, (_, i) => `S${i}`).concat(['MSFT', 'TSLA', 'META', 'KO', 'VST', 'CAT']);
+    const all = syms.map((s) => m.earnings(s));
+    expect(syms.map((s) => m.earnings(s))).toEqual(all);
+    for (const e of all) {
+      expect(e.date >= '20261009' && e.date <= '20270104').toBe(true);
+      if (e.minutes !== undefined) {
+        expect(e.time).toBe('bmo');
+        expect([420, 450, 480, 510, 540]).toContain(e.minutes);
+      }
+    }
+    expect(all.some((e) => e.minutes !== undefined)).toBe(true);
+    expect(all.some((e) => e.time === 'bmo' && e.minutes === undefined)).toBe(true);
+  });
+
   it('adds underlying statistics only for that profile', () => {
     const m = new DemoMarket(() => OPEN);
     expect(m.quote(stock('NVDA'), ['basic'])!.impliedVol).toBeUndefined();

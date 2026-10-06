@@ -305,14 +305,7 @@ function CatalogModal() {
             return (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 24px', boxShadow: 'inset 0 1px 0 var(--ln2)', flexShrink: 0 }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ fontSize: 14 }}>{text.name}</div>
-                    {c.subscription && (
-                      <div style={{ fontSize: 10, padding: '2px 6px', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}>
-                        {m.subscription}
-                      </div>
-                    )}
-                  </div>
+                  <div style={{ fontSize: 14 }}>{text.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--dm)', lineHeight: 1.5 }}>{text.desc}</div>
                 </div>
                 <button

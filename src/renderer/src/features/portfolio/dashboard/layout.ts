@@ -19,8 +19,6 @@ export interface CatalogEntry {
   id: WidgetId;
   /** Span when added (and in the default layout). */
   span: Span;
-  /** Needs a market data subscription at IB (earnings: Wall Street Horizon). */
-  subscription?: boolean;
 }
 
 /** Every widget in the default order (the design's catalog). */
@@ -33,7 +31,7 @@ export const CATALOG: readonly CatalogEntry[] = [
   { id: 'contrib', span: 2 },
   { id: 'expiry', span: 1 },
   { id: 'fills', span: 1 },
-  { id: 'events', span: 1, subscription: true },
+  { id: 'events', span: 1 },
   { id: 'bench', span: 1 },
 ];
 

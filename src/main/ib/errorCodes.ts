@@ -15,6 +15,7 @@ const FARM_CODES: Record<number, 'ok' | 'inactive' | 'broken'> = {
 
 /** Codes that confirm or annotate something rather than report a failure. */
 const NOTICE_CODES = new Set([
+  165, // Historical Market Data Service query message, "N items retrieved", sent before a scanner answer
   202, // Order cancelled (confirmation of a cancel request)
   399, // Order message, e.g. "Warning: your order will not be placed at the exchange until …"
   404, // Shares not immediately available for short sale; the order is held, not rejected
@@ -26,6 +27,14 @@ const NOTICE_CODES = new Set([
 export function isErrorCode(code: number): boolean {
   if (code >= 2000 && code < 3000) return false;
   return !NOTICE_CODES.has(code);
+}
+
+/**
+ * IB confirming a market scanner cancel (162 "…API scanner subscription cancelled: <reqId>"), not
+ * an error. 162 itself stays an error code: historical data and other scanner refusals use it.
+ */
+export function isScannerCancelAck(code: number, message: string): boolean {
+  return code === 162 && /scanner subscription cancel+ed/i.test(message);
 }
 
 /** 2100–2199 are informational messages (farm status, etc.). */

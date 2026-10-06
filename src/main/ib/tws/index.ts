@@ -65,6 +65,7 @@ export type {
   OrderComboLeg,
   OrderCondition,
   OrderState,
+  ScannerSubscription,
   SoftDollarTier,
   TagValue,
   WshEventData,

@@ -51,8 +51,14 @@ export interface RequestSpec<T> {
   label: string;
   timeoutMs: number;
   send(api: IBApi, reqId: number): void;
-  /** Cancels the request at IB when it times out (e.g. cancelHistoricalData). */
+  /** Cancels the request at IB when it times out or is aborted (e.g. cancelHistoricalData). */
   cancel?(api: IBApi, reqId: number): void;
+  /**
+   * The request opens a subscription IB keeps until it is cancelled (a market scan): cancel() is
+   * sent however the request ends (answer, IB error, timeout, abort), but not when the connection
+   * closed.
+   */
+  cancelWhenDone?: boolean;
   /**
    * Handlers per IB event; each is called only for this request's reqId (the first callback
    * argument) and receives the remaining arguments.
@@ -91,32 +97,39 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
     const reqId = ctx.ib.nextReqId();
     const subs: Unsubscribe[] = [];
     let settled = false;
+    let closed = false;
+    let cancelSent = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const finish = () => {
-      settled = true;
-      if (timer) clearTimeout(timer);
-      for (const off of subs) off();
-    };
-    const ctl: RequestControls<T> = {
-      resolve(value) {
-        if (settled) return;
-        finish();
-        resolvePromise(value);
-      },
-      reject(err) {
-        if (settled) return;
-        finish();
-        rejectPromise(err);
-      },
-    };
-    /** Cancels the request at IB (an unsent request and its cancel never reach the wire). */
+    /** Cancels the request at IB, at most once (an unsent request and its cancel never reach the wire). */
     const cancelAtIb = () => {
+      if (cancelSent) return;
+      cancelSent = true;
       try {
         if (spec.cancel && ctx.ib.api) spec.cancel(ctx.ib.api, reqId);
       } catch {
         // The socket may already be gone; the request is over either way.
       }
+    };
+    const finish = () => {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      for (const off of subs) off();
+    };
+    // Late frames for the reqId (rows after the cancel, IB's acknowledgement) find no listener.
+    const ctl: RequestControls<T> = {
+      resolve(value) {
+        if (settled) return;
+        finish();
+        if (spec.cancelWhenDone && !closed) cancelAtIb();
+        resolvePromise(value);
+      },
+      reject(err) {
+        if (settled) return;
+        finish();
+        if (spec.cancelWhenDone && !closed) cancelAtIb();
+        rejectPromise(err);
+      },
     };
 
     for (const [event, handler] of Object.entries(spec.events)) {
@@ -138,7 +151,12 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
         ctl.reject(new IbRequestError(e.code, e.message));
       }),
     );
-    subs.push(ctx.ib.onClosed(() => ctl.reject(new Error(`${spec.label}: connection closed`))));
+    subs.push(
+      ctx.ib.onClosed(() => {
+        closed = true;
+        ctl.reject(new Error(`${spec.label}: connection closed`));
+      }),
+    );
     if (signal) {
       const onAbort = () => {
         if (settled) return;
@@ -174,6 +192,7 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
     try {
       spec.send(api, reqId);
     } catch (err) {
+      cancelSent = true; // nothing reached IB, so there is nothing to cancel
       ctl.reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
