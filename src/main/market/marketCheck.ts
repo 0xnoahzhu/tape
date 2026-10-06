@@ -8,8 +8,9 @@
 // - US options: a near-the-money SPY call of the next expiration (option chain + contract details),
 //   or an option line some view already holds;
 // - indices: SPX on CBOE;
-// - Level 2 (only on the user's request, "Check now"): one depth line for SPY (DepthService.openLine),
-//   or the line the depth view already holds;
+// - Level 2 (on "Check now", and when Settings › Market Data opens without a Level 2 answer for the
+//   account, renderer logic.ts → autoCheckPlan): one depth line for SPY (DepthService.openLine), or
+//   the line the depth view already holds;
 // - the stocks the quotes service found SMART delayed and live on their exchange this session.
 // Owners reuse open lines (an instrument already subscribed is not requested again, and its answer
 // is known at once); everything is released afterwards (owner lines linger 30 s like any other).

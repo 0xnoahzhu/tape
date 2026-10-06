@@ -1,11 +1,12 @@
 // Building blocks shared by the Settings sections (styles copied from the design).
 
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import type { DeepPartial, Settings } from '@shared/types';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { Segmented, Toggle, type Option } from '../../ui/primitives';
 import { TAG_LABEL, tagColors, type ObservedTag } from './logic';
+import { useSettingsMessages } from './messages';
 
 /**
  * Persists a settings change. The main process merges, saves and broadcasts the new
@@ -86,17 +87,65 @@ export function LabelBlock({ label, desc }: { label: ReactNode; desc?: ReactNode
 
 /**
  * Outlined mono tag showing what was observed (LIVE / DELAYED / FROZEN / NO DATA / —). `via`: live
- * only on that exchange ("LIVE · NASDAQ"), drawn with the plain ring; `muted`: a past answer.
+ * only on that exchange ("LIVE · NASDAQ"), drawn with the plain ring; `muted`: a past answer;
+ * `alert`: red, for what the user has to act on (a competing session). Muted wins over alert.
  */
-export function ObservedTagBox({ tag, title, via, muted }: { tag: ObservedTag; title?: string; via?: string; muted?: boolean }) {
+export function ObservedTagBox({ tag, title, via, muted, alert }: { tag: ObservedTag; title?: string; via?: string; muted?: boolean; alert?: boolean }) {
   // Muted: a past answer (not connected now), in the colours of "—".
-  const { fg, bd } = tagColors(muted ? 'none' : tag);
+  const { fg, bd } = muted ? tagColors('none') : alert ? { fg: 'var(--r)', bd: 'var(--r)' } : tagColors(tag);
   return (
     <div
       title={title}
-      style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: fg, boxShadow: `inset 0 0 0 1px ${via ? 'var(--ln)' : bd}`, whiteSpace: 'nowrap' }}
+      style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: fg, boxShadow: `inset 0 0 0 1px ${via && !alert ? 'var(--ln)' : bd}`, whiteSpace: 'nowrap' }}
     >
       {via ? `${TAG_LABEL[tag]} · ${via}` : TAG_LABEL[tag]}
+    </div>
+  );
+}
+
+/**
+ * Collapsible block (the design's expander: `label` on the left, Expand ▾ / Collapse ▴ on the right,
+ * content on a --p2 panel). Closed at first unless `forceOpen`; turning `forceOpen` on later opens it
+ * too, and the user can still collapse it. The open state is not remembered.
+ */
+export function Disclosure({ label, forceOpen = false, children }: { label: ReactNode; forceOpen?: boolean; children: ReactNode }) {
+  const m = useSettingsMessages();
+  const [open, setOpen] = useState(forceOpen);
+  const panelId = useId();
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* A real button, so Tab reaches it and Enter / Space toggle it. */}
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen(!open)}
+        className="hover-tx"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          width: '100%',
+          padding: '4px 0',
+          border: 'none',
+          background: 'none',
+          textAlign: 'left',
+          fontSize: 13,
+          color: 'var(--mu)',
+        }}
+      >
+        <span>{label}</span>
+        <span style={{ flexShrink: 0 }}>{open ? m.collapse : m.expand}</span>
+      </button>
+      {open && (
+        <div id={panelId} style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px', background: 'var(--p2)' }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

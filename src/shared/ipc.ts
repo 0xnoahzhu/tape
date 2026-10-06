@@ -140,7 +140,8 @@ export interface TapeApi {
    * Checks what IB delivers per market (US stocks on SMART and on the primary exchange, an option,
    * an index and, with `depth`, Level 2) with streaming lines held for a few seconds, then released.
    * A check already running is joined. The result is kept, persisted and pushed as a
-   * `marketDataCheck` event. `auto`: started by Settings itself (an old result), not by the user.
+   * `marketDataCheck` event. `auto`: started by Settings itself (an old result, no Level 2 answer, a
+   * competing session over), not by the user.
    */
   checkMarketData(opts?: { depth?: boolean; auto?: boolean }): Promise<MarketDataCheck>;
 
