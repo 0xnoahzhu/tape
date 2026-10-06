@@ -201,6 +201,10 @@ export interface Observation {
 export type MarketRow = 'stk' | 'opt' | 'depth' | 'ind';
 
 export const MARKET_ROWS: readonly MarketRow[] = ['stk', 'opt', 'depth', 'ind'];
+/** The markets Settings › Market Data lists with a status (Level 2 has its switch row instead). */
+export const STATUS_ROWS = ['stk', 'opt', 'ind'] as const satisfies readonly MarketRow[];
+/** The markets of the Technical details' answer lines. */
+export const DETAIL_ROWS = ['stk', 'opt', 'ind', 'depth'] as const satisfies readonly MarketRow[];
 
 const SEC_PREFIX: Record<Exclude<MarketRow, 'depth'>, string> = { stk: 'STK:', opt: 'OPT:', ind: 'IND:' };
 
@@ -275,10 +279,12 @@ export const TAG_LABEL: Record<ObservedTag, string> = {
   none: '—',
 };
 
-/** Text and ring colors of an observation tag. */
+/**
+ * Text and ring colors of an observation tag. No data is muted like delayed: a market without a
+ * subscription is normal, and red is only drawn for a competing session (ObservedTagBox's `alert`).
+ */
 export function tagColors(tag: ObservedTag): { fg: string; bd: string } {
   if (tag === 'live') return { fg: 'var(--ac)', bd: 'var(--ac)' };
-  if (tag === 'nodata') return { fg: 'var(--r)', bd: 'var(--r)' };
   if (tag === 'none') return { fg: 'var(--dm)', bd: 'var(--ln)' };
   return { fg: 'var(--mu)', bd: 'var(--ln)' };
 }
@@ -317,97 +323,148 @@ export interface ExchangePair {
   exchange: string;
 }
 
-/** Why a market has no live data, and what to do about it (one note per reason). */
+/** What a check says beyond the rows' tags, once per kind (checkAttention's hints, Level 2's tooltip). */
 export type CheckReason =
-  | { kind: 'competing' }
   /**
    * Delayed / not subscribed: the markets concerned, IB's codes, and whether another market of the
    * same check is live (then a paper account already shares the live account's data).
    */
   | { kind: 'notSubscribed'; codes: number[]; markets: Array<{ market: MarketRow; instrument: string }>; othersLive: boolean }
-  /**
-   * SMART delayed but the exchange live: the check's own stock (`smartDelayed`: SMART was delayed
-   * for it, so likely for the account's stocks in general) and the quotes now served by their
-   * exchange. `liveOnSmart`: the check's stock when it was live on SMART (only some stocks fall back).
-   */
-  | { kind: 'fallback'; smartDelayed: boolean; pairs: ExchangePair[]; liveOnSmart?: string }
-  | { kind: 'depthPerm' }
+  /** Level 2 from some exchanges only (2152): those that send their book, those that need a subscription. */
   | { kind: 'depthPartial'; depth: string[]; missing: string[] }
-  | { kind: 'depthLimit' }
-  | { kind: 'noAnswer' }
-  | { kind: 'lines' }
-  | { kind: 'noOption' };
+  /** No free market data line for a market. */
+  | { kind: 'lines' };
 
 /** IB's answers that mean the account has no live entitlement for the API. */
 const NOT_SUBSCRIBED = new Set([354, 10089, 10090, 10091, 10167, 10168, 10186]);
-const COMPETING = 10197;
+/** 10197: no market data during a competing live session (the IB login is open elsewhere). */
+export const COMPETING = 10197;
 /** No free depth line ("Max number (3) of market depth requests has been reached"). */
 const DEPTH_LIMIT = 309;
 
-function probesOf(item: MarketCheckItem): MarketCheckProbe[] {
+/** The lines a market was checked on: the deciding one, then (stocks) the primary exchange's. */
+export function probesOf(item: MarketCheckItem): MarketCheckProbe[] {
   return item.primary ? [item.probe, item.primary] : [item.probe];
 }
 
 /**
- * The reasons behind the delayed / no-data markets of a check, in the order they should be read:
- * a competing session first (it hides everything else), then subscriptions, then the fallback and
- * Level 2 specifics, then Tape's own outcomes (no answer, no free line, no option to test).
+ * What a check says beyond the rows' tags: the markets without live data for want of a subscription
+ * (checkAttention's paper account hint), Level 2 from some exchanges only (its tooltip), no free line
+ * (a hint). A competing session and Tape's own outcomes are the rows' (rowState).
  */
 export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
   if (!result) return [];
-  const has = new Set<CheckReason['kind']>();
   const codes = new Set<number>();
-  const pairs = new Map<string, ExchangePair>();
   const notLive: Array<{ market: MarketRow; instrument: string }> = [];
-  let smartDelayed = false;
-  let liveOnSmart: string | undefined;
   let anyLive = false;
+  let lines = false;
   let partial: { depth: string[]; missing: string[] } | null = null;
   for (const item of result.items) {
     if (item.market !== 'depth' && (item.status === 'live' || item.status === 'frozen')) anyLive = true;
-    if (item.via && item.market !== 'depth') {
-      smartDelayed = true;
-      pairs.set(item.instrument, { symbol: item.instrument, exchange: item.via });
-    } else if (item.market === 'stk' && (item.probe.status === 'live' || item.probe.status === 'frozen')) {
-      liveOnSmart = item.instrument;
-    }
-    for (const f of item.fallback ?? []) if (!pairs.has(f.symbol)) pairs.set(f.symbol, { symbol: f.symbol, exchange: f.exchange });
-    for (const p of probesOf(item)) {
-      if (p.code === COMPETING) has.add('competing');
-      if (p.own === 'timeout') has.add('noAnswer');
-      if (p.own === 'lines') has.add('lines');
-      if (p.own === 'contract' && item.market === 'opt') has.add('noOption');
-    }
+    if (probesOf(item).some((p) => p.own === 'lines')) lines = true;
     const p = item.probe;
     if (item.market === 'depth') {
       if (item.via) partial = depthPermissions(p.message);
-      if (p.code === DEPTH_LIMIT) has.add('depthLimit');
-      else if (item.status === 'nodata' && p.code !== undefined && p.code !== COMPETING && !p.own) has.add('depthPerm');
       continue;
     }
-    // SMART delayed with the primary exchange live is the fallback's note, not a subscription problem;
-    // a delayed primary-exchange line next to a live SMART one needs nothing either.
+    // SMART delayed with the primary exchange live is live; a delayed primary-exchange line next to
+    // a live SMART one needs nothing either.
     if (item.via || p.status === 'live' || p.status === 'frozen') continue;
     if (p.code !== undefined && NOT_SUBSCRIBED.has(p.code)) {
-      has.add('notSubscribed');
       codes.add(p.code);
       notLive.push({ market: item.market, instrument: item.instrument });
     } else if (p.status === 'delayed' && p.code !== COMPETING) {
-      has.add('notSubscribed');
       notLive.push({ market: item.market, instrument: item.instrument });
     }
   }
   const out: CheckReason[] = [];
-  if (has.has('competing')) out.push({ kind: 'competing' });
-  if (has.has('notSubscribed')) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b), markets: notLive, othersLive: anyLive });
-  if (pairs.size) out.push({ kind: 'fallback', smartDelayed, pairs: [...pairs.values()], ...(!smartDelayed && liveOnSmart ? { liveOnSmart } : {}) });
-  if (has.has('depthPerm')) out.push({ kind: 'depthPerm' });
+  if (notLive.length) out.push({ kind: 'notSubscribed', codes: [...codes].sort((a, b) => a - b), markets: notLive, othersLive: anyLive });
   if (partial?.missing.length) out.push({ kind: 'depthPartial', ...partial });
-  if (has.has('depthLimit')) out.push({ kind: 'depthLimit' });
-  if (has.has('noAnswer')) out.push({ kind: 'noAnswer' });
-  if (has.has('lines')) out.push({ kind: 'lines' });
-  if (has.has('noOption')) out.push({ kind: 'noOption' });
+  if (lines) out.push({ kind: 'lines' });
   return out;
+}
+
+/** The short note next to a market's tag (none when the tag says it all). */
+export type RowNote = 'closed' | 'delay' | 'notSubscribed' | 'paused' | 'noAnswer' | 'noLine' | 'notTested';
+/** The sentence that opens a market row's tooltip. */
+export type RowTip = 'closed' | 'delay' | 'notSubscribed' | 'paused' | 'noAnswer' | 'noLine' | 'noOption' | 'interrupted';
+
+/** What a market row of Settings › Market Data shows: the tag, its exchange, a note and the tooltip's sentence. */
+export interface RowState {
+  tag: ObservedTag;
+  /** Live from this exchange only ("LIVE · ARCA"). */
+  via?: string;
+  note?: RowNote;
+  tip?: RowTip;
+  /** Red: a competing session takes the market data (the only state the user has to act on). */
+  alert?: true;
+}
+
+const PAUSED: RowState = { tag: 'nodata', note: 'paused', tip: 'paused', alert: true };
+const NOT_SUBSCRIBED_ROW: RowState = { tag: 'nodata', note: 'notSubscribed', tip: 'notSubscribed' };
+
+/**
+ * A market row from the check's item, else from the quotes of this session (`obs`). Delayed data and
+ * no data without a subscription are normal (muted); frozen is live with the market closed; Tape's
+ * own outcomes (no answer, no free line, nothing to test) read "—" with what happened. A competing
+ * session (`competingNow`: 10197 on the connection now, or on one of the item's lines) pauses it.
+ */
+export function rowState(item: MarketCheckItem | undefined, obs: Observation | undefined, competingNow: boolean): RowState {
+  if (competingNow) return PAUSED;
+  if (item) {
+    if (probesOf(item).some((p) => p.code === COMPETING)) return PAUSED;
+    const via = item.via ? { via: item.via } : {};
+    const p = item.probe;
+    switch (item.status) {
+      case 'live':
+        return { tag: 'live', ...via };
+      case 'frozen':
+        return { tag: 'live', ...via, note: 'closed', tip: 'closed' };
+      case 'delayed':
+        // Type 4 (delayed-frozen): the market is closed, the delay does not matter then.
+        return p.marketDataType === 4 ? { tag: 'delayed', note: 'closed', tip: 'closed' } : { tag: 'delayed', note: 'delay', tip: 'delay' };
+      default:
+        if (p.own === 'timeout') return { tag: 'none', note: 'noAnswer', tip: 'noAnswer' };
+        if (p.own === 'lines') return { tag: 'none', note: 'noLine', tip: 'noLine' };
+        if (p.own === 'contract') return { tag: 'none', note: 'notTested', tip: 'noOption' };
+        if (p.own === 'closed') return { tag: 'none', note: 'notTested', tip: 'interrupted' };
+        if (p.code !== undefined && NOT_SUBSCRIBED.has(p.code)) return NOT_SUBSCRIBED_ROW;
+        // Any other code: no data, IB's words in the tooltip.
+        return { tag: 'nodata' };
+    }
+  }
+  switch (obs?.tag) {
+    case 'live':
+      return { tag: 'live' };
+    case 'frozen':
+      return { tag: 'live', note: 'closed', tip: 'closed' };
+    case 'delayed':
+      return { tag: 'delayed', note: 'delay', tip: 'delay' };
+    case 'nodata':
+      if (obs.errorCode === COMPETING) return PAUSED;
+      return obs.errorCode !== undefined && NOT_SUBSCRIBED.has(obs.errorCode) ? NOT_SUBSCRIBED_ROW : { tag: 'nodata' };
+    default:
+      return { tag: 'none' };
+  }
+}
+
+/** A line under the market rows: a paper account without shared data, no free market data line. */
+export type Hint = 'notShared' | 'lines';
+
+/**
+ * What the user can act on: `alert`, a competing session, raised from what the rows show (`paused`:
+ * a market row is paused, rowState's `alert`, so a Level 2 answer a competing session spoiled earlier
+ * raises nothing above live rows); the hints, a paper account on which nothing is live (its live
+ * account's data is not shared with it; not said while a competing session explains it) and no free
+ * market data line.
+ */
+export function checkAttention(reasons: CheckReason[], paper: boolean, paused: boolean): { alert: boolean; hints: Hint[] } {
+  const alert = paused;
+  const hints: Hint[] = [];
+  const notSubscribed = reasons.find((r) => r.kind === 'notSubscribed');
+  if (!alert && paper && notSubscribed?.othersLive === false) hints.push('notShared');
+  if (reasons.some((r) => r.kind === 'lines')) hints.push('lines');
+  return { alert, hints };
 }
 
 /**
@@ -416,7 +473,8 @@ export function checkReasons(result: MarketDataCheck | null): CheckReason[] {
  * - limit: no free depth line (309);
  * - noSub: IB sends no book (a subscription answer: 354, 10092, …);
  * - noBook: no book otherwise (no answer in time, the session closed, a competing session);
- * - unconfirmed: a book, but IB may still send a 2152 (main/market/marketCheck.ts watches for one);
+ * - unconfirmed: a book, but IB may still send a 2152 (main/market/marketCheck.ts watches for one),
+ *   or the watch ended early (the session closed), or IB added a code Tape cannot read;
  * - auto: switched on by a check that found a full book; autoEarlier: by an earlier one (no answer now);
  * - full: a full book; notChecked: Level 2 not checked for this account.
  */
@@ -448,6 +506,52 @@ export function checkAge(checkedAt: number, now: number): { unit: 'now' | 'min' 
   if (ms < 60_000) return { unit: 'now', n: 0 };
   if (ms < 3_600_000) return { unit: 'min', n: Math.floor(ms / 60_000) };
   if (ms < 86_400_000) return { unit: 'h', n: Math.floor(ms / 3_600_000) };
+  return null;
+}
+
+/**
+ * An `unconfirmed` Level 2 answer older than this has lost main's watch for a 2152 (the session closed,
+ * IB dropped the market data, Tape quit): main watches at most DEPTH_FINAL_MS (60 s) after the request
+ * and DEPTH_FINAL_AFTER_UPDATE_MS (30 s) after a first book update that may come up to 60 s late.
+ */
+export const DEPTH_WATCH_MS = 2 * 60_000;
+
+/** True when this account's Level 2 answer (`item`) does not say what IB sends: none, a competing session's, a book whose watch was cut short. */
+function depthUntested(item: MarketCheckItem | undefined, now: number): boolean {
+  if (!item) return true;
+  if (probesOf(item).some((p) => p.code === COMPETING)) return true;
+  return !!item.unconfirmed && now - item.checkedAt > DEPTH_WATCH_MS;
+}
+
+/**
+ * The check Settings › Market Data starts by itself (null: none), connected:
+ * - the quiet one of checkNeeded (no result for this account, or an old one);
+ * - with Level 2 when the connected account has no Level 2 answer (main keeps the last check only, so
+ *   after switching accounts too), only a competing session's, or a book whose watch was cut short
+ *   (DEPTH_WATCH_MS), so Level 2 is tested without a click (a test that timed out is an answer: Check
+ *   now tests again);
+ * - again once a competing session is over, when the result shows one for a market (`recheckedFor`:
+ *   the result such a check last ran after, so it runs once per result).
+ * While a check runs: a Level 2 one when a quiet one runs and Level 2 needs a test (main runs it right
+ * after), else none. Nothing while the connection reports a competing session (10197): nothing flows
+ * then, so the check would only find it again.
+ */
+export function autoCheckPlan(
+  state: MarketDataCheckState,
+  connection: Pick<ConnectionState, 'status' | 'account'>,
+  issueCode: number | undefined,
+  now: number,
+  recheckedFor?: number,
+): { depth: boolean } | null {
+  if (connection.status !== 'connected' || issueCode === COMPETING) return null;
+  const items = checkItems(state.result, connection.account);
+  const depth = depthUntested(items.depth, now);
+  if (state.running) return depth && !state.depth ? { depth: true } : null;
+  const competed = STATUS_ROWS.some((row) => {
+    const item = items[row];
+    return !!item && probesOf(item).some((p) => p.code === COMPETING);
+  });
+  if (checkNeeded(state, connection, now) || depth || (competed && state.result?.checkedAt !== recheckedFor)) return { depth };
   return null;
 }
 

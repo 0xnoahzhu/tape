@@ -151,7 +151,10 @@ export interface MarketDataCheck {
   /** The account and client id that were connected. */
   account?: string;
   clientId?: number;
-  /** 'auto': after connecting, or when Settings › Market data opened with an old result; 'user': Check now. */
+  /**
+   * 'auto': after connecting, or started by Settings › Market Data (an old result, no Level 2 answer for
+   * the account, a competing session over); 'user': Check now.
+   */
   trigger: 'auto' | 'user';
   items: MarketCheckItem[];
 }
@@ -160,7 +163,7 @@ export interface MarketDataCheck {
 export interface MarketDataCheckState {
   result: MarketDataCheck | null;
   running: boolean;
-  /** While running: whether this check tests Level 2 (only "Check now" does). */
+  /** While running: whether this check tests Level 2 (Check now, and Settings › Market Data without a Level 2 answer for the account). */
   depth?: boolean;
 }
 

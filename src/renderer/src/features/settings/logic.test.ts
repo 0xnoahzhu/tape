@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { ApiLogEntry, DepthBook, MarketCheckItem, MarketDataCheck, Quote } from '@shared/types';
 import {
+  autoCheckPlan,
   checkAge,
+  checkAttention,
   checkItems,
   checkNeeded,
   checkReasons,
+  DEPTH_WATCH_MS,
   depthNote,
   depthSwitchPatch,
+  rowState,
   STALE_CHECK_MS,
+  STATUS_ROWS,
+  tagColors,
   hasSoundChoice,
   soundCategoryOff,
   soundChoices,
@@ -37,6 +43,8 @@ import {
   shortcutKeys,
   statusDotColor,
   tildify,
+  type CheckReason,
+  type Observation,
 } from './logic';
 import { useSettingsMessages } from './messages';
 
@@ -227,7 +235,7 @@ describe('market data check', () => {
     expect(checkItems(null, 'DU1')).toEqual({});
   });
 
-  it('explains delayed and no-data markets once per reason, competing session first', () => {
+  it('gathers what the hints and the Level 2 tooltip read, once per kind', () => {
     expect(checkReasons(result([stk()]))).toEqual([]);
     const r = result([
       stk({
@@ -240,7 +248,7 @@ describe('market data check', () => {
       { market: 'ind', status: 'delayed', instrument: 'SPX', probe: { status: 'delayed', exchange: 'CBOE', marketDataType: 3 }, checkedAt: at },
       { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 10092, message: 'x' }, checkedAt: at },
     ]);
-    // The SMART line's 10167 belongs to the fallback note, not to the subscription one.
+    // SPY live on its exchange (the SMART line's 10167) is live, not a subscription answer.
     expect(checkReasons(r)).toEqual([
       {
         kind: 'notSubscribed',
@@ -251,18 +259,13 @@ describe('market data check', () => {
         ],
         othersLive: true,
       },
-      { kind: 'fallback', smartDelayed: true, pairs: [{ symbol: 'SPY', exchange: 'NASDAQ' }] },
-      { kind: 'depthPerm' },
     ]);
-    // Only some stocks on their exchange while SPY is live on SMART; SPX delayed with every other market live.
+    // SPX delayed with every other market live.
     const some = result([
       stk({ fallback: [{ symbol: 'AAPL', exchange: 'NASDAQ' }] }),
       { market: 'ind', status: 'delayed', instrument: 'SPX', probe: { status: 'delayed', exchange: 'CBOE', marketDataType: 4 }, checkedAt: at },
     ]);
-    expect(checkReasons(some)).toEqual([
-      { kind: 'notSubscribed', codes: [], markets: [{ market: 'ind', instrument: 'SPX' }], othersLive: true },
-      { kind: 'fallback', smartDelayed: false, pairs: [{ symbol: 'AAPL', exchange: 'NASDAQ' }], liveOnSmart: 'SPY' },
-    ]);
+    expect(checkReasons(some)).toEqual([{ kind: 'notSubscribed', codes: [], markets: [{ market: 'ind', instrument: 'SPX' }], othersLive: true }]);
     const none = result([stk({ status: 'delayed', probe: { status: 'delayed', exchange: 'SMART', marketDataType: 3, code: 10167 } })]);
     expect(checkReasons(none)).toEqual([{ kind: 'notSubscribed', codes: [10167], markets: [{ market: 'stk', instrument: 'SPY' }], othersLive: false }]);
     const competing = result([
@@ -271,7 +274,8 @@ describe('market data check', () => {
       { market: 'ind', status: 'nodata', instrument: 'SPX', probe: { status: 'nodata', exchange: 'CBOE', code: -1, own: 'timeout', message: 'x' }, checkedAt: at },
       { market: 'opt', status: 'nodata', instrument: 'SPY option', probe: { status: 'nodata', exchange: 'SMART', code: -1, own: 'contract', message: 'x' }, checkedAt: at },
     ]);
-    expect(checkReasons(competing).map((x) => x.kind)).toEqual(['competing', 'depthLimit', 'noAnswer', 'noOption']);
+    // A competing session and Tape's own outcomes are the rows' (rowState), not reasons.
+    expect(checkReasons(competing)).toEqual([]);
     const partial = result([
       {
         market: 'depth',
@@ -330,17 +334,118 @@ describe('market data check', () => {
     // The copy: plural books, per-language lists, the share of US volume only for IEX alone, no subscription advice.
     const en = useSettingsMessages.for('en');
     const zh = useSettingsMessages.for('zh');
-    expect(en.depthNote.partial(['IEX'])).toBe(
-      'IB sends this account only the IEX book (IEX trades a few percent of US stock volume): Level 2 shows only part of the orders and can mislead.',
-    );
-    expect(en.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^IB sends this account only the IEX, NASDAQ books: /);
-    expect(en.depthNote.partial([])).toMatch(/^IB sends this account only the books of some exchanges: /);
-    expect(zh.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^IB 只向此账户提供 IEX、NASDAQ 的盘口，/);
+    expect(en.depthNote.partial(['IEX'])).toBe('Only the IEX book (a few percent of US volume), so Level 2 shows part of the orders.');
+    expect(en.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^Only the IEX, NASDAQ books, /);
+    expect(en.depthNote.partial([])).toMatch(/^Only some exchanges’ books, /);
+    expect(zh.depthNote.partial(['IEX', 'NASDAQ'])).toMatch(/^只有 IEX、NASDAQ 的盘口，/);
     expect(zh.depthNote.partial(['IEX'])).toContain('几个百分点');
     for (const m of [en, zh]) {
       expect(m.depthNote.partial(['IEX', 'NASDAQ'])).not.toMatch(/percent|百分点|TotalView|OpenBook/);
       expect(m.depthNote.partial(['IEX'])).not.toMatch(/TotalView|OpenBook/);
+      // A statement, not a test in progress: the watch may have ended without an answer.
+      expect(m.depthNote.unconfirmed).not.toMatch(/…$/);
     }
+  });
+
+  it('shows each market as a tag and a short note, muted unless a competing session pauses it', () => {
+    type Probe = MarketCheckItem['probe'];
+    const item = (status: MarketCheckItem['status'], probe: Partial<Probe> = {}, extra: Partial<MarketCheckItem> = {}): MarketCheckItem =>
+      stk({ status, probe: { status, exchange: 'SMART', ...probe }, ...extra });
+    const nodata = (code: number, own?: Probe['own']) => item('nodata', { code, message: 'x', ...(own ? { own } : {}) });
+    expect(rowState(item('live', { marketDataType: 1 }), undefined, false)).toEqual({ tag: 'live' });
+    expect(
+      rowState(
+        item('live', { status: 'delayed', marketDataType: 3, code: 10167 }, { via: 'NASDAQ', primary: { status: 'live', exchange: 'NASDAQ', marketDataType: 1 } }),
+        undefined,
+        false,
+      ),
+    ).toEqual({ tag: 'live', via: 'NASDAQ' });
+    // Frozen: live with the market closed.
+    expect(rowState(item('frozen', { marketDataType: 2 }), undefined, false)).toEqual({ tag: 'live', note: 'closed', tip: 'closed' });
+    expect(rowState(item('delayed', { marketDataType: 3, code: 10167 }), undefined, false)).toEqual({ tag: 'delayed', note: 'delay', tip: 'delay' });
+    expect(rowState(item('delayed', { marketDataType: 4 }), undefined, false)).toEqual({ tag: 'delayed', note: 'closed', tip: 'closed' });
+    // No subscription is normal (muted); another code says nothing but its tooltip.
+    expect(rowState(nodata(354), undefined, false)).toEqual({ tag: 'nodata', note: 'notSubscribed', tip: 'notSubscribed' });
+    expect(rowState(nodata(200), undefined, false)).toEqual({ tag: 'nodata' });
+    // A competing session: on the primary exchange's line only, or on the connection now.
+    const paused = { tag: 'nodata', note: 'paused', tip: 'paused', alert: true };
+    expect(rowState(item('live', { marketDataType: 1 }, { primary: { status: 'nodata', exchange: 'ARCA', code: 10197, message: 'x' } }), undefined, false)).toEqual(paused);
+    expect(rowState(item('live', { marketDataType: 1 }), undefined, true)).toEqual(paused);
+    // Tape's own outcomes: "—" with what happened.
+    expect(rowState(nodata(-1, 'timeout'), undefined, false)).toEqual({ tag: 'none', note: 'noAnswer', tip: 'noAnswer' });
+    expect(rowState(nodata(-1, 'lines'), undefined, false)).toEqual({ tag: 'none', note: 'noLine', tip: 'noLine' });
+    expect(rowState(nodata(-1, 'contract'), undefined, false)).toEqual({ tag: 'none', note: 'notTested', tip: 'noOption' });
+    expect(rowState(nodata(-1, 'closed'), undefined, false)).toEqual({ tag: 'none', note: 'notTested', tip: 'interrupted' });
+    // Without a check: this session's quotes.
+    const o = (over: Partial<Observation>): Observation => ({ tag: 'none', live: 0, frozen: 0, delayed: 0, errors: 0, ...over });
+    expect(rowState(undefined, o({ tag: 'live', live: 2 }), false)).toEqual({ tag: 'live' });
+    expect(rowState(undefined, o({ tag: 'frozen', frozen: 1 }), false)).toEqual({ tag: 'live', note: 'closed', tip: 'closed' });
+    expect(rowState(undefined, o({ tag: 'delayed', delayed: 1 }), false)).toEqual({ tag: 'delayed', note: 'delay', tip: 'delay' });
+    expect(rowState(undefined, o({ tag: 'nodata', errors: 1, errorCode: 10168 }), false)).toEqual({ tag: 'nodata', note: 'notSubscribed', tip: 'notSubscribed' });
+    expect(rowState(undefined, o({ tag: 'nodata', errorCode: 10197 }), false)).toEqual(paused);
+    expect(rowState(undefined, o({}), false)).toEqual({ tag: 'none' });
+    expect(rowState(undefined, undefined, false)).toEqual({ tag: 'none' });
+  });
+
+  it('raises only a competing session the rows show, and hints at sharing on a paper account and at free lines', () => {
+    const notSubscribed = (othersLive: boolean): CheckReason => ({ kind: 'notSubscribed', codes: [10167], markets: [{ market: 'stk', instrument: 'SPY' }], othersLive });
+    expect(checkAttention([], false, false)).toEqual({ alert: false, hints: [] });
+    expect(checkAttention([], false, true)).toEqual({ alert: true, hints: [] });
+    // Nothing live on a paper account: its live account's data is likely not shared with it.
+    expect(checkAttention([notSubscribed(false)], true, false)).toEqual({ alert: false, hints: ['notShared'] });
+    expect(checkAttention([notSubscribed(true)], true, false).hints).toEqual([]);
+    expect(checkAttention([notSubscribed(false)], false, false).hints).toEqual([]);
+    expect(checkAttention([notSubscribed(false)], true, true)).toEqual({ alert: true, hints: [] });
+    expect(checkAttention([notSubscribed(false), { kind: 'lines' }], true, false).hints).toEqual(['notShared', 'lines']);
+    // A Level 2 answer a competing session spoiled earlier, next to live rows: no row is paused, so no panel.
+    const spoiled = result([
+      stk(),
+      { market: 'depth', status: 'nodata', instrument: 'SPY', probe: { status: 'nodata', exchange: 'SMART', code: 10197, message: 'x' }, checkedAt: at },
+    ]);
+    const items = checkItems(spoiled, 'DU1');
+    const paused = STATUS_ROWS.some((row) => rowState(items[row], undefined, false).alert);
+    expect(checkAttention(checkReasons(spoiled), true, paused)).toEqual({ alert: false, hints: [] });
+  });
+
+  it('checks by itself when the result is old, Level 2 is untested or a competing session spoiled it', () => {
+    const conn = { status: 'connected' as const, account: 'DU1' };
+    const depth = (code?: number): MarketCheckItem => ({
+      market: 'depth',
+      status: code ? 'nodata' : 'live',
+      instrument: 'SPY',
+      probe: code ? { status: 'nodata', exchange: 'SMART', code, message: 'x' } : { status: 'live', exchange: 'SMART' },
+      checkedAt: at,
+    });
+    const withDepth = result([stk(), depth()]);
+    const idle = (r: MarketDataCheck | null) => ({ result: r, running: false });
+    expect(autoCheckPlan(idle(null), { ...conn, status: 'disconnected' }, undefined, at)).toBeNull();
+    // A check running: none, but Level 2 behind a quiet one when it needs a test (main queues it).
+    expect(autoCheckPlan({ result: null, running: true, depth: true }, conn, undefined, at)).toBeNull();
+    expect(autoCheckPlan({ result: result([stk()]), running: true }, conn, undefined, at + 1)).toEqual({ depth: true });
+    expect(autoCheckPlan({ result: withDepth, running: true, depth: false }, conn, undefined, at + 1)).toBeNull();
+    expect(autoCheckPlan({ result: withDepth, running: true }, conn, undefined, at + STALE_CHECK_MS)).toBeNull();
+    expect(autoCheckPlan({ result: withDepth, running: true }, { ...conn, account: 'DU2' }, undefined, at + 1)).toEqual({ depth: true });
+    // Nothing flows during a competing session: a check would only find it again.
+    expect(autoCheckPlan(idle(null), conn, 10197, at)).toBeNull();
+    expect(autoCheckPlan(idle(withDepth), conn, undefined, at + 1)).toBeNull();
+    expect(autoCheckPlan(idle(result([stk()])), conn, undefined, at + 1)).toEqual({ depth: true });
+    expect(autoCheckPlan(idle(withDepth), conn, undefined, at + STALE_CHECK_MS)).toEqual({ depth: false });
+    expect(autoCheckPlan(idle(withDepth), { ...conn, account: 'DU2' }, undefined, at + 1)).toEqual({ depth: true });
+    // A competing session is over: once per result.
+    const competed = result([stk({ status: 'nodata', probe: { status: 'nodata', exchange: 'SMART', code: 10197, message: 'x' } }), depth()]);
+    expect(autoCheckPlan(idle(competed), conn, undefined, at + 1)).toEqual({ depth: false });
+    expect(autoCheckPlan(idle(competed), conn, undefined, at + 1, at)).toBeNull();
+    expect(autoCheckPlan(idle(result([stk(), depth(10197)])), conn, undefined, at + 1, at)).toEqual({ depth: true });
+    // A book whose watch for a 2152 was cut short (the session closed, Tape quit) is tested again once it is over.
+    const unconfirmed = result([stk(), { ...depth(), unconfirmed: true }]);
+    expect(autoCheckPlan(idle(unconfirmed), conn, undefined, at + DEPTH_WATCH_MS)).toBeNull();
+    expect(autoCheckPlan(idle(unconfirmed), conn, undefined, at + DEPTH_WATCH_MS + 1)).toEqual({ depth: true });
+    expect(autoCheckPlan(idle(unconfirmed), conn, undefined, at + STALE_CHECK_MS)).toEqual({ depth: true });
+  });
+
+  it('draws no data muted (red is only for a competing session)', () => {
+    expect(tagColors('nodata')).toEqual({ fg: 'var(--mu)', bd: 'var(--ln)' });
+    expect(tagColors('live')).toEqual({ fg: 'var(--ac)', bd: 'var(--ac)' });
   });
 
   it('records the Level 2 switch set in Settings as the user’s choice', () => {

@@ -2,7 +2,7 @@
 // auto-reconnect, and the client id under Advanced.
 
 import { useApiLogStream } from '../../hooks/useApiLogStream';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { hmsMs } from '@shared/format';
 import type { ConnectionState, Settings } from '@shared/types';
 import { maskAccounts } from '../../lib/account';
@@ -11,7 +11,7 @@ import { useStore, type ConfirmRequest } from '../../state/store';
 import { Segmented, TextInput } from '../../ui/primitives';
 import { farmList, hostAppName, logBody, parseClientId, parseHost, parsePort, portForMode, statusDotColor } from './logic';
 import { useSettingsMessages, type SettingsMessages } from './messages';
-import { SectionHeader, SettingToggle, saveSettings } from './parts';
+import { Disclosure, SectionHeader, SettingToggle, saveSettings } from './parts';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 
@@ -49,65 +49,18 @@ export function ConnectionSection() {
         on={cfg.autoReconnect}
         onToggle={() => saveSettings({ connection: { autoReconnect: !cfg.autoReconnect } })}
       />
-      <Advanced forceOpen={cidInUse}>
+      <Disclosure label={m.advanced} forceOpen={cidInUse}>
         <div style={{ width: CLIENT_ID_WIDTH }}>
           <DraftField label={m.clientId} value={String(cfg.clientId)} parse={parseClientId} invalidText={m.cidInvalid} commit={(clientId) => apply({ clientId })} />
         </div>
         <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)', textWrap: 'pretty' }}>{m.cidHelp}</div>
-      </Advanced>
+      </Disclosure>
     </>
   );
 }
 
 /** Width of the Client ID field: the Port field's (1fr of Host / Port in the 720px section). */
 const CLIENT_ID_WIDTH = 236;
-
-/**
- * Collapsible "Advanced" block (the design's expander: label on the left, Expand ▾ / Collapse ▴
- * on the right, content on a --p2 panel). Closed at first unless `forceOpen`; turning
- * `forceOpen` on later (a new 326) opens it too, and the user can still collapse it.
- */
-function Advanced({ forceOpen = false, children }: { forceOpen?: boolean; children: ReactNode }) {
-  const m = useSettingsMessages();
-  const [open, setOpen] = useState(forceOpen);
-  const panelId = useId();
-  useEffect(() => {
-    if (forceOpen) setOpen(true);
-  }, [forceOpen]);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* A real button, so Tab reaches it and Enter / Space toggle it. */}
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen(!open)}
-        className="hover-tx"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          width: '100%',
-          padding: '4px 0',
-          border: 'none',
-          background: 'none',
-          textAlign: 'left',
-          fontSize: 13,
-          color: 'var(--mu)',
-        }}
-      >
-        <span>{m.advanced}</span>
-        <span style={{ flexShrink: 0 }}>{open ? m.collapse : m.expand}</span>
-      </button>
-      {open && (
-        <div id={panelId} style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px', background: 'var(--p2)' }}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
 
 type ConnectionPatch = Partial<Pick<Settings['connection'], 'mode' | 'host' | 'port' | 'clientId'>>;
 

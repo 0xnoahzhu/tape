@@ -60,9 +60,11 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
   computed from the chain quotes on screen.
 - **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the
   switch in *Settings › Market Data* (off by default: an open book uses one of the depth lines IB allows per
-  user, 3 by default, shared with TWS and other API clients). A market data check that finds a full book from
-  IB (no 2152 within a minute) turns it on unless you have set the switch yourself; a book from some
-  exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a note under the switch.
+  user, 3 by default, shared with TWS and other API clients). Tape tests Level 2 when the section opens
+  without a Level 2 answer for the connected account (Tape keeps the last check only, so again after you switch
+  accounts) and on *Check now*; a full book from IB (no 2152 within a minute) turns it on unless you have set
+  the switch yourself, and a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
+  note under the switch.
 
 **Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions, CSV export.
 
@@ -87,15 +89,20 @@ idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock s
 Where IBKR does not provide a value (no market data permission, a competing session, a closed market) Tape
 shows "—" or an explanatory empty state instead of inventing numbers.
 
-**Market data check** — *Settings › Market Data* asks IB what this account actually gets: for a few seconds
-Tape holds streaming quotes for SPY (through SMART and on its own exchange), a near-the-money SPY option and
-SPX, and with *Check now* also a Level 2 book, then releases them. Each market reads Live, Live on one
-exchange only, Delayed, No data or Frozen (market closed), with IB's code, when it was checked, and what to
-do about it (a competing live session, a subscription not enabled for the API or not shared with the paper
-account, a missing or partial depth subscription). The check runs quietly after connecting and again when the section
-opens with a result older than five minutes; the last result is kept across restarts. Lines already open for
-the watchlist, chart or option chain are reused, and regulatory snapshots (which IBKR charges for) are never
-used.
+**Market data check** — Tape always asks IB for the best data it offers (live where you are subscribed,
+15–20 min delayed elsewhere), so there is nothing to set. *Settings › Market Data* shows what this account
+actually gets: for a few seconds Tape holds streaming quotes for SPY (through SMART and on its own exchange),
+a near-the-money SPY option and SPX, and a Level 2 book on *Check now* and when the section opens without a
+Level 2 answer for the connected account (only the last check is kept, so also after switching accounts),
+then releases them. Each market shows its status with a short note (Live, Live on one
+exchange only, Delayed, Not subscribed, Market closed): delayed or unsubscribed markets are normal and stay
+muted, and only a competing live session is flagged, with what to do about it; a paper account on which
+nothing is live gets a hint about sharing the live account's market data. The details are on demand: IB's
+codes and messages in the tooltips, and the request type, every answer and the quote field sources under
+*Technical details*. The check runs quietly after connecting, and again from the section when its result is
+older than five minutes or a competing session has ended since; the last result is kept across restarts. Lines
+already open for the watchlist, chart or option chain are reused, and regulatory snapshots (which IBKR
+charges for) are never used.
 
 **Exchange quotes when SMART is delayed** — IBKR can send an account a stock's consolidated (SMART) quote
 delayed while the stock's own exchange sends live data (seen on a paper account: AAPL delayed on SMART, live
@@ -103,8 +110,8 @@ on NASDAQ). Tape then quotes that stock from its primary exchange, marked "Live 
 the watchlist and in the order ticket: the bid, ask and last on that exchange, not the national best bid
 and offer. It tries SMART again every 10 minutes, after a reconnect and when a competing session ends, and
 goes back to the consolidated quote as soon as SMART is live (or when the exchange turns delayed too).
-Settings › Market data lists the stocks quoted this way during the session, also after you have left their
-page.
+Settings › Market Data lists the stocks quoted this way during the session under *Technical details*, also
+after you have left their page.
 
 ## Requirements
 

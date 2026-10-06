@@ -497,7 +497,7 @@ seconds:
 | US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the stocks the fallback found SMART delayed and live on their exchange this session (`fallbacks()`, also when their line has gone) |
 | US options | an option line a view already holds with an answer, else the SPY call of the first expiration after today with the whole strike nearest SPY's price (chain → contract details) | its status |
 | Indices | SPX on CBOE via the owner | its status |
-| Level 2 | only on *Check now*: the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one depth line of its own (SPY, SMART depth, 5 rows, `DepthService.openLine`), released when it answers | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354, or no update within 20 s (`DEPTH_TIMEOUT_MS`), no data |
+| Level 2 | on *Check now*, and when Settings › Market Data opens without a Level 2 answer for the connected account (only the last result is kept, so also after an account switch): the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one depth line of its own (SPY, SMART depth, 5 rows, `DepthService.openLine`), released when it answers | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354, or no update within 20 s (`DEPTH_TIMEOUT_MS`), no data |
 
 Contracts another owner holds, or whose line lingers, answer at once from their quote (their type or
 error; nothing is requested). Otherwise a line's answer is its `marketDataType` (1 live, 2 frozen, 3 / 4
@@ -544,21 +544,35 @@ running check; a request with Level 2 during one without runs right after it. A 
 runs 8 s after every handshake unless one ran for the account in the last 5 minutes.
 `checkMarketData` is refused while locked (`LOCK_POLICY`: a user action that sends requests).
 
-Settings › Market data (`MarketDataSection.tsx`, `logic.ts → checkNeeded / checkItems / checkReasons`)
-shows per market the checked status ("Live", "Live · NASDAQ only", "Delayed", "No data", "Frozen (market
-closed)"), the instrument with the SMART / exchange split or IB's code, "checked 2 min ago", the quotes of
-this session as a second line, and one note per reason: a competing session (10197), no live data for the
-markets it names (354 / 10089 / 10090 / 10091 / 10167 / 10168 / 10186 or plain delayed data; for a paper
-account the market data sharing setting, which takes up to a day, only when no market of the check is
-live), SMART delayed but the exchange live (per stock and exchange; "in general" only when the check's own
-SPY was delayed on SMART), a missing or partial depth subscription (2152 lists the exchanges), no free
-depth line (309), no answer, no free line, no option found. Opening the section checks again when the
-result is older than 5 minutes or belongs to another account; *Check now* includes Level 2. While not
-connected the last result stays, muted, with "not connected". Under the Level 2 switch (sub-section
-"Market Depth"), next to the check's tag, `logic.ts → depthNote` says what the check found: the books of
-some exchanges only (the subscriptions they need are in the 2152 note above), no free depth line, no book
-(a subscription answer, or none at all), a book not confirmed yet, turned on by this check or an earlier
-one, a full book, or, not checked, the subscription Level 2 needs.
+Settings › Market data (`MarketDataSection.tsx`, `logic.ts → rowState / checkAttention / autoCheckPlan`)
+is a status view: Tape always asks for type 4, so there is nothing to set. Each market (US stocks, US
+options, indices) shows a tag and a short note (`rowState`): LIVE, "LIVE · NASDAQ" when only the
+exchange is live, frozen as LIVE with "Market closed", DELAYED with "15–20 min delay" (type 4: "Market
+closed"), NO DATA with "Not subscribed" (354 / 10089 / 10090 / 10091 / 10167 / 10168 / 10186), Tape's own
+outcomes as "—" with "No answer from IB", "No free line" or "Not tested"; without a check, the quotes of
+this session. Delayed and unsubscribed markets are normal and drawn muted (`tagColors`); red is only for
+a competing session (10197 on the connection, or on a market's line in the check: `rowState`), and while a
+row shows it a panel says to log out of the other session (`checkAttention`, from the rows, so a Level 2
+answer a competing session spoiled earlier raises nothing above live rows). Under the rows come at most two hints (`checkAttention`): a
+paper account on which nothing is live (share the live account's market data, which takes up to a day)
+and no free market data line. The diagnostics are on demand: a row's tooltip says what its note means,
+then IB's answer on each line (instrument, exchange, `marketDataType`, code and message), the stocks the
+fallback serves from their exchange and when it was checked; the *Technical details* disclosure lists the
+request type, every line's answer, the connection's issue, the API acknowledgement tip when a market is
+delayed or not subscribed, and the quote field sources. Level 2 is only in its switch row (sub-section
+"Market Depth"): next to the check's tag (whose tooltip names the exchanges a 2152 lacks),
+`logic.ts → depthNote` says what the check found: the books of some exchanges only, no free depth line,
+no book (a subscription answer, or none at all), a book not confirmed yet, turned on by this check or an
+earlier one, a full book, or, not checked, the subscription Level 2 needs. The section starts checks by
+itself (`autoCheckPlan`, with the stale rule of `checkNeeded`), when it opens, on connecting, when a
+competing session ends and when a check brings a new result: a quiet one when the result is older than
+5 minutes or belongs to another account, one with Level 2 when the connected account has no Level 2 answer
+(only the last result is kept, so again after an account switch), only a competing session's, or an
+`unconfirmed` one older than 2 minutes (`DEPTH_WATCH_MS`: its watch was cut short; a test that timed out
+is an answer, *Check now* tests again), and one after a competing session ends when the result shows
+10197 for a market (once per result); none while the connection reports 10197. While a quiet check runs it
+asks for Level 2 when that needs a test (main runs it right after); a check that fails is not retried.
+*Check now* includes Level 2. While not connected the last result stays, muted, with "not connected".
 
 ### Corporate events
 
