@@ -76,8 +76,19 @@ export function GreeksWidget({ rows, quotes, known }: { rows: readonly PositionR
         title={g.pending ? m.greeksPending(g.pending) : undefined}
         style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--ln2)', fontVariantNumeric: 'tabular-nums' }}
       >
-        {cells.map((c) => (
-          <div key={c.label} style={{ background: 'var(--p)', padding: '12px 4px 14px 0', display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0 }}>
+        {/* 2×2 cells split by 1px rules: the left column keeps the card's edge, and each column stays 20px off the middle rule. */}
+        {cells.map((c, i) => (
+          <div
+            key={c.label}
+            style={{
+              background: 'var(--p)',
+              padding: i % 2 ? '12px 0 14px 20px' : '12px 20px 14px 0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 7,
+              minWidth: 0,
+            }}
+          >
             <div style={{ fontSize: 12, color: 'var(--mu)' }}>{c.label}</div>
             <div className="selectable" style={{ font: '500 20px/1 var(--num)', color: c.color, whiteSpace: 'nowrap' }}>
               {c.value}
