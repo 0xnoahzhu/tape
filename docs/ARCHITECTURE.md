@@ -52,12 +52,13 @@ through the shared `MainContext` (never inside their factory).
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
-| `market/corporateEvents.ts` | Upcoming earnings of the holdings from Wall Street Horizon (see *Corporate events*) |
+| `market/corporateEvents.ts` | Upcoming earnings of the holdings: Wall Street Horizon, else estimated from IB's market scanner (see *Corporate events*) |
+| `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |
 | `market/alerts.ts` | Price alert evaluation |
 | `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
-| `appearance.ts` | Theme (`nativeTheme.themeSource`) and theme-matched dock/window icon |
+| `appearance.ts` | Theme (`nativeTheme.themeSource`), theme-matched dock/window icon and, via `finderIcon.ts`, the macOS Finder icon (see *Appearance*) |
 | `menu.ts` | Application menu (localized), menu commands |
 | `lock/` | `ctx.lock`: lock state, PIN, idle auto-lock, biometrics, Forgot-PIN reset (see *Lock screen*) |
 | `ipcDispatch.ts` | The `InvokeResult` envelope around every handler and the lock's IPC allow-list |
@@ -245,6 +246,14 @@ names and listener arguments), built on `node:net` and `node:events` only.
 * Wall Street Horizon: `reqWshMetaData` / `reqWshEventData` (conId or JSON filter, fill flags,
   date range and limit, always sent: every supported server version has them) and their
   cancels; the answers are `wshMetaData` / `wshEventData` (104 / 105) with IB's JSON as text.
+* Market scanner: `reqScannerSubscription` (22) sends all 25 fields, every supported server
+  version has them, with the filter tag-values (`scannerSubscriptionFilterOptions`) before the
+  options; it goes in the market data lane and pairs with `cancelScannerSubscription`
+  (`[23, 1, reqId]`), so an unsent pair is elided. `scannerData` (20, version 3, 16 fields per
+  row) emits `scannerData` per row, then `scannerDataEnd`; IB has no end message of its own and an
+  empty answer is a count of 0. The scanner parameters (19, 24) are not implemented. In the API log
+  165 ("N items retrieved", before a scan's rows) is a notice and IB's 162 acknowledging a scanner
+  cancel ("API scanner subscription cancelled") is not shown as an error; other 162s still are.
 * `pacing.ts` — per-request rules checked when a frame is written (the moment IB counts it):
   `reqMatchingSymbols` at most 1 per second; `reqHistoricalData` no identical request within
   15 s, at most 5 per contract + exchange + tick type within 2 s, at most 60 per 10 minutes
@@ -368,7 +377,9 @@ ones on the interval's grid (`chartMath.ts → advanceLiveBars`); the live bars 
 quotes until a reload reaches them, nothing is filled across the overnight break (the first bar
 starts at the 04:00 open), and delayed quotes (the account's market data type 3 / 4) never touch
 intraday bars, and seconds charts show a note. A reload of a seconds window, which slides with
-every reload, replaces the chart's bars unless older pages were loaded in front of it.
+every reload, replaces the chart's bars unless older pages were loaded in front of it. In the
+header the watchlist star and the price-alert bell (`BUTTONS_W`) sit left of the interval chips,
+which get what is left beside a title of `MIN_TITLE_W`.
 
 ### Quote subscriptions
 
@@ -551,17 +562,71 @@ one, a full book, or, not checked, the subscription Level 2 needs.
 
 ### Corporate events
 
-`getEarnings(underlyings)` (`market/corporateEvents.ts`) asks Wall Street Horizon for the
-holdings' earnings from today to 90 days ahead: `reqWshMetaData` once per connection (IB wants it
-first), then one `reqWshEventData` per conId, one at a time, cached per conId for the New York
-day. Option-only underlyings are resolved to their conId first. The answer has a status: `ok`,
-`unsubscribed` (IB refused with 10276 "News feed is not allowed" or 10277: the account has no WSH
-subscription, as on the paper account; remembered until the next handshake, so IB is not asked
-again) or `unavailable` (not connected, a timeout or another error). IB documents the event JSON
-only by example and the paper account cannot receive any, so `parseWshEarnings` reads it
-defensively (an array, `{ events }` or arrays keyed by event type; earnings types `wshe_ed` /
-`earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an answer it cannot read is
-logged once. Dividends do not come from WSH but from the dividend tick above.
+`getEarnings(underlyings)` (`market/corporateEvents.ts`) answers with the holdings' next earnings
+dates. Wall Street Horizon comes first: `reqWshMetaData` once per connection (IB wants it first),
+then one `reqWshEventData` per conId from today to 90 days ahead, one at a time, cached per conId
+for the New York day and the connection (a 1101 keeps the cache). Option-only underlyings are
+resolved to their conId first. IB documents the event JSON only by example and the paper account
+cannot receive any, so `parseWshEarnings` reads it defensively (an array, `{ events }` or arrays
+keyed by event type; earnings types `wshe_ed` / `earnings`; yyyy-mm-dd or yyyyMMdd dates; before /
+after the session); an answer it cannot read is logged once. Dividends do not come from WSH but from
+the dividend tick above.
+
+Without the WSH subscription IB refuses with 10276 "News feed is not allowed" (the paper account) or
+10277. The refusal is remembered for the connection and the New York day, so WSH is asked again on
+the next connection or day. The stocks then go to IB's market scanner (`market/earningsScanner.ts`);
+a refusal of one event request keeps the events WSH already gave and sends that stock and the rest
+there. A meta data failure other than a refusal (a timeout, 10279) answers `unavailable`. WSH
+answers stay in use for the rest of the day after a later refusal, option-only underlyings too
+(by the conId resolved for their contract key).
+
+The scanner fallback. `SCAN_nextEarningsDateTime_ASC` on `STK` / `STK.US.MAJOR` with the filter
+`nextEarningsDateTimeAbove=X;nextEarningsDateTimeBelow=Y;` works without WSH. X and Y are epoch
+seconds, inclusive, always both sent (without them stocks that report no earnings are listed too).
+The rows carry no date, so the date is inferred: a stock listed for a window reports in it. Windows
+are New York wall time (`nyWallToEpochMs`, midnight to midnight, so 23- and 25-hour days are right).
+A scan answers at most 50 rows, soonest first: a stock in a cut answer is in the window for sure,
+its absence proves nothing. 165 says whether an answer was cut ("50 out of 435 items retrieved");
+without a 165, 50 rows count as cut. Each scan is narrowed to the stock's price, ± 3 % around the
+lowest and highest of its quote's last, close, mark and last RTH trade and its position's market
+price (Tape knows no market cap), read when the scan is sent (a search may wait minutes for its
+turn). A cut answer without the stock is asked again at ± 1.5 %, then ± 0.75 %, and the narrower
+band stays for the rest of that stock's search. A window still cut is split, and a cut single day
+gives no date rather than a wrong one.
+
+The search per stock (`searchEarnings`): bisection, earliest first, over today .. today + 120 New
+York days (1 + 7 scans; a half known from the other costs none; nothing within 120 days: no
+earnings). Then 16:00:00 ET exactly (IB's stamp for after the close: `amc`, 9 scans in all), then
+09:30:00 exactly (before the open: `bmo`, 10), then 00:00:00 exactly (a date without a time, which
+TWS shows without one: the date only, 11). Otherwise the whole day is checked once more (a day the
+stock is not listed for, its price having left the band, gives no date), then the half-hour slot
+(6 scans) and its first minute: `minutes` when the release is exactly there (CAT 08:30), else the
+slot's side of the session (before 09:30 `bmo`, from 16:00 `amc`, else `dmh`); about 19 scans. A
+stock's search stops after 24 scans: the date without a time once the day was confirmed, else no
+date. IB marks no date confirmed, so every scanner event carries `estimated: true`.
+
+Searches run in the background, at most 3 at a time with one scan each, so at most 3 scans are open
+(IB allows 10). Every scan is cancelled however it ends: rows, an IB error, the 10 s timeout
+(counted from the write) or an abort (`ibRequest`'s `cancelWhenDone`), not after the connection
+closed; late rows and IB's 162 acknowledgement find no listener, and request ids are never reused.
+Typical cost for 40 holdings is about 400 scans (960 at worst): about 75 s at about 0.55 s per scan
+three at a time, about 5.5 requests and 5.5 cancels per second (of the 45 sent at most), once per
+New York day per connection plus new holdings. ETFs (`ContractInfo.stockType`) and non-USD stocks
+cost no scans. A stock without any price waits up to 10 s for a quote (the widget's `dashboard-div`
+line), else, like a timeout or another IB error, it is tried again after 5 minutes. Results, none
+and unknown too, are kept per stock for the New York day and dropped when the connection closes;
+a none or unknown reached with a narrowed band (the stock's price may have moved away from Tape's)
+is asked once more after 5 minutes before it holds for the day. 162 (other than pacing or a limit)
+or 321 means IB refuses the scanner itself: no more scans on this connection that day.
+
+`getEarnings` never waits for the scanner: it answers with what is known and `pending: true` while
+searches run (the widget asks again every 3 s), and `retryInMs` while a stock waits to be tried
+again (the widget asks again then). The answer has a status: `ok` (with `source: 'wsh'`, or
+`'scanner'` when some stocks went to the scanner; `partial` when some of those are not US dollar
+stocks, which the scanner cannot look up: the note then says US stocks only), `unsubscribed` (IB
+refused WSH and the scanner, or only stocks the scanner does not cover are left) or `unavailable`
+(not connected, a timeout or another error). Demo mode answers from the simulator, as scanner
+estimates.
 
 ### API log
 
@@ -578,6 +643,45 @@ Live `apiLog` events are sent only while a view streams them (`STREAM_BY_DEFAULT
    a stream start sends one even without frames.
 4. Streaming is tracked per renderer (`createLogViewers`, keyed by webContents): the last view to
    unmount turns it off, and a reload (`did-start-loading`) or a destroyed window ends it too.
+
+### Appearance
+
+`appearance.ts` sets `nativeTheme.themeSource` from `settings.appearance.theme`. Whenever the resolved
+theme changes (`sync()`: the setting, or the OS appearance while on "system"; once at ready), it swaps
+the Dock icon (macOS `app.dock.setIcon`, `icon-<theme>.png`), the window icon (Windows / Linux) and the
+window backgrounds.
+
+On macOS, packaged, the bundle's own icon follows too (`finderIcon.ts`): the icon Finder, the
+Applications folder and the Dock tile of a Tape that is not running draw by path. A signed bundle's
+icon cannot be switched, so, like Arc, Tape uses a Finder custom icon: `NSWorkspace
+setIcon:forFile:options:` writes `Tape.app/Icon\r` (empty, the icns in its resource fork) and sets
+kHasCustomIcon (0x0400) in the bundle's `com.apple.FinderInfo`; with nil it deletes both. Dark sets
+`resources/icons/icon-dark.icns` (iconutil, so small sizes are rendered, not scaled down from 1024 px);
+light removes the custom icon, since `build/icon.icns` is light.
+
+* No native module: `/usr/bin/osascript -l JavaScript -e SET_ICON_JXA <app> [<icns>]` via `execFile`
+  (no shell). The paths reach the script's `run(argv)`, never its text. JXA's nil is `$()` (`null`
+  bridges to NSNull and throws). 15 s timeout; `ok` on stdout is success (about 60–120 ms). A failure
+  is reported with osascript's output, not the error's message, which holds the whole command line.
+* `sync()` calls `want(dark)`. The first update waits 3 s after start; updates run one at a time and
+  coalesce, so a burst of switches applies only the last theme. `finderIconOp(dark, Icon\r exists)`:
+  light removes only when `Icon\r` exists, so the usual light start never runs osascript; dark always
+  sets, which the controller does once per session and at each switch to dark. `Icon\r` alone does
+  not prove the dark icon is shown: it can outlive the icns in its resource fork and the flag
+  (`xattr -cr` leaves it bare; so do half of the undo and a set stopped by the timeout), and setting
+  again is idempotent. Any custom icon on the bundle counts as Tape's: one set with Get Info is
+  replaced at the next dark set and removed by light. A flag left without `Icon\r` (only `Icon\r`
+  deleted by hand) is not detected, since Node cannot read the xattr without a process; Finder
+  already shows the light icon then, `--strict` keeps failing until the next dark-to-light switch.
+* `finderIconSkipReason` returns a reason (logged once) and nothing is written when not packaged, in
+  a second instance, translocated (`/AppTranslocation/`), or outside `/Applications` and
+  `~/Applications` (the DMG under `/Volumes`, a build folder, Downloads and other protected folders).
+  `access(W_OK)` is checked at the first write (EACCES, or EROFS on a read-only volume). That, or the
+  first failed write, is logged once and ends updates for the session; the app behaves as it did
+  without the feature.
+* Only the bundle root changes: `codesign --verify --deep` still passes and Tape launches, while
+  `--strict` reports Finder-info detritus while dark (as on Arc). The icon only changes while Tape
+  runs; an update installs a new, light bundle until the next sync.
 
 ### Lock screen (`src/main/lock`)
 
@@ -797,7 +901,7 @@ Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
 | P&L contributions | The rows' re-marked day P&L, largest first |
 | Option expirations | Days to expiry (local calendar) and moneyness from the underlying price (futures options: only IB's model underlying price, never their own premium) |
 | Today's trades | `executions` since New York midnight (`shared/session.ts → nyDayStart`, re-checked every minute: main keeps the session's fills, so after midnight the list still holds yesterday's) |
-| Earnings & dividends | `getEarnings` (Wall Street Horizon, needs IB's subscription) and `Quote.dividends` (tick 456, live lines only); the note says when earnings dates are missing (not subscribed, or unavailable while connected) |
+| Earnings & dividends | `getEarnings` (Wall Street Horizon with IB's subscription, else estimates from IB's market scanner: "Est.", an exact time in the user's clock format ("8:30 AM ET", 24-hour "08:30 ET") when known, before the open / after the close otherwise, a tooltip saying it is not a confirmed date) and `Quote.dividends` (tick 456, live lines only); the note says where earnings dates come from, that the scanner is still looking them up, or why they are missing (IB refused both, or unavailable while connected). The catalog no longer marks the widget as needing a subscription |
 | vs. benchmark | The equity card's range return against SPY / QQQ: live price over their price at the range's first NAV sample, so both start at the same moment. A start within 9 days is priced from 5-minute bars, within 25 days from hourly ones (the close of the last bar that ended by then, else the open of the bar it falls in); an older one, or one the intraday window misses, at the daily close (16:00 New York) at or before it (older pages for long ALL ranges). Bars through `getHistory`, regular hours |
 
 The hooks subscribe only while their widget is on the layout, under their own quote owners:
@@ -820,7 +924,18 @@ the user's and saved as edited. The renderer edits them with the pure functions 
   group. The panel's `watchlist` quote owner is the current list's instruments, so the removed
   symbols' quotes are released with the next subscription set.
 * The current list and the collapsed groups are per-device preferences in `localStorage`
-  (`prefs.ts`); collapsed entries of groups the list no longer has are dropped.
+  (`prefs.ts`); collapsed entries of groups the list no longer has are dropped. The current list
+  and each list's "Add symbol" target group (kept for the session only) live in `viewState.ts`, a
+  feature-local store shared by the panel and the chart's star, so either follows the other and
+  the target survives collapsing the panel and switching pages.
+* The chart header's star (`WatchStar.tsx`) adds the charted instrument to the current list in
+  one click, into its target group (else the first group); `model.ts → quickAdd` decides. When
+  the current list already has it, does not accept it (Indices takes only `IND`) or there are no
+  lists, the click opens a menu of every list · group that accepts it, checked where it is: an
+  unchecked row adds it there, or moves it there when that list has it in another group
+  (`placeItem`, keeping the stored name), and "Remove from …" shares the row menu's
+  confirmation (`actions.ts → askRemoveItem`). Membership is by `contractKey`, so another conId or
+  exchange of the same instrument counts as in the list.
 * Name editors closed with Enter / Escape and a group deleted from its header give focus back to
   a ✎ (the group's own, or the group now in its place) or to "+ New group" / "New list"
   (`ui/focus.ts → useRefocus`). Focus left on `<body>` would let the next Enter submit the
