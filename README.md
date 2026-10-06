@@ -16,14 +16,16 @@ average cost, last price, market value and P&L; a sector allocation chart; a per
 **Trade**
 
 - **Watchlists** with groups, built-in US index and macro lists, symbol search (IBKR contract search) and
-  per-row actions.
+  per-row actions. A star in the chart header adds the charted symbol to the current list's group in
+  one click; once it is there, the star opens a list · group menu to add it elsewhere, move it to another
+  group or remove it.
 - **Chart** from IBKR historical data in every interval IBKR offers: seconds (1s 5s 10s 15s 30s, and 45s
   merged from 15-second bars), minutes (1m 3m 5m 10m 15m 30m), hours (1h 2h 3h 4h) and D / W / M / Q / Y,
   plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
-  delayed data keeps seconds bars from being live), session status, and the position and open orders for
-  the selected symbol.
+  delayed data keeps seconds bars from being live), session status, the watchlist star and price-alert bell
+  in the header, and the position and open orders for the selected symbol.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
   market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
   on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force
@@ -74,10 +76,10 @@ notification server decides the sound. Clicking a notification about an instrume
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
 daily log files, retention and export.
 
-**General** — dark, light or system theme (the dock / window icon follows the theme), red-up / green-down
-(CN) or green-up / red-down (US) color convention, English and 中文, and 12-hour ("9:41 AM", "上午 9:41";
-the default) or 24-hour ("09:41") clock times everywhere you read them; the API log, CSV exports and what is
-sent to IB stay 24-hour.
+**General** — dark, light or system theme (the dock / window icon follows the theme, and on macOS so does
+Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention, English and
+中文, and 12-hour ("9:41 AM", "上午 9:41"; the default) or 24-hour ("09:41") clock times everywhere you read
+them; the API log, CSV exports and what is sent to IB stay 24-hour.
 
 **Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
 idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).
@@ -218,10 +220,27 @@ with `electron-builder --linux` after `pnpm build`.
 
 - **Icons.** `resources/icons/icon-dark.svg` and `icon-light.svg` are the source artwork. `pnpm icons`
   renders the macOS dock icons (`icon-<theme>.png`, 1024 px on Apple's icon grid with a drop shadow), the
-  full-bleed window icons (`icon-<theme>-256.png` / `-512.png`) and the bundle icons in `build/`
-  (`icon.png`, `icon.icns` via `iconutil` on macOS, `icon.ico`). The PNGs ship in the app's `resources/icons`;
-  at runtime Tape switches the dock icon (macOS) or window icon (Windows, Linux) when the theme changes. The
-  bundle icon shown by Finder and installers is the light one.
+  dark Finder icon (`icon-dark.icns`, via `iconutil` on macOS), the full-bleed window icons
+  (`icon-<theme>-256.png` / `-512.png`) and the bundle icons in `build/` (`icon.png`, `icon.icns` via
+  `iconutil` on macOS, `icon.ico`). The PNGs and `icon-dark.icns` ship in the app's `resources/icons`; at
+  runtime Tape switches the dock icon (macOS) or window icon (Windows, Linux) when the theme changes. The
+  bundle icon shown by installers (and by Finder, unless the dark Finder icon below is set) is the light one.
+- **Finder icon (macOS).** While Tape runs from `/Applications` or `~/Applications`, its icon in Finder (and
+  its Dock tile while it is not running) follows the theme, like Arc's. For dark, Tape gives its bundle a
+  Finder custom icon (`NSWorkspace setIcon:forFile:options:` via `osascript`): an empty `Tape.app/Icon\r`
+  file whose resource fork holds `icon-dark.icns`, and the custom-icon flag in the bundle's
+  `com.apple.FinderInfo`. Light removes both, so the light bundle icon shows again. Nothing in `Contents/`
+  changes: `codesign --verify --deep` passes and Tape launches as before, but while the dark icon is set
+  `codesign --verify --deep --strict` reports "resource fork, Finder information, or similar detritus not
+  allowed" (Arc's bundle reports the same). Switch to Light first, or run
+  `rm "/Applications/Tape.app/Icon"$'\r'; xattr -d com.apple.FinderInfo /Applications/Tape.app`, before a
+  strict check. The icon only changes while Tape runs: if macOS switches appearance while Tape is closed,
+  the last icon stays until the next launch, and an update (a new bundle) starts light. Tape treats any
+  custom icon on its bundle as its own: while dark it sets its dark icon once per launch and at each
+  switch to dark, which replaces one set with Get Info and repairs one stripped by `xattr -cr`, and Light
+  removes it. It leaves the
+  bundle alone when it runs translocated, from the DMG or outside the Applications folders, or cannot
+  write it; a failure is logged once and changes nothing else.
 - **Electron fuses.** The packaged binary has `runAsNode`, `NODE_OPTIONS` and `--inspect` turned off and only
   loads the `app.asar` it was built with (embedded asar integrity), so it cannot be used as a plain Node
   runtime or started with modified app code. Check with `npx @electron/fuses read --app release/mac-arm64/Tape.app`.
@@ -244,6 +263,7 @@ src/
     market/          contracts, quotes, history, depth, options, price alerts, demo simulator
     notifications.ts in-app list + OS notifications
     appearance.ts    theme and theme-matched icons
+    finderIcon.ts    macOS: the bundle's Finder icon follows the theme
     menu.ts          localized application menu (menuTemplate.ts)
     lock/            lock screen: PIN hash and backoff, idle auto-lock, Touch ID / Windows Hello, Forgot-PIN reset
     ipcDispatch.ts   IPC envelope and the methods refused while locked
