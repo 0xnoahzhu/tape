@@ -243,7 +243,7 @@ export interface OrderService {
   refreshExecutions(): Promise<void>;
 }
 
-/** Theme, dock/window icon and native theme handling. */
+/** Theme, dock/window icon, the macOS Finder (bundle) icon and native theme handling. */
 export interface Appearance {
   /** True when the resolved theme is dark. */
   isDark(): boolean;

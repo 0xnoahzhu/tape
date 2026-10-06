@@ -6,7 +6,20 @@ import type { MainContext } from './context';
 
 // nativeTheme stand-in: themeSource resolves against a fake OS appearance; 'updated' is emitted
 // asynchronously in Electron, tests emit it by hand.
-const fake = vi.hoisted(() => ({ systemDark: false, dockIcons: [] as string[] }));
+const fake = vi.hoisted(() => ({
+  systemDark: false,
+  dockIcons: [] as string[],
+  packaged: false,
+  finderEnv: null as unknown,
+  finderWants: [] as boolean[],
+}));
+// The Finder icon's own behavior is tested in finderIcon.test.ts; here only what appearance asks of it.
+vi.mock('./finderIcon', () => ({
+  finderIconFor: (env: unknown) => {
+    fake.finderEnv = env;
+    return { want: (dark: boolean) => fake.finderWants.push(dark), idle: () => Promise.resolve() };
+  },
+}));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
   class NativeTheme extends EventEmitter {
@@ -19,10 +32,14 @@ vi.mock('electron', async () => {
     nativeTheme: new NativeTheme(),
     nativeImage: { createFromPath: (path: string) => ({ path, isEmpty: () => false }) },
     app: {
-      isPackaged: false,
+      get isPackaged() {
+        return fake.packaged;
+      },
       isReady: () => true,
       whenReady: () => Promise.resolve(),
       getAppPath: () => '/app',
+      getPath: (name: string) => ({ exe: '/Applications/Tape.app/Contents/MacOS/Tape', home: '/Users/n' })[name],
+      hasSingleInstanceLock: () => true,
       dock: { setIcon: (img: { path: string }) => fake.dockIcons.push(img.path.split('/').pop()!) },
     },
   };
@@ -61,6 +78,9 @@ describe('Appearance', () => {
   beforeEach(() => {
     fake.systemDark = false;
     fake.dockIcons.length = 0;
+    fake.packaged = false;
+    fake.finderEnv = null;
+    fake.finderWants.length = 0;
     nativeTheme.removeAllListeners();
   });
   afterEach(() => Object.defineProperty(process, 'platform', { value: platform }));
@@ -103,6 +123,43 @@ describe('Appearance', () => {
     // Unrelated 'updated' events (e.g. high contrast) change nothing.
     nativeTheme.emit('updated');
     expect(events).toHaveLength(1);
+  });
+
+  it('packaged on macOS, the Finder icon follows the resolved theme', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    fake.packaged = true;
+    const resourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+    Object.defineProperty(process, 'resourcesPath', { value: '/Applications/Tape.app/Contents/Resources', configurable: true });
+    try {
+      const { update } = setup('system');
+      expect(fake.finderEnv).toMatchObject({ platform: 'darwin', primary: true, exe: '/Applications/Tape.app/Contents/MacOS/Tape', home: '/Users/n' });
+      await flush();
+      expect(fake.finderWants).toEqual([false]);
+      fake.systemDark = true;
+      nativeTheme.emit('updated');
+      expect(fake.finderWants).toEqual([false, true]);
+      // Only changes of the resolved theme reach it.
+      nativeTheme.emit('updated');
+      update('dark');
+      expect(fake.finderWants).toEqual([false, true]);
+      update('light');
+      expect(fake.finderWants).toEqual([false, true, false]);
+    } finally {
+      if (resourcesPath) Object.defineProperty(process, 'resourcesPath', resourcesPath);
+      else delete (process as { resourcesPath?: string }).resourcesPath;
+    }
+  });
+
+  it('leaves the Finder icon alone when not packaged and on other platforms', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    setup('dark');
+    await flush();
+    expect(fake.finderEnv).toBeNull();
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    fake.packaged = true;
+    setup('dark');
+    await flush();
+    expect(fake.finderEnv).toBeNull();
   });
 
   it('sets the window icon on Windows and Linux instead of the dock', async () => {
