@@ -109,6 +109,24 @@ describe('IbConnection', () => {
     expect(t.ib.nextReqId()).toBe(FIRST_REQ_ID + 1);
   });
 
+  it('replays the running session to a ready listener added while connected, unless it wants only later ones', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    const current = vi.fn();
+    const later = vi.fn();
+    t.ib.onReady(current);
+    t.ib.onReady(later, { current: false });
+    await Promise.resolve();
+    expect(current).toHaveBeenCalledTimes(1);
+    expect(later).not.toHaveBeenCalled();
+    // IB dropped the market data subscriptions: both re-issue theirs.
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data lost.', 1101);
+    expect(current).toHaveBeenCalledTimes(2);
+    expect(later).toHaveBeenCalledTimes(1);
+  });
+
   it('hands out request ids that order ids cannot reach', async () => {
     const t = setup();
     const p = t.ib.connect();

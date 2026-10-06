@@ -619,11 +619,11 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       const s = set;
       return () => void s.delete(listener);
     },
-    onReady(listener) {
+    onReady(listener, opts) {
       readyListeners.add(listener);
-      // A service that subscribes while connected still gets this session.
+      // A service that subscribes while connected still gets this session (unless it only wants the next ones).
       const api = inst;
-      if (ready && api) queueMicrotask(() => ready && inst === api && readyListeners.has(listener) && safely(() => listener(api), 'ready'));
+      if (opts?.current !== false && ready && api) queueMicrotask(() => ready && inst === api && readyListeners.has(listener) && safely(() => listener(api), 'ready'));
       return () => void readyListeners.delete(listener);
     },
     onClosed(listener) {
