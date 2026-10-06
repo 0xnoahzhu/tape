@@ -6,9 +6,9 @@ import type { WatchItem, Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { MenuDivider, MenuItem, Popover } from '../../ui/primitives';
-import { updateList } from './actions';
+import { askRemoveItem, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
-import { addItem, clampMenu, itemKey, listAccepts, listHas, moveItem, removeItem } from './model';
+import { addItem, clampMenu, itemKey, listAccepts, listHas, moveItem } from './model';
 
 export const ROW_MENU_WIDTH = 196;
 /** Distance kept between the menu and the panel edges. */
@@ -22,9 +22,9 @@ export interface RowMenuTarget {
   y: number;
 }
 
-const sectionLabel: CSSProperties = { padding: '2px 12px 4px', fontSize: 11, color: 'var(--dm)' };
+export const sectionLabel: CSSProperties = { padding: '2px 12px 4px', fontSize: 11, color: 'var(--dm)' };
 const subItem: CSSProperties = { padding: '0 12px 0 20px' };
-const emptyItem: CSSProperties = { height: 32, display: 'flex', alignItems: 'center', padding: '0 12px 0 20px', color: 'var(--dm)' };
+export const emptyItem: CSSProperties = { height: 32, display: 'flex', alignItems: 'center', padding: '0 12px 0 20px', color: 'var(--dm)' };
 
 export function RowMenu({
   target,
@@ -80,16 +80,7 @@ export function RowMenu({
 
   const remove = () => {
     onClose();
-    useStore.getState().ask({
-      title: m.remove,
-      rows: [
-        { label: m.symbol, value: label },
-        { label: m.list, value: nameOf(list.name, lang) },
-      ],
-      label: m.removeLabel,
-      danger: true,
-      run: () => updateList(list.id, (l) => removeItem(l, groupId, key)),
-    });
+    askRemoveItem(list.id, item.contract, groupId);
   };
 
   const close = (e: React.MouseEvent) => {

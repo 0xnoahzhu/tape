@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contractKey, index, stock } from '@shared/contract';
+import { contractKey, index, option, stock } from '@shared/contract';
 import { defaultWatchlists } from '@shared/defaults';
 import type { ContractRef, SymbolMatch, Watchlist } from '@shared/types';
 import {
@@ -8,6 +8,7 @@ import {
   clampMenu,
   createGroup,
   createList,
+  currentListOf,
   deleteGroup,
   deleteList,
   groupNameTaken,
@@ -21,12 +22,16 @@ import {
   neighborGroupId,
   normalizeMatch,
   normalizeTicker,
+  placeItem,
   pruneClosedGroups,
+  quickAdd,
+  removeFromList,
   removeItem,
   renameGroup,
   renameList,
   setItemName,
   suggestionsFrom,
+  targetGroupOf,
 } from './model';
 
 const DEFAULT = { en: 'Default', zh: '默认' };
@@ -101,6 +106,129 @@ describe('item operations', () => {
     const next = setItemName(main, 'STK:AMD', 'Advanced Micro Devices');
     expect(next.groups[0].items.find((i) => i.contract.symbol === 'AMD')!.name).toBe('Advanced Micro Devices');
     expect(setItemName(main, 'STK:ZZZ', 'x')).toBe(main);
+  });
+});
+
+describe('current list and target group', () => {
+  it('resolves the current list, else the first list', () => {
+    expect(currentListOf(lists, 'w-options')?.id).toBe('w-options');
+    expect(currentListOf(lists, 'gone')?.id).toBe('main');
+    expect(currentListOf(lists, null)?.id).toBe('main');
+    expect(currentListOf(lists, undefined)?.id).toBe('main');
+    expect(currentListOf([], 'main')).toBeUndefined();
+  });
+
+  it('resolves the target group, else the first group', () => {
+    expect(targetGroupOf(main, 'g-etf')?.id).toBe('g-etf');
+    expect(targetGroupOf(main, 'missing')?.id).toBe('g-tech');
+    expect(targetGroupOf(main, undefined)?.id).toBe('g-tech');
+    expect(targetGroupOf({ id: 'e', name: 'E', groups: [] }, 'g')).toBeUndefined();
+  });
+});
+
+describe('placing from the chart star', () => {
+  const twice: Watchlist = { id: 'x', name: 'x', groups: [{ id: 'a', name: 'a', items: [{ contract: stock('AAPL') }] }, { id: 'b', name: 'b', items: [{ contract: stock('AAPL') }] }] };
+
+  it('removes an instrument from every group of a list', () => {
+    const next = removeFromList(twice, 'STK:AAPL');
+    expect(listHas(next, 'STK:AAPL')).toBe(false);
+    expect(next.groups.map((g) => g.items)).toEqual([[], []]);
+    expect(removeFromList(main, 'STK:ZZZ')).toBe(main);
+    expect(twice.groups[0].items).toHaveLength(1); // input untouched
+  });
+
+  it('adds when the list lacks the instrument', () => {
+    const goog = { contract: stock('GOOG'), name: 'Alphabet' };
+    const a = placeItem(main, 'g-etf', goog, DEFAULT);
+    expect(a.change).toBe('added');
+    expect(a.list.groups.find((g) => g.id === 'g-etf')!.items.at(-1)).toEqual(goog);
+    const b = placeItem(main, 'missing', goog, DEFAULT);
+    expect(b.change).toBe('added');
+    expect(b.list.groups.find((g) => g.id === 'g-tech')!.items.at(-1)).toEqual(goog);
+    const empty: Watchlist = { id: 'e', name: 'E', groups: [] };
+    expect(placeItem(empty, undefined, { contract: stock('IBM') }, DEFAULT, 'g1')).toEqual({
+      list: { id: 'e', name: 'E', groups: [{ id: 'g1', name: DEFAULT, items: [{ contract: stock('IBM') }] }] },
+      change: 'added',
+    });
+  });
+
+  it('moves within the list, keeping the stored item', () => {
+    const r = placeItem(main, 'g-auto', { contract: stock('NVDA'), name: 'Nvidia Corp' }, DEFAULT);
+    expect(r.change).toBe('moved');
+    expect(r.list.groups.find((g) => g.id === 'g-tech')!.items.map((i) => i.contract.symbol)).not.toContain('NVDA');
+    expect(r.list.groups.find((g) => g.id === 'g-auto')!.items.at(-1)).toEqual({ contract: stock('NVDA'), name: 'NVIDIA' });
+    expect(listItemCount(r.list)).toBe(listItemCount(main));
+    expect(main.groups[0].items.map((i) => i.contract.symbol)).toContain('NVDA'); // input untouched
+    // In two groups: only the target keeps it.
+    const d = placeItem(twice, 'b', { contract: stock('AAPL') }, DEFAULT);
+    expect(d.change).toBe('moved');
+    expect(d.list.groups.map((g) => g.items.length)).toEqual([0, 1]);
+  });
+
+  it('does nothing when it is already only there, or the group is gone', () => {
+    const a = placeItem(main, 'g-tech', { contract: stock('AAPL') }, DEFAULT);
+    expect(a.change).toBeNull();
+    expect(a.list).toBe(main);
+    const b = placeItem(main, 'nope', { contract: stock('AAPL') }, DEFAULT);
+    expect(b.change).toBeNull();
+    expect(b.list).toBe(main);
+  });
+
+  it('adds in one click to the current list target group', () => {
+    const q = quickAdd(lists, 'main', {}, stock('GOOG'));
+    expect(q.list?.id).toBe('main');
+    expect(q.inList).toBe(false);
+    expect(q.click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
+    expect(quickAdd(lists, 'main', { main: 'g-etf' }, stock('GOOG')).click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-etf' });
+    expect(quickAdd(lists, 'main', { main: 'gone' }, stock('GOOG')).click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
+  });
+
+  it('opens the menu when the current list has it, offering every group that accepts it', () => {
+    const q = quickAdd(lists, 'main', {}, stock('AAPL'));
+    expect(q.inList).toBe(true);
+    expect(q.click).toEqual({ kind: 'menu' });
+    expect(q.rows.map((r) => [r.list.id, r.group?.id, r.checked])).toEqual([
+      ['main', 'g-tech', true],
+      ['main', 'g-auto', false],
+      ['main', 'g-etf', false],
+      ['w-options', 'g-hiv', false],
+    ]);
+  });
+
+  it('compares instruments by contractKey', () => {
+    expect(quickAdd(lists, 'main', {}, { ...stock('AAPL'), conId: 265598, primaryExchange: 'NASDAQ', exchange: 'ISLAND' }).inList).toBe(true);
+    const call = quickAdd(lists, 'main', {}, option('AAPL', '20261016', 230, 'C'));
+    expect(call.inList).toBe(false);
+    expect(call.click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
+  });
+
+  it('lets only indices into a current Indices list', () => {
+    const aapl = quickAdd(lists, 'idx', {}, stock('AAPL'));
+    expect(aapl.inList).toBe(false);
+    expect(aapl.click).toEqual({ kind: 'menu' });
+    expect(aapl.rows.some((r) => r.list.id === 'idx')).toBe(false);
+    const spx = quickAdd(lists, 'idx', {}, index('SPX', 'CBOE'));
+    expect(spx.inList).toBe(true);
+    expect(spx.click).toEqual({ kind: 'menu' });
+    const oex = quickAdd(lists, 'idx', {}, index('OEX', 'CBOE'));
+    expect(oex.click).toEqual({ kind: 'add', listId: 'idx', groupId: 'g-us' });
+    expect(oex.rows.map((r) => `${r.list.id}:${r.group?.id}`)).toEqual(['main:g-tech', 'main:g-auto', 'main:g-etf', 'idx:g-us', 'idx:g-macro', 'w-options:g-hiv']);
+  });
+
+  it('adds to the current list when only another list has it', () => {
+    const q = quickAdd(lists, 'w-options', {}, stock('MSFT'));
+    expect(q.inList).toBe(false);
+    expect(q.click).toEqual({ kind: 'add', listId: 'w-options', groupId: 'g-hiv' });
+    expect(q.rows.filter((r) => r.checked).map((r) => `${r.list.id}:${r.group?.id}`)).toEqual(['main:g-tech']);
+  });
+
+  it('falls back for a stale current list, no lists and a list without groups', () => {
+    expect(quickAdd(lists, 'gone', {}, stock('GOOG')).list?.id).toBe('main');
+    expect(quickAdd([], 'main', {}, stock('GOOG'))).toEqual({ list: undefined, inList: false, click: { kind: 'menu' }, rows: [] });
+    const empty: Watchlist = { id: 'e', name: 'E', groups: [] };
+    const q = quickAdd([empty], 'e', {}, stock('GOOG'));
+    expect(q.click).toEqual({ kind: 'add', listId: 'e', groupId: undefined });
+    expect(q.rows).toEqual([{ list: empty, group: undefined, checked: false }]);
   });
 });
 
