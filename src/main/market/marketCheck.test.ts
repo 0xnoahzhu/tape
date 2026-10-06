@@ -299,6 +299,24 @@ describe('market data check', () => {
     expect(item(r, 'depth')).toMatchObject({ status: 'live', via: 'IEX', probe: { code: 2152, message: notice } });
   });
 
+  it('is not ended by the session the connection replays to a ready listener added while connected', async () => {
+    const { fake, svc } = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
+    // As connection.ts does: a listener added while connected also gets the running session.
+    const add = fake.ib.onReady;
+    fake.ib.onReady = (l, o) => {
+      const off = add(l, o);
+      const api = fake.ib.api;
+      if (o?.current !== false && api) queueMicrotask(() => l(api));
+      return off;
+    };
+    fake.onCall = ((prev) => (name: string, args: unknown[]) => {
+      prev?.(name, args);
+      if (name === 'reqMktDepth') setTimeout(() => fake.emit('updateMktDepthL2', args[0], 0, 'NSDQ', 0, 1, 670.1, 100), 50);
+    })(fake.onCall);
+    const r = await finish(svc.run({ depth: true, trigger: 'user' }));
+    expect(item(r, 'depth')).toMatchObject({ status: 'live', probe: { status: 'live' } });
+  });
+
   it('patches Level 2 with a 2152 that comes after the first book update, and keeps it for later checks', async () => {
     const all = { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } };
     const { fake, svc, events } = await setup({ lines: all });

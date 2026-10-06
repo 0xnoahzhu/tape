@@ -85,8 +85,12 @@ export interface IbConnection {
    * (a new instance is created when host/port/clientId change).
    */
   on(event: string, listener: IbListener): Unsubscribe;
-  /** Called after every successful handshake (nextValidId received). Re-issue subscriptions here. */
-  onReady(listener: (api: IBApi) => void): Unsubscribe;
+  /**
+   * Called after every successful handshake (nextValidId received) and when IB drops the market data
+   * subscriptions (1101). Re-issue subscriptions here. A listener added while connected is also called
+   * for the running session (in a microtask) unless `current` is false: then only later ones count.
+   */
+  onReady(listener: (api: IBApi) => void, opts?: { current?: boolean }): Unsubscribe;
   /** Called when the socket closes for any reason. */
   onClosed(listener: () => void): Unsubscribe;
   /** Errors that carry a request/order id (reqId >= 0). Info codes (2104 etc.) are not routed here. */

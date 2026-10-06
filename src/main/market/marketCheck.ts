@@ -494,12 +494,13 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
       );
       // The session may also close after the check has returned, while the line is still watched,
       // or IB drop its market data requests (1101: the connection fires ready again): a 2152 can no
-      // longer come, so the last answer is not final.
+      // longer come, so the last answer is not final. Only a later ready counts: the running session,
+      // which the connection replays to a listener added while connected, is the one being checked.
       const closed = () => {
         if (!answer) report({ status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: 'Connection closed', own: 'closed' });
         end(false);
       };
-      offs.push(ctx.ib.onClosed(closed), ctx.ib.onReady(closed));
+      offs.push(ctx.ib.onClosed(closed), ctx.ib.onReady(closed, { current: false }));
       onClose(closed);
     });
   };
