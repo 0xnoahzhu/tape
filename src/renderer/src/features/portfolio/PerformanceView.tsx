@@ -28,6 +28,11 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
     });
   }, [series]);
 
+  // Tape samples net liquidation itself while connected (IB keeps no history of it to ask for): a range
+  // the samples do not reach back to says where they start instead of a drawdown.
+  const first = series[0] ? new Date(series[0].t) : null;
+  const since = first ? m.historyFrom(`${first.getMonth() + 1}/${first.getDate()}`) : m.noHistoryShort;
+
   const a = account;
   const lev = leverage(totals.gross, a?.netLiquidation);
 
@@ -74,7 +79,7 @@ export function PerformanceView({ series, account, totals }: { series: NavPoint[
                   {ret ? pct(ret.pct) : DASH}
                 </div>
                 <div style={{ font: '12px/1 var(--num)', color: col }}>{ret ? sg(ret.change, f0) : '\u00a0'}</div>
-                <div style={{ fontSize: 11, color: 'var(--dm)' }}>{m.maxDrawdown(ret ? `${f2(ret.maxDrawdown, 1)}%` : DASH)}</div>
+                <div style={{ fontSize: 11, color: 'var(--dm)' }}>{ret ? m.maxDrawdown(`${f2(ret.maxDrawdown, 1)}%`) : since}</div>
               </div>
             );
           })}

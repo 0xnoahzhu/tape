@@ -79,6 +79,8 @@ export const usePortfolioMessages = createMessages({
     // Performance
     returns: 'Returns',
     maxDrawdown: (v: string) => `Max drawdown ${v}`,
+    historyFrom: (md: string) => `History from ${md}`,
+    noHistoryShort: 'No history yet',
     balances: 'Balances',
     stockValue: 'Stock value',
     optionValue: 'Option value',
@@ -170,6 +172,8 @@ export const usePortfolioMessages = createMessages({
 
     returns: '收益',
     maxDrawdown: (v: string) => `最大回撤 ${v}`,
+    historyFrom: (md: string) => `记录始于 ${md}`,
+    noHistoryShort: '暂无记录',
     balances: '余额',
     stockValue: '股票市值',
     optionValue: '期权市值',
