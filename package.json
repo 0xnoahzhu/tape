@@ -1,7 +1,7 @@
 {
   "name": "tape",
   "productName": "Tape",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A desktop trading client for Interactive Brokers (TWS / IB Gateway).",
   "author": "Noah Zhu",
   "license": "Apache-2.0",
