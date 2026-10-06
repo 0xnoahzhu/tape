@@ -5,9 +5,9 @@
 //
 // Through the real services: the account values the header and the margin widget read (net
 // liquidation, excess liquidity, margins, today's realized P&L), the IB dividend tick on a
-// 'dividends' quote line (generic tick 456), Wall Street Horizon earnings (the paper account has
-// no WSH subscription: 'unsubscribed') and SPY's daily bars for the benchmark. Market data and
-// account data only; no orders. Use a client id no other program uses.
+// 'dividends' quote line (generic tick 456), earnings (the paper account has no WSH
+// subscription: estimates from IB's market scanner) and SPY's daily bars for the benchmark.
+// Market data and account data only; no orders. Use a client id no other program uses.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,14 +140,45 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
     for (const x of seen) if (x.dividends?.nextDate) expect(x.dividends.nextDate).toMatch(/^\d{8}$/);
   });
 
-  it('reports earnings as unsubscribed without a WSH subscription', async () => {
+  it('reports earnings (Wall Street Horizon or the scanner fallback)', { timeout: 600_000 }, async () => {
     const held = ctx.account.getPositions().filter((p) => p.contract.secType === 'STK').map((p) => p.contract);
-    const res = await ctx.corporateEvents.getEarnings(held.length ? held : [stock('AAPL')]);
-    console.log('[live] earnings', JSON.stringify(res), errors.filter((e) => / 102\d\d /.test(e)));
-    expect(['unsubscribed', 'ok']).toContain(res.status);
-    // Answered from memory the second time.
-    const again = await ctx.corporateEvents.getEarnings([stock('AAPL')]);
-    expect(again.status).toBe(res.status);
+    const stocks = (held.length ? held : [stock('AAPL')]).slice(0, 40);
+    // The scanner's price band comes from the quotes the widget's dividends line keeps.
+    ctx.quotes.setRendererSubscriptions(
+      'dashboard-div',
+      stocks.map((contract) => ({ contract, profile: 'dividends' as const })),
+    );
+    let scans = 0;
+    const off = ctx.ib.on(EventName.sent, (tokens: unknown) => {
+      if (Array.isArray(tokens) && Number(tokens[0]) === OUT_MSG_ID.REQ_SCANNER_SUBSCRIPTION) scans++;
+    });
+    try {
+      // The scanner's searches run in the background: ask until none is left (about 10 scans a
+      // stock, three at a time, plus up to 10 s waiting for a quote).
+      const deadline = Date.now() + 30_000 + stocks.length * 10_000;
+      let res = await ctx.corporateEvents.getEarnings(stocks);
+      while (res.pending && Date.now() < deadline) {
+        await sleep(1000);
+        res = await ctx.corporateEvents.getEarnings(stocks);
+      }
+      console.log('[live] earnings', JSON.stringify(res), `${scans} scans`, errors.filter((e) => / 102\d\d /.test(e)));
+      expect(['unsubscribed', 'ok']).toContain(res.status);
+      expect(res.pending).toBeUndefined();
+      if (res.status === 'ok' && res.source === 'scanner') {
+        const estimated = res.events.filter((e) => e.estimated);
+        expect(estimated.length).toBeGreaterThan(0);
+        for (const e of estimated) expect(e.date).toMatch(/^\d{8}$/);
+      }
+      // Answered from memory the second time: the same events, no more scans.
+      const sent = scans;
+      const again = await ctx.corporateEvents.getEarnings(stocks);
+      expect(again.status).toBe(res.status);
+      expect(again.events).toEqual(res.events);
+      expect(again.pending).toBeUndefined();
+      expect(scans).toBe(sent);
+    } finally {
+      off();
+    }
   });
 
   it('loads SPY daily bars for the benchmark', async () => {

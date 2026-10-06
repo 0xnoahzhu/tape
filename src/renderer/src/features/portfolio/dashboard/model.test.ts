@@ -9,6 +9,8 @@ import {
   closeAtOrBefore,
   concentration,
   contributions,
+  earningsState,
+  etClock,
   expirations,
   holdingUnderlyings,
   intradayCovers,
@@ -227,6 +229,43 @@ describe('upcoming events', () => {
     expect(events.every((e) => e.kind === 'dividend')).toBe(true);
     expect(events).toHaveLength(3);
     expect(upcomingEvents(und, div, undefined, NOW, 2)).toHaveLength(2);
+  });
+
+  it('passes the scanner’s estimates and exact times through', () => {
+    const events = upcomingEvents(
+      und,
+      {},
+      {
+        status: 'ok',
+        source: 'scanner',
+        events: [
+          { key: 'STK:AAPL', date: '20261029', time: 'amc', estimated: true },
+          { key: 'STK:TSLA', date: '20261021', time: 'bmo', minutes: 510, estimated: true },
+        ],
+      },
+      NOW,
+    );
+    expect(events.map((e) => [e.symbol, e.time, e.minutes, e.estimated])).toEqual([
+      ['TSLA', 'bmo', 510, true],
+      ['AAPL', 'amc', undefined, true],
+    ]);
+    expect('minutes' in events[1]).toBe(false);
+    expect(etClock(510)).toBe('08:30');
+    expect(etClock(960)).toBe('16:00');
+    expect(etClock(0)).toBe('00:00');
+  });
+
+  it('says where earnings dates come from, or why there are none', () => {
+    expect(earningsState(undefined, true)).toBe('ok');
+    expect(earningsState({ status: 'ok', events: [], source: 'wsh' }, true)).toBe('ok');
+    expect(earningsState({ status: 'ok', events: [], source: 'scanner' }, true)).toBe('estimated');
+    expect(earningsState({ status: 'ok', events: [], source: 'scanner', pending: true }, true)).toBe('searching');
+    expect(earningsState({ status: 'ok', events: [], source: 'scanner', partial: true }, true)).toBe('estimatedUs');
+    expect(earningsState({ status: 'ok', events: [], source: 'scanner', retryInMs: 300_000 }, true)).toBe('estimated');
+    expect(earningsState({ status: 'unsubscribed', events: [] }, true)).toBe('unsubscribed');
+    expect(earningsState({ status: 'unavailable', events: [] }, true)).toBe('unavailable');
+    // Not connected: the widget says so itself.
+    expect(earningsState({ status: 'unavailable', events: [] }, false)).toBe('ok');
   });
 });
 

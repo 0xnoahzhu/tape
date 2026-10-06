@@ -50,6 +50,8 @@ const MARKET_DATA_MSGS = [
   M.REQ_HISTORICAL_TICKS,
   M.REQ_HISTOGRAM_DATA,
   M.CANCEL_HISTOGRAM_DATA,
+  M.REQ_SCANNER_SUBSCRIPTION,
+  M.CANCEL_SCANNER_SUBSCRIPTION,
 ];
 const LANE_OF = new Map<number, Lane>([...ORDER_MSGS.map((id) => [id, Lane.Order] as const), ...MARKET_DATA_MSGS.map((id) => [id, Lane.MarketData] as const)]);
 
@@ -69,6 +71,7 @@ const REQUEST_OF_CANCEL = new Map<number, number>([
   [M.CANCEL_PNL_SINGLE, M.REQ_PNL_SINGLE],
   [M.CANCEL_WSH_META_DATA, M.REQ_WSH_META_DATA],
   [M.CANCEL_WSH_EVENT_DATA, M.REQ_WSH_EVENT_DATA],
+  [M.CANCEL_SCANNER_SUBSCRIPTION, M.REQ_SCANNER_SUBSCRIPTION],
 ]);
 const PAIRED_REQUESTS: ReadonlySet<number> = new Set(REQUEST_OF_CANCEL.values());
 

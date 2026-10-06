@@ -12,7 +12,7 @@
 import { IBApiTickType, IN_MSG_ID, OUT_MSG_ID } from './tws';
 import { hms } from '@shared/format';
 import type { ApiLogEntry } from '@shared/types';
-import { isErrorCode } from './errorCodes';
+import { isErrorCode, isScannerCancelAck } from './errorCodes';
 
 export type Direction = 'out' | 'in';
 export type Fields = Array<[string, string]>;
@@ -328,6 +328,22 @@ function symbolSamples(r: FieldReader): void {
   r.add('matches', summarize(items));
 }
 
+/** scannerData: the row count and the symbols in rank order (each row is 16 fields in version 3). */
+function scannerData(r: FieldReader): void {
+  const v = Number(r.f('version'));
+  r.f('reqId');
+  const n = r.int();
+  r.add('count', String(n));
+  const items: string[] = [];
+  for (let i = 0; i < n && !r.done; i++) {
+    r.skip(); // rank
+    if (v >= 3) r.skip(); // conId
+    items.push(r.str());
+    r.skip(12 + (v >= 2 ? 1 : 0)); // secType … projection, legs
+  }
+  r.add('symbols', summarize(items));
+}
+
 function secDefOptParams(r: FieldReader): void {
   r.fs('reqId', 'exchange', 'underlyingConId', 'tradingClass', 'multiplier');
   const expirations: string[] = [];
@@ -444,6 +460,7 @@ const IN_SCHEMAS: Record<string, Schema> = {
   userInfo: withId('reqId', 'reqId', 'whiteBrandingId'),
   wshMetaData: withId('reqId', 'reqId', 'dataJson'),
   wshEventData: withId('reqId', 'reqId', 'dataJson'),
+  scannerData: { id: 'reqId', compact: true, read: scannerData },
 };
 
 // ---------------------------------------------------------------------------
@@ -641,6 +658,37 @@ const OUT_SCHEMAS: Record<string, Schema> = {
   cancelWshMetaData: withId('reqId', 'reqId'),
   reqWshEventData: withId('reqId', 'reqId', 'conId', 'filter', 'fillWatchlist', 'fillPortfolio', 'fillCompetitors', 'startDate', 'endDate', 'totalLimit'),
   cancelWshEventData: withId('reqId', 'reqId'),
+  reqScannerSubscription: {
+    id: 'reqId',
+    compact: true,
+    read: seq(
+      'reqId',
+      'numberOfRows',
+      'instrument',
+      'locationCode',
+      'scanCode',
+      'abovePrice',
+      'belowPrice',
+      'aboveVolume',
+      'marketCapAbove',
+      'marketCapBelow',
+      'moodyRatingAbove',
+      'moodyRatingBelow',
+      'spRatingAbove',
+      'spRatingBelow',
+      'maturityDateAbove',
+      'maturityDateBelow',
+      'couponRateAbove',
+      'couponRateBelow',
+      'excludeConvertible',
+      'averageOptionVolumeAbove',
+      'scannerSettingPairs',
+      'stockTypeFilter',
+      'filterOptions',
+      'options',
+    ),
+  },
+  cancelScannerSubscription: withId('reqId', 'version', 'reqId'),
 };
 
 // ---------------------------------------------------------------------------
@@ -750,7 +798,9 @@ function decodeTokens(dir: Direction, tokens: string[], bytes: number, opts: Dec
 
   const reqId = schema?.id ? fieldValue(fields, schema.id) : undefined;
   const code = name === 'error' ? Number(fieldValue(fields, 'code')) : NaN;
-  const err = dir === 'in' && name === 'error' && Number.isFinite(code) && isErrorCode(code);
+  // IB acknowledges a scanner cancel with error 162; that one reports no failure.
+  const err =
+    dir === 'in' && name === 'error' && Number.isFinite(code) && isErrorCode(code) && !isScannerCancelAck(code, fieldValue(fields, 'msg') ?? '');
   return reqId ? { msgId, name, reqId, fields, bytes, err, raw } : { msgId, name, fields, bytes, err, raw };
 }
 

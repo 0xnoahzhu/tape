@@ -1,13 +1,18 @@
 // Corporate events of the holdings: upcoming earnings from Wall Street Horizon (WSH), which IB
-// serves only to accounts with the WSH subscription. Dividends do not come from here: they are
-// IB's dividend tick on the holdings' quotes (generic tick 456, see subscriptions.ts).
+// serves only to accounts with the WSH subscription, and when IB refuses WSH, estimated from IB's
+// market scanner (see earningsScanner.ts). Dividends do not come from here: they are IB's
+// dividend tick on the holdings' quotes (generic tick 456, see subscriptions.ts).
 //
 // IB requires reqWshMetaData once per connection before reqWshEventData. Event requests go one
 // at a time (one per underlying conId, today to EARNINGS_DAYS ahead) and their results are kept
-// per conId for the New York day. Without the subscription IB refuses the meta data request
-// (error 10276 "News feed is not allowed" on the paper account): the service then answers
-// 'unsubscribed' without asking IB again until the next handshake. Demo mode answers from the
-// simulator.
+// per conId for the New York day and the connection. Without the subscription IB refuses the
+// meta data request (error 10276 "News feed is not allowed" on the paper account): the refusal is
+// remembered for the connection and the New York day, and those stocks go to the scanner, whose
+// searches run in the background (the answer says `pending` while they do, and `retryInMs` when a
+// stock waits to be searched again). The scanner covers US dollar stocks only: with others left
+// over the answer is `partial`, and with nothing else `unsubscribed`. A refusal of one event
+// request keeps the events WSH already gave and sends the rest to the scanner. Demo mode answers
+// from the simulator, as scanner estimates.
 //
 // IB did not document the event JSON beyond examples and the paper account cannot receive any,
 // so parseWshEarnings reads it defensively (see there); a shape it cannot read is logged once.
@@ -17,6 +22,7 @@ import { contractKey, contractLabel } from '@shared/contract';
 import type { ContractRef, CorporateEarnings, EarningsEvent } from '@shared/types';
 import type { CorporateEventsService, MainContext } from '../context';
 import { demoMarket } from './demo';
+import { createEarningsScanner } from './earningsScanner';
 import { IbRequestError, ibRequest, isIbConnected, Limiter } from './ibRequest';
 import { addDays, nyDay, yyyymmdd } from './nyTime';
 
@@ -35,6 +41,8 @@ export const WSH_UNSUBSCRIBED_CODES: ReadonlySet<number> = new Set([10276, 10277
 const DUPLICATE_META_CODE = 10278;
 
 const todayYmd = (now: number) => yyyymmdd(nyDay(now));
+/** Soonest first, then by contract key (in place). */
+const sortEvents = (events: EarningsEvent[]): EarningsEvent[] => events.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
 
 // ---------------------------------------------------------------------------
 // Event JSON
@@ -127,21 +135,29 @@ export function parseWshEarnings(json: string, key: string, today: string): Earn
 export function createCorporateEventsService(ctx: MainContext): CorporateEventsService {
   /** Meta data requested on this connection (IB wants it before event data). */
   let meta: Promise<void> | null = null;
-  /** IB refused WSH on this connection (no subscription). */
-  let unsubscribed = false;
-  /** Earnings per conId, for one New York day. */
+  /** The New York day IB refused WSH on this connection (no subscription). */
+  let wshRefusedDay: string | null = null;
+  /** Earnings per conId, for one New York day and connection. */
   const cache = new Map<number, { day: string; events: Omit<EarningsEvent, 'key'>[] }>();
+  /** The conId each contract key was asked by (option underlyings carry none), for cachedWsh. */
+  const conIds = new Map<string, number>();
   const queue = new Limiter(1);
+  const scanner = createEarningsScanner(ctx);
   let warnedShape = false;
 
   const reset = () => {
     meta = null;
-    unsubscribed = false;
+    wshRefusedDay = null;
   };
 
   setImmediate(() => {
     ctx.ib.onReady(reset);
-    ctx.ib.onClosed(reset);
+    // A 1101 (ready again) keeps the cached events; a new connection asks again.
+    ctx.ib.onClosed(() => {
+      reset();
+      cache.clear();
+      conIds.clear();
+    });
   });
 
   const refusal = (err: unknown): boolean => err instanceof IbRequestError && WSH_UNSUBSCRIBED_CODES.has(err.code);
@@ -159,8 +175,9 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
         return true;
       },
     }).catch((err: unknown) => {
-      if (refusal(err)) unsubscribed = true;
-      else meta = null; // a timeout or a dropped connection is asked again next time
+      // A refusal holds for the New York day; a timeout or a dropped connection is asked again next time.
+      if (refusal(err)) wshRefusedDay = todayYmd(Date.now());
+      meta = null;
       throw err;
     });
     return meta;
@@ -170,6 +187,7 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
     const key = contractKey(und);
     const conId = und.conId ?? (await ctx.contracts.resolve(und)).conId;
     if (!conId) throw new Error(`Unknown contract: ${contractLabel(und)}`);
+    conIds.set(key, conId);
     const hit = cache.get(conId);
     if (hit && hit.day === today) return hit.events.map((e) => ({ ...e, key }));
     const endDate = yyyymmdd(addDays(nyDay(Date.now()), EARNINGS_DAYS));
@@ -190,9 +208,28 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
     return events;
   }
 
+  /** The events WSH gave today for stocks with a known conId; the others are returned as `rest`. */
+  function cachedWsh(stocks: ContractRef[], today: string): { events: EarningsEvent[]; answered: number; rest: ContractRef[] } {
+    const events: EarningsEvent[] = [];
+    const rest: ContractRef[] = [];
+    let answered = 0;
+    for (const und of stocks) {
+      // As eventsOf found it: an option underlying's conId was resolved there.
+      const conId = und.conId ?? conIds.get(contractKey(und));
+      const hit = conId !== undefined ? cache.get(conId) : undefined;
+      if (hit?.day !== today) {
+        rest.push(und);
+        continue;
+      }
+      events.push(...hit.events.map((e) => ({ ...e, key: contractKey(und) })));
+      answered++;
+    }
+    return { events, answered, rest };
+  }
+
   function demoEarnings(underlyings: ContractRef[]): CorporateEarnings {
-    const events = underlyings.map((u) => ({ key: contractKey(u), ...demoMarket().earnings(u.symbol) }));
-    return { status: 'ok', events: events.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key)) };
+    const events = underlyings.map((u) => ({ key: contractKey(u), ...demoMarket().earnings(u.symbol), estimated: true }));
+    return { status: 'ok', events: sortEvents(events), source: 'scanner' };
   }
 
   return {
@@ -209,32 +246,64 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
         .slice(0, MAX_UNDERLYINGS);
       if (ctx.demo) return demoEarnings(stocks);
       if (!isIbConnected(ctx)) return { status: 'unavailable', events: [] };
-      if (unsubscribed) return { status: 'unsubscribed', events: [] };
       if (!stocks.length) return { status: 'ok', events: [] };
-      try {
-        await requestMeta();
-      } catch (err) {
-        return { status: refusal(err) ? 'unsubscribed' : 'unavailable', events: [] };
-      }
       const today = todayYmd(Date.now());
-      let answered = 0;
-      let refused = false;
-      const events: EarningsEvent[] = [];
-      for (const und of stocks) {
+      const wshEvents: EarningsEvent[] = [];
+      let wshAnswered = 0;
+      let rest = stocks;
+      if (wshRefusedDay !== today) {
         try {
-          events.push(...(await queue.run(() => eventsOf(und, today))));
-          answered++;
+          await requestMeta();
         } catch (err) {
-          if (refusal(err)) {
-            unsubscribed = refused = true;
-            break;
-          }
+          if (!refusal(err)) return { status: 'unavailable', events: [] };
+          wshRefusedDay = today;
         }
       }
-      if (refused) return { status: 'unsubscribed', events: [] };
-      if (!answered) return { status: 'unavailable', events: [] };
-      events.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
-      return { status: 'ok', events };
+      if (wshRefusedDay !== today) {
+        let refusedAt = -1;
+        for (let i = 0; i < stocks.length; i++) {
+          try {
+            wshEvents.push(...(await queue.run(() => eventsOf(stocks[i], today))));
+            wshAnswered++;
+          } catch (err) {
+            if (refusal(err)) {
+              wshRefusedDay = today;
+              refusedAt = i;
+              break;
+            }
+          }
+        }
+        if (refusedAt < 0) {
+          if (!wshAnswered) return { status: 'unavailable', events: [] };
+          return { status: 'ok', events: sortEvents(wshEvents), source: 'wsh' };
+        }
+        // The events WSH gave are kept; the refused stock and those after it go to the scanner.
+        rest = stocks.slice(refusedAt);
+      } else {
+        // WSH refused earlier today: stocks it answered before keep that answer.
+        const cached = cachedWsh(stocks, today);
+        wshEvents.push(...cached.events);
+        wshAnswered = cached.answered;
+        rest = cached.rest;
+      }
+      const s = scanner.lookup(rest, today);
+      /** Stocks that went to the scanner and that it can look up (US dollar ones). */
+      const scanned = rest.length - s.uncovered;
+      const retry = s.retryInMs !== undefined ? { retryInMs: s.retryInMs } : {};
+      if (!wshAnswered && !s.answered && !s.pending) {
+        // Nothing else than stocks the scanner does not cover: they need WSH.
+        if (s.refused || !scanned) return { status: 'unsubscribed', events: [] };
+        return { status: 'unavailable', events: [], ...retry };
+      }
+      const events = sortEvents([...wshEvents, ...s.events]);
+      return {
+        status: 'ok',
+        events,
+        source: scanned ? 'scanner' : 'wsh',
+        ...(s.uncovered ? { partial: true } : {}),
+        ...(s.pending ? { pending: true } : {}),
+        ...retry,
+      };
     },
   };
 }

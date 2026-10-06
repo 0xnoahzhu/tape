@@ -238,11 +238,12 @@ export interface QuoteDividends {
 }
 
 // ---------------------------------------------------------------------------
-// Corporate events (Wall Street Horizon)
+// Corporate events (Wall Street Horizon, else estimated from IB's market scanner)
 
 /**
  * - ok: IB answered (the list may be empty)
  * - unsubscribed: the account has no Wall Street Horizon subscription (IB error 10276 and kin)
+ *   and IB refused its market scanner too
  * - unavailable: not connected, or IB did not answer
  */
 export type CorporateEventsStatus = 'ok' | 'unsubscribed' | 'unavailable';
@@ -254,12 +255,24 @@ export interface EarningsEvent {
   date: string;
   /** Before market open, after market close, during market hours; absent when unknown. */
   time?: 'bmo' | 'amc' | 'dmh';
+  /** The release time in minutes after midnight New York, only when pinned exactly. */
+  minutes?: number;
+  /** Inferred from IB's market scanner; IB marks no date as confirmed. */
+  estimated?: boolean;
 }
 
 export interface CorporateEarnings {
   status: CorporateEventsStatus;
   /** Upcoming earnings, soonest first (empty unless status is 'ok'). */
   events: EarningsEvent[];
+  /** Where the dates come from: Wall Street Horizon, or (for some or all stocks) IB's market scanner. */
+  source?: 'wsh' | 'scanner';
+  /** The scanner is still looking up some stocks; ask again shortly. */
+  pending?: boolean;
+  /** Some stocks have no source: IB refused WSH and the scanner covers US dollar stocks only. */
+  partial?: boolean;
+  /** Some stocks are looked up again after this many ms (a failed scan, no price yet): ask again then. */
+  retryInMs?: number;
 }
 
 /**

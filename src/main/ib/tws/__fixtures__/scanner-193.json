@@ -1,0 +1,31 @@
+{
+  "description": "Market scanner frames from IB Gateway 10.50 (paper account, server version 193, no Wall Street Horizon subscription) on 2026-10-06: a scan by next earnings date (SCAN_nextEarningsDateTime_ASC) and its answer, cut at 50 of 435 rows. Scanner and error frames only.",
+  "serverVersion": 193,
+  "frames": [
+    {
+      "label": "reqScannerSubscription, market cap above 30000, 20261006..20270215",
+      "dir": "out",
+      "tokens": ["22","644","50","STK","STK.US.MAJOR","SCAN_nextEarningsDateTime_ASC","","","","30000","","","","","","","","","","0","","","ALL","nextEarningsDateTimeAbove=20261006;nextEarningsDateTimeBelow=20270215;",""]
+    },
+    {
+      "label": "162 acknowledging the cancel of the previous scan",
+      "dir": "in",
+      "tokens": ["4","2","643","162","Historical Market Data Service error message:API scanner subscription cancelled: 643",""]
+    },
+    {
+      "label": "165 before a cut answer",
+      "dir": "in",
+      "tokens": ["4","2","644","165","Historical Market Data Service query message:50 out of 435 items retrieved",""]
+    },
+    {
+      "label": "scannerData, 50 rows (cut: 50 out of 435)",
+      "dir": "in",
+      "tokens": ["20","3","644","50","0","11017","PEP","STK","","0","","SMART","USD","PEP","NMS","NMS","","","","","1","44001820","DAL","STK","","0","","SMART","USD","DAL","DAL","DAL","","","","","2","13272","UNH","STK","","0","","SMART","USD","UNH","UNH","UNH","","","","","3","8719","JNJ","STK","","0","","SMART","USD","JNJ","JNJ","JNJ","","","","","4","1520593","JPM","STK","","0","","SMART","USD","JPM","JPM","JPM","","","","","5","87335484","C","STK","","0","","SMART","USD","C","C","C","","","","","6","4627828","GS","STK","","0","","SMART","USD","GS","GS","GS","","","","","7","10375","WFC","STK","","0","","SMART","USD","WFC","WFC","WFC","","","","","8","729193719","BLK","STK","","0","","SMART","USD","BLK","BLK","BLK","","","","","9","10098","BAC","STK","","0","","SMART","USD","BAC","BAC","BAC","","","","","10","117902840","ASML","STK","","0","","SMART","USD","ASML","NMS","NMS","","","","","11","269120","FAST","STK","","0","","SMART","USD","FAST","NMS","NMS","","","","","12","2841574","MS","STK","","0","","SMART","USD","MS","MS","MS","","","","","13","11080","PGR","STK","","0","","SMART","USD","PGR","PGR","PGR","","","","","14","2730980","STT","STK","","0","","SMART","USD","STT","STT","STT","","","","","15","6223250","TSM","STK","","0","","SMART","USD","TSM","TSM","TSM","","","","","16","9705","MRSH","STK","","0","","SMART","USD","MRSH","MRSH","MRSH","","","","","17","11905","SCHW","STK","","0","","SMART","USD","SCHW","SCHW","SCHW","","","","","18","11669769","USB","STK","","0","","SMART","USD","USB","USB","USB","","","","","19","44986804","BNY","STK","","0","","SMART","USD","BNY","BNY","BNY","","","","","20","88819288","PLD","STK","","0","","SMART","USD","PLD","PLD","PLD","","","","","21","11240","PNC","STK","","0","","SMART","USD","PNC","PNC","PNC","","","","","22","43645865","IBKR","STK","","0","","SMART","USD","IBKR","NMS","NMS","","","","","23","2585323","MTB","STK","","0","","SMART","USD","MTB","MTB","MTB","","","","","24","393460310","TFC","STK","","0","","SMART","USD","TFC","TFC","TFC","","","","","25","43150617","TRV","STK","","0","","SMART","USD","TRV","TRV","TRV","","","","","26","12796138","HDB","STK","","0","","SMART","USD","HDB","HDB","HDB","","","","","27","8068883","IBN","STK","","0","","SMART","USD","IBN","IBN","IBN","","","","","28","269318","FITB","STK","","0","","SMART","USD","FITB","FITB","FITB","","","","","29","6478095","STLD","STK","","0","","SMART","USD","STLD","NMS","NMS","","","","","30","498843743","GE","STK","","0","","SMART","USD","GE","GE","GE","","","","","31","80986742","GM","STK","","0","","SMART","USD","GM","GM","GM","","","","","32","415342104","RTX","STK","","0","","SMART","USD","RTX","RTX","RTX","","","","","33","9720","MMM","STK","","0","","SMART","USD","MMM","MMM","MMM","","","","","34","47101335","MSCI","STK","","0","","SMART","USD","MSCI","MSCI","MSCI","","","","","35","10376","NOC","STK","","0","","SMART","USD","NOC","NOC","NOC","","","","","36","618310823","AMX","STK","","0","","SMART","USD","AMX","AMX","AMX","","","","","37","218939694","CB","STK","","0","","SMART","USD","CB","CB","CB","","","","","38","5941","COF","STK","","0","","SMART","USD","COF","COF","COF","","","","","39","57698865","EQT","STK","","0","","SMART","USD","EQT","EQT","EQT","","","","","40","9063285","ISRG","STK","","0","","SMART","USD","ISRG","NMS","NMS","","","","","41","15124833","NFLX","STK","","0","","SMART","USD","NFLX","NMS","NMS","","","","","42","79498203","UAL","STK","","0","","SMART","USD","UAL","NMS","NMS","","","","","43","12869","TMO","STK","","0","","SMART","USD","TMO","TMO","TMO","","","","","44","6442","DHR","STK","","0","","SMART","USD","DHR","DHR","DHR","","","","","45","45127739","CME","STK","","0","","SMART","USD","CME","NMS","NMS","","","","","46","173962302","ELV","STK","","0","","SMART","USD","ELV","ELV","ELV","","","","","47","37018770","T","STK","","0","","SMART","USD","T","T","T","","","","","48","661633","WAB","STK","","0","","SMART","USD","WAB","WAB","WAB","","","","","49","4065","ABT","STK","","0","","SMART","USD","ABT","ABT","ABT","","","",""]
+    },
+    {
+      "label": "cancelScannerSubscription",
+      "dir": "out",
+      "tokens": ["23","1","644"]
+    }
+  ]
+}

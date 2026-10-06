@@ -11,7 +11,7 @@
 import { isPegBenchOrder, isPegBestOrder, isPegMidOrder, COMPETE_AGAINST_BEST_OFFSET_UP_TO_MID, OrderConditionType } from './enums.ts';
 import { ErrorCode, TwsEncodeError } from './errors.ts';
 import { MIN_SERVER_VER, OUT_MSG_ID } from './messageIds.ts';
-import type { ComboLeg, Contract, ExecutionFilter, Order, OrderCancel, OrderCondition, TagValue, WshEventData } from './types.ts';
+import type { ComboLeg, Contract, ExecutionFilter, Order, OrderCancel, OrderCondition, ScannerSubscription, TagValue, WshEventData } from './types.ts';
 
 /** One field of an outgoing frame. undefined and null are sent as empty fields. */
 export type Token = string | number | undefined | null;
@@ -282,7 +282,7 @@ export function reqSecDefOptParams(
 // ---------------------------------------------------------------------------
 // Wall Street Horizon (corporate event calendar; needs the account's WSH subscription)
 
-/** Unset integers (conId, total limit) are sent as empty fields. */
+/** Unset integers (conId, total limit, scanner rows and volumes) are sent as empty fields. */
 const intOrEmpty = (n: number | undefined): number | undefined => (n === undefined || n === INT_MAX || !Number.isFinite(n) ? undefined : n);
 
 export function reqWshMetaData(_sv: number, reqId: number): Token[] {
@@ -318,6 +318,55 @@ export function reqWshEventData(sv: number, reqId: number, data: WshEventData): 
 
 export function cancelWshEventData(_sv: number, reqId: number): Token[] {
   return toTokens([OUT_MSG_ID.CANCEL_WSH_EVENT_DATA, reqId]);
+}
+
+// ---------------------------------------------------------------------------
+// Market scanner
+
+/**
+ * Every field is always sent: Tape supports server versions 176+, and every gate of EClient is
+ * older (25 for the option volume and the setting pairs, 27 for stockTypeFilter, 70 for the
+ * options list, 143 for the filter list without a VERSION token). On the wire the filter
+ * tag-values go before the options list.
+ */
+export function reqScannerSubscription(
+  _sv: number,
+  reqId: number,
+  sub: ScannerSubscription,
+  options?: readonly TagValue[],
+  filterOptions?: readonly TagValue[],
+): Token[] {
+  return toTokens([
+    OUT_MSG_ID.REQ_SCANNER_SUBSCRIPTION,
+    reqId,
+    intOrEmpty(sub.numberOfRows),
+    sub.instrument ?? '',
+    sub.locationCode ?? '',
+    sub.scanCode ?? '',
+    nullifyMax(sub.abovePrice),
+    nullifyMax(sub.belowPrice),
+    intOrEmpty(sub.aboveVolume),
+    nullifyMax(sub.marketCapAbove),
+    nullifyMax(sub.marketCapBelow),
+    sub.moodyRatingAbove ?? '',
+    sub.moodyRatingBelow ?? '',
+    sub.spRatingAbove ?? '',
+    sub.spRatingBelow ?? '',
+    sub.maturityDateAbove ?? '',
+    sub.maturityDateBelow ?? '',
+    nullifyMax(sub.couponRateAbove),
+    nullifyMax(sub.couponRateBelow),
+    !!sub.excludeConvertible,
+    intOrEmpty(sub.averageOptionVolumeAbove),
+    sub.scannerSettingPairs ?? '',
+    sub.stockTypeFilter ?? '',
+    encodeTagValues(filterOptions),
+    encodeTagValues(options),
+  ]);
+}
+
+export function cancelScannerSubscription(_sv: number, reqId: number): Token[] {
+  return toTokens([OUT_MSG_ID.CANCEL_SCANNER_SUBSCRIPTION, 1, reqId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -765,6 +814,12 @@ export class Encoder {
   }
   cancelWshEventData(reqId: number): void {
     this.send((sv) => cancelWshEventData(sv, reqId));
+  }
+  reqScannerSubscription(reqId: number, subscription: ScannerSubscription, options?: readonly TagValue[], filterOptions?: readonly TagValue[]): void {
+    this.send((sv) => reqScannerSubscription(sv, reqId, subscription, options, filterOptions));
+  }
+  cancelScannerSubscription(reqId: number): void {
+    this.send((sv) => cancelScannerSubscription(sv, reqId));
   }
   reqAccountUpdates(subscribe: boolean, acctCode: string): void {
     this.send((sv) => reqAccountUpdates(sv, subscribe, acctCode));

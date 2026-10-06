@@ -278,14 +278,18 @@ export interface CorporateEvent {
   soon: boolean;
   /** Earnings: before the open, after the close or during the session. */
   time?: 'bmo' | 'amc' | 'dmh';
+  /** Earnings: the release time in minutes after midnight New York, when known exactly. */
+  minutes?: number;
+  /** Earnings: estimated from IB's market scanner, not a confirmed date. */
+  estimated?: boolean;
   /** Dividend per share. */
   amount?: number;
 }
 
 /**
- * The holdings' upcoming earnings (Wall Street Horizon) and ex-dividend dates (IB's dividend
- * tick), today or later, soonest first. `underlyings` are the holdings' underlyings by key;
- * events of other instruments are ignored.
+ * The holdings' upcoming earnings (Wall Street Horizon or scanner estimates) and ex-dividend
+ * dates (IB's dividend tick), today or later, soonest first. `underlyings` are the holdings'
+ * underlyings by key; events of other instruments are ignored.
  */
 export function upcomingEvents(
   underlyings: ReadonlyMap<string, ContractRef>,
@@ -295,28 +299,47 @@ export function upcomingEvents(
   limit = 5,
 ): CorporateEvent[] {
   const out: CorporateEvent[] = [];
-  const add = (key: string, kind: CorporateEvent['kind'], date: string, extra: Pick<CorporateEvent, 'time' | 'amount'>) => {
+  const add = (key: string, kind: CorporateEvent['kind'], date: string, extra: Pick<CorporateEvent, 'time' | 'minutes' | 'estimated' | 'amount'>) => {
     const und = underlyings.get(key);
     if (!und || !/^\d{8}$/.test(date)) return;
     const days = daysToExpiry(date, now);
     if (days < 0) return;
     out.push({ key, symbol: und.symbol, underlying: und, kind, date, days, soon: days <= SOON_DAYS, ...extra });
   };
-  if (earnings?.status === 'ok') for (const e of earnings.events) add(e.key, 'earnings', e.date, e.time ? { time: e.time } : {});
+  if (earnings?.status === 'ok') {
+    for (const e of earnings.events) {
+      const extra: Pick<CorporateEvent, 'time' | 'minutes' | 'estimated'> = {};
+      if (e.time) extra.time = e.time;
+      if (finite(e.minutes)) extra.minutes = e.minutes;
+      if (e.estimated) extra.estimated = true;
+      add(e.key, 'earnings', e.date, extra);
+    }
+  }
   for (const [key, d] of Object.entries(dividends)) {
     if (d?.nextDate) add(key, 'dividend', d.nextDate, finite(d.nextAmount) ? { amount: d.nextAmount } : {});
   }
   return out.sort((a, b) => a.days - b.days || a.symbol.localeCompare(b.symbol) || a.kind.localeCompare(b.kind)).slice(0, limit);
 }
 
+/** "08:30" for 510 minutes after midnight (New York): a 24-hour wall time for Clock.wall. */
+export function etClock(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+export type EarningsState = 'ok' | 'estimated' | 'estimatedUs' | 'searching' | 'unsubscribed' | 'unavailable';
+
 /**
- * What the widget can say about earnings: 'ok' (listed, or still loading), 'unsubscribed' (no
- * Wall Street Horizon subscription) or 'unavailable' (IB did not answer while connected). Not
- * connected counts as 'ok': the widget then says so itself.
+ * What the widget can say about earnings: 'ok' (listed, or still loading), 'estimated' (dates from
+ * IB's market scanner), 'estimatedUs' (the same, but the scanner covers US stocks only and some
+ * holdings are not), 'searching' (the scanner is still looking some up), 'unsubscribed' (no Wall
+ * Street Horizon subscription and no scanner) or 'unavailable' (IB did not answer while
+ * connected). Not connected counts as 'ok': the widget then says so itself.
  */
-export function earningsState(earnings: CorporateEarnings | undefined, connected: boolean): CorporateEarnings['status'] {
+export function earningsState(earnings: CorporateEarnings | undefined, connected: boolean): EarningsState {
   if (earnings?.status === 'unsubscribed') return 'unsubscribed';
   if (earnings?.status === 'unavailable' && connected) return 'unavailable';
+  if (earnings?.status === 'ok' && earnings.pending) return 'searching';
+  if (earnings?.status === 'ok' && earnings.source === 'scanner') return earnings.partial ? 'estimatedUs' : 'estimated';
   return 'ok';
 }
 

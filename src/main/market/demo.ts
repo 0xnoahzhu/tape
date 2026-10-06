@@ -407,11 +407,16 @@ export class DemoMarket {
     return out;
   }
 
-  /** The next earnings date (YYYYMMDD, 3 to 90 days ahead) and its time of day, per symbol. */
-  earnings(symbol: string): { date: string; time: 'bmo' | 'amc' } {
+  /**
+   * The next earnings date (YYYYMMDD, 3 to 90 days ahead) and its time of day, per symbol; 3 in 10
+   * pre-open ones with an exact time (07:00–09:00 New York), as the scanner sometimes pins one.
+   */
+  earnings(symbol: string): { date: string; time: 'bmo' | 'amc'; minutes?: number } {
     const r = new Rng(hashString(symbol.toUpperCase() + ':earnings'));
     const day = addDays(nyDay(this.clock()), 3 + Math.floor(r.next() * 88));
-    return { date: yyyymmdd(day), time: r.next() < 0.6 ? 'amc' : 'bmo' };
+    const time = r.next() < 0.6 ? 'amc' : 'bmo';
+    if (time === 'bmo' && r.next() < 0.3) return { date: yyyymmdd(day), time, minutes: [420, 450, 480, 510, 540][Math.floor(r.next() * 5)] };
+    return { date: yyyymmdd(day), time };
   }
 
   private optionModel(c: ContractRef, underlyingPrice?: number, extraDays = 0) {

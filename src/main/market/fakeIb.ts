@@ -1,6 +1,6 @@
 // Test double for the IB connection and the main context (used by the *.test.ts files only).
 
-import { OUT_MSG_ID, type IBApi } from '../ib/tws';
+import { OUT_MSG_ID, type IBApi, type ScannerSubscription, type TagValue } from '../ib/tws';
 import type { TapeEvent } from '@shared/ipc';
 import { defaultSettings } from '@shared/defaults';
 import type { DeepPartial, PriceAlert, Settings } from '@shared/types';
@@ -31,7 +31,10 @@ export interface FakeIb {
 }
 
 /** Outgoing message ids of the calls whose 'sent' event services wait for. */
-const SENT_IDS: Record<string, number> = { reqHistoricalData: OUT_MSG_ID.REQ_HISTORICAL_DATA };
+const SENT_IDS: Record<string, number> = {
+  reqHistoricalData: OUT_MSG_ID.REQ_HISTORICAL_DATA,
+  reqScannerSubscription: OUT_MSG_ID.REQ_SCANNER_SUBSCRIPTION,
+};
 
 export function createFakeIb(): FakeIb {
   const events = new Map<string, Set<IbListener>>();
@@ -99,6 +102,86 @@ export function createFakeIb(): FakeIb {
     onRequestError: (l) => add(errorListeners, l),
   };
   return fake;
+}
+
+/** A stock the fake market scanner lists: its next earnings (epoch seconds) and its price. */
+export interface ScannerListing {
+  conId: number;
+  symbol: string;
+  at: number;
+  price: number;
+}
+
+export interface FakeScanner {
+  /** Request ids of the scans not cancelled yet. */
+  open: Set<number>;
+  /** Most scans open at the same time. */
+  most: number;
+  requests: Array<{ reqId: number; sub: ScannerSubscription; filter: TagValue[] }>;
+  cancelled: number[];
+  /**
+   * Answers one scan with the matching listings (at most 50) and their count. Default: IB's 165
+   * "N items retrieved" after 1 ms, the rows and the end 1 ms later. Tests replace it.
+   */
+  answer: (reqId: number, rows: ScannerListing[], total: number) => void;
+  /** Handles one IBApi call (installed as fake.onCall; tests that replace onCall call it themselves). */
+  handle(name: string, args: unknown[]): void;
+}
+
+/**
+ * IB's SCAN_nextEarningsDateTime_ASC over `listings`: the stocks within the request's price band
+ * and its nextEarningsDateTimeAbove / Below window (epoch seconds, inclusive), soonest first (ties
+ * by conId), at most 50. `listings` may be changed between scans. A closed connection ends the
+ * open scans.
+ */
+export function fakeScanner(fake: FakeIb, listings: ScannerListing[]): FakeScanner {
+  const sc: FakeScanner = {
+    open: new Set(),
+    most: 0,
+    requests: [],
+    cancelled: [],
+    answer(reqId, rows, total) {
+      const text = total > 50 ? `50 out of ${total}` : total ? String(total) : 'no';
+      setTimeout(() => {
+        fake.error(reqId, 165, `Historical Market Data Service query message:${text} items retrieved`);
+        setTimeout(() => {
+          rows.forEach((l, rank) => {
+            const contract = { conId: l.conId, symbol: l.symbol, secType: 'STK', exchange: 'SMART', currency: 'USD', localSymbol: l.symbol };
+            fake.emit('scannerData', reqId, rank, { contract, marketName: 'NMS' }, '', '', '', '');
+          });
+          fake.emit('scannerDataEnd', reqId);
+        }, 1);
+      }, 1);
+    },
+    handle(name, args) {
+      const reqId = args[0] as number;
+      if (name === 'cancelScannerSubscription') {
+        sc.open.delete(reqId);
+        sc.cancelled.push(reqId);
+      }
+      if (name !== 'reqScannerSubscription') return;
+      const sub = args[1] as ScannerSubscription;
+      const filter = (args[3] as TagValue[] | undefined) ?? [];
+      sc.requests.push({ reqId, sub, filter });
+      sc.open.add(reqId);
+      sc.most = Math.max(sc.most, sc.open.size);
+      const bound = (tag: string) => Number(filter.find((t) => t.tag === tag)?.value);
+      const above = bound('nextEarningsDateTimeAbove');
+      const below = bound('nextEarningsDateTimeBelow');
+      const hits = listings
+        .filter((l) => l.at >= above && l.at <= below && l.price >= (sub.abovePrice ?? 0) && l.price <= (sub.belowPrice ?? Infinity))
+        .sort((a, b) => a.at - b.at || a.conId - b.conId);
+      sc.answer(reqId, hits.slice(0, 50), hits.length);
+    },
+  };
+  const prev = fake.onCall;
+  fake.onCall = (name, args) => {
+    prev?.(name, args);
+    sc.handle(name, args);
+  };
+  // IB drops a connection's scans with it.
+  fake.ib.onClosed(() => sc.open.clear());
+  return sc;
 }
 
 export interface FakeContext {

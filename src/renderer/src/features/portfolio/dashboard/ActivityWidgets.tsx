@@ -15,7 +15,7 @@ import { spanLabel } from '../EquityCard';
 import { usePortfolioMessages } from '../messages';
 import { useBenchmark, useEarnings, useHoldingDividends, useHoldingUnderlyings, useNyDayStart } from './data';
 import { useDashboardMessages } from './messages';
-import { earningsState, recentFills, upcomingEvents, type CorporateEvent } from './model';
+import { earningsState, etClock, recentFills, upcomingEvents, type CorporateEvent } from './model';
 import { EmptyLine, List, Note, WidgetCard } from './WidgetCard';
 
 const ROW_RULE = 'inset 0 -1px 0 var(--ln2)';
@@ -80,19 +80,32 @@ const monthDay = (yyyymmdd: string) => `${Number(yyyymmdd.slice(4, 6))}/${Number
 export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
   const m = useDashboardMessages();
   const common = useCommon();
+  const clock = useClock();
   const connected = useStore((s) => s.connection.status === 'connected');
   const openSymbol = useStore((s) => s.openSymbol);
   const underlyings = useHoldingUnderlyings(rows);
   const dividends = useHoldingDividends(underlyings);
   const earnings = useEarnings(underlyings);
   const events = useMemo(() => upcomingEvents(underlyings, dividends, earnings, new Date()), [underlyings, dividends, earnings]);
-  // Without earnings dates the list holds dividends only, and the note says why.
+  // The note says where earnings dates come from, or why the list holds dividends only.
   const state = earningsState(earnings, connected);
-  const note = state === 'unsubscribed' ? m.eventsNoteUnsubscribed : state === 'unavailable' ? m.eventsNoteUnavailable : m.eventsNote;
-  const empty = !connected && !rows.length ? common.notConnected : state === 'ok' ? m.noEvents : m.noDividends;
+  const note = {
+    ok: m.eventsNote,
+    estimated: m.eventsNoteEstimated,
+    estimatedUs: m.eventsNoteEstimatedUs,
+    searching: m.eventsNoteSearching,
+    unsubscribed: m.eventsNoteUnsubscribed,
+    unavailable: m.eventsNoteUnavailable,
+  }[state];
+  const empty = !connected && !rows.length ? common.notConnected : state === 'unsubscribed' || state === 'unavailable' ? m.noDividends : m.noEvents;
 
   const detail = (e: CorporateEvent) => {
-    if (e.kind === 'earnings') return e.time ? `${monthDay(e.date)} · ${m.eventTime[e.time]}` : monthDay(e.date);
+    if (e.kind === 'earnings') {
+      // An exact time (scanner) says more than before the open / after the close; in the user's
+      // clock format ("8:30 AM ET", "美东 上午 8:30").
+      const when = e.minutes != null ? m.atEt(clock.wall(etClock(e.minutes))) : e.time ? m.eventTime[e.time] : undefined;
+      return [monthDay(e.date), when, e.estimated ? m.estimated : undefined].filter(Boolean).join(' · ');
+    }
     return e.amount != null ? `${monthDay(e.date)} · $${f2(e.amount)}` : monthDay(e.date);
   };
 
@@ -103,6 +116,7 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
           <div
             key={`${e.key}|${e.kind}|${e.date}`}
             onClick={() => openSymbol(e.underlying)}
+            title={e.estimated ? m.estimatedHint : undefined}
             className="hover-p2"
             style={{ display: 'flex', alignItems: 'center', gap: 12, height: 44, cursor: 'pointer', boxShadow: ROW_RULE }}
           >
