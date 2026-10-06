@@ -7,12 +7,15 @@
 //                           margin) with a soft drop shadow, like Big Sur style app icons
 //   icon-<theme>-256.png    full-bleed window / taskbar / notification icon (Windows, Linux)
 //   icon-<theme>-512.png    full-bleed, larger
+//   icon-dark.icns          macOS dark icon via iconutil (16–1024 px), set as the bundle's Finder
+//                           custom icon while the theme is dark (src/main/finderIcon.ts)
 // build/ (electron-builder)
 //   icon.png                1024 px, light, macOS style
 //   icon.icns               macOS bundle icon via iconutil (macOS only)
 //   icon.ico                Windows icon, full-bleed light, 16–256 px PNG entries
 // The bundle icons (Finder, Launchpad, the DMG, the taskbar before the app runs) are the light ones,
-// like the Light theme that Settings lists first; at run time the icon follows the resolved theme.
+// like the Light theme that Settings lists first; at run time the icon follows the resolved theme
+// (on macOS the Finder icon too, via a custom icon).
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -98,7 +101,7 @@ function ico(images: Array<{ size: number; png: Buffer }>): Buffer {
 
 function icns(theme: Theme, out: string): void {
   if (process.platform !== 'darwin') {
-    console.warn('icons: skipping icon.icns (iconutil is only available on macOS)');
+    console.warn(`icons: skipping ${relative(root, out)} (iconutil is only available on macOS)`);
     return;
   }
   const tmp = mkdtempSync(join(tmpdir(), 'tape-icons-'));
@@ -126,6 +129,7 @@ for (const theme of ['dark', 'light'] as const) {
 
 write(join(buildDir, 'icon.png'), render(macSvg(BUNDLE_THEME), CANVAS));
 icns(BUNDLE_THEME, join(buildDir, 'icon.icns'));
+icns('dark', join(iconsDir, 'icon-dark.icns'));
 write(
   join(buildDir, 'icon.ico'),
   ico([16, 24, 32, 48, 64, 128, 256].map((size) => ({ size, png: render(source(BUNDLE_THEME), size) }))),

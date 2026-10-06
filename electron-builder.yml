@@ -14,12 +14,14 @@ files:
   - out/**/*
   - package.json
 
-# Theme-matched dock / window icons, loaded at runtime from process.resourcesPath/icons.
+# Theme-matched dock / window icons and the dark Finder icon (macOS custom icon), loaded at runtime
+# from process.resourcesPath/icons.
 extraResources:
   - from: resources/icons
     to: icons
     filter:
       - '*.png'
+      - '*.icns'
 
 asar: true
 
