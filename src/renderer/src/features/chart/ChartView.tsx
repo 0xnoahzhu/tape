@@ -1,7 +1,7 @@
 // Chart view of the Trade page (design 3a, top-left cell): instrument header with the
-// session-aware price, price-alert bell, intervals and ranges (TimeframeBar), OHLC row with
-// indicator chips (moving averages and volume), and the candlestick chart fed by IB historical
-// bars plus the live last price.
+// session-aware price, watchlist star, price-alert bell, intervals and ranges (TimeframeBar), OHLC
+// row with indicator chips (moving averages and volume), and the candlestick chart fed by IB
+// historical bars plus the live last price.
 //
 // Live bars: intraday bars reload every REFRESH_MS (seconds bars too: during a session each reload
 // is one of IB's 60 historical requests per 10 minutes, and the history service keeps 20 of them
@@ -16,8 +16,8 @@
 // until the user pans or zooms (PriceChart's fit). A refused, empty or superseded page is asked
 // again once its wait is over.
 //
-// Header width: the bell and the interval chips (TimeframeBar) get what is left beside a title of
-// MIN_TITLE_W; favorites beyond it stay in the picker.
+// Header width: the star, the bell and the interval chips (TimeframeBar) get what is left beside a
+// title of MIN_TITLE_W; favorites beyond it stay in the picker.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
@@ -29,6 +29,7 @@ import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../h
 import { nameOf, useClock, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
+import { WatchStar } from '../watchlist/WatchStar';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
 import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, withLiveBars } from './chartMath';
@@ -49,8 +50,12 @@ const EXT_OPEN_MIN = 240;
 const PAD_X = 28;
 const HEADER_GAP = 24;
 const PRICE_GAP = 14;
-/** The bell button's width; the title keeps at least MIN_TITLE_W beside the tools. */
+/** Width of the header buttons (watchlist star, price-alert bell); the title keeps at least MIN_TITLE_W beside the tools. */
 const BELL_W = 30;
+/** Gap between the star and the bell (as between the ringed indicator chips). */
+const BUTTON_GAP = 6;
+/** The star and the bell side by side. */
+const BUTTONS_W = 2 * BELL_W + BUTTON_GAP;
 const MIN_TITLE_W = 120;
 
 function BellButton({ title, active, onClick }: { title: string; active: boolean; onClick: () => void }) {
@@ -136,8 +141,8 @@ export function ChartView() {
   const usSession = usesUsEquitySession(symbol);
   const session = usSession ? usEquitySession(now, info?.liquidHours) : 'regular';
 
-  // The bell and timeframes sit beside the price as in the design while price and change fit there
-  // on one line. In a narrower view the header stacks: title beside the tools, price below.
+  // The star, bell and timeframes sit beside the price as in the design while price and change fit
+  // there on one line. In a narrower view the header stacks: title beside the tools, price below.
   const rootRef = useRef<HTMLDivElement>(null);
   const priceRef = useRef<HTMLDivElement>(null);
   const toolsRef = useRef<HTMLDivElement>(null);
@@ -300,13 +305,16 @@ export function ChartView() {
       )}
     </div>
   );
-  // What the interval chips may take: the view less its padding, a title of MIN_TITLE_W and the bell.
-  const barWidth = viewWidth > 0 ? Math.max(0, viewWidth - 2 * PAD_X - MIN_TITLE_W - 2 * HEADER_GAP - BELL_W) : 0;
+  // What the interval chips may take: the view less its padding, a title of MIN_TITLE_W and the star and bell.
+  const barWidth = viewWidth > 0 ? Math.max(0, viewWidth - 2 * PAD_X - MIN_TITLE_W - 2 * HEADER_GAP - BUTTONS_W) : 0;
   // The plot: the view less its left padding and the price axis (the chart runs to the right edge).
   const plotWidth = viewWidth > 0 ? Math.max(0, viewWidth - PAD_X - PRICE_AXIS_W) : undefined;
   const tools = (
     <div ref={toolsRef} style={{ display: 'flex', alignItems: 'flex-start', gap: HEADER_GAP, flexShrink: 1, minWidth: 0 }}>
-      <BellButton title={m.addAlert} active={alertLevels.length > 0} onClick={() => openAlertForm(symbol)} />
+      <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
+        <WatchStar contract={symbol} name={symbolName || info?.longName || undefined} size={BELL_W} />
+        <BellButton title={m.addAlert} active={alertLevels.length > 0} onClick={() => openAlertForm(symbol)} />
+      </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>
   );

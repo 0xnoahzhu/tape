@@ -42,6 +42,14 @@ export const useWatchlistMessages = createMessages({
     addedTo: (sym: string, group: string) => `${sym} added to ${group}`,
     movedTo: (sym: string, group: string) => `${sym} moved to ${group}`,
     copiedTo: (sym: string, list: string) => `${sym} added to ${list}`,
+    /** A group named with its list: "Watchlist · Tech". */
+    place: (list: string, group: string) => `${list} · ${group}`,
+    // The chart header's star (WatchStar.tsx): tooltips, menu.
+    starAdd: (place: string) => `Add to ${place}`,
+    starIn: (list: string) => `In ${list}`,
+    starPick: 'Add to watchlist…',
+    removeFrom: (list: string) => `Remove from ${list}`,
+    noLists: 'No watchlists',
     saveFailed: (msg: string) => `Could not save watchlists: ${msg}`,
     /** The quote comes from the primary exchange (SMART is delayed for this stock): "Live · NASDAQ". */
     via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}`,
@@ -91,6 +99,12 @@ export const useWatchlistMessages = createMessages({
     addedTo: (sym: string, group: string) => `${sym} 已加入 ${group}`,
     movedTo: (sym: string, group: string) => `${sym} 已移到 ${group}`,
     copiedTo: (sym: string, list: string) => `${sym} 已添加到 ${list}`,
+    place: (list: string, group: string) => `${list} · ${group}`,
+    starAdd: (place: string) => `加入 ${place}`,
+    starIn: (list: string) => `已在 ${list} 中`,
+    starPick: '加入自选…',
+    removeFrom: (list: string) => `从 ${list} 移除`,
+    noLists: '暂无自选列表',
     saveFailed: (msg: string) => `自选保存失败：${msg}`,
     via: (x: string, type: number | undefined) => `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}`,
     viaTip: (x: string, symbol: string, type?: number) =>

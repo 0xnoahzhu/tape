@@ -1,13 +1,13 @@
 // Writes watchlist changes: optimistic store update, then persistence in the main process
 // (which broadcasts the saved lists back as a `watchlists` event).
 
-import { contractKey } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
 import type { ContractRef, Watchlist } from '@shared/types';
 import { currentLang, nameOf } from '../../i18n';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useWatchlistMessages } from './messages';
-import { canDeleteGroup, deleteGroup, neighborGroupId, setItemName } from './model';
+import { canDeleteGroup, deleteGroup, neighborGroupId, removeFromList, removeItem, setItemName } from './model';
 
 export function commitWatchlists(next: Watchlist[]): void {
   if (next === useStore.getState().watchlists) return;
@@ -68,6 +68,27 @@ export function askDeleteGroup(listId: string, groupId: string, onDeleted?: (nei
     label: m.delete,
     danger: true,
     run,
+  });
+}
+
+/**
+ * Removes an instrument from a list after a confirmation (a row menu's Remove, the chart star's
+ * "Remove from <list>"). `groupId`: from that group only; otherwise from every group holding it.
+ */
+export function askRemoveItem(listId: string, contract: ContractRef, groupId?: string): void {
+  const list = useStore.getState().watchlists.find((l) => l.id === listId);
+  if (!list) return;
+  const m = useWatchlistMessages.now();
+  const key = contractKey(contract);
+  useStore.getState().ask({
+    title: m.remove,
+    rows: [
+      { label: m.symbol, value: contractLabel(contract) },
+      { label: m.list, value: nameOf(list.name, currentLang()) },
+    ],
+    label: m.removeLabel,
+    danger: true,
+    run: () => updateList(listId, (l) => (groupId ? removeItem(l, groupId, key) : removeFromList(l, key))),
   });
 }
 

@@ -1,5 +1,6 @@
 // Watchlist panel of the Trade page (design 3a, left column).
-// Lists live in the store (persisted by the main process); the current list and collapsed
+// Lists live in the store (persisted by the main process); the current list and each list's
+// "Add symbol" target group live in viewState.ts, shared with the chart's star, and collapsed
 // groups are per-device preferences. When collapsed only a vertical handle is rendered,
 // absolutely positioned inside the Trade page grid.
 
@@ -14,20 +15,17 @@ import { GroupList } from './GroupList';
 import { GroupMenu, type GroupMenuTarget } from './GroupMenu';
 import { ListMenu } from './ListMenu';
 import { useWatchlistMessages } from './messages';
-import { itemKey, listContracts } from './model';
-import { loadCurrentListId, saveCurrentListId } from './prefs';
+import { currentListOf, itemKey, listContracts } from './model';
 import { ROW_MENU_WIDTH, RowMenu, type RowMenuTarget } from './RowMenu';
+import { useWatchlistView } from './viewState';
 
 const NO_CONTRACTS: ContractRef[] = [];
 
 /** The current list: the remembered one if it still exists, otherwise the first list. */
 function useCurrentList(lists: Watchlist[]): [Watchlist | undefined, (id: string) => void] {
-  const [id, setId] = useState(loadCurrentListId);
-  const select = useCallback((next: string) => {
-    setId(next);
-    saveCurrentListId(next);
-  }, []);
-  return [lists.find((l) => l.id === id) ?? lists[0], select];
+  const id = useWatchlistView((s) => s.currentId);
+  const select = useWatchlistView((s) => s.selectList);
+  return [currentListOf(lists, id), select];
 }
 
 export function WatchlistPanel() {
@@ -95,9 +93,10 @@ function ExpandedPanel({
   const [adding, setAdding] = useState(false);
   const [rowMenu, setRowMenu] = useState<RowMenuTarget | null>(null);
   const [groupMenu, setGroupMenu] = useState<GroupMenuTarget | null>(null);
-  // Target group for "Add symbol", remembered per list until the list changes.
-  const [target, setTarget] = useState<{ listId: string; groupId: string } | null>(null);
-  const targetGroupId = target && list && target.listId === list.id ? target.groupId : undefined;
+  // Target group for "Add symbol", remembered per list for the session (viewState.ts; the chart's
+  // star adds there too).
+  const targetGroupId = useWatchlistView((s) => (list ? s.targets[list.id] : undefined));
+  const setTarget = useWatchlistView((s) => s.setTarget);
   // Group whose name is being edited in its header.
   const [renaming, setRenaming] = useState<{ listId: string; groupId: string } | null>(null);
   const renamingId = renaming && list && renaming.listId === list.id ? renaming.groupId : undefined;
@@ -200,7 +199,7 @@ function ExpandedPanel({
         </div>
       </div>
       {adding && list && (
-        <AddSymbol list={list} targetGroupId={targetGroupId} onTarget={(groupId) => setTarget({ listId: list.id, groupId })} onClose={() => setAdding(false)} />
+        <AddSymbol list={list} targetGroupId={targetGroupId} onTarget={(groupId) => setTarget(list.id, groupId)} onClose={() => setAdding(false)} />
       )}
       {list && (
         <GroupList
@@ -210,7 +209,7 @@ function ExpandedPanel({
           onRename={startRename}
           onGroupMenu={openGroupMenu}
           onRowMenu={openRowMenu}
-          onGroupCreated={(groupId) => setTarget({ listId: list.id, groupId })}
+          onGroupCreated={(groupId) => setTarget(list.id, groupId)}
         />
       )}
       {rowMenu && rowMenuValid && list && <RowMenu target={rowMenu} list={list} lists={lists} panelSize={panelSize} onClose={() => setRowMenu(null)} />}

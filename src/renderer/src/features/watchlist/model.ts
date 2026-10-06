@@ -84,6 +84,96 @@ export function setItemName(list: Watchlist, key: string, name: LocalizedName): 
   return { ...list, groups: list.groups.map((g) => ({ ...g, items: g.items.map((i) => (itemKey(i) === key ? { ...i, name } : i)) })) };
 }
 
+/** The current list: the remembered one while it exists, else the first list (the fallback is never saved). */
+export function currentListOf(lists: Watchlist[], id: string | null | undefined): Watchlist | undefined {
+  return lists.find((l) => l.id === id) ?? lists[0];
+}
+
+/** The group "Add symbol" adds to: the remembered target while the list has it, else the first group (undefined: no groups). */
+export function targetGroupOf(list: Watchlist, groupId: string | undefined): WatchGroup | undefined {
+  return list.groups.find((g) => g.id === groupId) ?? list.groups[0];
+}
+
+/** Removes an instrument from every group of a list; the list itself when it does not have it. */
+export function removeFromList(list: Watchlist, key: string): Watchlist {
+  if (!listHas(list, key)) return list;
+  return { ...list, groups: list.groups.map((g) => (g.items.some((i) => itemKey(i) === key) ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g)) };
+}
+
+/**
+ * Puts an instrument into one group of a list:
+ * - 'added' (addItem: unknown group → first group, no groups → a default group) when the list lacks it;
+ * - 'moved' there, out of every other group, keeping the stored item (its name), when it is elsewhere in the list;
+ * - null when there is nothing to do: it is already only there, or the group is gone.
+ */
+export function placeItem(
+  list: Watchlist,
+  groupId: string | undefined,
+  item: WatchItem,
+  defaultGroupName: LocalizedName,
+  groupIdForNew: string = newId('g'),
+): { list: Watchlist; change: 'added' | 'moved' | null } {
+  const key = itemKey(item);
+  if (!listHas(list, key)) {
+    const next = addItem(list, groupId, item, defaultGroupName, groupIdForNew);
+    return { list: next, change: next === list ? null : 'added' };
+  }
+  const target = list.groups.find((g) => g.id === groupId);
+  if (!target) return { list, change: null };
+  const holds = (g: WatchGroup) => g.items.some((i) => itemKey(i) === key);
+  if (!list.groups.some((g) => g !== target && holds(g))) return { list, change: null };
+  // The stored item moves (the target keeps its own when it already has one).
+  const kept = list.groups.flatMap((g) => g.items).find((i) => itemKey(i) === key) ?? item;
+  return {
+    list: {
+      ...list,
+      groups: list.groups.map((g) => {
+        if (g === target) return holds(g) ? g : { ...g, items: [...g.items, kept] };
+        return holds(g) ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g;
+      }),
+    },
+    change: 'moved',
+  };
+}
+
+export interface QuickAddRow {
+  list: Watchlist;
+  /** undefined: the list has no group yet (adding creates its default group). */
+  group: WatchGroup | undefined;
+  /** The instrument is in this group. */
+  checked: boolean;
+}
+
+export interface QuickAdd {
+  /** The current list (currentListOf); undefined when there are no lists. */
+  list: Watchlist | undefined;
+  /** The current list holds the instrument (the star is filled). */
+  inList: boolean;
+  /** A click on the star: add to that group of the current list, or open the menu. */
+  click: { kind: 'add'; listId: string; groupId: string | undefined } | { kind: 'menu' };
+  /** Menu rows: every group of every list that accepts the instrument, in list then group order. */
+  rows: QuickAddRow[];
+}
+
+/**
+ * What the chart's star does for `contract`: one click adds it to the current list's target
+ * group while that list lacks it and accepts it; otherwise the click opens the list · group menu.
+ * Membership is by contractKey (another conId or exchange of the same instrument is the same).
+ */
+export function quickAdd(lists: Watchlist[], currentId: string | null | undefined, targets: Readonly<Record<string, string>>, contract: ContractRef): QuickAdd {
+  const key = contractKey(contract);
+  const list = currentListOf(lists, currentId);
+  const inList = !!list && listHas(list, key);
+  const click: QuickAdd['click'] =
+    !list || !listAccepts(list, contract) || inList ? { kind: 'menu' } : { kind: 'add', listId: list.id, groupId: targetGroupOf(list, targets[list.id])?.id };
+  const rows = lists
+    .filter((l) => listAccepts(l, contract))
+    .flatMap((l): QuickAddRow[] =>
+      l.groups.length ? l.groups.map((g) => ({ list: l, group: g, checked: g.items.some((i) => itemKey(i) === key) })) : [{ list: l, group: undefined, checked: false }],
+    );
+  return { list, inList, click, rows };
+}
+
 // ---------------------------------------------------------------------------
 // Groups
 

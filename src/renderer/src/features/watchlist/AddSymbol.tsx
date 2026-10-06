@@ -11,7 +11,7 @@ import { listingTag } from '../search/listing';
 import { ListingName } from '../search/ListingName';
 import { fillMissingName, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
-import { addItem, listKeys, looksLikeTicker, normalizeTicker, suggestionsFrom, type Suggestion } from './model';
+import { addItem, listKeys, looksLikeTicker, normalizeTicker, suggestionsFrom, targetGroupOf, type Suggestion } from './model';
 import { useSymbolSearch, type SearchResult } from './useSymbolSearch';
 
 interface Row extends Suggestion {
@@ -39,7 +39,7 @@ export function AddSymbol({ list, targetGroupId, onTarget, onClose }: { list: Wa
   const search = useSymbolSearch(q);
   const exclude = useMemo(() => listKeys(list), [list]);
   const rows = useMemo(() => rowsFor(search, exclude), [search.query, search.status, search.matches, exclude]); // eslint-disable-line react-hooks/exhaustive-deps
-  const target = list.groups.find((g) => g.id === targetGroupId) ?? list.groups[0];
+  const target = targetGroupOf(list, targetGroupId);
 
   const add = (row: Row) => {
     const item: WatchItem = { contract: row.contract, ...(row.name ? { name: row.name } : {}) };
