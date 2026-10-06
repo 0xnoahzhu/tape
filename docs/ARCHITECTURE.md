@@ -940,16 +940,20 @@ the user's and saved as edited. The renderer edits them with the pure functions 
 * The current list and the collapsed groups are per-device preferences in `localStorage`
   (`prefs.ts`); collapsed entries of groups the list no longer has are dropped. The current list
   and each list's "Add symbol" target group (kept for the session only) live in `viewState.ts`, a
-  feature-local store shared by the panel and the chart's star, so either follows the other and
-  the target survives collapsing the panel and switching pages.
-* The chart header's star (`WatchStar.tsx`) adds the charted instrument to the current list in
-  one click, into its target group (else the first group); `model.ts → quickAdd` decides. When
-  the current list already has it, does not accept it (Indices takes only `IND`) or there are no
-  lists, the click opens a menu of every list · group that accepts it, checked where it is: an
-  unchecked row adds it there, or moves it there when that list has it in another group
-  (`placeItem`, keeping the stored name), and "Remove from …" shares the row menu's
-  confirmation (`actions.ts → askRemoveItem`). Membership is by `contractKey`, so another conId or
-  exchange of the same instrument counts as in the list.
+  feature-local store. The current list is the panel's own; the chart's star only sets target
+  groups (a picked group becomes its list's target), so the panel's chips follow it, and the
+  target survives collapsing the panel and switching pages.
+* The chart header's star (`WatchStar.tsx`) opens a picker of every list that accepts the charted
+  instrument (Indices takes only `IND`) or already holds it, each list's groups under its name and
+  checked where it is (`model.ts → starSections`; a list without groups offers its default group).
+  A click toggles one group (`toggleInGroup`). An unchecked group gets the instrument: added to that
+  list, or moved there from another of its groups (`placeItem`, keeping the stored name). A checked
+  one takes it out of that list (`removeFromList`), without a confirmation since one click puts it
+  back. The picker stays open for more picks, keeping the lists it opened with (a stock unchecked
+  in Indices keeps that section, so the rows do not shift and it can be put back), and closes on a
+  press outside, Escape, another symbol or the lock. A picked group becomes that list's "Add symbol" target. The star is filled while any
+  list holds the instrument, and its tooltip names the places. Membership is by `contractKey`, so
+  another conId or exchange of the same instrument counts as in the list.
 * Name editors closed with Enter / Escape and a group deleted from its header give focus back to
   a ✎ (the group's own, or the group now in its place) or to "+ New group" / "New list"
   (`ui/focus.ts → useRefocus`). Focus left on `<body>` would let the next Enter submit the

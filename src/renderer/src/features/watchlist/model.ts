@@ -136,42 +136,55 @@ export function placeItem(
   };
 }
 
-export interface QuickAddRow {
-  list: Watchlist;
-  /** undefined: the list has no group yet (adding creates its default group). */
+export interface StarRow {
+  /** undefined: the list has no group yet (picking it creates its default group). */
   group: WatchGroup | undefined;
   /** The instrument is in this group. */
   checked: boolean;
 }
 
-export interface QuickAdd {
-  /** The current list (currentListOf); undefined when there are no lists. */
-  list: Watchlist | undefined;
-  /** The current list holds the instrument (the star is filled). */
-  inList: boolean;
-  /** A click on the star: add to that group of the current list, or open the menu. */
-  click: { kind: 'add'; listId: string; groupId: string | undefined } | { kind: 'menu' };
-  /** Menu rows: every group of every list that accepts the instrument, in list then group order. */
-  rows: QuickAddRow[];
+export interface StarSection {
+  list: Watchlist;
+  rows: StarRow[];
 }
 
 /**
- * What the chart's star does for `contract`: one click adds it to the current list's target
- * group while that list lacks it and accepts it; otherwise the click opens the list · group menu.
+ * The chart star's picker for `contract`: every list that accepts it (Indices: indices only),
+ * already holds it, or is in `keep` (the lists shown when the picker opened, so a stock unchecked
+ * in Indices keeps its section until the picker closes), in list order, with its groups in order,
+ * checked where it is; a list without groups gets one unchecked row for its default group.
  * Membership is by contractKey (another conId or exchange of the same instrument is the same).
  */
-export function quickAdd(lists: Watchlist[], currentId: string | null | undefined, targets: Readonly<Record<string, string>>, contract: ContractRef): QuickAdd {
+export function starSections(lists: Watchlist[], contract: ContractRef, keep: readonly string[] = []): StarSection[] {
   const key = contractKey(contract);
-  const list = currentListOf(lists, currentId);
-  const inList = !!list && listHas(list, key);
-  const click: QuickAdd['click'] =
-    !list || !listAccepts(list, contract) || inList ? { kind: 'menu' } : { kind: 'add', listId: list.id, groupId: targetGroupOf(list, targets[list.id])?.id };
-  const rows = lists
-    .filter((l) => listAccepts(l, contract))
-    .flatMap((l): QuickAddRow[] =>
-      l.groups.length ? l.groups.map((g) => ({ list: l, group: g, checked: g.items.some((i) => itemKey(i) === key) })) : [{ list: l, group: undefined, checked: false }],
-    );
-  return { list, inList, click, rows };
+  return lists
+    .filter((l) => listAccepts(l, contract) || listHas(l, key) || keep.includes(l.id))
+    .map((l) => ({
+      list: l,
+      rows: l.groups.length ? l.groups.map((g) => ({ group: g, checked: g.items.some((i) => itemKey(i) === key) })) : [{ group: undefined, checked: false }],
+    }));
+}
+
+/**
+ * A click on one group row of the star's picker:
+ * - a group holding the instrument: 'removed' from the whole list (removeFromList);
+ * - otherwise placeItem: 'added' (unknown group → first group, no groups → a default group) or
+ *   'moved' there from the list's other groups, keeping the stored item (its name);
+ * - null when nothing changed (the group is gone while the list has it).
+ * `groupId` is the group it is in now (only for 'added' / 'moved').
+ */
+export function toggleInGroup(
+  list: Watchlist,
+  groupId: string | undefined,
+  item: WatchItem,
+  defaultGroupName: LocalizedName,
+  groupIdForNew: string = newId('g'),
+): { list: Watchlist; change: 'added' | 'moved' | 'removed' | null; groupId?: string } {
+  const key = itemKey(item);
+  if (list.groups.find((g) => g.id === groupId)?.items.some((i) => itemKey(i) === key)) return { list: removeFromList(list, key), change: 'removed' };
+  const r = placeItem(list, groupId, item, defaultGroupName, groupIdForNew);
+  if (!r.change) return { list, change: null };
+  return { ...r, groupId: r.list.groups.find((g) => g.items.some((i) => itemKey(i) === key))?.id };
 }
 
 // ---------------------------------------------------------------------------

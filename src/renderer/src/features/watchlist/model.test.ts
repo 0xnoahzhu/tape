@@ -24,14 +24,15 @@ import {
   normalizeTicker,
   placeItem,
   pruneClosedGroups,
-  quickAdd,
   removeFromList,
   removeItem,
   renameGroup,
   renameList,
   setItemName,
+  starSections,
   suggestionsFrom,
   targetGroupOf,
+  toggleInGroup,
 } from './model';
 
 const DEFAULT = { en: 'Default', zh: '默认' };
@@ -126,7 +127,7 @@ describe('current list and target group', () => {
   });
 });
 
-describe('placing from the chart star', () => {
+describe('the chart star picker', () => {
   const twice: Watchlist = { id: 'x', name: 'x', groups: [{ id: 'a', name: 'a', items: [{ contract: stock('AAPL') }] }, { id: 'b', name: 'b', items: [{ contract: stock('AAPL') }] }] };
 
   it('removes an instrument from every group of a list', () => {
@@ -174,61 +175,110 @@ describe('placing from the chart star', () => {
     expect(b.list).toBe(main);
   });
 
-  it('adds in one click to the current list target group', () => {
-    const q = quickAdd(lists, 'main', {}, stock('GOOG'));
-    expect(q.list?.id).toBe('main');
-    expect(q.inList).toBe(false);
-    expect(q.click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
-    expect(quickAdd(lists, 'main', { main: 'g-etf' }, stock('GOOG')).click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-etf' });
-    expect(quickAdd(lists, 'main', { main: 'gone' }, stock('GOOG')).click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
+  it('offers every list that accepts it, its groups checked where it is', () => {
+    expect(starSections(lists, stock('AAPL')).map((s) => [s.list.id, s.rows.map((r) => [r.group?.id, r.checked])])).toEqual([
+      ['main', [['g-tech', true], ['g-auto', false], ['g-etf', false]]],
+      ['w-options', [['g-hiv', false]]],
+    ]);
+    const nvda = starSections(lists, stock('NVDA'));
+    expect(nvda.flatMap((s) => s.rows.filter((r) => r.checked).map((r) => `${s.list.id}:${r.group?.id}`))).toEqual(['main:g-tech', 'w-options:g-hiv']);
   });
 
-  it('opens the menu when the current list has it, offering every group that accepts it', () => {
-    const q = quickAdd(lists, 'main', {}, stock('AAPL'));
-    expect(q.inList).toBe(true);
-    expect(q.click).toEqual({ kind: 'menu' });
-    expect(q.rows.map((r) => [r.list.id, r.group?.id, r.checked])).toEqual([
-      ['main', 'g-tech', true],
-      ['main', 'g-auto', false],
-      ['main', 'g-etf', false],
-      ['w-options', 'g-hiv', false],
+  it('offers the Indices list for indices, or when it already holds the instrument', () => {
+    expect(starSections(lists, index('OEX', 'CBOE')).map((s) => s.list.id)).toEqual(['main', 'idx', 'w-options']);
+    const spx = starSections(lists, index('SPX', 'CBOE')).find((s) => s.list.id === 'idx')!;
+    expect(spx.rows.map((r) => [r.group?.id, r.checked])).toEqual([
+      ['g-us', true],
+      ['g-macro', false],
+    ]);
+    expect(starSections(lists, stock('AAPL')).some((s) => s.list.id === 'idx')).toBe(false);
+    // Symbol search can put a stock into Indices: it is offered there so it can be unchecked.
+    const held = lists.map((l) => (l.id === 'idx' ? addItem(l, 'g-macro', { contract: stock('GOOG') }, DEFAULT) : l));
+    const goog = starSections(held, stock('GOOG')).find((s) => s.list.id === 'idx')!;
+    expect(goog.rows.map((r) => [r.group?.id, r.checked])).toEqual([
+      ['g-us', false],
+      ['g-macro', true],
     ]);
   });
 
+  it('keeps the lists shown when the picker opened, so an unchecked stock can go back into Indices', () => {
+    const held = lists.map((l) => (l.id === 'idx' ? addItem(l, 'g-macro', { contract: stock('GOOG') }, DEFAULT) : l));
+    const shown = starSections(held, stock('GOOG')).map((s) => s.list.id);
+    expect(shown).toEqual(['main', 'idx', 'w-options']);
+    const idx = held.find((l) => l.id === 'idx')!;
+    const out = toggleInGroup(idx, 'g-macro', { contract: stock('GOOG') }, DEFAULT);
+    expect(out.change).toBe('removed');
+    const after = held.map((l) => (l === idx ? out.list : l));
+    // Closed (no lists kept), Indices is not offered for a stock it no longer holds ...
+    expect(starSections(after, stock('GOOG')).map((s) => s.list.id)).toEqual(['main', 'w-options']);
+    // ... while open, it stays, unchecked, and one click puts it back.
+    const open = starSections(after, stock('GOOG'), shown);
+    expect(open.map((s) => s.list.id)).toEqual(shown);
+    expect(open.find((s) => s.list.id === 'idx')!.rows.map((r) => [r.group?.id, r.checked])).toEqual([
+      ['g-us', false],
+      ['g-macro', false],
+    ]);
+    const back = toggleInGroup(out.list, 'g-macro', { contract: stock('GOOG') }, DEFAULT);
+    expect(back.change).toBe('added');
+    expect(back.groupId).toBe('g-macro');
+    // A kept list that is gone is not offered.
+    expect(starSections(after.filter((l) => l.id !== 'idx'), stock('GOOG'), shown).map((s) => s.list.id)).toEqual(['main', 'w-options']);
+  });
+
   it('compares instruments by contractKey', () => {
-    expect(quickAdd(lists, 'main', {}, { ...stock('AAPL'), conId: 265598, primaryExchange: 'NASDAQ', exchange: 'ISLAND' }).inList).toBe(true);
-    const call = quickAdd(lists, 'main', {}, option('AAPL', '20261016', 230, 'C'));
-    expect(call.inList).toBe(false);
-    expect(call.click).toEqual({ kind: 'add', listId: 'main', groupId: 'g-tech' });
+    const aapl = starSections(lists, { ...stock('AAPL'), conId: 265598, primaryExchange: 'NASDAQ', exchange: 'ISLAND' });
+    expect(aapl.find((s) => s.list.id === 'main')!.rows.find((r) => r.group?.id === 'g-tech')!.checked).toBe(true);
+    const call = starSections(lists, option('AAPL', '20261016', 230, 'C'));
+    expect(call.some((s) => s.rows.some((r) => r.checked))).toBe(false);
   });
 
-  it('lets only indices into a current Indices list', () => {
-    const aapl = quickAdd(lists, 'idx', {}, stock('AAPL'));
-    expect(aapl.inList).toBe(false);
-    expect(aapl.click).toEqual({ kind: 'menu' });
-    expect(aapl.rows.some((r) => r.list.id === 'idx')).toBe(false);
-    const spx = quickAdd(lists, 'idx', {}, index('SPX', 'CBOE'));
-    expect(spx.inList).toBe(true);
-    expect(spx.click).toEqual({ kind: 'menu' });
-    const oex = quickAdd(lists, 'idx', {}, index('OEX', 'CBOE'));
-    expect(oex.click).toEqual({ kind: 'add', listId: 'idx', groupId: 'g-us' });
-    expect(oex.rows.map((r) => `${r.list.id}:${r.group?.id}`)).toEqual(['main:g-tech', 'main:g-auto', 'main:g-etf', 'idx:g-us', 'idx:g-macro', 'w-options:g-hiv']);
-  });
-
-  it('adds to the current list when only another list has it', () => {
-    const q = quickAdd(lists, 'w-options', {}, stock('MSFT'));
-    expect(q.inList).toBe(false);
-    expect(q.click).toEqual({ kind: 'add', listId: 'w-options', groupId: 'g-hiv' });
-    expect(q.rows.filter((r) => r.checked).map((r) => `${r.list.id}:${r.group?.id}`)).toEqual(['main:g-tech']);
-  });
-
-  it('falls back for a stale current list, no lists and a list without groups', () => {
-    expect(quickAdd(lists, 'gone', {}, stock('GOOG')).list?.id).toBe('main');
-    expect(quickAdd([], 'main', {}, stock('GOOG'))).toEqual({ list: undefined, inList: false, click: { kind: 'menu' }, rows: [] });
+  it('has nothing without lists and a default row for a list without groups', () => {
+    expect(starSections([], stock('GOOG'))).toEqual([]);
     const empty: Watchlist = { id: 'e', name: 'E', groups: [] };
-    const q = quickAdd([empty], 'e', {}, stock('GOOG'));
-    expect(q.click).toEqual({ kind: 'add', listId: 'e', groupId: undefined });
-    expect(q.rows).toEqual([{ list: empty, group: undefined, checked: false }]);
+    expect(starSections([empty], stock('GOOG'))).toEqual([{ list: empty, rows: [{ group: undefined, checked: false }] }]);
+  });
+
+  it('checks an unchecked group: adds the instrument there', () => {
+    const goog = { contract: stock('GOOG'), name: 'Alphabet' };
+    const a = toggleInGroup(main, 'g-etf', goog, DEFAULT);
+    expect(a.change).toBe('added');
+    expect(a.groupId).toBe('g-etf');
+    expect(a.list.groups.find((g) => g.id === 'g-etf')!.items.at(-1)).toEqual(goog);
+    expect(main.groups[2].items).toHaveLength(2); // input untouched
+    const empty: Watchlist = { id: 'e', name: 'E', groups: [] };
+    expect(toggleInGroup(empty, undefined, { contract: stock('IBM') }, DEFAULT, 'g1')).toEqual({
+      list: { id: 'e', name: 'E', groups: [{ id: 'g1', name: DEFAULT, items: [{ contract: stock('IBM') }] }] },
+      change: 'added',
+      groupId: 'g1',
+    });
+  });
+
+  it('moves it there when the list has it in another group, keeping the stored item', () => {
+    const r = toggleInGroup(main, 'g-auto', { contract: stock('NVDA'), name: 'Nvidia Corp' }, DEFAULT);
+    expect(r.change).toBe('moved');
+    expect(r.groupId).toBe('g-auto');
+    expect(r.list.groups.find((g) => g.id === 'g-auto')!.items.at(-1)).toEqual({ contract: stock('NVDA'), name: 'NVIDIA' });
+    expect(r.list.groups.find((g) => g.id === 'g-tech')!.items.map((i) => i.contract.symbol)).not.toContain('NVDA');
+    expect(listItemCount(r.list)).toBe(listItemCount(main));
+  });
+
+  it('unchecks a checked group: takes it out of the list, and one click puts it back', () => {
+    const r = toggleInGroup(main, 'g-tech', { contract: stock('AAPL') }, DEFAULT);
+    expect(r.change).toBe('removed');
+    expect(r.groupId).toBeUndefined();
+    expect(listHas(r.list, 'STK:AAPL')).toBe(false);
+    expect(listItemCount(r.list)).toBe(8);
+    const back = toggleInGroup(r.list, 'g-tech', { contract: stock('AAPL') }, DEFAULT);
+    expect(back.change).toBe('added');
+    expect(back.groupId).toBe('g-tech');
+    // In two groups: out of both.
+    expect(toggleInGroup(twice, 'a', { contract: stock('AAPL') }, DEFAULT).list.groups.map((g) => g.items)).toEqual([[], []]);
+  });
+
+  it('does nothing for a gone group while the list has it', () => {
+    const r = toggleInGroup(main, 'nope', { contract: stock('AAPL') }, DEFAULT);
+    expect(r).toEqual({ list: main, change: null });
+    expect(r.list).toBe(main);
   });
 });
 

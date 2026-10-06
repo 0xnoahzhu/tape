@@ -1,8 +1,9 @@
 // Watchlist panel of the Trade page (design 3a, left column).
 // Lists live in the store (persisted by the main process); the current list and each list's
-// "Add symbol" target group live in viewState.ts, shared with the chart's star, and collapsed
-// groups are per-device preferences. When collapsed only a vertical handle is rendered,
-// absolutely positioned inside the Trade page grid.
+// "Add symbol" target group live in viewState.ts (a group picked in the chart star's picker sets
+// the target too; the current list is the panel's own), and collapsed groups are per-device
+// preferences. When collapsed only a vertical handle is rendered, absolutely positioned inside
+// the Trade page grid.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import type { ContractRef, WatchItem, Watchlist } from '@shared/types';
@@ -93,8 +94,8 @@ function ExpandedPanel({
   const [adding, setAdding] = useState(false);
   const [rowMenu, setRowMenu] = useState<RowMenuTarget | null>(null);
   const [groupMenu, setGroupMenu] = useState<GroupMenuTarget | null>(null);
-  // Target group for "Add symbol", remembered per list for the session (viewState.ts; the chart's
-  // star adds there too).
+  // Target group for "Add symbol", remembered per list for the session (viewState.ts; a group
+  // picked in the chart star's picker becomes it).
   const targetGroupId = useWatchlistView((s) => (list ? s.targets[list.id] : undefined));
   const setTarget = useWatchlistView((s) => s.setTarget);
   // Group whose name is being edited in its header.

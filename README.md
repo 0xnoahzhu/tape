@@ -21,9 +21,9 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
 **Trade**
 
 - **Watchlists** with groups, built-in US index and macro lists, symbol search (IBKR contract search) and
-  per-row actions. A star in the chart header adds the charted symbol to the current list's group in
-  one click; once it is there, the star opens a list · group menu to add it elsewhere, move it to another
-  group or remove it.
+  per-row actions. A star in the chart header opens a list → group picker for the charted symbol: check
+  a group to add it there (or move it there within that list), uncheck it to take it out of that list.
+  The star is filled while any list holds it.
 - **Chart** from IBKR historical data in every interval IBKR offers: seconds (1s 5s 10s 15s 30s, and 45s
   merged from 15-second bars), minutes (1m 3m 5m 10m 15m 30m), hours (1h 2h 3h 4h) and D / W / M / Q / Y,
   plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
