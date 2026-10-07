@@ -1,7 +1,8 @@
 // Conversions between Tape's ContractRef and the TWS client's structures (pure, unit-tested).
 
 import type { Contract, ContractDescription, ContractDetails } from '../ib/tws';
-import type { ContractInfo, ContractRef, SecType, SymbolMatch } from '@shared/types';
+import { CONTRACT_DETAILS_VERSION } from '@shared/contract';
+import type { BondDetails, ContractInfo, ContractRef, SecType, SymbolMatch } from '@shared/types';
 
 type IbSecType = NonNullable<Contract['secType']>;
 type IbRight = NonNullable<Contract['right']>;
@@ -102,11 +103,48 @@ const splitList = (s: string | undefined): string[] | undefined => {
   return parts.length ? parts : undefined;
 };
 
+const text = (s: string | undefined): string | undefined => (s && s.trim() ? s.trim() : undefined);
+
+/**
+ * The last trading time and its zone. Server 193 sends lastTradeDateOrContractMonth as
+ * "20261016 16:00:00 US/Eastern" (the decoder splits only on "-", so lastTradeTime stays empty);
+ * older servers sent "20261016-16:00:00" with the time split off. The zone falls back to the
+ * instrument's.
+ */
+export function lastTradeTimeOf(d: ContractDetails): { time?: string; zone?: string } {
+  const split = text(d.lastTradeTime);
+  const m = /^(\d{8})\s+(\d{2}:\d{2}(?::\d{2})?)(?:\s+(\S+))?/.exec(d.contract.lastTradeDateOrContractMonth?.trim() ?? '');
+  const time = split ?? m?.[2];
+  if (!time) return {};
+  const zone = m?.[3] ?? text(d.timeZoneId);
+  return zone ? { time, zone } : { time };
+}
+
+function bondDetails(d: ContractDetails): BondDetails | undefined {
+  const b: BondDetails = {};
+  if (text(d.cusip)) b.cusip = text(d.cusip);
+  if (typeof d.coupon === 'number' && Number.isFinite(d.coupon)) b.coupon = d.coupon;
+  // Its date only: server 193 may send "YYYYMMDD HH:MM:SS Zone" (lastTradeTimeOf), which the decoder
+  // keeps whole (it splits only on "-").
+  const maturity = text(d.maturity);
+  if (maturity) b.maturity = /^\d{8}/.exec(maturity)?.[0] ?? maturity;
+  if (text(d.issueDate)) b.issueDate = text(d.issueDate);
+  if (text(d.bondType)) b.bondType = text(d.bondType);
+  if (text(d.couponType)) b.couponType = text(d.couponType);
+  if (typeof d.callable === 'boolean') b.callable = d.callable;
+  if (typeof d.putable === 'boolean') b.putable = d.putable;
+  if (typeof d.convertible === 'boolean') b.convertible = d.convertible;
+  if (text(d.descAppend)) b.descAppend = text(d.descAppend);
+  if (text(d.notes)) b.notes = text(d.notes);
+  return Object.keys(b).length ? b : undefined;
+}
+
 export function toContractInfo(d: ContractDetails, requested: ContractRef): ContractInfo {
   const info: ContractInfo = {
     contract: fromIbContract(d.contract, requested),
     longName: d.longName || d.contract.description || requested.symbol,
     minTick: d.minTick && d.minTick > 0 ? d.minTick : 0.01,
+    v: CONTRACT_DETAILS_VERSION,
   };
   if (d.industry) info.industry = d.industry;
   if (d.category) info.category = d.category;
@@ -120,6 +158,21 @@ export function toContractInfo(d: ContractDetails, requested: ContractRef): Cont
   if (orderTypes) info.orderTypes = orderTypes;
   const stockType = d.stockType?.trim();
   if (stockType) info.stockType = stockType.toUpperCase();
+  const isin = text(d.secIdList?.find((t) => t.tag?.toUpperCase() === 'ISIN')?.value);
+  if (isin) info.isin = isin;
+  if (text(d.marketName)) info.marketName = text(d.marketName);
+  if (text(d.contractMonth)) info.contractMonth = text(d.contractMonth);
+  if (text(d.realExpirationDate)) info.realExpirationDate = text(d.realExpirationDate);
+  const { time, zone } = lastTradeTimeOf(d);
+  if (time) info.lastTradeTime = time;
+  if (time && zone) info.lastTradeZone = zone;
+  if (text(d.underSymbol)) info.underSymbol = text(d.underSymbol);
+  if (d.underConId && d.underConId > 0) info.underConId = d.underConId;
+  if (text(d.underSecType)) info.underSecType = text(d.underSecType);
+  if (info.contract.secType === 'BOND') {
+    const bond = bondDetails(d);
+    if (bond) info.bond = bond;
+  }
   return info;
 }
 

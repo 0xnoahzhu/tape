@@ -385,7 +385,7 @@ Components call `useQuoteSubscriptions(owner, contracts, profile)`, which sends 
 with `setQuoteSubscriptions(owner, subs)` (an empty set releases it; the renderer drops quotes no
 owner wants any more). `market/quotes.ts` unions the owners per contract (`subscriptions.ts`), keeps
 one `reqMktData` line per contract whose generic tick list is the union of the owners' profiles
-(`basic`, `underlying`, `option`, `dividends`), and cancels lines nobody wants. At most 95 lines are open (IB's
+(`basic`, `underlying`, `option`, `dividends` and the add-ons below), and cancels lines nobody wants. At most 95 lines are open (IB's
 default limit is 100), in the order the contracts were first wanted; the rest carry a "line limit"
 error on their quote. Price alerts are an owner too (a main-process one, see below). After every
 handshake and after 1101, market data type 4 (delayed-frozen fallback) is set and all lines are
@@ -404,11 +404,69 @@ quote would lack its previous close and data type): it asks for the whole quote 
 
 The `dividends` profile adds generic tick 456 to stocks: IB answers with tick 59
 ("past 12 months, next 12 months, next ex-date, next amount", e.g. `3.64,3.92,20261119,0.98`),
-kept as `Quote.dividends` (an empty object for IB's `,,,`: no dividend). IB sends it only on live
+kept as `Quote.dividends` (an empty object for IB's `,,,`: no dividend, which the Positions columns
+show as 0). IB sends it only on live
 lines; a delayed line (market data type 3 / 4) never gets it. The `underlying` profile of stocks
 includes 456 too, so the stock tick lists nest (basic ⊂ dividends ⊂ underlying): a line already
 open for a stock is requested again once with the wider tick list and then kept when a page with a
-narrower profile takes over (options view ↔ dashboard).
+narrower profile takes over (options view ↔ dashboard). Its historical volatility is the real-time
+one, generic tick 411 (tick 58, `Quote.rtHistVol`): IB refuses 104 (tick 23) in a generic tick list,
+so `underlying` is `100,101,106,165,318,411,456` for stocks and `100,101,106,165,411` for indices,
+and the options desk's HV reads `histVol ?? rtHistVol`.
+
+**Legal generic ticks.** Every list is built from `LEGAL_GENERIC_TICKS` (`subscriptions.ts`): the ids
+IB's error 321 names as legal ("Legal ones for (STK) are: …", probed on the paper account, server 193,
+October 2026). IB sent the same 30 ids for STK, ETFs, OPT, IND, FUT, FOP, CASH, CRYPTO, CFD, CMDTY,
+FUND and an unresolved BOND, so the table only rules out ids illegal everywhere (104, 576, 578); warrants
+(not resolved) and combos (not probed) get none. Legal ids Tape never asks for (`NEVER_REQUESTED`): 258
+(fundamentals) and 787 (odd-lot quotes), which were seen ending the line; 232 (the same mark as 221);
+292, 375, 586, 587 and 619, which describe no holding. A test checks every type × profile × level
+against both tables.
+
+**Add-on profiles** (`shared/quoteProfiles.ts`) are a type's basic ticks plus those of one family of
+Positions columns, asked for only while such a column is shown. Their lists name only the types the
+probe saw data for (a legal id is not always one IB answers on a type):
+
+| Add-on | Generic ticks (→ tick ids) | Types |
+| --- | --- | --- |
+| `range` | 165 → 15–20 (13 / 26 / 52-week lows and highs), 21 (average volume) | STK |
+| `volatility` | 106 → 24 (30-day IV), 411 → 58 (real-time HV) | STK; FUT 106 only |
+| `optionFlow` | 100 → 29 / 30, 101 → 27 / 28, 105 → 87 | STK; FUT 101 only |
+| `activity` | 293 / 294 / 295 → 54 / 55 / 56, 595 → 63–65 | STK; FUT 295 only |
+| `auction` | 225 → 34, 35, 36, 61 | STK |
+| `vwap` | 233 → 48 (RTVolume) | STK |
+| `mark` | 221 → 37 | STK, FUT, CASH, CRYPTO (OPT and FOP carry it in their basic list) |
+| `shortSale` | 236 → 46, 89; 499 → 111 | STK |
+| `etfNav` | 577 → 96, 614 → 98 / 99, 623 → 97 | STK (the table asks for ETFs only) |
+| `futuresOi` | 588 → 86 | FUT |
+| `bondFactor` | 460 → 60 | BOND |
+
+RTVolume (tick 48) gives only `Quote.vwap` (its fifth field): the last trade, its size and time and the
+volume stay with ticks 4, 5, 45 and 8. The frozen ETF NAV (97) counts only while the line has sent no
+live one (96). Bond lines carry their yields with their prices (ticks 50–52, delayed 103 / 104), kept
+as sent, zero and negative ones too.
+
+**Error 321.** Should IB still refuse a line's list, it has dropped the request (no cancel, which would
+only answer 300), and the line is requested again one level lower: `full` → `core` (without the add-on
+profiles; dividends and underlying stay) → `none` (no generic tick). A 321 naming the generic tick list
+is remembered for the app's run per type and list, so other lines of that type skip straight to the
+next level; any other 321 is remembered for that contract. Neither is forgotten on a reconnect (IB's
+refusal is not repeated after every 1101), and each is logged once. The quote's `ticksRefused`
+(`'addOns'` / `'all'`) says what the line runs without, which the Positions table's Quote status column
+shows as 321; it clears once the line holds every tick wanted again (the add-on columns went). Prices
+keep coming throughout: only a 321 on a line without generic ticks ends it, as before.
+
+**A line's generic values never outlive it.** Every new line (a request, a 321 or close re-request, a
+resolved retry, a reconnect, a route switch of the primary-exchange fallback) starts without the fields
+generic ticks bring (`tickMap.ts → GENERIC_FIELDS`, `clearGenericFields`) and without the bond yields
+(the last yield, tick 52, has no delayed tick); only the mark stays, when the new line asks for it too
+(options are valued at it, and IB sends it on delayed lines as well). When a line's data type changes
+between live (1, 2) and delayed (3, 4), without a re-request, the yields and the generic values IB is not
+known to send on delayed lines go (`clearLiveOnlyFields`: dividends, the last RTH trade, …); those the
+probe saw on delayed lines stay (`DELAYED_TOO`: the mark, the 165 week ranges and average volume, IV,
+open interest, the volume rate), since IB sends some of them only once a line. So a field IB does not
+send on the current line (dividends on a delayed one) shows "—", never an older value; values blank for
+a moment after each re-request until IB sends them again.
 
 The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3 per
 account, TWS and other clients included); the market data check may hold one more for a few seconds
@@ -894,14 +952,17 @@ own remembered position (first: the bottom-right corner of the content area).
 
 The Positions tab shows the columns the user picks in the column editor (`ColumnEditor.tsx`, the
 "Columns" button in the tab row), by default the design's eight: Symbol, Qty, Avg, Price, Value,
-% NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 85 columns in five
-groups: Position, IB P&L, Contract, Quote, Options), with each column's kind, the instrument types it
-applies to, its minimum width, format, sort type and accessor. `cells.ts` formats the cells,
+% NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 145 columns in nine
+groups: Position, IB P&L, Contract, Quote, Statistics, Short selling, Dividends & earnings, Options,
+ETF / futures / bonds), with each column's kind, the instrument types it applies to (and, for the ETF
+columns, `when`: a stock IB types as ETF / ETN / ETC / ETP), its minimum width, format, sort type,
+accessor, the add-on quote profile it needs and whether it is verified. `cells.ts` formats the cells,
 `columnsState.ts` holds the pure edits (the order, a dragged header's slot, the widths and the grid
 tracks), the reading of stored preferences, the sort cycle and comparator and the held row order, and
 `columnStore.ts` persists them. `usePositionColumnData.ts`
 reads what the shown columns need beyond the rows (the positions' quotes, their contract details, the
-gross value), each only while a shown column needs it.
+gross value, the holdings' earnings), each only while a shown column needs it, and asks for the shown
+columns' extra generic ticks.
 
 **IB or calculated.** Every column shows IB's own value (`kind: 'ib'`) or a calculation by Tape
 (`'calc'`). A calculated column has a dim ƒ after its header, a "Calc." chip in the editor and a
@@ -916,14 +977,54 @@ one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L
 | --- | --- | --- |
 | Position | Name, Type, Qty, Avg, Avg cost (IB), Cost basis, Price, Value, % NLV, Unrl. P&L and %, Day P&L, Currency, FX rate, Value (base), % Gross, Account | `position` / `updatePortfolio` (`Position.averageCost` is IB's as sent, per contract); contract details; the account updates' `ExchangeRate` (paper accounts: `$LEDGER-ExchangeRate`) per currency, `account.ts → exchangeRateOf`, kept as `AccountSummary.exchangeRates` |
 | IB P&L | Price, Value, Unrl. P&L, Realized (IB); Day P&L, Unrl. P&L, Realized, Value (IB live); Total P&L | `updatePortfolio` as sent (pushed when the position changes, so it can lag); `reqPnLSingle` (`Position.dailyPnL`, `pnlValue`; `pnlUnrealized` and `pnlRealized` as sent, so IB's "no value" clears them and the cell shows "—"); Total = the two `reqPnLSingle` figures |
-| Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, DTE, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options), and Name and Min tick do not apply to bonds (their details reach Tape without them, so `ContractInfo` would hold its defaults) |
-| Quote | Last, Last size, Last time, Bid, Ask, sizes, Mid, Spread and %, Prev close, Chg and %, Open, High, Low, Volume, Mark (options), Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner, basic profile: stocks 318, options 100, 101, 106 and 221). Chg compares the quote's own price, never the previous close itself; Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt) |
+| Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, DTE, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours, Contract month, Last trade, Expiration, ISIN, Market | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options). Underlying is IB's `underSymbol` (a futures option's is its future, `ESZ6`; the tooltip has the underlying's type and conId). Last trade is the day and time of `lastTradeDateOrContractMonth` ("20261016 16:00:00 US/Eastern" on server 193), in the user's clock, the zone in the tooltip, sorted by the instant (`zonedInstant`: 08:30 US/Central after 09:00 US/Eastern); ISIN comes from `secIdList` (stocks and ETFs) |
+| Quote | Last, Last size, Last time, Bid, Ask, sizes, Mid, Spread and %, Prev close, Chg and %, Open, High, Low, Volume, Mark, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner, basic profile: stocks 318, options 100, 101, 106 and 221). Mark: options always, stocks, futures, forex and crypto with the `mark` add-on. Chg compares the quote's own price, never the previous close itself; Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
+| Statistics | 52w / 26w / 13w high and low, From 52w high / low, Avg volume, Rel. volume, IV 30d, HV 30d, Call / put volume and OI, Avg opt. volume, Trades, Trades/min, Volume/min, Vol 3m / 5m / 10m, VWAP, Auction price, volume, imbalance and regulatory imbalance | The add-ons `range`, `volatility`, `optionFlow`, `activity`, `vwap`, `auction` (stocks; IV, OI and volume/min also futures). From 52w = (Price ÷ high or low − 1) × 100, 0 when they differ only by IB's float32 rounding of ticks 15–20; Rel. volume = volume (tick 8) ÷ average volume (tick 21) |
+| Short selling | Shortable, Shortable shares, Borrow fee | `shortSale` (stocks): tick 46 as a word (above 2.5 easy, at least 1000 shares; above 1.5 on locate; else no), sorted by IB's value; tick 89; tick 111 as sent |
+| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Div. yield, Div. income 12m, Days to div., Earnings, Earnings est. | The `dividends` profile (tick 59, live lines only); yield = next 12m ÷ Price × 100, income = next 12m × quantity (a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). The earnings columns read `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the dashboard and cached for the day): Earnings is Wall Street Horizon's date with BMO / AMC / during, Earnings est. Tape's estimate from IB's market scanner where WSH is not available; both sort by date, then before the open, during, after the close, unknown |
 | Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI, ITM %, Intrinsic, Extrinsic, Break-even, position delta, gamma, theta, vega, Delta $ | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28; the position figures are greek × quantity × multiplier, at IB's model underlying price |
+| ETF / futures / bonds | NAV, NAV high / low, Prem./disc., Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Bond type, Features, Description | `etfNav` (ETFs; premium = (Price ÷ NAV − 1) × 100), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
 
-No column requests market data of its own: the catalog holds only what Tape already receives.
-Columns that need more generic ticks (52-week range, the holdings' dividends, shortability, auction,
-ETF NAV), another request type (earnings dates) or contract details Tape does not keep yet (ISIN,
-contract month, the underlying's conId) are not in it.
+**Extra market data.** A column with a `profile` needs generic ticks beyond the position's basic line.
+`addOnSubscriptions` lists one subscription per position and profile, for the positions the column
+applies to and whose type the profile has ticks for (option lines carry the mark already), with the
+position's quote contract (`quoteContract`, as the `portfolio` owner), so the keys are the portfolio's
+own: no line opens, and the 95-line budget is unchanged. The renderer owner `positions-table` holds
+them; it stays a background owner (not visible), so no line's priority changes either. The first set
+goes out at once; later changes of the shown columns 500 ms after the last one (`latestAfter`, on the
+profile columns only), while a change of the rows (a fill, an account switch, the first positions) goes
+out at once, in the same commit as the `portfolio` owner's, so a new position's line is requested once,
+with its extra ticks. Leaving the tab releases them at once. The default columns have no profile, so the
+default view asks for nothing new. Turning on such a column costs one cancel and one request per
+affected line (both on the market data lane, so orders still go first); hiding it re-requests nothing
+(the line keeps its wider list, `coversTicks`, until its next request), except VWAP: a line that carries
+RTVolume (233, a message per trade) no owner wants any more is requested again without it
+(`subscriptions.ts → lineServes`).
+
+**Unverified columns.** The units the probe confirmed: ticks 15–20 are prices (float32-noisy, the price
+format rounds them), 21 shares (IB's average daily volume), 24 an annualized fraction, 27 / 28 and 87
+contracts (27 / 28 summed over the underlying's options), 29 / 30 contracts, 46 IB's code, 89 and
+63–65 shares, 55 trades and 56 shares (futures: contracts) per minute, 37 a price, 86 contracts, 59
+per-share amounts in the contract's currency. A column whose unit or source is not confirmed carries
+`unverified` with the reason in both languages (`messages.ts → unverified`): its tooltip ends with
+"Not yet verified: …" and the editor's note says "Unverified". These are Rel. volume (tick 8 against
+tick 21 during regular hours), HV 30d, VWAP and the auction columns (not delivered outside regular
+hours), Trades (when the count resets), Borrow fee (tick 111 read as an annual rate, not compared with
+TWS), Earnings (the paper account has no WSH), the ETF NAV columns (no NAV tick outside regular hours)
+and every bond column (no bond resolved on the paper account). The editor's note also says "Extra
+market data" for a column with a profile and for the earnings columns (Wall Street Horizon requests,
+else the market scanner, for every stock held).
+
+**Contract details, version 2.** `ContractInfo.v` (`CONTRACT_DETAILS_VERSION`, 2) marks the mapping
+that built an entry: version 2 added the ISIN, market name, contract month, real expiration, last
+trading time and zone, the underlying (`underSymbol`, `underConId`, `underSecType`) and the bond
+details. A persisted entry below it (absent: 1) is returned at once and fetched again in the
+background through `contracts.ts`'s `RefetchQueue` (one request per instrument, at most 2 in flight,
+250 ms apart, only while connected, resumed on every handshake; the week-old refresh goes through it
+too), since `reqContractDetails` shares the control lane that goes ahead of market data. The table asks
+again for details still below version 2 after 5 s, 15 s, 45 s, 2 min and 5 min (`reaskDelay`, while
+the columns are shown and market data is available, starting over when it comes back); main answers
+those from memory.
 
 Forex rows write their prices to IB's precision (5 decimals, 3 for pairs priced at 10 or more;
 `cells.ts → priceDigits`); others use the shared price format. Spread % keeps 3 decimals below 1 %.

@@ -35,6 +35,11 @@ export interface Classification {
 /** IB stock types of exchange-traded products, which go to the ETF bucket. */
 const EXCHANGE_TRADED = new Set(['ETF', 'ETN', 'ETC', 'ETP']);
 
+/** Whether IB's stock type is an exchange-traded product (ETF, ETN, ETC, ETP). */
+export function isExchangeTraded(stockType: string | undefined): boolean {
+  return !!stockType && EXCHANGE_TRADED.has(stockType.trim().toUpperCase());
+}
+
 /** Index options and their underlyings; everything else is treated as a stock underlying. */
 const INDEX_EXCHANGES: Record<string, string> = {
   SPX: 'CBOE',

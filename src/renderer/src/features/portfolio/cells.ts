@@ -4,7 +4,7 @@
 
 import { compact, DASH, f0, f2, pct, px, sg, signColor } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { MarketDataType, OptionRight } from '@shared/types';
+import type { EarningsEvent, MarketDataType, OptionRight, Quote } from '@shared/types';
 import { qtyLabel, weightLabel } from './calc';
 import { applies, type CellCtx, type CellValue, type ColumnDef, type Fmt } from './columns';
 
@@ -20,11 +20,27 @@ export interface CellWords {
   closed: string;
   /** Calendar days: "12d". */
   days(n: number): string;
+  /** IB's shortable code (tick 46): none, on locate, at least 1000 shares. */
+  shortable: readonly [string, string, string];
+  /** An earnings release's time of day. */
+  earningsTimes: Record<NonNullable<EarningsEvent['time']>, string>;
+  /** A bond's features; `none`: IB says it has none of them. */
+  features: Record<'callable' | 'putable' | 'convertible' | 'none', string>;
+  /** The Quote status cell's tooltip while IB refused the line's extra generic ticks. */
+  ticksRefused: Record<NonNullable<Quote['ticksRefused']>, string>;
+}
+
+/** IB's shortable code as an index into CellWords.shortable: above 2.5 easy, above 1.5 on locate, else none. */
+export function shortableLevel(code: number): 0 | 1 | 2 {
+  return code > 2.5 ? 2 : code > 1.5 ? 1 : 0;
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
 const sameDay = (a: number, b: number): boolean => new Date(a).toDateString() === new Date(b).toDateString();
+
+/** "20261016" → "2026-10-16"; other text as it is. */
+const dateText = (v: string): string => (/^\d{8}$/.test(v) ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : v);
 
 /** "0400-2000,..." → "4:00 AM–8:00 PM, ..." in the user's clock; "CLOSED" → Closed. */
 function hoursText(v: string, w: CellWords, clock: Clock): string {
@@ -52,9 +68,26 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
       case 'right':
         return w.rights[v as OptionRight] ?? v;
       case 'date':
-        return /^\d{8}$/.test(v) ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : v;
+        return dateText(v);
       case 'hours':
         return hoursText(v, w, clock);
+      case 'month':
+        return /^\d{6}$/.test(v) ? `${v.slice(0, 4)}-${v.slice(4, 6)}` : v;
+      case 'stamp': {
+        // "YYYYMMDD HH:MM", a wall time in the instrument's zone: written in the user's format.
+        const [day, time] = v.split(' ');
+        return time ? `${dateText(day)} ${clock.wall(time)}` : dateText(day);
+      }
+      case 'earn': {
+        const [day, time] = v.split('|');
+        const when = time ? w.earningsTimes[time as NonNullable<EarningsEvent['time']>] : undefined;
+        return when ? `${dateText(day)} ${when}` : dateText(day);
+      }
+      case 'features':
+        return v
+          .split(',')
+          .map((f) => w.features[f as keyof CellWords['features']] ?? f)
+          .join(' · ');
       default:
         return v;
     }
@@ -69,6 +102,8 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
       return f0(v);
     case 'num2':
       return f2(v);
+    case 'num3':
+      return f2(v, 3);
     case 'num4':
       return f2(v, 4);
     case 'dec':
@@ -101,6 +136,10 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
       return w.halts[v === 1 || v === 2 ? v : 0];
     case 'dataType':
       return w.dataTypes[v as MarketDataType] ?? String(v);
+    case 'shortable':
+      return w.shortable[shortableLevel(v)];
+    case 'ratio':
+      return `${f2(v)}×`;
     default:
       return String(v);
   }

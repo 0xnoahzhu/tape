@@ -23,11 +23,19 @@ export function useQuoteSubscriptions(owner: string, contracts: ContractRef[], p
     }
     return out;
   }, [contracts, profile]);
+  useQuoteSubscriptionList(owner, subs);
+}
+
+/**
+ * Declares an owner's subscriptions with a profile each (several profiles of one contract are
+ * several entries). Sent again only when their contracts or profiles change; released on unmount.
+ */
+export function useQuoteSubscriptionList(owner: string, subs: readonly QuoteSubscription[]): void {
   const signature = subs.map((s) => contractKey(s.contract) + '|' + s.profile).join(',');
   const connected = useStore((s) => s.connection.status === 'connected');
 
   useEffect(() => {
-    void setQuoteSubscriptions(owner, subs);
+    void setQuoteSubscriptions(owner, [...subs]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner, signature, connected]);
 

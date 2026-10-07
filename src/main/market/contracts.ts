@@ -2,17 +2,20 @@
 // Stocks found by search are routed through SMART where IB reaches their listing that way, else
 // on their own exchange (routeMatch).
 // Contract details are persisted in the kv cache (namespace 'contract', by contract key and by
-// conId), so instruments resolve without IB after a restart; entries older than a week are
-// refreshed in the background. In demo mode without a connection both are answered from the
-// simulator's built-in table.
+// conId), so instruments resolve without IB after a restart; entries older than a week, or built by
+// an older mapping (ContractInfo.v below CONTRACT_DETAILS_VERSION), are used at once and fetched
+// again in the background, through a paced queue (RefetchQueue: one request per instrument, at most
+// REFETCH_MAX at a time, REFETCH_GAP_MS apart, only while connected): the control lane they share
+// goes ahead of market data, so an upgrade of every held instrument must not crowd it. In demo
+// mode without a connection both are answered from the simulator's built-in table.
 
 import { EventName, type ContractDescription, type ContractDetails } from '../ib/tws';
-import { contractKey, contractLabel } from '@shared/contract';
+import { CONTRACT_DETAILS_VERSION, contractKey, contractLabel } from '@shared/contract';
 import type { ContractInfo, ContractRef, SymbolMatch } from '@shared/types';
 import type { ContractService, MainContext } from '../context';
 import { demoContractInfo, demoSearch } from './demo';
 import { pickDetails, sortMatches, toContractInfo, toIbContract, toSymbolMatch } from './ibContract';
-import { ibRequest, isIbConnected, NOT_CONNECTED, TtlCache } from './ibRequest';
+import { afterStartup, ibRequest, isIbConnected, NOT_CONNECTED, TtlCache } from './ibRequest';
 
 const DETAILS_TIMEOUT_MS = 15_000;
 const SEARCH_TIMEOUT_MS = 8_000;
@@ -25,6 +28,9 @@ export const SEARCH_TTL_MS = 5 * 60_000;
 export const CONTRACT_REFRESH_MS = 7 * 86_400_000;
 export const CONTRACT_NS = 'contract';
 const conIdKey = (conId: number) => `conId:${conId}`;
+/** Background refetches in flight at most, and the least time between two of them. */
+export const REFETCH_MAX = 2;
+export const REFETCH_GAP_MS = 250;
 
 /**
  * Listing exchanges whose stocks IB reaches through SMART: the US markets and those where a
@@ -127,13 +133,59 @@ class SearchQueue {
   }
 }
 
+/**
+ * Background refetches of persisted details (see the header): deduplicated by key, at most
+ * REFETCH_MAX at a time and REFETCH_GAP_MS apart, only while `ready`; `pump` resumes them (on
+ * every handshake). A refetch that fails because the connection went is queued again.
+ */
+export class RefetchQueue {
+  private readonly queued = new Map<string, () => Promise<unknown>>();
+  private readonly running = new Set<string>();
+  private lastStart = -Infinity;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(private readonly ready: () => boolean) {}
+
+  add(key: string, job: () => Promise<unknown>): void {
+    if (this.queued.has(key) || this.running.has(key)) return;
+    this.queued.set(key, job);
+    this.pump();
+  }
+
+  pump(): void {
+    while (!this.timer && this.queued.size && this.running.size < REFETCH_MAX && this.ready()) {
+      const wait = this.lastStart + REFETCH_GAP_MS - Date.now();
+      if (wait > 0) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.pump();
+        }, wait);
+        return;
+      }
+      const [key, job] = this.queued.entries().next().value!;
+      this.queued.delete(key);
+      this.running.add(key);
+      this.lastStart = Date.now();
+      job()
+        .catch(() => {
+          if (!this.ready() && !this.queued.has(key)) this.queued.set(key, job);
+        })
+        .finally(() => {
+          this.running.delete(key);
+          this.pump();
+        });
+    }
+  }
+}
+
 const isInfo = (v: unknown): v is ContractInfo => !!v && typeof v === 'object' && !!(v as ContractInfo).contract?.symbol;
 
 export function createContractService(ctx: MainContext): ContractService {
   const infoCache = new TtlCache<ContractInfo | null>();
   const byConId = new Map<number, ContractInfo>();
   const searchCache = new TtlCache<SymbolMatch[]>();
-  const refreshing = new Set<string>();
+  const refetch = new RefetchQueue(() => isIbConnected(ctx));
+  afterStartup(() => ctx.ib.onReady(() => refetch.pump()));
 
   const fetchDetails = (c: ContractRef): Promise<ContractDetails[]> => {
     const rows: ContractDetails[] = [];
@@ -143,7 +195,8 @@ export function createContractService(ctx: MainContext): ContractService {
       send: (api, reqId) => api.reqContractDetails(reqId, toIbContract(c)),
       events: {
         [EventName.contractDetails]: ([details]) => void rows.push(details as ContractDetails),
-        [EventName.bondContractDetails]: ([contract]) => void rows.push({ contract } as ContractDetails),
+        // A bond's details arrive whole, as other instruments' do (its contract in `.contract`).
+        [EventName.bondContractDetails]: ([details]) => void rows.push(details as ContractDetails),
         [EventName.contractDetailsEnd]: (_args, ctl) => ctl.resolve(rows),
       },
       onError: (e, ctl) => {
@@ -192,21 +245,20 @@ export function createContractService(ctx: MainContext): ContractService {
     return info;
   };
 
-  /** Re-reads old persisted details without making the caller wait. */
+  /** Re-reads old or outdated persisted details without making the caller wait (paced, see the header). */
   const refreshInBackground = (c: ContractRef, key: string) => {
-    if (refreshing.has(key) || !isIbConnected(ctx)) return;
-    refreshing.add(key);
-    fetchInfo(c, key)
-      .then((info) => info && infoCache.set(key, info, INFO_TTL_MS))
-      .catch(() => undefined)
-      .finally(() => refreshing.delete(key));
+    refetch.add(key, async () => {
+      const info = await fetchInfo(c, key);
+      if (info) infoCache.set(key, info, INFO_TTL_MS);
+    });
   };
 
   const loadInfo = async (c: ContractRef, key: string): Promise<ContractInfo | null> => {
     const persisted = await readPersisted(c, key);
     if (persisted) {
       remember(persisted.info);
-      if (Date.now() - persisted.updatedAt >= CONTRACT_REFRESH_MS) refreshInBackground(c, key);
+      const outdated = (persisted.info.v ?? 1) < CONTRACT_DETAILS_VERSION;
+      if (outdated || Date.now() - persisted.updatedAt >= CONTRACT_REFRESH_MS) refreshInBackground(c, key);
       return persisted.info;
     }
     if (!isIbConnected(ctx)) throw new OfflineError(NOT_CONNECTED);

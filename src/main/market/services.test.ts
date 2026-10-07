@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { index, stock } from '@shared/contract';
 import type { TapeEvent } from '@shared/ipc';
 import type { ContractInfo, DepthBook, OptionChainParams } from '@shared/types';
-import { CONTRACT_REFRESH_MS, createContractService, SEARCH_TTL_MS } from './contracts';
+import { CONTRACT_REFRESH_MS, createContractService, REFETCH_GAP_MS, REFETCH_MAX, SEARCH_TTL_MS } from './contracts';
 import { CANCEL_CAP_MS, createDepthService } from './depth';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
 import { createHistoryService } from './history';
@@ -98,6 +98,107 @@ describe('ContractService', () => {
     expect(fake.callsOf('reqContractDetails')).toHaveLength(1);
     expect((await ctx.db.kv.get<ContractInfo>('contract', 'STK:AAPL'))?.value.longName).toBe('APPLE INC');
     expect((await ctx.contracts.getInfo(stock('AAPL')))?.longName).toBe('APPLE INC');
+  });
+
+  it('answers from details of an older version at once and upgrades them through a paced queue', async () => {
+    const { fake, ctx } = setup();
+    // Five held stocks Tape 0.8 stored (no version: 1).
+    const syms = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'META'];
+    const conIdOf = (sym: string) => 1000 + syms.indexOf(sym);
+    for (const sym of syms) await ctx.db.kv.set('contract', `STK:${sym}`, { contract: { ...stock(sym), conId: conIdOf(sym) }, longName: `${sym} OLD`, minTick: 0.01 });
+    // Offline: the stored details at once, nothing asked.
+    const before = await Promise.all(syms.map((sym) => ctx.contracts.getInfo(stock(sym))));
+    expect(before.map((i) => [i?.longName, i?.v])).toEqual(syms.map((sym) => [`${sym} OLD`, undefined]));
+    expect(fake.callsOf('reqContractDetails')).toEqual([]);
+    await settle();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const open = new Map<number, number>(); // reqId -> conId
+      const sentAt: number[] = [];
+      fake.onCall = (name, args) => {
+        if (name !== 'reqContractDetails') return;
+        const c = args[1] as { conId?: number; symbol?: string };
+        open.set(args[0] as number, c.conId ?? conIdOf(c.symbol!));
+        sentAt.push(Date.now());
+      };
+      const answer = (reqId: number) => {
+        const conId = open.get(reqId)!;
+        open.delete(reqId);
+        const sym = syms[conId - 1000];
+        fake.emit('contractDetails', reqId, { ...aaplDetails('SMART', 'USD', conId), contract: { ...aaplDetails('SMART', 'USD', conId).contract, symbol: sym }, longName: `${sym} NEW`, secIdList: [{ tag: 'ISIN', value: `US-${sym}` }] });
+        fake.emit('contractDetailsEnd', reqId);
+      };
+      const step = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+      fake.ready();
+      await step();
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(1);
+      await step(REFETCH_GAP_MS - 1);
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(1);
+      await step(1);
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(2);
+      // At most two at a time.
+      await step(5000);
+      expect(open.size).toBe(REFETCH_MAX);
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(2);
+      answer([...open.keys()][0]);
+      await step();
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(3);
+      // The connection goes: nothing is sent meanwhile, and what was in flight is asked for again later.
+      fake.close();
+      await step(10_000);
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(3);
+      fake.ready();
+      for (let i = 0; i < 20 && (open.size || fake.callsOf('reqContractDetails').length < 7); i++) {
+        for (const id of [...open.keys()]) answer(id);
+        await step(REFETCH_GAP_MS);
+      }
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(7);
+      // One request per instrument (the two cut off by the disconnect twice), always REFETCH_GAP_MS apart.
+      const asked = fake.callsOf('reqContractDetails').map((c) => (c[1] as { symbol: string }).symbol);
+      expect(new Set(asked).size).toBe(5);
+      for (let i = 1; i < sentAt.length; i++) expect(sentAt[i] - sentAt[i - 1]).toBeGreaterThanOrEqual(REFETCH_GAP_MS);
+      // Upgraded: by key and by conId, in memory and stored.
+      for (const sym of syms) {
+        expect(await ctx.contracts.getInfo(stock(sym))).toMatchObject({ v: 2, longName: `${sym} NEW`, isin: `US-${sym}` });
+        expect(await ctx.contracts.getInfo({ ...stock(sym), conId: conIdOf(sym) })).toMatchObject({ v: 2, longName: `${sym} NEW` });
+        expect((await ctx.db.kv.get<ContractInfo>('contract', `STK:${sym}`))?.value.v).toBe(2);
+      }
+      expect(fake.callsOf('reqContractDetails')).toHaveLength(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a bond’s details whole (bondContractDetails)', async () => {
+    const { fake, ctx } = setup();
+    fake.ready();
+    fake.onCall = (name, args) => {
+      if (name !== 'reqContractDetails') return;
+      const id = args[0];
+      queueMicrotask(() => {
+        fake.emit('bondContractDetails', id, {
+          contract: { symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD', conId: 742000123, tradingClass: 'US-T' },
+          longName: 'United States Treasury',
+          minTick: 0.0001,
+          cusip: '91282CLW9',
+          coupon: 4.25,
+          maturity: '20341115',
+          callable: false,
+          putable: false,
+          convertible: false,
+          descAppend: 'T 4 1/4 11/15/34',
+        });
+        fake.emit('contractDetailsEnd', id);
+      });
+    };
+    const info = await ctx.contracts.getInfo({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD', conId: 742000123 });
+    expect(info).toMatchObject({
+      contract: { symbol: 'US-T', secType: 'BOND', conId: 742000123 },
+      longName: 'United States Treasury',
+      minTick: 0.0001,
+      bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115', callable: false, descAppend: 'T 4 1/4 11/15/34' },
+    });
+    expect((info?.contract as unknown as { contract?: unknown }).contract).toBeUndefined();
   });
 
   it('answers null for error 200 and throws on resolve', async () => {

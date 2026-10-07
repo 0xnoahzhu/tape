@@ -17,6 +17,10 @@ export const TICK = {
   CLOSE: 9,
   MODEL_OPTION: 13,
   OPEN: 14,
+  LOW_13_WEEK: 15,
+  HIGH_13_WEEK: 16,
+  LOW_26_WEEK: 17,
+  HIGH_26_WEEK: 18,
   LOW_52_WEEK: 19,
   HIGH_52_WEEK: 20,
   AVG_VOLUME: 21,
@@ -26,12 +30,28 @@ export const TICK = {
   OPTION_PUT_OPEN_INTEREST: 28,
   OPTION_CALL_VOLUME: 29,
   OPTION_PUT_VOLUME: 30,
+  AUCTION_VOLUME: 34,
+  AUCTION_PRICE: 35,
+  AUCTION_IMBALANCE: 36,
   MARK_PRICE: 37,
   LAST_TIMESTAMP: 45,
+  SHORTABLE: 46,
   RT_VOLUME: 48,
   HALTED: 49,
+  BID_YIELD: 50,
+  ASK_YIELD: 51,
+  LAST_YIELD: 52,
+  TRADE_COUNT: 54,
+  TRADE_RATE: 55,
+  VOLUME_RATE: 56,
   LAST_RTH_TRADE: 57,
+  RT_HISTORICAL_VOL: 58,
   IB_DIVIDENDS: 59,
+  BOND_FACTOR_MULTIPLIER: 60,
+  REGULATORY_IMBALANCE: 61,
+  SHORT_TERM_VOLUME_3_MIN: 63,
+  SHORT_TERM_VOLUME_5_MIN: 64,
+  SHORT_TERM_VOLUME_10_MIN: 65,
   DELAYED_BID: 66,
   DELAYED_ASK: 67,
   DELAYED_LAST: 68,
@@ -44,8 +64,19 @@ export const TICK = {
   DELAYED_CLOSE: 75,
   DELAYED_OPEN: 76,
   DELAYED_MODEL_OPTION: 83,
+  FUTURES_OPEN_INTEREST: 86,
+  AVG_OPT_VOLUME: 87,
   DELAYED_LAST_TIMESTAMP: 88,
+  SHORTABLE_SHARES: 89,
   DELAYED_HALTED: 90,
+  ETF_NAV_LAST: 96,
+  ETF_NAV_FROZEN_LAST: 97,
+  ETF_NAV_HIGH: 98,
+  ETF_NAV_LOW: 99,
+  DELAYED_YIELD_BID: 103,
+  DELAYED_YIELD_ASK: 104,
+  /** "SLB Rate - Fee" (generic tick 499; not in IB's TickType list). */
+  SLB_FEE: 111,
 } as const;
 
 type NumericField = {
@@ -60,9 +91,17 @@ const PRICE_FIELDS: Partial<Record<number, NumericField>> = {
   [TICK.LOW]: 'low',
   [TICK.CLOSE]: 'close',
   [TICK.OPEN]: 'open',
+  [TICK.LOW_13_WEEK]: 'week13Low',
+  [TICK.HIGH_13_WEEK]: 'week13High',
+  [TICK.LOW_26_WEEK]: 'week26Low',
+  [TICK.HIGH_26_WEEK]: 'week26High',
   [TICK.LOW_52_WEEK]: 'week52Low',
   [TICK.HIGH_52_WEEK]: 'week52High',
+  [TICK.AUCTION_PRICE]: 'auctionPrice',
   [TICK.MARK_PRICE]: 'mark',
+  [TICK.BID_YIELD]: 'bidYield',
+  [TICK.ASK_YIELD]: 'askYield',
+  [TICK.LAST_YIELD]: 'lastYield',
   [TICK.LAST_RTH_TRADE]: 'lastRthTrade',
   [TICK.DELAYED_BID]: 'bid',
   [TICK.DELAYED_ASK]: 'ask',
@@ -71,6 +110,13 @@ const PRICE_FIELDS: Partial<Record<number, NumericField>> = {
   [TICK.DELAYED_LOW]: 'low',
   [TICK.DELAYED_CLOSE]: 'close',
   [TICK.DELAYED_OPEN]: 'open',
+  [TICK.ETF_NAV_LAST]: 'etfNav',
+  [TICK.ETF_NAV_FROZEN_LAST]: 'etfNav',
+  [TICK.ETF_NAV_HIGH]: 'etfNavHigh',
+  [TICK.ETF_NAV_LOW]: 'etfNavLow',
+  [TICK.DELAYED_YIELD_BID]: 'bidYield',
+  [TICK.DELAYED_YIELD_ASK]: 'askYield',
+  [TICK.SLB_FEE]: 'borrowFee',
 };
 
 const SIZE_FIELDS: Partial<Record<number, NumericField>> = {
@@ -79,14 +125,112 @@ const SIZE_FIELDS: Partial<Record<number, NumericField>> = {
   [TICK.LAST_SIZE]: 'lastSize',
   [TICK.VOLUME]: 'volume',
   [TICK.AVG_VOLUME]: 'avgVolume',
+  [TICK.AUCTION_VOLUME]: 'auctionVolume',
+  [TICK.AUCTION_IMBALANCE]: 'auctionImbalance',
+  [TICK.REGULATORY_IMBALANCE]: 'regulatoryImbalance',
+  [TICK.SHORT_TERM_VOLUME_3_MIN]: 'volume3m',
+  [TICK.SHORT_TERM_VOLUME_5_MIN]: 'volume5m',
+  [TICK.SHORT_TERM_VOLUME_10_MIN]: 'volume10m',
   [TICK.DELAYED_BID_SIZE]: 'bidSize',
   [TICK.DELAYED_ASK_SIZE]: 'askSize',
   [TICK.DELAYED_LAST_SIZE]: 'lastSize',
   [TICK.DELAYED_VOLUME]: 'volume',
+  [TICK.FUTURES_OPEN_INTEREST]: 'futuresOpenInterest',
+  [TICK.AVG_OPT_VOLUME]: 'avgOptionVolume',
+  [TICK.SHORTABLE_SHARES]: 'shortableShares',
 };
 
 /** Prices where 0 is a real quote (an option without bids still shows 0.00). */
 const ZERO_OK_PRICES = new Set<NumericField>(['bid', 'ask']);
+/** Prices that may be 0 or negative: bond yields. */
+const SIGNED_PRICES = new Set<NumericField>(['bidYield', 'askYield', 'lastYield']);
+/** Sizes with a side: an auction imbalance is a buy or a sell excess. */
+const SIGNED_SIZES = new Set<NumericField>(['auctionImbalance', 'regulatoryImbalance']);
+
+/**
+ * The Quote fields each generic tick id brings (the ticks it makes IB send). A line's generic
+ * values never outlive it: clearGenericFields empties them for every new line, so a field IB does
+ * not send on the new one (a delayed line gets no dividends) shows "—" instead of an older value.
+ */
+export const GENERIC_FIELDS: Readonly<Record<number, readonly (keyof Quote)[]>> = {
+  100: ['callVolume', 'putVolume'],
+  101: ['callOpenInterest', 'putOpenInterest', 'openInterest'],
+  104: ['histVol'],
+  105: ['avgOptionVolume'],
+  106: ['impliedVol'],
+  165: ['week13Low', 'week13High', 'week26Low', 'week26High', 'week52Low', 'week52High', 'avgVolume'],
+  221: ['mark'],
+  225: ['auctionVolume', 'auctionPrice', 'auctionImbalance', 'regulatoryImbalance'],
+  233: ['vwap'],
+  236: ['shortable', 'shortableShares'],
+  293: ['tradeCount'],
+  294: ['tradeRate'],
+  295: ['volumeRate'],
+  318: ['lastRthTrade'],
+  411: ['rtHistVol'],
+  456: ['dividends'],
+  460: ['bondFactor'],
+  499: ['borrowFee'],
+  577: ['etfNav'],
+  588: ['futuresOpenInterest'],
+  595: ['volume3m', 'volume5m', 'volume10m'],
+  614: ['etfNavHigh', 'etfNavLow'],
+  623: ['etfNav'],
+};
+
+/**
+ * Bond yields (ticks 50–52, delayed 103 / 104). They come with a bond line's prices, but the last
+ * yield has no delayed tick: kept across lines, a line that turns delayed would show a live one for
+ * good. So they go with the generic values, on every new line and every live ↔ delayed change.
+ */
+const LINE_YIELDS: readonly (keyof Quote)[] = ['bidYield', 'askYield', 'lastYield'];
+
+/**
+ * Generic values IB sends on delayed lines too (probe of the paper account, October 2026): the mark
+ * (37), the 165 values (week ranges 15–20, seen on a delayed index, with the average volume 21),
+ * implied volatility (24), open interest (27 / 28, futures 86) and the volume rate (56). IB sends some
+ * of them only once a line, so a line that changes between live and delayed keeps them.
+ */
+export const DELAYED_TOO: ReadonlySet<keyof Quote> = new Set<keyof Quote>([
+  'mark',
+  ...GENERIC_FIELDS[165],
+  'impliedVol',
+  'callOpenInterest',
+  'putOpenInterest',
+  'openInterest',
+  'futuresOpenInterest',
+  'volumeRate',
+]);
+
+/**
+ * Clears every field a generic tick brings, and the bond yields, for a new line requested with
+ * `ticks` (a genericTicksFor list). Only the mark stays, when the new line asks for it too (221):
+ * options are valued at it, and IB sends it on delayed lines as well. Returns true when a field changed.
+ */
+export function clearGenericFields(q: Quote, ticks: string): boolean {
+  const keepMark = ticks.split(',').includes('221');
+  let changed = false;
+  for (const fields of Object.values(GENERIC_FIELDS)) {
+    for (const f of fields) if (!(keepMark && f === 'mark')) changed = set(q, f, undefined) || changed;
+  }
+  for (const f of LINE_YIELDS) changed = set(q, f, undefined) || changed;
+  return changed;
+}
+
+/**
+ * Clears what a line whose data type changed between live (1, 2) and delayed (3, 4) may not get
+ * again: the generic values IB is not known to send on delayed lines (dividends, the last RTH trade,
+ * …) and the bond yields. Those of DELAYED_TOO stay: IB sends them on the new data type as well, some
+ * only at the start of a line. Returns true when a field changed.
+ */
+export function clearLiveOnlyFields(q: Quote): boolean {
+  let changed = false;
+  for (const fields of Object.values(GENERIC_FIELDS)) {
+    for (const f of fields) if (!DELAYED_TOO.has(f)) changed = set(q, f, undefined) || changed;
+  }
+  for (const f of LINE_YIELDS) changed = set(q, f, undefined) || changed;
+  return changed;
+}
 
 export type TickEvent =
   | { kind: 'price'; field: number; value: number | undefined }
@@ -115,6 +259,8 @@ export interface TickContext {
   isCombo?: boolean;
   /** Per-line state kept by applyTick: the line has sent a previous close (see applyClose). */
   hasClose?: boolean;
+  /** Per-line state: the line has sent an ETF NAV (96), so the frozen one (97) no longer counts. */
+  hasNav?: boolean;
 }
 
 /** Rejects IB's "no value" markers: undefined, NaN, Double.MAX and other absurd magnitudes. */
@@ -129,6 +275,7 @@ function set<K extends keyof Quote>(q: Quote, key: K, value: Quote[K]): boolean 
 
 function priceValue(field: NumericField, v: number | undefined, ctx: TickContext): number | undefined {
   if (!finite(v)) return undefined;
+  if (SIGNED_PRICES.has(field)) return v;
   if (ctx.isCombo) return v === -1 ? undefined : v;
   if (v < 0) return undefined; // -1 = no bid / ask / last
   if (v === 0 && !(ctx.isOption && ZERO_OK_PRICES.has(field))) return undefined;
@@ -148,7 +295,11 @@ function applyPrice(q: Quote, field: number, value: number | undefined, ctx: Tic
   const key = PRICE_FIELDS[field];
   if (!key) return false;
   const v = priceValue(key, value, ctx);
-  return key === 'close' ? applyClose(q, v, ctx) : set(q, key, v);
+  if (key === 'close') return applyClose(q, v, ctx);
+  // The frozen NAV (97) stands in until the line sends a live one (96).
+  if (field === TICK.ETF_NAV_FROZEN_LAST && ctx.hasNav) return false;
+  if (field === TICK.ETF_NAV_LAST && v !== undefined) ctx.hasNav = true;
+  return set(q, key, v);
 }
 
 /**
@@ -168,7 +319,7 @@ function applyClose(q: Quote, v: number | undefined, ctx: TickContext): boolean 
 
 function applySize(q: Quote, field: number, value: number | undefined, ctx: TickContext): boolean {
   const key = SIZE_FIELDS[field];
-  if (key) return set(q, key, sizeValue(value));
+  if (key) return set(q, key, SIGNED_SIZES.has(key) ? (finite(value) ? value : undefined) : sizeValue(value));
   const v = sizeValue(value);
   switch (field) {
     case TICK.OPTION_CALL_OPEN_INTEREST:
@@ -196,6 +347,19 @@ function applyGeneric(q: Quote, field: number, value: number | undefined): boole
       return set(q, 'histVol', finite(value) && value > 0 ? value : undefined);
     case TICK.OPTION_IMPLIED_VOL:
       return set(q, 'impliedVol', finite(value) && value > 0 ? value : undefined);
+    case TICK.RT_HISTORICAL_VOL:
+      return set(q, 'rtHistVol', finite(value) && value > 0 ? value : undefined);
+    case TICK.SHORTABLE:
+      // IB's raw code: above 2.5 at least 1000 shares to borrow, above 1.5 on locate, else none.
+      return set(q, 'shortable', finite(value) && value >= 0 ? value : undefined);
+    case TICK.TRADE_COUNT:
+      return set(q, 'tradeCount', sizeValue(value));
+    case TICK.TRADE_RATE:
+      return set(q, 'tradeRate', sizeValue(value));
+    case TICK.VOLUME_RATE:
+      return set(q, 'volumeRate', sizeValue(value));
+    case TICK.BOND_FACTOR_MULTIPLIER:
+      return set(q, 'bondFactor', finite(value) && value > 0 ? value : undefined);
     case TICK.HALTED:
     case TICK.DELAYED_HALTED: {
       // -1 = not available, 0 = trading, 1 = general halt, 2 = volatility halt.
@@ -233,6 +397,13 @@ export function parseDividends(value: string | undefined): QuoteDividends | unde
   return out;
 }
 
+/** The VWAP of an RTVolume string (its fifth field), or undefined when it carries none. */
+export function parseVwap(value: string | undefined): number | undefined {
+  const field = (value ?? '').split(';')[4]?.trim();
+  const v = Number(field);
+  return field && finite(v) && v > 0 ? v : undefined;
+}
+
 const sameDividends = (a: QuoteDividends | undefined, b: QuoteDividends | undefined): boolean =>
   a === b || (!!a && !!b && a.past12m === b.past12m && a.next12m === b.next12m && a.nextDate === b.nextDate && a.nextAmount === b.nextAmount);
 
@@ -244,20 +415,11 @@ function applyString(q: Quote, field: number, value: string | undefined): boolea
       return t !== undefined ? set(q, 'lastTime', t) : false;
     }
     case TICK.RT_VOLUME: {
-      // "price;size;time(ms);totalVolume;VWAP;singleTrade". Price is empty for unreported trades.
-      const [price, size, time, total] = (value ?? '').split(';');
-      let changed = false;
-      const p = Number(price);
-      if (price && finite(p) && p > 0) {
-        changed = set(q, 'last', p) || changed;
-        const s = Number(size);
-        if (size && finite(s) && s >= 0) changed = set(q, 'lastSize', s) || changed;
-        const t = timestampMs(time);
-        if (t !== undefined) changed = set(q, 'lastTime', t) || changed;
-      }
-      const v = Number(total);
-      if (total && finite(v) && v >= 0) changed = set(q, 'volume', v) || changed;
-      return changed;
+      // "price;size;time(ms);totalVolume;VWAP;singleTrade". Only the VWAP is taken: the last trade
+      // and the volume come from ticks 4, 5, 45 and 8 (RTVolume counts other trades, and a second
+      // source would make them jump).
+      const vwap = parseVwap(value);
+      return vwap !== undefined ? set(q, 'vwap', vwap) : false;
     }
     case TICK.IB_DIVIDENDS: {
       // A new object only when a value changed: the renderer patch compares fields by reference.

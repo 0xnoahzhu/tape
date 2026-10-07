@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Quote } from '@shared/types';
-import { applyTick, lastOrMid, midPrice, parseDividends, TICK, type TickContext } from './tickMap';
+import { applyTick, clearGenericFields, clearLiveOnlyFields, DELAYED_TOO, GENERIC_FIELDS, lastOrMid, midPrice, parseDividends, parseVwap, TICK, type TickContext, type TickEvent } from './tickMap';
 
 /** One stock line per test (applyTick keeps per-line state in its context). */
 let stock: TickContext;
@@ -45,10 +45,49 @@ describe('applyTick prices', () => {
     });
   });
 
-  it('ignores 13 and 26 week extremes', () => {
+  it('maps the 13 and 26 week extremes (generic tick 165) and the auction price', () => {
     const q = q0();
-    for (const field of [15, 16, 17, 18]) expect(applyTick(q, { kind: 'price', field, value: 5 }, stock)).toBe(false);
-    expect(q).toEqual(q0());
+    // As seen on AAPL: float32-noisy prices, kept as sent (the price format rounds them).
+    applyTick(q, { kind: 'price', field: TICK.LOW_13_WEEK, value: 300 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.HIGH_13_WEEK, value: 345.33999634 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.LOW_26_WEEK, value: 255.83200073 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.HIGH_26_WEEK, value: 345.33999634 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.AUCTION_PRICE, value: 334.1 }, stock);
+    expect(q).toMatchObject({ week13Low: 300, week13High: 345.33999634, week26Low: 255.83200073, week26High: 345.33999634, auctionPrice: 334.1 });
+    // -1 / 0 are "no value" for them as for other prices.
+    applyTick(q, { kind: 'price', field: TICK.AUCTION_PRICE, value: 0 }, stock);
+    expect(q.auctionPrice).toBeUndefined();
+  });
+
+  it('keeps bond yields as sent, 0 and negative ones too', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.BID_YIELD, value: 4.212 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.ASK_YIELD, value: -0.15 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.LAST_YIELD, value: 0 }, stock);
+    expect(q).toMatchObject({ bidYield: 4.212, askYield: -0.15, lastYield: 0 });
+    applyTick(q, { kind: 'price', field: TICK.DELAYED_YIELD_BID, value: 4.3 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.DELAYED_YIELD_ASK, value: 4.28 }, stock);
+    expect(q).toMatchObject({ bidYield: 4.3, askYield: 4.28 });
+    applyTick(q, { kind: 'price', field: TICK.BID_YIELD, value: Number.NaN }, stock);
+    expect(q.bidYield).toBeUndefined();
+  });
+
+  it('takes the frozen ETF NAV (97) only while the line has sent no live one (96)', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.ETF_NAV_FROZEN_LAST, value: 571.1 }, stock);
+    expect(q.etfNav).toBe(571.1);
+    applyTick(q, { kind: 'price', field: TICK.ETF_NAV_LAST, value: 571.35 }, stock);
+    expect(applyTick(q, { kind: 'price', field: TICK.ETF_NAV_FROZEN_LAST, value: 570 }, stock)).toBe(false);
+    expect(q.etfNav).toBe(571.35);
+    applyTick(q, { kind: 'price', field: TICK.ETF_NAV_HIGH, value: 572 }, stock);
+    applyTick(q, { kind: 'price', field: TICK.ETF_NAV_LOW, value: 569.8 }, stock);
+    expect(q).toMatchObject({ etfNavHigh: 572, etfNavLow: 569.8 });
+  });
+
+  it('maps the borrow fee (tick 111) as sent', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.SLB_FEE, value: 0.0025 }, stock);
+    expect(q.borrowFee).toBe(0.0025);
   });
 
   it('clears a side on -1 and treats 0 as no data except option bid/ask', () => {
@@ -196,22 +235,47 @@ describe('applyTick generic and string', () => {
     expect(q).toMatchObject({ halted: true, haltCode: 2 });
   });
 
-  it('parses last timestamps (seconds) and RTVolume', () => {
+  it('parses last timestamps (seconds)', () => {
     const q = q0();
     applyTick(q, { kind: 'string', field: TICK.LAST_TIMESTAMP, value: '1759500000' }, stock);
     expect(q.lastTime).toBe(1_759_500_000_000);
     applyTick(q, { kind: 'string', field: TICK.DELAYED_LAST_TIMESTAMP, value: '1759500060' }, stock);
     expect(q.lastTime).toBe(1_759_500_060_000);
-    applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: '227.48;300;1759500123456;48123456;227.1;false' }, stock);
-    expect(q).toMatchObject({ last: 227.48, lastSize: 300, lastTime: 1_759_500_123_456, volume: 48_123_456 });
-    // Unreported trade: no price, volume still updates.
-    applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: ';0;1759500123999;48123999;227.1;false' }, stock);
-    expect(q).toMatchObject({ last: 227.48, volume: 48_123_999 });
+  });
+
+  it('takes only the VWAP from RTVolume: the last trade and the volume stay with ticks 4, 5, 45 and 8', () => {
+    const q = q0();
+    applyTick(q, { kind: 'price', field: TICK.LAST, value: 227.5 }, stock);
+    applyTick(q, { kind: 'size', field: TICK.LAST_SIZE, value: 100 }, stock);
+    applyTick(q, { kind: 'size', field: TICK.VOLUME, value: 48_000_000 }, stock);
+    applyTick(q, { kind: 'string', field: TICK.LAST_TIMESTAMP, value: '1759500000' }, stock);
+    expect(applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: '227.48;300;1759500123456;48123456;227.1;false' }, stock)).toBe(true);
+    expect(q).toMatchObject({ last: 227.5, lastSize: 100, volume: 48_000_000, lastTime: 1_759_500_000_000, vwap: 227.1 });
+    // Unreported trade: no price, the VWAP still updates.
+    applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: ';0;1759500123999;48123999;227.12;false' }, stock);
+    expect(q).toMatchObject({ last: 227.5, volume: 48_000_000, vwap: 227.12 });
+    expect(applyTick(q, { kind: 'string', field: TICK.RT_VOLUME, value: '227.6;100;1759500124000;48124099;;true' }, stock)).toBe(false);
+    expect(q.vwap).toBe(227.12);
+  });
+
+  it('parses the VWAP field of RTVolume', () => {
+    expect(parseVwap('227.48;300;1759500123456;48123456;227.1;false')).toBe(227.1);
+    expect(parseVwap(';0;1759500123999;48123999;227.1;false')).toBe(227.1);
+    expect(parseVwap('227.48;300;1759500123456;48123456;0;false')).toBeUndefined();
+    expect(parseVwap('227.48;300;1759500123456;48123456;;false')).toBeUndefined();
+    expect(parseVwap('227.48;300')).toBeUndefined();
+    expect(parseVwap('')).toBeUndefined();
+    expect(parseVwap(undefined)).toBeUndefined();
+    expect(parseVwap('a;b;c;d;NaN;e')).toBeUndefined();
   });
 
   it('parses IB dividends (tick 59) as seen on the paper account', () => {
     expect(parseDividends('3.64,3.92,20261119,0.98')).toEqual({ past12m: 3.64, next12m: 3.92, nextDate: '20261119', nextAmount: 0.98 });
     expect(parseDividends('0.52,1.00,20261203,0.25')).toEqual({ past12m: 0.52, next12m: 1, nextDate: '20261203', nextAmount: 0.25 });
+    // AAPL in the October 2026 probe: past 12 months, next 12 months, next date, next amount.
+    expect(parseDividends('1.06,1.10,20261109,0.27')).toEqual({ past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 });
+    expect(parseDividends(' 1.06 , 1.10 , 20261109 , 0.27 ')).toEqual({ past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 });
+    expect(parseDividends('-1,1.10,20261109,0.27')).toEqual({ next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 });
     // TSLA: no dividend at all.
     expect(parseDividends(',,,')).toEqual({});
     expect(parseDividends('1.2,1.3,,')).toEqual({ past12m: 1.2, next12m: 1.3 });
@@ -231,6 +295,146 @@ describe('applyTick generic and string', () => {
     expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: 'bad' }, stock)).toBe(false);
     expect(applyTick(q, { kind: 'string', field: TICK.IB_DIVIDENDS, value: ',,,' }, stock)).toBe(true);
     expect(q.dividends).toEqual({});
+  });
+});
+
+describe('add-on ticks', () => {
+  it('maps every size, generic and price tick the add-on profiles bring', () => {
+    const q = q0();
+    const sizes: Array<[number, keyof Quote, number]> = [
+      [TICK.AVG_VOLUME, 'avgVolume', 45_588_678],
+      [TICK.AUCTION_VOLUME, 'auctionVolume', 1_200_000],
+      [TICK.SHORT_TERM_VOLUME_3_MIN, 'volume3m', 40],
+      [TICK.SHORT_TERM_VOLUME_5_MIN, 'volume5m', 80],
+      [TICK.SHORT_TERM_VOLUME_10_MIN, 'volume10m', 320],
+      [TICK.FUTURES_OPEN_INTEREST, 'futuresOpenInterest', 1_921_143],
+      [TICK.AVG_OPT_VOLUME, 'avgOptionVolume', 1_339_031],
+      [TICK.SHORTABLE_SHARES, 'shortableShares', 191_230_895],
+      [TICK.OPTION_CALL_VOLUME, 'callVolume', 462_487],
+      [TICK.OPTION_PUT_VOLUME, 'putVolume', 264_181],
+      [TICK.OPTION_CALL_OPEN_INTEREST, 'callOpenInterest', 2_275_669],
+      [TICK.OPTION_PUT_OPEN_INTEREST, 'putOpenInterest', 1_497_807],
+    ];
+    for (const [field, key, value] of sizes) {
+      expect(applyTick(q, { kind: 'size', field, value }, stock), key).toBe(true);
+      expect(q[key]).toBe(value);
+    }
+    const generics: Array<[number, keyof Quote, number]> = [
+      [TICK.SHORTABLE, 'shortable', 3],
+      [TICK.TRADE_COUNT, 'tradeCount', 148_082],
+      [TICK.TRADE_RATE, 'tradeRate', 0],
+      [TICK.VOLUME_RATE, 'volumeRate', 50],
+      [TICK.RT_HISTORICAL_VOL, 'rtHistVol', 0.231],
+      [TICK.BOND_FACTOR_MULTIPLIER, 'bondFactor', 0.98],
+      [TICK.OPTION_IMPLIED_VOL, 'impliedVol', 0.2636187756],
+    ];
+    for (const [field, key, value] of generics) {
+      applyTick(q, { kind: 'generic', field, value }, stock);
+      expect(q[key], key).toBe(value);
+    }
+    // No values: negative counts, a 0 volatility or factor.
+    for (const field of [TICK.SHORTABLE, TICK.TRADE_COUNT, TICK.RT_HISTORICAL_VOL]) applyTick(q, { kind: 'generic', field, value: -1 }, stock);
+    applyTick(q, { kind: 'generic', field: TICK.BOND_FACTOR_MULTIPLIER, value: 0 }, stock);
+    expect(q).toMatchObject({ shortable: undefined, tradeCount: undefined, rtHistVol: undefined, bondFactor: undefined });
+  });
+
+  it('keeps the side of an auction imbalance', () => {
+    const q = q0();
+    applyTick(q, { kind: 'size', field: TICK.AUCTION_IMBALANCE, value: -25_000 }, stock);
+    applyTick(q, { kind: 'size', field: TICK.REGULATORY_IMBALANCE, value: 1_500 }, stock);
+    expect(q).toMatchObject({ auctionImbalance: -25_000, regulatoryImbalance: 1_500 });
+  });
+
+  it('lists the fields of every generic tick, so a new line can clear them', () => {
+    // Every field a generic tick writes, from a stock line and an option line.
+    const generated: Array<[TickEvent, TickContext]> = [
+      ...[15, 16, 17, 18, 19, 20, 35, 37, 57, 96, 98, 99, 111].map((field): [TickEvent, TickContext] => [{ kind: 'price', field, value: 5 }, { isOption: false }]),
+      ...[21, 27, 28, 29, 30, 34, 36, 61, 63, 64, 65, 86, 87, 89].map((field): [TickEvent, TickContext] => [{ kind: 'size', field, value: 5 }, { isOption: false }]),
+      ...[23, 24, 46, 54, 55, 56, 58, 60].map((field): [TickEvent, TickContext] => [{ kind: 'generic', field, value: 0.5 }, { isOption: false }]),
+      [{ kind: 'string', field: TICK.RT_VOLUME, value: '1;1;1;1;5;false' }, { isOption: false }],
+      [{ kind: 'string', field: TICK.IB_DIVIDENDS, value: '1,1,20261109,0.27' }, { isOption: false }],
+      [{ kind: 'size', field: 27, value: 12_605 }, { isOption: true, right: 'C' }],
+    ];
+    const written = new Set<string>();
+    for (const [tick, ctx] of generated) {
+      const q = q0();
+      applyTick(q, tick, ctx);
+      for (const k of Object.keys(q)) if (k !== 'key' && k !== 'updatedAt' && q[k as keyof Quote] !== undefined) written.add(k);
+    }
+    const listed = new Set(Object.values(GENERIC_FIELDS).flat());
+    expect([...written].filter((k) => !listed.has(k as keyof Quote))).toEqual([]);
+  });
+
+  it('clears every generic value for a new line, the mark only when the new line does not ask for it', () => {
+    const full: Quote = {
+      ...q0(),
+      last: 334,
+      close: 333.63,
+      volume: 13_709,
+      marketDataType: 1,
+      mark: 334,
+      week52High: 345.34,
+      week13Low: 300,
+      avgVolume: 45_588_678,
+      dividends: { past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 },
+      shortable: 3,
+      vwap: 333.9,
+      etfNav: 571,
+      futuresOpenInterest: 1_921_143,
+      lastRthTrade: 333.63,
+      rtHistVol: 0.23,
+      openInterest: 12_605,
+    };
+    const stk = { ...full };
+    expect(clearGenericFields(stk, '318,456')).toBe(true);
+    expect(stk).toMatchObject({ last: 334, close: 333.63, volume: 13_709, marketDataType: 1 });
+    for (const k of ['mark', 'week52High', 'week13Low', 'avgVolume', 'dividends', 'shortable', 'vwap', 'etfNav', 'futuresOpenInterest', 'lastRthTrade', 'rtHistVol', 'openInterest'] as const) {
+      expect(stk[k], k).toBeUndefined();
+      expect(k in stk).toBe(true); // kept as undefined, so the renderer's merge clears it too
+    }
+    const option = { ...full };
+    clearGenericFields(option, '100,101,106,221');
+    expect(option.mark).toBe(334);
+    expect(option.openInterest).toBeUndefined();
+    // Nothing to clear the second time.
+    expect(clearGenericFields(stk, '318')).toBe(false);
+    // A bond line's yields go too (the last yield has no delayed tick to replace it).
+    const bond: Quote = { ...q0(), bid: 98.5, bidYield: 4.21, askYield: 4.19, lastYield: 4.2 };
+    expect(clearGenericFields(bond, '')).toBe(true);
+    expect(bond).toMatchObject({ bid: 98.5, bidYield: undefined, askYield: undefined, lastYield: undefined });
+  });
+
+  it('keeps what IB sends on delayed lines too when a line changes between live and delayed', () => {
+    const q: Quote = {
+      ...q0(),
+      last: 334,
+      marketDataType: 1,
+      mark: 334,
+      week52High: 345.34,
+      week13Low: 300,
+      avgVolume: 45_588_678,
+      impliedVol: 0.26,
+      callOpenInterest: 2_275_669,
+      futuresOpenInterest: 1_921_143,
+      volumeRate: 50,
+      dividends: { past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 },
+      lastRthTrade: 333.63,
+      shortable: 3,
+      vwap: 333.9,
+      lastYield: 4.2,
+    };
+    expect(clearLiveOnlyFields(q)).toBe(true);
+    // Sent once a line (ranges, open interest) or on delayed lines as well (mark, IV, volume rate): kept.
+    expect(q).toMatchObject({ last: 334, mark: 334, week52High: 345.34, week13Low: 300, avgVolume: 45_588_678, impliedVol: 0.26, callOpenInterest: 2_275_669, futuresOpenInterest: 1_921_143, volumeRate: 50 });
+    // Live only, or not known on delayed lines: "—".
+    for (const k of ['dividends', 'lastRthTrade', 'shortable', 'vwap', 'lastYield'] as const) {
+      expect(q[k], k).toBeUndefined();
+      expect(k in q).toBe(true);
+    }
+    expect(clearLiveOnlyFields(q)).toBe(false);
+    // Every field it keeps is one a generic tick brings.
+    const listed = new Set(Object.values(GENERIC_FIELDS).flat());
+    expect([...DELAYED_TOO].filter((k) => !listed.has(k))).toEqual([]);
   });
 });
 

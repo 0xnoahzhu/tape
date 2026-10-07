@@ -32,7 +32,7 @@ import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
-import { positionTarget, type PositionRow } from './calc';
+import { positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
@@ -171,7 +171,7 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
   const widths = usePositionColumns((s) => s.widths);
   const moveToSlot = usePositionColumns((s) => s.moveToSlot);
   const defs = useMemo(() => shown.map((id) => COLUMNS[id]), [shown]);
-  const { quotes, infos, grossBase } = usePositionColumnData(rows, defs);
+  const { quotes, infos, grossBase, earnings } = usePositionColumnData(rows, defs);
   const now = useMinute();
   const [hold, setHold] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -186,9 +186,14 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
 
   const ctxs = useMemo(() => {
     const out = new Map<string, CellCtx>();
-    for (const row of rows) out.set(rowId(row), { row, q: quotes[contractKey(row.position.contract)], info: infos.get(rowId(row)), grossBase, now });
+    for (const row of rows) {
+      const k = row.position.contract;
+      // An option shows its underlying's earnings.
+      const e = earnings.size ? earnings.get(contractKey(underlyingOf(k))) : undefined;
+      out.set(rowId(row), { row, q: quotes[contractKey(k)], info: infos.get(rowId(row)), grossBase, earnings: e, now });
+    }
     return out;
-  }, [rows, quotes, infos, grossBase, now]);
+  }, [rows, quotes, infos, grossBase, earnings, now]);
 
   // The default order is the rows' own (largest absolute value first, calc.ts → sortRows).
   const sortDef = sort ? COLUMNS[sort.id] : null;
@@ -514,6 +519,7 @@ const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.c.q === b.c.q &&
   a.c.info === b.c.info &&
   a.c.grossBase === b.c.grossBase &&
+  a.c.earnings === b.c.earnings &&
   a.c.now === b.c.now &&
   sameRow(a.c.row, b.c.row);
 
@@ -562,7 +568,7 @@ function Cell({ def, c, words, clock }: { def: ColumnDef; c: CellCtx; words: Cel
   if (!applies(def, c.row)) return <div role="cell" />;
   const text = cellText(def, c, words, clock);
   const color = cellColor(def, def.value(c));
-  const title = def.title?.(c);
+  const title = def.title?.(c, words);
   if (def.sub) {
     return (
       <div role="cell" title={title} style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', color, whiteSpace: 'nowrap' }}>
