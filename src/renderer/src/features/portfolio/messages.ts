@@ -247,6 +247,11 @@ export const usePortfolioMessages = createMessages({
     dragToReorder: 'Drag to reorder (Alt+↑ / Alt+↓)',
     resetDefault: 'Reset to default',
     done: 'Done',
+    // Table headers (tooltips)
+    headerSort: 'Click to sort',
+    headerSortMove: 'Click to sort · drag to reorder',
+    resizeColumn: 'Drag to resize · double-click to reset',
+    resizeColumnOf: (name: string) => `Resize ${name}`,
     kinds: {
       STK: 'Stock',
       OPT: 'Option',
@@ -515,6 +520,10 @@ export const usePortfolioMessages = createMessages({
     dragToReorder: '拖动排序（Alt+↑ / Alt+↓）',
     resetDefault: '恢复默认',
     done: '完成',
+    headerSort: '点击排序',
+    headerSortMove: '点击排序 · 拖动调整顺序',
+    resizeColumn: '拖动调整列宽 · 双击恢复默认',
+    resizeColumnOf: (name: string) => `调整“${name}”列宽`,
     kinds: {
       STK: '股票',
       OPT: '期权',

@@ -90,6 +90,78 @@ describe('remembered columns and sort', () => {
     expect(store.getState().columns).toContain('ask');
   });
 
+  it('remembers column widths across a restart, without writing out the default columns', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    let store = await freshStore();
+    expect(store.getState().widths).toEqual({});
+    store.getState().setWidth('value', 151.4);
+    store.getState().setWidth('quantity', 1);
+    expect(JSON.parse(storage.data.get(KEY)!)).toEqual({ sort: null, widths: { value: 151, quantity: 72 } });
+
+    // A new app start reads them back (localStorage lives in the Electron profile).
+    store = await freshStore();
+    expect(store.getState()).toMatchObject({ columns: null, sort: null, widths: { value: 151, quantity: 72 } });
+
+    // A double-click on the edge: the default width again.
+    store.getState().resetWidth('value');
+    store.getState().resetWidth('quantity');
+    expect(store.getState().widths).toEqual({});
+    expect(storage.data.has(KEY)).toBe(false);
+  });
+
+  it('stores the widths the columns left of a sized one were drawn at, and forgets them on reset', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    let store = await freshStore();
+    // Symbol and Qty took a share of the spare width; Avg is at its minimum.
+    store.getState().setWidth('price', 140.4, { symbol: 340.2, quantity: 110, avgPrice: 84 });
+    expect(JSON.parse(storage.data.get(KEY)!).widths).toEqual({ symbol: 340, quantity: 110, price: 140 });
+    store = await freshStore();
+    expect(store.getState().widths).toEqual({ symbol: 340, quantity: 110, price: 140 });
+    store.getState().reset();
+    expect(store.getState().widths).toEqual({});
+    expect(storage.data.has(KEY)).toBe(false);
+  });
+
+  it('keeps a hidden column\'s width for when it is shown again; reset forgets widths too', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const store = await freshStore();
+    store.getState().toggle('bid');
+    store.getState().setWidth('bid', 130);
+    store.getState().toggle('bid');
+    expect(store.getState().columns).not.toContain('bid');
+    expect(JSON.parse(storage.data.get(KEY)!).widths).toEqual({ bid: 130 });
+    store.getState().toggle('bid');
+    expect(store.getState().widths).toEqual({ bid: 130 });
+
+    store.getState().reset();
+    expect(storage.data.has(KEY)).toBe(false);
+    expect(store.getState()).toMatchObject({ columns: null, sort: null, widths: {} });
+  });
+
+  it('reads what a version without widths stored', async () => {
+    vi.stubGlobal('localStorage', memoryStorage({ [KEY]: JSON.stringify({ columns: ['symbol', 'value', 'bid'], sort: { id: 'bid', dir: 'desc' } }) }));
+    expect((await freshStore()).getState()).toMatchObject({ columns: ['symbol', 'value', 'bid'], sort: { id: 'bid', dir: 'desc' }, widths: {} });
+    vi.stubGlobal('localStorage', memoryStorage({ [KEY]: JSON.stringify({ widths: { nope: 90, value: 'wide', bid: 120 } }) }));
+    expect((await freshStore()).getState()).toMatchObject({ columns: null, sort: null, widths: { bid: 120 } });
+  });
+
+  it('moves a dropped header to its slot, the order the editor shows', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const store = await freshStore();
+    store.getState().moveToSlot('dayPnl', 1);
+    expect(store.getState().columns).toEqual(['symbol', 'dayPnl', ...DEFAULT_COLUMNS.slice(1, -1)]);
+    expect(JSON.parse(storage.data.get(KEY)!).columns).toEqual(store.getState().columns);
+    // Dropped where it is: nothing changes.
+    const before = store.getState().columns;
+    store.getState().moveToSlot('dayPnl', 2);
+    store.getState().moveToSlot('symbol', 4);
+    expect(store.getState().columns).toBe(before);
+  });
+
   it('does not store the editor, and closeTransient closes it', async () => {
     const storage = memoryStorage();
     vi.stubGlobal('localStorage', storage);

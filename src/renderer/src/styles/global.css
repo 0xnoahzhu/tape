@@ -130,6 +130,28 @@ a:hover {
   background: transparent;
 }
 
+/* The Positions table's card while its columns are wider than it (PositionsTable.tsx sets
+   data-overflow-x): its scrollbars are styled, which on macOS turns the overlay ones (hidden until
+   a scroll) into classic ones, so the horizontal one stays in view at the card's bottom edge, in
+   both themes. A table that fits keeps the platform's look. */
+.pos-scroll[data-overflow-x]::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.pos-scroll[data-overflow-x]::-webkit-scrollbar-thumb {
+  background: var(--dm);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.pos-scroll[data-overflow-x]::-webkit-scrollbar-thumb:hover {
+  background: var(--mu);
+  background-clip: content-box;
+}
+.pos-scroll[data-overflow-x]::-webkit-scrollbar-track,
+.pos-scroll[data-overflow-x]::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Window dragging: the top bar is the title bar. */
 .drag {
   -webkit-app-region: drag;
@@ -173,4 +195,27 @@ input::placeholder {
    the row's hover background too. */
 .pos-row:hover > .pos-sticky {
   background: var(--p2) !important;
+}
+
+/* The strip on a Positions header's right edge that sizes its column: a hairline in the gap on
+   hover, in the accent while it is dragged. */
+.pos-resize::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: calc(50% - 0.5px);
+  width: 1px;
+  transition: background 0.12s;
+}
+.pos-resize:hover::after {
+  background: var(--mu);
+}
+.pos-resize[data-active]::after {
+  background: var(--ac);
+}
+/* While a column is sized the pointer keeps the resize cursor over whatever it crosses. */
+.pos-resizing,
+.pos-resizing * {
+  cursor: col-resize !important;
 }

@@ -897,8 +897,9 @@ The Positions tab shows the columns the user picks in the column editor (`Column
 % NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 85 columns in five
 groups: Position, IB P&L, Contract, Quote, Options), with each column's kind, the instrument types it
 applies to, its minimum width, format, sort type and accessor. `cells.ts` formats the cells,
-`columnsState.ts` holds the pure edits, the reading of stored preferences, the sort cycle and
-comparator and the held row order, and `columnStore.ts` persists them. `usePositionColumnData.ts`
+`columnsState.ts` holds the pure edits (the order, a dragged header's slot, the widths and the grid
+tracks), the reading of stored preferences, the sort cycle and comparator and the held row order, and
+`columnStore.ts` persists them. `usePositionColumnData.ts`
 reads what the shown columns need beyond the rows (the positions' quotes, their contract details, the
 gross value), each only while a shown column needs it.
 
@@ -944,16 +945,45 @@ and a sideways-scrolling wrapper would keep the table header from sticking): the
 its top and the Symbol cell at its left (reaching over the row's left padding, with a rule on its right
 while the table is scrolled; `global.css`'s `.pos-row:hover > .pos-sticky` gives it the row's hover
 background). Symbol's track is `minmax(width, 2fr)`, the others' `minmax(width, 1fr)`; narrower than
-the sum of the minimums, the table scrolls sideways instead of cutting values. Rows are keyed by conId
+the sum of the minimums, the table scrolls sideways instead of cutting values. While it does
+(`data-overflow-x` on the card, compared with the card's outer width), `global.css` styles the card's
+scrollbars (`.pos-scroll`): on macOS that turns the overlay scrollbars, hidden until a scroll, into
+classic ones, so the horizontal one stays in view at the card's bottom edge (the card, not the page,
+scrolls both ways). A table that fits keeps the platform's look. Rows are keyed by conId
 (contract keys collide for SPX / SPXW) and memoized: a row redraws only when one of its values, its
-quote or its details change.
+quote or its details change. The tracks reach the header and the rows through the table's
+`--pos-cols`, so sizing a column redraws no row.
 
-**Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort }` per device (read and
-written in try/catch; `sanitizePrefs`: renamed ids through `COLUMN_ALIASES`, unknown and repeated ids
-dropped, Symbol first, a sort only on a shown column). The default columns are not written out (only a
-sort), so they follow later defaults until the user changes them; from then on, columns added to the
-catalog later are not added to their list (as with the dashboard's layout). Reset removes the key. The
-editor's open state is not stored; leaving the page and locking close it (`state/lockActions.ts`).
+**Moving and sizing columns.** A header dragged sideways (HTML drag and drop on the header's button;
+Symbol's is not draggable) moves its column: the slot follows the pointer's x anywhere over the card
+(`dropSlot`: before the first header whose midpoint is right of it, never before Symbol; over the
+sticky Symbol the pointer counts as at its right edge, so a header never lands among the columns
+scrolled under it), an accent line marks it (none at the column's own edges, `slotTarget`, never over
+Symbol), and the drop moves the column in the
+same list the editor shows (`moveToSlot`). The editor's drag, ↑ / ↓ and Alt+↑ / Alt+↓ stay the
+keyboard way. A 10px strip in the gap right of each header (`col-resize`, a hairline on hover) sizes
+its column: from the width it is drawn at, live while the pointer is down, stored on release, between
+its catalog width and `MAX_COLUMN_WIDTH` (640px, `clampWidth`); a press that does not move is no
+resize, and a double-click gives the column its default width back. The strip lies outside the
+header's button, so it never sorts or drags the header, and its press is not prevented, so it closes
+the column editor like any press outside it. A sized column's track is its width in px; the others
+keep sharing the spare width. So that the edge follows the pointer, the columns left of it stay at
+the widths they were drawn at while it is sized (`liveWidths`: what it takes or gives back goes to the
+columns right of it), and on release those that shared the spare width keep them (`sizeColumn`;
+columns at their minimum, already sized or wider than the maximum keep theirs as they were). While the
+pointer is down the table stays at least as wide as at the press, so a card scrolled to its right end
+does not scroll back under the pointer; it settles on release. A column drawn wider than the maximum
+(its share of a very wide card) is sized only once the pointer brings it within the maximum.
+
+**Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort, widths }` per device, in the
+Electron profile, so it outlasts a restart (read and written in try/catch; `sanitizePrefs`: renamed ids
+through `COLUMN_ALIASES`, unknown and repeated ids dropped, Symbol first, a sort only on a shown
+column; `sanitizeWidths`: unknown ids and non-numbers dropped, each width clamped). What 0.8.x stored,
+without `widths`, reads as before. The default columns are not written out (only a sort and widths), so
+they follow later defaults until the user changes them; from then on, columns added to the catalog
+later are not added to their list (as with the dashboard's layout). A hidden column keeps its width, so
+showing it again brings the width back. Reset to default removes the key (columns, sort and widths).
+The editor's open state is not stored; leaving the page and locking close it (`state/lockActions.ts`).
 
 ### Portfolio dashboard (`features/portfolio/dashboard`)
 
