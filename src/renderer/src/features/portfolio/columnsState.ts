@@ -1,9 +1,10 @@
-// The Positions table's column choice and sort (pure): which columns show in which order, the
-// stored preferences and how they are read back, the sort cycle, the comparator and the row
-// order held while the pointer is over the rows. Persisted by columnStore.ts.
+// The Positions table's column choice and sort (pure): which columns show in which order and how
+// wide, the stored preferences and how they are read back, where a header dragged across the table
+// lands, the sort cycle, the comparator and the row order held while the pointer is over the rows.
+// Persisted by columnStore.ts.
 
 import type { Lang } from '@shared/types';
-import { DEFAULT_COLUMNS, PINNED, isColumnId, type CellValue, type ColumnId } from './columns';
+import { COLUMNS, DEFAULT_COLUMNS, PINNED, isColumnId, type CellValue, type ColumnDef, type ColumnId } from './columns';
 
 export type SortDir = 'asc' | 'desc';
 
@@ -12,10 +13,20 @@ export interface SortState {
   dir: SortDir;
 }
 
-/** What is stored: the shown columns (null = the default set) and the sort (null = by size). */
+/**
+ * Widths in px the user gave columns by dragging a header's right edge. A column not in it has no
+ * width of its own: it shares the spare width with the others (the default look).
+ */
+export type ColumnWidths = Readonly<Partial<Record<ColumnId, number>>>;
+
+/**
+ * What is stored: the shown columns (null = the default set), the sort (null = by size) and the
+ * widths the user set (of hidden columns too, so showing one again brings its width back).
+ */
 export interface ColumnPrefs {
   columns: ColumnId[] | null;
   sort: SortState | null;
+  widths: ColumnWidths;
 }
 
 /**
@@ -39,9 +50,88 @@ export function sanitizeColumns(raw: unknown, aliases: Readonly<Record<string, C
   return out;
 }
 
+/** The widest a column can be dragged (px); the narrowest is its catalog width. */
+export const MAX_COLUMN_WIDTH = 640;
+
+/** A column's width in whole px, between its catalog width (its minimum) and MAX_COLUMN_WIDTH. */
+export function clampWidth(id: ColumnId, w: number): number {
+  return Math.max(COLUMNS[id].width, Math.min(MAX_COLUMN_WIDTH, Math.round(w)));
+}
+
 /**
- * Stored preferences ({ columns, sort }); null when there are none to read. A sort is kept only on
- * a shown column with a valid direction.
+ * Stored widths: renamed ids mapped, unknown ids and anything but a finite number dropped, each
+ * clamped (a catalog width raised since keeps its new minimum). Anything that is not an object is
+ * none. Hidden columns keep theirs.
+ */
+export function sanitizeWidths(raw: unknown, aliases: Readonly<Record<string, ColumnId>> = COLUMN_ALIASES): ColumnWidths {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Partial<Record<ColumnId, number>> = {};
+  for (const [key, w] of Object.entries(raw)) {
+    const id = aliases[key] ?? key;
+    if (isColumnId(id) && typeof w === 'number' && Number.isFinite(w)) out[id] = clampWidth(id, w);
+  }
+  return out;
+}
+
+/** Sets a column's width (clamped); unchanged widths come back as they are. */
+export function setColumnWidth(widths: ColumnWidths, id: ColumnId, w: number): ColumnWidths {
+  const next = clampWidth(id, w);
+  return widths[id] === next ? widths : { ...widths, [id]: next };
+}
+
+/**
+ * The widths drawn while a column is sized by its right edge: the column at `w`, and the columns
+ * left of it at the widths they were drawn at when the edge was pressed (`left`), so the spare width
+ * the column takes or gives back goes to the columns right of it and its edge stays under the pointer.
+ */
+export function liveWidths(widths: ColumnWidths, id: ColumnId, w: number, left: ColumnWidths): ColumnWidths {
+  return { ...widths, ...left, [id]: w };
+}
+
+/**
+ * A column sized by dragging its right edge to `w` (clamped), with `left` the widths the columns left
+ * of it were drawn at (liveWidths). Those that took a share of the spare width (drawn wider than their
+ * catalog width, at most MAX_COLUMN_WIDTH, without a width of their own) keep that width too, so the
+ * column stays where it was let go instead of the columns left of it sharing out what it took or gave
+ * back. Columns at their catalog width (a table that scrolls sideways) keep sharing. Unchanged widths
+ * come back as they are.
+ */
+export function sizeColumn(widths: ColumnWidths, id: ColumnId, w: number, left: ColumnWidths = {}): ColumnWidths {
+  let next = widths;
+  for (const [key, lw] of Object.entries(left)) {
+    if (key === id || !isColumnId(key) || next[key] !== undefined || typeof lw !== 'number') continue;
+    const drawn = Math.round(lw);
+    if (drawn > COLUMNS[key].width && drawn <= MAX_COLUMN_WIDTH) next = setColumnWidth(next, key, drawn);
+  }
+  return setColumnWidth(next, id, w);
+}
+
+/** Gives a column back its default width (it shares the spare width again). */
+export function resetColumnWidth(widths: ColumnWidths, id: ColumnId): ColumnWidths {
+  if (widths[id] === undefined) return widths;
+  const next: Partial<Record<ColumnId, number>> = { ...widths };
+  delete next[id];
+  return next;
+}
+
+/**
+ * The table's grid tracks. A column the user sized is that wide; the others share the spare width
+ * (Symbol twice as much as the others) and none gets narrower than its catalog width. Without
+ * widths this is the table as it always was.
+ */
+export function gridTemplate(defs: readonly ColumnDef[], widths: ColumnWidths): string {
+  return defs.map((d, i) => (widths[d.id] !== undefined ? `${widths[d.id]}px` : `minmax(${d.width}px,${i ? 1 : 2}fr)`)).join(' ');
+}
+
+/** The tracks' smallest total width (px, without gaps): narrower than that, the table scrolls sideways. */
+export function tracksWidth(defs: readonly ColumnDef[], widths: ColumnWidths): number {
+  return defs.reduce((sum, d) => sum + (widths[d.id] ?? d.width), 0);
+}
+
+/**
+ * Stored preferences ({ columns, sort, widths }); null when there are none to read. A sort is kept
+ * only on a shown column with a valid direction. What an older version stored (no widths) reads as
+ * it did.
  */
 export function sanitizePrefs(raw: unknown): ColumnPrefs | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -54,7 +144,7 @@ export function sanitizePrefs(raw: unknown): ColumnPrefs | null {
     const known = typeof id === 'string' ? (COLUMN_ALIASES[id] ?? id) : id;
     if (isColumnId(known) && shown.includes(known) && (dir === 'asc' || dir === 'desc')) sort = { id: known, dir };
   }
-  return { columns, sort };
+  return { columns, sort, widths: sanitizeWidths(r.widths) };
 }
 
 /** Adds a column at the end, or removes a shown one. Symbol stays. */
@@ -84,6 +174,40 @@ export function moveColumn(cols: readonly ColumnId[], id: ColumnId, to: number):
 export function moveColumnBy(cols: readonly ColumnId[], id: ColumnId, delta: -1 | 1): readonly ColumnId[] {
   const from = cols.indexOf(id);
   return from < 0 ? cols : moveColumn(cols, id, from + delta);
+}
+
+/**
+ * The slot a header dragged across the table lands in, for the pointer at `x` over columns whose
+ * header midpoints are `mids` (in column order): before the first column whose midpoint is right of
+ * it, or after the last (slot = the number of columns). Symbol's midpoint is left out (it is sticky,
+ * so it can lie over columns scrolled under it), and nothing lands before Symbol. `floor` (Symbol's
+ * right edge) is the furthest left the pointer counts: over Symbol, the columns scrolled under it lie
+ * left of the pointer, so a header never lands among columns out of view.
+ */
+export function dropSlot(mids: readonly number[], x: number, floor = -Infinity): number {
+  const at = Math.max(x, floor);
+  let slot = 1;
+  for (let i = 1; i < mids.length; i++) if (mids[i] < at) slot++;
+  return Math.min(slot, Math.max(1, mids.length));
+}
+
+/**
+ * The index for moveColumn that drops a shown column in `slot` (as dropSlot gives it, counted in
+ * the list with the column still in it); null when the column would stay where it is (a slot at
+ * either of its own edges) or cannot move.
+ */
+export function slotTarget(cols: readonly ColumnId[], id: ColumnId, slot: number): number | null {
+  const from = cols.indexOf(id);
+  if (id === PINNED || from < 0) return null;
+  const at = Math.max(1, Math.min(cols.length, Math.round(slot)));
+  if (at === from || at === from + 1) return null;
+  return at > from ? at - 1 : at;
+}
+
+/** Moves a shown column to a slot of the list (a header dropped between two others). */
+export function moveColumnToSlot(cols: readonly ColumnId[], id: ColumnId, slot: number): readonly ColumnId[] {
+  const to = slotTarget(cols, id, slot);
+  return to == null ? cols : moveColumn(cols, id, to);
 }
 
 /** A header click: ascending, then descending, then no sort (the default order). */

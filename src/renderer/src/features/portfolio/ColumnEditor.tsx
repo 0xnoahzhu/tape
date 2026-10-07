@@ -1,8 +1,9 @@
 // The Positions tab's column editor: a "Columns" button in the tab row opens a popover with a
 // search box, the shown columns in order (drag, ↑ / ↓ or Alt+↑ / Alt+↓ to reorder, × to hide;
 // Symbol stays first) and every column by group with a check to show or hide it. Calculated
-// columns carry a "Calc." chip. It is not modal: the table updates behind it. A press outside,
-// Escape, leaving the page and locking Tape close it (state/lockActions.ts).
+// columns carry a "Calc." chip. It is not modal: the table updates behind it, and a header dragged
+// in the table moves the same list. "Reset to default" also gives every column its default width. A
+// press outside, Escape, leaving the page and locking Tape close it (state/lockActions.ts).
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react';
 import { useStore } from '../../state/store';
