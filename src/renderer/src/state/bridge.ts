@@ -172,7 +172,7 @@ function apply(e: TapeEvent): void {
       set({ priceAlerts: e.alerts });
       break;
     case 'nav':
-      set({ nav: e.points });
+      set({ nav: { account: e.account, points: e.points } });
       break;
     case 'lock':
       applyLockState(e.state);

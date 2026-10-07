@@ -71,6 +71,13 @@ const MIGRATIONS: readonly string[] = [
   ALTER TABLE series DROP COLUMN intraday;
   DELETE FROM kv WHERE ns = 'coverage' AND key IN (SELECT key FROM series WHERE retention = 'hours');
   `,
+  // v4: NAV history per account. Rows written before have no account (NULL): they are not shown
+  // until an account claims them at runtime (sqlite.ts → navAppend: an account's first sample
+  // claims the unattributed rows within a factor of 2 of it); unclaimed rows are kept.
+  `
+  ALTER TABLE nav ADD COLUMN account TEXT;
+  CREATE INDEX nav_account_t ON nav(account, t);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

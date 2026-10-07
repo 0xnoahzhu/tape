@@ -31,6 +31,7 @@ import {
   rangeStart,
   sectorOf,
   shortHistory,
+  shownNavSeries,
   sliceRange,
   sortRows,
   sumRows,
@@ -75,6 +76,33 @@ describe('navSeries', () => {
     expect(navSeries([pt(9, 10)], { netLiq: 12, t: 5 })).toEqual([pt(9, 10)]);
     expect(navSeries([], { netLiq: undefined, t: 5 })).toEqual([]);
     expect(navSeries([], { netLiq: 7, t: 5 })).toEqual([pt(5, 7)]);
+  });
+});
+
+describe('shownNavSeries', () => {
+  const nav = { account: 'DU1', points: [pt(1, 10), pt(2, 11)] };
+  const live = (account: string, netLiquidation = 12) => ({ account, netLiquidation, updatedAt: 5 });
+
+  it("uses the history and the live value of the connection's account only", () => {
+    expect(shownNavSeries(nav, 'DU1', live('DU1'))).toEqual([pt(1, 10), pt(2, 11), pt(5, 12)]);
+    // Another account's history (switched, its history not sent yet): only the live value.
+    expect(shownNavSeries(nav, 'U2', live('U2', 31_000))).toEqual([pt(5, 31_000)]);
+    // A summary kept from the previous account adds nothing.
+    expect(shownNavSeries(nav, 'U2', live('DU1'))).toEqual([]);
+    expect(shownNavSeries(nav, 'DU1', live('U2'))).toEqual([pt(1, 10), pt(2, 11)]);
+    expect(shownNavSeries(nav, 'DU1', null)).toEqual([pt(1, 10), pt(2, 11)]);
+  });
+
+  it('before the first connect: the account main sent the history of', () => {
+    expect(shownNavSeries(nav, undefined, null)).toEqual([pt(1, 10), pt(2, 11)]);
+    expect(shownNavSeries(nav, '', live('DU1'))).toEqual([pt(1, 10), pt(2, 11), pt(5, 12)]);
+    expect(shownNavSeries(nav, undefined, live('U2'))).toEqual([pt(1, 10), pt(2, 11)]);
+  });
+
+  it('no account known at all: nothing (a summary without an account mixes every managed account)', () => {
+    const none = { account: '', points: [] };
+    expect(shownNavSeries(none, undefined, live(''))).toEqual([]);
+    expect(shownNavSeries(none, '', live(''))).toEqual([]);
   });
 });
 

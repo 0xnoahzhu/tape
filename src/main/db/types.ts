@@ -22,7 +22,8 @@
 // - kv entries not rewritten for 180 days are deleted (contract details, option chains,
 //   coverage documents, head timestamps);
 // - executions are never deleted (the trade journal is the user's record); the NAV history is
-//   compacted to one point per day after 10 days by ib/navHistory.ts.
+//   kept per account, each account's compacted to one point per day after 10 days by
+//   ib/navHistory.ts; unattributed rows (written before schema v4) are kept until claimed.
 // Then free pages are returned to the file system (incremental vacuum), the WAL is truncated and
 // the planner statistics refreshed. Evicted series are reported through onEvicted, so the
 // history service drops what it keeps in memory about them and refetches them cleanly.
@@ -82,12 +83,27 @@ export interface ExecutionJournal {
   since(since: number): Promise<Execution[]>;
 }
 
+/**
+ * Net liquidation samples, one history per account (sqlite.ts → navAppend has the rules). Rows
+ * written before schema v4 have no account: they are shown by no read until an account claims
+ * them.
+ */
 export interface NavLog {
-  append(points: NavPoint[]): Promise<void>;
-  /** All points, ascending. */
+  /**
+   * Adds `account`'s points; null: unattributed (the nav.json import only). A time held by
+   * another account's row is left alone; the same account's replaces the value. An account's
+   * first sample (it has no rows yet) first claims the unattributed rows within a factor of 2 of
+   * the first point (NAV_CLAIM_FACTOR), in the same transaction.
+   */
+  append(account: string | null, points: NavPoint[]): Promise<void>;
+  /** One account's points, ascending. */
+  get(account: string): Promise<NavPoint[]>;
+  /** Every row, unattributed ones included, ascending: for the nav.json import check and tests, never shown. */
   all(): Promise<NavPoint[]>;
-  /** Replaces the whole history (used by compaction). */
-  replace(points: NavPoint[]): Promise<void>;
+  /** The account of the newest attributed sample (undefined: none yet). */
+  lastAccount(): Promise<string | undefined>;
+  /** Replaces one account's history (compaction); other accounts' and unattributed rows are kept. */
+  replace(account: string, points: NavPoint[]): Promise<void>;
 }
 
 export interface Database {

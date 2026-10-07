@@ -1,5 +1,6 @@
 // Retention of tape.db: schema v2 (series.last_access, bar_count), access batching, eviction of
-// unused series, the size cap, chunked maintenance and clearing the market data cache.
+// unused series, the size cap, chunked maintenance and clearing the market data cache; the later
+// migrations (v3 retention classes, v4 NAV per account).
 
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ import { SECDEF_NS } from '../market/options';
 import { unpackBars, unpackNav } from './client';
 import { configure, migrate, SCHEMA_VERSION, schemaVersion } from './schema';
 import { MEMORY_MARKET_DATA_NS } from './memory';
+import { LIVE, LIVE_ROWS, PAPER, PAPER_ROWS, USER_ROWS } from './navCases';
 import type { BarRetention } from './types';
 import {
   ACCESS_WRITE_MS,
@@ -120,6 +122,7 @@ describe('tape.db retention', () => {
     expect(store.kvGet('coverage', AAPL_D)?.json).toBe('{"ranges":[[86400,172801]]}');
     expect(store.stats()).toMatchObject({ series: 3, bars: 3, executions: 1 });
     expect(unpackNav(store.navAll())).toEqual([{ t: 1000, netLiq: 5 }]);
+    expect(store.navGet('DU1').length).toBe(0); // no account (v4) until one claims it
     expect(store.db.prepare('SELECT key, retention FROM series ORDER BY id').all().map((r) => ({ ...r }))).toEqual([
       { key: AAPL_D, retention: 'daily' },
       { key: 'STK:AAPL|1 min|TRADES|1', retention: 'minutes' },
@@ -178,6 +181,35 @@ describe('tape.db retention', () => {
     expect(store.stats()).toMatchObject({ series: keys.length, bars: keys.length });
     // The old column is gone.
     expect(store.db.prepare("SELECT count(*) AS n FROM pragma_table_info('series') WHERE name = 'intraday'").get()).toEqual({ n: 0 });
+  });
+
+  it("migrates v3 to v4: the NAV rows keep their values without an account (the paper and live accounts' samples, mixed), shown by no account until claimed", () => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), 'tape-ret-'));
+    file = join(dir, 'tape.db');
+    const v3 = new DatabaseSync(file);
+    configure(v3);
+    migrate(v3, 3);
+    const insert = v3.prepare('INSERT INTO nav (t, net_liq) VALUES (?, ?)');
+    for (const p of USER_ROWS) insert.run(p.t, p.netLiq);
+    v3.close();
+
+    store = open();
+    expect(store.recovered).toBeUndefined();
+    expect(schemaVersion(store.db)).toBe(4);
+    expect((store.db.prepare('PRAGMA index_list(nav)').all() as Array<{ name: string }>).map((i) => i.name)).toContain('nav_account_t');
+    expect(store.db.prepare('SELECT count(*) AS n FROM nav WHERE account IS NULL').get()).toEqual({ n: USER_ROWS.length });
+    expect(unpackNav(store.navAll())).toEqual(USER_ROWS);
+    expect(store.navGet(PAPER).length).toBe(0);
+    expect(store.navLastAccount()).toBeNull();
+    // The paper account's first sample takes its rows; the live account's three wait for it.
+    const sample = { t: Date.UTC(2026, 9, 7, 14), netLiq: 1_051_800 };
+    store.navAppend(PAPER, [sample]);
+    expect(unpackNav(store.navGet(PAPER))).toEqual([...PAPER_ROWS, sample]);
+    expect(unpackNav(store.navGet(LIVE))).toEqual([]);
+    store.navAppend(LIVE, [{ t: sample.t + 60_000, netLiq: 31_040 }]);
+    expect(unpackNav(store.navGet(LIVE))).toEqual([...LIVE_ROWS, { t: sample.t + 60_000, netLiq: 31_040 }]);
   });
 
   it('keeps the bar count exact through overlapping puts, retention and eviction', () => {
@@ -372,7 +404,7 @@ describe('tape.db retention', () => {
     for (const ns of MARKET_DATA_NS) store.kvSet(ns, 'k', '{}', T0);
     store.kvSet('other', 'k', '{}', T0);
     store.executionsPut([{ execId: 'e.1', time: 1, json: '{"execId":"e.1"}' }]);
-    store.navAppend([{ t: 1, netLiq: 1 }]);
+    store.navAppend('DU1', [{ t: 1, netLiq: 1 }]);
     store.checkpoint();
     const before = store.stats();
     expect(before).toMatchObject({ series: 20, bars: 40_000, executions: 1, oldestAccess: T0 });

@@ -21,6 +21,7 @@ import { createCorporateEventsService } from './market/corporateEvents';
 import { createMarketCheckService } from './market/marketCheck';
 import { createAlertService } from './market/alerts';
 import { createAccountService } from './ib/account';
+import { readNavHistory } from './ib/navHistory';
 import { createOrderService } from './ib/orders';
 import { createAppearance, titleBarOverlay } from './appearance';
 import { installMenu } from './menu';
@@ -161,7 +162,7 @@ function resetApp(confirmation: string): Promise<void> {
 
 async function snapshot(): Promise<AppSnapshot> {
   // The only async part comes first, so every other field is read in the same tick as the reply.
-  const nav = await ctx.db.nav.all().catch(() => []);
+  const nav = await readNavHistory(ctx.db, ctx.ib.getState().account).catch(() => ({ account: '', points: [] }));
   return {
     platform: process.platform,
     appVersion: app.getVersion(),

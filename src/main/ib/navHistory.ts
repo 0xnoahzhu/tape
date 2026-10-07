@@ -1,10 +1,16 @@
-// Net liquidation history for the equity curve: intraday samples for the last few days and
-// one point per trading day (the last sample of the day, New York date) for everything older.
-// Persisted in the database's NAV log (tape.db); nav.json is only read once, to import it.
+// Net liquidation history for the equity curve, one per account: intraday samples for the last
+// few days and one point per trading day (the last sample of the day, New York date) for
+// everything older. IB keeps no NAV history for the socket API, so Tape records the active
+// account's NetLiquidation itself while connected (account.ts). Persisted in the database's NAV
+// log (tape.db); nav.json is only read once, to import it.
+//
+// Rows written before the history was kept per account (schema v4) and the nav.json import have
+// no account: an account's first sample claims those within a factor of 2 of its value
+// (db/sqlite.ts → navAppend); the others are kept and never shown, and never compacted.
 
-import type { NavPoint } from '@shared/types';
+import type { NavHistory, NavPoint } from '@shared/types';
 import { nyClock } from '@shared/session';
-import type { Database } from '../db/types';
+import type { Database, NavLog } from '../db/types';
 
 export const NAV_SAMPLE_MS = 5 * 60_000;
 export const INTRADAY_DAYS = 10;
@@ -58,63 +64,146 @@ export interface LegacyNav {
   clear(): void;
 }
 
+/**
+ * The account whose history is shown: `account` (the connection's), else, before the first
+ * connect, the one that recorded the newest sample ('' when none has).
+ */
+async function shownAccount(nav: Pick<NavLog, 'lastAccount'>, account: string | undefined): Promise<string> {
+  return account || (await nav.lastAccount()) || '';
+}
+
+/** `account`'s history, else (before the first connect) that of the account that recorded the newest sample. */
+export async function readNavHistory(db: Pick<Database, 'nav'>, account?: string): Promise<NavHistory> {
+  const shown = await shownAccount(db.nav, account);
+  return { account: shown, points: shown ? await db.nav.get(shown) : [] };
+}
+
 export interface NavRecorder {
-  /** Loads the history once (later calls share the result). */
-  load(): Promise<NavPoint[]>;
   /**
-   * Adds and persists a sample; resolves with the whole history to send to the renderer once
-   * the write is done, i.e. after the database answered every read sent before it (a snapshot
-   * read in flight never misses a point whose 'nav' event already went out).
+   * The history to show (as readNavHistory): `account`'s, else that of the account of the newest
+   * sample. Each account's history is loaded and compacted once, after the nav.json import.
    */
-  add(p: NavPoint): Promise<NavPoint[]>;
+  history(account?: string): Promise<NavHistory>;
+  /**
+   * Adds and persists a sample of `account` (samples are added one at a time); resolves with the
+   * account's whole history to send to the renderer once the write is done, i.e. after the
+   * database answered every read sent before it (a snapshot read in flight never misses a point
+   * whose 'nav' event already went out).
+   */
+  add(account: string, p: NavPoint): Promise<NavPoint[]>;
 }
 
 /**
- * NAV history kept in memory and persisted in the database's NAV log. The first load imports
- * the legacy JSON history (retired once the database holds it) and compacts old days. Samples
- * are appended; when compaction drops points (the first sample after New York midnight, once a
- * day) the log is replaced, so the database always matches what the renderer shows.
+ * NAV histories kept in memory per account and persisted in the database's NAV log. The legacy
+ * JSON history is imported first (retired once the database holds it); each account's history is
+ * compacted when it is loaded. Samples are appended; when compaction drops points (the first
+ * sample after New York midnight, once a day) the account's rows are replaced, so the database
+ * always matches what the renderer shows. An account's first sample reads its rows back: the
+ * database added the unattributed rows it claimed. Only a list read from the database is kept, so
+ * a replace never drops rows that were not read.
  */
 export function createNavRecorder(db: Pick<Database, 'nav' | 'kind'> | undefined, legacy: LegacyNav, now: () => number = Date.now): NavRecorder {
-  let points: NavPoint[] = [];
-  let loading: Promise<NavPoint[]> | null = null;
+  /** Each loaded account's history as stored. */
+  const lists = new Map<string, NavPoint[]>();
+  const loads = new Map<string, Promise<void>>();
+  let imported: Promise<void> | null = null;
+  /** The last sample's work (samples are added one at a time). */
+  let adding: Promise<unknown> = Promise.resolve();
+  /** The account of the newest sample recorded in this run (what history() falls back to without a database). */
+  let lastAccount = '';
 
-  async function importAndCompact(): Promise<NavPoint[]> {
-    if (!db) return [];
-    const old = legacy.get().filter(isValid);
-    if (old.length) await db.nav.append(old);
-    const all = await db.nav.all();
-    if (old.length && db.kind === 'sqlite') {
-      const stored = new Set(all.map((p) => p.t));
+  /**
+   * Imports nav.json once. No account is known yet: its points land unattributed, for the first
+   * account whose first sample is within a factor of 2 of them. The file is retired once every
+   * point is in the database, claimed or not.
+   */
+  function importLegacy(): Promise<void> {
+    imported ??= (async () => {
+      if (!db) return;
+      const old = legacy.get().filter(isValid);
+      if (!old.length) return;
+      await db.nav.append(null, old);
+      if (db.kind !== 'sqlite') return;
+      const stored = new Set((await db.nav.all()).map((p) => p.t));
       if (old.every((p) => stored.has(Math.round(p.t)))) legacy.clear();
-    }
-    const compacted = compactNav(all, now());
-    if (compacted.length < all.length) await db.nav.replace(compacted);
+    })().catch((err) => console.error('[account] NAV history could not be imported:', err));
+    return imported;
+  }
+
+  /** `account`'s rows, compacted (the rows are replaced when that dropped any). */
+  async function readCompacted(account: string): Promise<NavPoint[]> {
+    if (!db) return [];
+    const stored = await db.nav.get(account);
+    const compacted = compactNav(stored, now());
+    if (compacted.length < stored.length) await db.nav.replace(account, compacted);
     return compacted;
   }
 
-  function load(): Promise<NavPoint[]> {
-    loading ??= importAndCompact().then(
-      (list) => (points = list),
-      (err) => {
-        console.error('[account] NAV history could not be loaded:', err);
-        return points;
-      },
-    );
+  /** Loads `account`'s history once (later calls share it). */
+  function load(account: string): Promise<void> {
+    let loading = loads.get(account);
+    if (!loading) {
+      loading = importLegacy()
+        .then(() => readCompacted(account))
+        .then(
+          (list) => void lists.set(account, list),
+          (err) => {
+            console.error('[account] NAV history could not be loaded:', err);
+            lists.set(account, []);
+          },
+        );
+      loads.set(account, loading);
+    }
     return loading;
   }
 
+  async function addNow(account: string, p: NavPoint): Promise<NavPoint[]> {
+    await load(account);
+    const prev = lists.get(account) ?? [];
+    if (!isValid(p)) return prev;
+    const point = { t: p.t, netLiq: p.netLiq };
+    let next = addNavPoint(prev, point);
+    // Writes never reject; awaiting them orders the caller's 'nav' event after earlier reads.
+    if (db && !prev.length) {
+      // The account's first sample: the rows it claimed come with it.
+      await db.nav.append(account, [point]);
+      try {
+        next = await readCompacted(account);
+      } catch (err) {
+        // Not cached: a list missing the account's rows must never replace them (nav.replace).
+        // The next sample (or history()) loads the account again.
+        console.error('[account] NAV history could not be read:', err);
+        loads.delete(account);
+        lists.delete(account);
+        lastAccount = account;
+        return next;
+      }
+    } else if (next.length === prev.length + 1) await db?.nav.append(account, [point]);
+    else await db?.nav.replace(account, next);
+    lists.set(account, next);
+    lastAccount = account;
+    return next;
+  }
+
   return {
-    load,
-    async add(p) {
-      await load();
-      if (!isValid(p)) return points;
-      const prev = points;
-      const next = (points = addNavPoint(prev, p));
-      // Writes never reject; awaiting them orders the caller's 'nav' event after earlier reads.
-      if (next.length === prev.length + 1) await db?.nav.append([{ t: p.t, netLiq: p.netLiq }]);
-      else await db?.nav.replace(next);
-      return next;
+    async history(account) {
+      await importLegacy();
+      let shown = account || lastAccount;
+      if (db) {
+        try {
+          shown = await shownAccount(db.nav, account);
+        } catch (err) {
+          console.error('[account] NAV history could not be read:', err);
+        }
+      }
+      if (!shown) return { account: '', points: [] };
+      await load(shown);
+      return { account: shown, points: lists.get(shown) ?? [] };
+    },
+    add(account, p) {
+      const done = adding.then(() => addNow(account, p));
+      adding = done.catch(() => undefined);
+      return done;
     },
   };
 }

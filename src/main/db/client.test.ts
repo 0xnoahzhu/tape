@@ -102,10 +102,18 @@ describe('database client <-> worker protocol', () => {
     await db.executions.put([exec('a.01', 1000), exec('b.01', 2000)]);
     expect((await db.executions.since(1500)).map((e) => e.execId)).toEqual(['b.01']);
     expect(await db.executions.since(0)).toEqual([exec('b.01', 2000), exec('a.01', 1000)]);
-    await db.nav.append([{ t: 2, netLiq: 20 }, { t: 1, netLiq: 10 }]);
-    expect(await db.nav.all()).toEqual([{ t: 1, netLiq: 10 }, { t: 2, netLiq: 20 }]);
-    await db.nav.replace([{ t: 3, netLiq: 30 }]);
-    expect(await db.nav.all()).toEqual([{ t: 3, netLiq: 30 }]);
+    await db.nav.append(null, [{ t: 5, netLiq: 1_000 }, { t: 6, netLiq: 3 }]);
+    await db.nav.append('DU1', [{ t: 2, netLiq: 20 }, { t: 1, netLiq: 10 }]);
+    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 10 }, { t: 2, netLiq: 20 }]);
+    expect(await db.nav.lastAccount()).toBe('DU1');
+    // U2's first sample claims the unattributed row within a factor of 2 of it.
+    await db.nav.append('U2', [{ t: 7, netLiq: 2.5 }]);
+    expect(await db.nav.get('U2')).toEqual([{ t: 6, netLiq: 3 }, { t: 7, netLiq: 2.5 }]);
+    expect(await db.nav.lastAccount()).toBe('U2');
+    await db.nav.replace('DU1', [{ t: 3, netLiq: 30 }]);
+    expect(await db.nav.get('DU1')).toEqual([{ t: 3, netLiq: 30 }]);
+    expect(await db.nav.get('none')).toEqual([]);
+    expect(await db.nav.all()).toEqual([{ t: 3, netLiq: 30 }, { t: 5, netLiq: 1_000 }, { t: 6, netLiq: 3 }, { t: 7, netLiq: 2.5 }]);
     expect(c.logs).toEqual([]);
   });
 
@@ -114,7 +122,7 @@ describe('database client <-> worker protocol', () => {
     db = connect(file, { open }).db;
     await db.ready;
     const writes = Array.from({ length: 200 }, (_, i) => db!.kv.set('ns', String(i), i));
-    writes.push(db.nav.append([{ t: 1, netLiq: 1 }]), db.bars.put('X|1D', [bar(1)]));
+    writes.push(db.nav.append('DU1', [{ t: 1, netLiq: 1 }]), db.bars.put('X|1D', [bar(1)]));
     await Promise.all(writes);
     expect(stats.transactions).toBe(1);
     expect((await db.kv.get('ns', '199'))?.value).toBe(199);
@@ -123,9 +131,9 @@ describe('database client <-> worker protocol', () => {
   it('reads see the writes sent before them', async () => {
     db = connect(file).db;
     void db.bars.put('AAPL|1D', [bar(100)]);
-    void db.nav.append([{ t: 5, netLiq: 5 }]);
+    void db.nav.append('DU1', [{ t: 5, netLiq: 5 }]);
     expect(await db.bars.get('AAPL|1D')).toEqual([bar(100)]);
-    expect(await db.nav.all()).toEqual([{ t: 5, netLiq: 5 }]);
+    expect(await db.nav.get('DU1')).toEqual([{ t: 5, netLiq: 5 }]);
   });
 
   it('logs failed writes and resolves them; failed reads reject', async () => {
@@ -137,7 +145,7 @@ describe('database client <-> worker protocol', () => {
     await expect(db.bars.get('X|1D', {} as never)).rejects.toThrow(/bound/);
     // A failed write does not take the other writes of its batch down.
     void db.bars.put(null as never, [bar(1)]);
-    await db.nav.append([{ t: 7, netLiq: 7 }]);
+    await db.nav.append('DU1', [{ t: 7, netLiq: 7 }]);
     expect(await db.nav.all()).toEqual([{ t: 7, netLiq: 7 }]);
   });
 
@@ -149,8 +157,13 @@ describe('database client <-> worker protocol', () => {
     await expect(put).resolves.toBeUndefined();
     expect(await read).toEqual([bar(1)]);
     expect(db.kind).toBe('memory');
-    await db.nav.append([{ t: 1, netLiq: 1 }]);
-    expect(await db.nav.all()).toEqual([{ t: 1, netLiq: 1 }]);
+    // The same NAV rules in memory: unattributed rows, claimed by an account's first sample.
+    await db.nav.append(null, [{ t: 1, netLiq: 1 }]);
+    expect(await db.nav.get('DU1')).toEqual([]);
+    expect(await db.nav.lastAccount()).toBeUndefined();
+    await db.nav.append('DU1', [{ t: 2, netLiq: 1.5 }]);
+    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 1 }, { t: 2, netLiq: 1.5 }]);
+    expect(await db.nav.lastAccount()).toBe('DU1');
     expect(c.logs.filter((l) => /SQLite unavailable/.test(l))).toHaveLength(1);
   });
 
@@ -159,22 +172,22 @@ describe('database client <-> worker protocol', () => {
     db = c.db;
     await db.ready;
     await db.kv.set('a', 'b', 1);
-    const pending = db.nav.append([{ t: 1, netLiq: 1 }]);
+    const pending = db.nav.append('DU1', [{ t: 1, netLiq: 1 }]);
     c.fail(new Error('database worker exited with code 1'));
     c.fail(new Error('again'));
     await expect(pending).resolves.toBeUndefined();
     expect(db.kind).toBe('memory');
-    expect(await db.nav.all()).toEqual([{ t: 1, netLiq: 1 }]);
+    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 1 }]);
     expect(c.logs.filter((l) => /SQLite unavailable/.test(l))).toHaveLength(1);
     c.close();
   });
 
   it('close() commits pending writes; later calls neither fail nor reach the file', async () => {
     db = connect(file).db;
-    for (let i = 0; i < 50; i++) void db.nav.append([{ t: i, netLiq: i + 1 }]);
+    for (let i = 0; i < 50; i++) void db.nav.append('DU1', [{ t: i, netLiq: i + 1 }]);
     void db.executions.put([exec('x.01', 1)]);
     await db.close();
-    await expect(db.nav.append([{ t: 999, netLiq: 1 }])).resolves.toBeUndefined();
+    await expect(db.nav.append('DU1', [{ t: 999, netLiq: 1 }])).resolves.toBeUndefined();
     // Closing checkpointed the WAL into the main file (and SQLite removed it).
     expect(readdirSync(dir).filter((f) => f.endsWith('-wal'))).toEqual([]);
     const store = openStore(file);
@@ -230,7 +243,7 @@ describe('database client <-> worker protocol', () => {
     await db.bars.put('B|1 min|TRADES|1', [bar(Math.floor(Date.now() / 1000) - 60)]);
     await db.kv.set('coverage', 'A|1 day|TRADES|1', { ranges: [] });
     await db.executions.put([exec('x.01', 1)]);
-    await db.nav.append([{ t: 1, netLiq: 1 }]);
+    await db.nav.append('DU1', [{ t: 1, netLiq: 1 }]);
     expect(await db.stats()).toMatchObject({ series: 2, bars: 3, executions: 1 });
 
     vi.advanceTimersByTime(6_000);

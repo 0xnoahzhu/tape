@@ -23,8 +23,8 @@ IB Gateway / TWS ──socket──▶ main (services) ──TapeEvent──▶ 
 ```
 
 * The main process is the single source of truth for everything that comes from IB or is persisted
-  (settings, watchlists, price alerts, notifications in JSON files; NAV history and the executions
-  journal in `tape.db`).
+  (settings, watchlists, price alerts, notifications in JSON files; NAV history per account and the
+  executions journal in `tape.db`).
 * The renderer receives a snapshot on startup (`getSnapshot`) and then push events
   (`src/shared/ipc.ts → TapeEvent`). `src/renderer/src/state/bridge.ts` applies them to the store.
 * Renderer writes go through `window.tape.*` (`TapeApi`). The main process persists and broadcasts
@@ -45,7 +45,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary, positions/portfolio, P&L, NAV sampling (`navHistory.ts`, stored in `ctx.db.nav`) |
+| `ib/account.ts` | Account summary, positions/portfolio, P&L, NAV sampling per account (the active account's own NetLiquidation only; `navHistory.ts`, stored in `ctx.db.nav`) |
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (journaled in `ctx.db.executions`) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` |
@@ -270,10 +270,12 @@ or IPC; the main side (`client.ts`) is an async RPC.
 
 * Schema (`schema.ts`): `series` (`key`, `retention`, `last_access`, `bar_count`) + `bars`
   (WITHOUT ROWID, clustered by series and time), `kv` (`ns`, `key`, JSON, `updated_at`),
-  `executions` (by `exec_id`, indexed by time), `nav` (`t`, `net_liq`). WAL; versioned migrations
-  (v2 added `last_access`, set to the migration time, and `bar_count`, counted once; v3 replaced
-  the `intraday` flag by the retention class `seconds` / `minutes` / `hours` / `daily`, taken from
-  the bar size in the series key; every bar is kept).
+  `executions` (by `exec_id`, indexed by time), `nav` (`t`, `net_liq`, `account`, indexed by
+  account and time). WAL; versioned migrations (v2 added `last_access`, set to the migration time,
+  and `bar_count`, counted once; v3 replaced the `intraday` flag by the retention class `seconds` /
+  `minutes` / `hours` / `daily`, taken from the bar size in the series key; every bar is kept; v4
+  added `account`: older rows have none and are claimed by an account's first sample within a
+  factor of 2, unclaimed rows are kept, never shown).
 * Writes never reject (best-effort, logged); writes that arrive together commit in one transaction.
   Reads reject on database errors.
 * Series access: every `bars.get` / `bars.put` notes the series in the worker's memory; its
@@ -290,8 +292,26 @@ or IPC; the main side (`client.ts`) is an async RPC.
   | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (seconds, then minutes and hours, then daily; least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
   | `kv` (contract details, option chains, coverage, head timestamps, the last market data check) | Entries not rewritten for 180 days are deleted |
   | Executions | Never deleted automatically (the trade journal is the user's record) |
-  | NAV | All of it; compacted to one point per day after 10 days by `navHistory.ts` |
+  | NAV | All of it; each account's history compacted to one point per day after 10 days by `navHistory.ts`; rows without an account are left as they are |
 
+* NAV history (`ib/navHistory.ts`, `ctx.db.nav`): IB keeps no NAV history for the socket API, so
+  Tape samples the active account's `NetLiquidation` from `reqAccountSummary` while connected (the
+  first value after each connect, then every 5 minutes) and keeps one history per account. Only a
+  value known to be the active account's is recorded; with no account known (no
+  `managedAccounts`) nothing is. The account shown is the connection's account, else (before the
+  first connect of a run) the account of the newest sample. Main sends that account's history in
+  the snapshot, on every connect whose account is known, else once `managedAccounts` names it
+  (connection.ts stops waiting for it 2 s after `nextValidId`) — an empty one too, so a switch
+  replaces the other account's — and after each sample; the renderer (`portfolio/calc.ts → shownNavSeries`) uses a history and the
+  live net liquidation only when they belong to the account shown, so accounts are never mixed.
+* The v4 migration adds `nav.account`: rows written before (and the one-time `nav.json` import)
+  have none. An account's first sample (it has no rows yet) claims the rows without an account
+  within a factor of 2 of its value, in the same transaction as the sample (`sqlite.ts →
+  navAppend`): a paper account of about 1.05M and a live one of 31k sampled into the same old
+  history each get their own rows, when each next records a sample. Rows nobody claims are kept
+  and never shown; two accounts within a factor of 2 of each other cannot be told apart (the first
+  to record a sample takes both). An insert never takes a time another account (or no account)
+  holds.
 * Maintenance runs in the worker about 2 minutes after startup and then every 6 hours, once the
   port has been quiet for 5 s: retention deletes, the size cap, `PRAGMA incremental_vacuum` in
   steps, `wal_checkpoint(TRUNCATE)`, `PRAGMA optimize`. It is a generator of steps: one transaction
@@ -916,7 +936,7 @@ Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
 | Option expirations | Days to expiry (local calendar) and moneyness from the underlying price (futures options: only IB's model underlying price, never their own premium) |
 | Today's trades | `executions` since New York midnight (`shared/session.ts → nyDayStart`, re-checked every minute: main keeps the session's fills, so after midnight the list still holds yesterday's) |
 | Earnings & dividends | `getEarnings` (Wall Street Horizon with IB's subscription, else estimates from IB's market scanner: "Est.", an exact time in the user's clock format ("8:30 AM ET", 24-hour "08:30 ET") when known, before the open / after the close otherwise, a tooltip saying it is not a confirmed date) and `Quote.dividends` (tick 456, live lines only); the note says where earnings dates come from, that the scanner is still looking them up, or why they are missing (IB refused both, or unavailable while connected). The catalog no longer marks the widget as needing a subscription |
-| vs. benchmark | The equity card's range return against SPY / QQQ: live price over their price at the range's first NAV sample, so both start at the same moment. A start within 9 days is priced from 5-minute bars, within 25 days from hourly ones (the close of the last bar that ended by then, else the open of the bar it falls in); an older one, or one the intraday window misses, at the daily close (16:00 New York) at or before it (older pages for long ALL ranges). Bars through `getHistory`, regular hours |
+| vs. benchmark | The equity card's range return against SPY / QQQ: live price over their price at the range's first NAV sample of the account shown, so both start at the same moment. A start within 9 days is priced from 5-minute bars, within 25 days from hourly ones (the close of the last bar that ended by then, else the open of the bar it falls in); an older one, or one the intraday window misses, at the daily close (16:00 New York) at or before it (older pages for long ALL ranges). Bars through `getHistory`, regular hours |
 
 The hooks subscribe only while their widget is on the layout, under their own quote owners:
 `dashboard-und` (option underlyings, basic), `dashboard-div` (the holdings' stocks, `dividends`)

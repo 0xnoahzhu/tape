@@ -13,9 +13,9 @@ import {
   RANGES,
   axisLabels,
   equityChart,
-  navSeries,
   rangeReturn,
   shortHistory,
+  shownNavSeries,
   sliceRange,
   tickLabels,
   type RangeKey,
@@ -31,12 +31,18 @@ export function spanLabel(m: PortfolioMessages, range: RangeKey, covered: boolea
   return { '7D': m.span7D, MTD: m.spanMTD, YTD: m.spanYTD, '1Y': m.span1Y }[range];
 }
 
-/** All NAV samples plus the live account value, in time order. */
+/** The NAV samples of the account shown plus its live account value, in time order (calc.ts → shownNavSeries). */
 export function useNavSeries(): NavPoint[] {
   const nav = useStore((s) => s.nav);
-  const netLiq = useStore((s) => s.account?.netLiquidation);
+  const connectionAccount = useStore((s) => s.connection.account);
+  const liveAccount = useStore((s) => s.account?.account);
+  const netLiquidation = useStore((s) => s.account?.netLiquidation);
   const updatedAt = useStore((s) => s.account?.updatedAt);
-  return useMemo(() => navSeries(nav, { netLiq, t: updatedAt ?? Date.now() }), [nav, netLiq, updatedAt]);
+  return useMemo(
+    () =>
+      shownNavSeries(nav, connectionAccount, liveAccount === undefined ? null : { account: liveAccount, netLiquidation, updatedAt: updatedAt ?? Date.now() }),
+    [nav, connectionAccount, liveAccount, netLiquidation, updatedAt],
+  );
 }
 
 export function EquityCard({ series, symbol }: { series: NavPoint[]; symbol: string }) {

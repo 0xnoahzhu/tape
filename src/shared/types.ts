@@ -443,6 +443,15 @@ export interface NavPoint {
   netLiq: number;
 }
 
+/**
+ * One account's NAV history (the history is kept per account and never mixed). `account` '' with
+ * no points: no account has recorded a sample yet.
+ */
+export interface NavHistory {
+  account: string;
+  points: NavPoint[];
+}
+
 // ---------------------------------------------------------------------------
 // Orders
 
@@ -953,7 +962,8 @@ export interface AppSnapshot {
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
   notifications: AppNotification[];
-  nav: NavPoint[];
+  /** The NAV history of the connection's account, else (before the first connect) of the account of the newest sample. */
+  nav: NavHistory;
   logFilePath: string;
   lock: LockState;
   /** This launch follows a Forgot-PIN reset (Settings › Connection opens, no auto-connect). */

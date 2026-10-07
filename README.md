@@ -10,7 +10,7 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 ## Feature tour
 
 **Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; an equity curve built from
-sampled net liquidation values (kept locally); a positions table with
+sampled net liquidation values (kept locally, per account); a positions table with
 average cost, last price, market value and P&L; a sector allocation chart; a performance view. The
 Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's P&L by position, option
 expirations, today's trades, a benchmark comparison and **earnings & dividends** for the holdings.
@@ -211,8 +211,8 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 | `notifications.json` | The last 200 notifications |
 | `window.json` | Window position and size |
 | `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
-| `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve and a journal of executions with commissions; its cache tables expire (seconds bars after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days) |
-| `nav.json` | Older versions' equity curve data; imported into `tape.db` once, then emptied |
+| `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve, per account (samples from older versions have no account: an account's first sample takes those within a factor of 2 of its value, the rest stay hidden), and a journal of executions with commissions; its cache tables expire (seconds bars after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days) |
+| `nav.json` | Older versions' equity curve data; imported into `tape.db` once (as samples without an account), then emptied |
 
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`
 and the defaults are used instead; an unreadable `tape.db` is moved aside as `tape.db.corrupt-<timestamp>`
