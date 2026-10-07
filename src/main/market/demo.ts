@@ -542,7 +542,7 @@ export class DemoMarket {
     };
   }
 
-  /** A 10-level book around the current quote; null where IB has no depth (indices). */
+  /** A book of `rows` levels a side around the current quote; null where IB has no depth (indices). */
   book(c: ContractRef, rows = 10): DemoBook | null {
     if (c.secType === 'IND' || c.secType === 'BAG') return null;
     const q = this.quote(c);

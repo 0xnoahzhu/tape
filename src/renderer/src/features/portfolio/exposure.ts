@@ -1,8 +1,9 @@
-// The holdings' option exposure (pure): the portfolio greeks on the Positions toolbar and the line
-// under an option row's symbol ("Call · 12 DTE · 3.2% ITM"). No React and no store access; every
-// value comes from the position rows (valued by the one-price rule, calc.ts) and quotes: the
-// options' own lines (IB's model greeks, tick 13) and their underlyings' (data.ts →
-// useUnderlyingQuotes).
+// The holdings' option exposure (pure): the portfolio greeks on the Positions toolbar (and, for one
+// underlying, in the Trade page's activity panel under the options desk, with each row's delta and
+// days to expiry) and the line under an option row's symbol ("Call · 12 DTE · 3.2% ITM"). No React
+// and no store access; every value comes from the position rows (valued by the one-price rule,
+// calc.ts) and quotes: the options' own lines (IB's model greeks, tick 13) and their underlyings'
+// (data.ts → useUnderlyingQuotes; the activity panel's own subscription).
 
 import { contractKey, multiplierOf } from '@shared/contract';
 import { nyDaysUntil } from '@shared/orderTiming';
@@ -105,6 +106,19 @@ export function portfolioGreeks(rows: readonly PositionRow[], quotes: Readonly<R
   }
   if (pending) return { pending, options };
   return { delta, dollarDelta: dollarKnown ? dollar : undefined, gamma, theta, vega, pending, options };
+}
+
+/**
+ * One row's share of portfolioGreeks' delta: a stock its shares, an option IB's model delta ×
+ * quantity × multiplier (undefined until IB sends it); undefined for any other instrument. The
+ * Trade page's activity panel shows it per row under the options desk.
+ */
+export function positionDelta(row: PositionRow, quotes: Readonly<Record<string, Quote>>): number | undefined {
+  const c = row.position.contract;
+  if (c.secType === 'STK') return row.position.quantity;
+  if (!isOption(row)) return undefined;
+  const d = quotes[contractKey(c)]?.delta;
+  return finite(d) ? d * row.position.quantity * (row.position.multiplier || multiplierOf(c)) : undefined;
 }
 
 // ---------------------------------------------------------------------------

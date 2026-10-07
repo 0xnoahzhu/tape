@@ -998,7 +998,7 @@ export interface Settings {
   };
   /** Features that depend on extra market data subscriptions. */
   features: {
-    /** Level 2: the Trade page's Depth tab and the floating ticket's book (each open book uses one of IB's depth lines). */
+    /** Level 2: the order ticket's Book, docked or floating (while shown it uses one of IB's depth lines). */
     depth: boolean;
     /**
      * The user has set `depth` in Settings. Until then a market data check that finds a full book

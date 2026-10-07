@@ -52,7 +52,9 @@ Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and price-alert bell
-  in the header, and the position and open orders for the selected symbol.
+  in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity, average
+  cost, value, % of net liquidation, unrealized and day P&L) and open orders (time, side, contract, quantity
+  @ price, status, Modify / Cancel), under column names; a splitter resizes it and it collapses to a bar.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
   market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
   on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force
@@ -67,28 +69,33 @@ Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
   the reason. The totals show IBKR's **what-if** (initial margin change and commission) as you edit,
   and optional confirmation before every order repeats IBKR's margin and commission estimate; keyboard
-  entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
+  entry (B / S, ↑ / ↓ for quantity, ⏎ to submit). With Level 2 on, a 5-level book sits between the bid /
+  ask and the entry fields; a click loads a limit order at that level, buying at an ask and selling at a
+  bid (while you modify an order, only its price moves).
 - **Floating order ticket and strategy builder**: the pop-out icon at the top right of the order ticket
-  or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart,
-  depth or option chain then uses the full width. Drag it by its header, resize it from any edge or
-  corner. It is laid out for its size: from about 900 px wide in three columns (market: bid / ask, 5
-  depth levels, the position and working orders; entry: side, type, quantity and price with quick chips
-  100 / 500 / 1K / Position and Bid / Mid / Ask, ± one tick; confirm: the advanced sections, the totals
-  with IBKR's what-if, the submit button), narrower as the docked panel. After a submit a status strip
-  follows the order (submitted, partial fills with progress, filled with average price, position change
-  and commission, or IBKR's rejection). The chevron (or Esc) collapses it to a slim bar with the latest
-  order's status and Buy / Sell; an accepted order does this by itself. The dock-back icon puts it back
-  in the right column. Tape remembers per device which panels float, where, and whether collapsed.
+  or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart or
+  option chain then uses the full width. Drag it by its header, resize it from any edge or corner. It is
+  laid out for its size: from about 900 px wide in three columns (market: bid / ask and, with Level 2 on,
+  the 5-level book; entry: side, type, quantity and price with quick chips 100 / 500 / 1K / Position and
+  Bid / Mid / Ask, ± one tick; confirm: the advanced sections, the totals with IBKR's what-if, the submit
+  button), narrower as the docked panel. After a submit a status strip follows the order (submitted,
+  partial fills with progress, filled with average price, position change and commission, or IBKR's
+  rejection), and the new order flashes in the open orders under the chart. The chevron (or Esc)
+  collapses it to a slim bar with the latest order's status and Buy / Sell; an accepted order does this by
+  itself. The dock-back icon puts it back in the right column. Tape remembers per device which panels
+  float, where, and whether collapsed.
 - **Symbol search** (⌘K / Ctrl+K): find a ticker or company and open it on the Trade page; orders are
   entered in the order ticket.
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type; ATM IV, IV
   rank and percentile, expected move and put / call volume (call and put volume on hover) and
   open-interest ratios in the desk header; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
-  non-guaranteed; volatility view; option positions with risk alerts. Always available: without OPRA the
-  quotes are delayed.
-- **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the
-  switch in *Settings › Market Data* (off by default: an open book uses one of the depth lines IB allows per
-  user, 3 by default, shared with TWS and other API clients). Tape tests Level 2 when the section opens
+  non-guaranteed; tabs Chain / Volatility. Under the desk the same positions and open-orders panel as under
+  the chart, with the underlying's exposure (Δ sh, $Δ, Γ, Θ/day, Vega/pt) and DTE and Δ per position; a
+  click on an option opens its expiry in the chain. Option risk alerts are in the bell. Always available:
+  without OPRA the quotes are delayed.
+- **Level 2**: a 5-level book in the order ticket (docked or floating), behind the switch in *Settings ›
+  Market Data* (off by default: an open book uses one of the depth lines IB allows per user, 3 by
+  default, shared with TWS and other API clients). Tape tests Level 2 when the section opens
   without a Level 2 answer for the connected account (Tape keeps the last check only, so again after you switch
   accounts) and on *Check now*; a full book from IB (no 2152 within a minute) turns it on unless you have set
   the switch yourself, and a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a

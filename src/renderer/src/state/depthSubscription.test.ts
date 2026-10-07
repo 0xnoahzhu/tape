@@ -13,24 +13,24 @@ describe('shared Level 2 subscription', () => {
   });
 
   it('follows the newest owner and is released when nobody wants a book', async () => {
-    await setDepthOwner('depth-view', stock('AAPL'));
+    await setDepthOwner('first', stock('AAPL'));
     expect(setDepthSubscription).toHaveBeenLastCalledWith(stock('AAPL'));
-    // The floating ticket wants the same book: nothing is sent again.
-    await setDepthOwner('ticket-panel', stock('AAPL'));
+    // A second owner wants the same book: nothing is sent again.
+    await setDepthOwner('second', stock('AAPL'));
     expect(setDepthSubscription).toHaveBeenCalledTimes(1);
-    // The depth view goes: the panel keeps the line.
-    await setDepthOwner('depth-view', null);
+    // The first goes: the second keeps the line.
+    await setDepthOwner('first', null);
     expect(setDepthSubscription).toHaveBeenCalledTimes(1);
-    await setDepthOwner('ticket-panel', null);
+    await setDepthOwner('second', null);
     expect(setDepthSubscription).toHaveBeenLastCalledWith(null);
     expect(setDepthSubscription).toHaveBeenCalledTimes(2);
   });
 
   it('sends again when forced (after a reconnect)', async () => {
-    await setDepthOwner('depth-view', stock('MSFT'));
-    await setDepthOwner('depth-view', stock('MSFT'), true);
+    await setDepthOwner('ticket-book', stock('MSFT'));
+    await setDepthOwner('ticket-book', stock('MSFT'), true);
     expect(setDepthSubscription).toHaveBeenCalledTimes(2);
-    await setDepthOwner('depth-view', null);
+    await setDepthOwner('ticket-book', null);
   });
 
   it('wants the newest owner’s instrument', () => {

@@ -9,7 +9,7 @@ describe('opening a notification', () => {
   const aapl = stock('AAPL');
   const call = option('AAPL', '20261016', 230, 'C');
   beforeEach(() => {
-    useStore.setState({ ...initial, page: 'set', view: 'depth', symbol: stock('MSFT') }, true);
+    useStore.setState({ ...initial, page: 'set', view: 'opt', symbol: stock('MSFT') }, true);
     usePortfolioUi.setState({ tab: 'pos' });
   });
 
@@ -34,8 +34,8 @@ describe('opening a notification', () => {
   it('opens anything else in the chart, or in the view the Trade page shows', () => {
     openNotificationTarget(aapl, 'chart');
     expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'chart', symbol: aapl });
-    useStore.setState({ page: 'acct', view: 'depth' });
+    useStore.setState({ page: 'acct', view: 'opt' });
     openNotificationTarget(stock('NVDA'), undefined);
-    expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'depth', symbol: stock('NVDA') });
+    expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'opt', symbol: stock('NVDA') });
   });
 });

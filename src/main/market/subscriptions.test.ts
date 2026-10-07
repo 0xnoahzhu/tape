@@ -230,7 +230,7 @@ describe('owner priority', () => {
   });
 
   it('classifies owners', () => {
-    for (const o of ['chart', 'ticket', 'watchlist', 'search', 'options-chain', 'options-underlying', 'options-legs']) expect(ownerPriority(o)).toBe(OwnerPriority.Visible);
+    for (const o of ['chart', 'ticket', 'watchlist', 'search', 'options-chain', 'options-underlying', 'options-legs', 'symbol-activity']) expect(ownerPriority(o)).toBe(OwnerPriority.Visible);
     for (const o of ['alerts', 'options-risk', 'options-term', 'portfolio', 'bell-risk-count', 'bell-alerts']) expect(ownerPriority(o)).toBe(OwnerPriority.Background);
   });
 });

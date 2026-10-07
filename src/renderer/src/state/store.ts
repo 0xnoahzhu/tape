@@ -43,7 +43,8 @@ import type {
 
 /** Portfolio (with its Positions, Orders and Trades tabs: features/portfolio/uiState.ts), Trade, Settings. */
 export type Page = 'acct' | 'trade' | 'set';
-export type TradeView = 'chart' | 'opt' | 'depth';
+/** The Trade page's views (pages/tradeViews.ts); Level 2 is the order ticket's Book. */
+export type TradeView = 'chart' | 'opt';
 /** 'view' is General (language, theme, colors); 'sec' is Privacy & Security. */
 export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log';
 export type BellTab = 'alerts' | 'notifs';
@@ -78,7 +79,7 @@ export interface TicketCondition {
 /** Collapsible sections of the ticket's Advanced panel. */
 export type AdvancedSection = 'exits' | 'conditions' | 'fill' | 'trigger' | 'algo' | 'routing' | 'other';
 
-/** Order ticket state shared by the ticket, depth view, command bar and "Modify". */
+/** Order ticket state shared by the ticket, its Book, the command bar and "Modify". */
 export interface TicketState {
   side: OrderAction;
   orderType: OrderType;

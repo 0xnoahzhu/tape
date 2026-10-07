@@ -1,5 +1,5 @@
 // The layer of the floating panels over the content area (App mounts it under the top bar): the
-// order ticket where the docked ticket would be (Trade › Chart, Depth), the strategy builder in
+// order ticket where the docked ticket would be (Trade › Chart), the strategy builder in
 // Trade › Options. The layer passes clicks through; z-index 1 puts it above the page content and
 // below menus (4+), the top bar's dropdowns, dialogs, toasts and the lock screen.
 

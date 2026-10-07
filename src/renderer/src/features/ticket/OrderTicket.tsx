@@ -1,10 +1,12 @@
 // Order ticket (design 3a, right column of the Trade page). Its state lives in store.ticket so the
-// depth view, "Modify" and the command bar can prefill it; prices nobody typed follow the market.
+// Book, "Modify" and the command bar can prefill it; prices nobody typed follow the market.
+// With Level 2 on, the Book (DepthBlock.tsx) sits between the bid / ask and the entry fields.
 // The parts and the controller are shared with the floating ticket (features/panels):
-// parts.tsx, useTicket.ts.
+// parts.tsx, DepthBlock.tsx, useTicket.ts.
 
 import type { ReactNode } from 'react';
 import type { PanelId } from '../panels/model';
+import { DepthBlock } from './DepthBlock';
 import {
   AdvancedBlock,
   AdvancedToggle,
@@ -75,6 +77,7 @@ export function OrderTicket({
         <NotTradableNote T={T} />
         <QuoteBoxes T={T} S={S} />
         <MarketIssue T={T} />
+        <DepthBlock T={T} S={S} />
         <SideSwitch T={T} S={S} />
         <OrderTypeRow T={T} S={S} />
         <QtyPriceRow T={T} S={S} />

@@ -1,8 +1,9 @@
 // Level 2 order book for one instrument at a time (reqMktDepth with SMART depth).
 // Book changes are emitted as `depth` events at most every 100 ms.
 //
-// IB allows 3 depth lines per account (TWS and other clients included), so the view holds one
-// at a time: every subscribe goes through request(), which first releases the line that is open.
+// IB allows 3 depth lines per account (TWS and other clients included), so the order ticket's book
+// holds one at a time (DEPTH_ROWS a side): every subscribe goes through request(), which first
+// releases the line that is open.
 // The market data check may open one more for a few seconds (openLine / closeLine).
 //
 // IB can take 10 s and more to start a depth stream (seen live for SPY SMART depth), and a
@@ -37,7 +38,7 @@ const LIMIT_RETRY_MS = 1_000;
 /** A released line that never answered is cancelled anyway this long after its request. */
 export const CANCEL_CAP_MS = 60_000;
 
-/** A depth line this client holds at IB (the view's, or the market data check's). */
+/** A depth line this client holds at IB (the order ticket's book's, or the market data check's). */
 interface HeldLine {
   /** IB has started the stream (a book update or a reset came): a cancel now takes effect. */
   started: boolean;
@@ -121,7 +122,7 @@ export function createDepthService(ctx: MainContext): DepthService {
     emitTimer ??= setTimeout(emitNow, EMIT_MS);
   };
 
-  /** Releases the view's depth line, if any (see release; a dead request holds no line at IB). */
+  /** Releases the order ticket's book's depth line, if any (see release; a dead request holds no line at IB). */
   const cancel = () => {
     if (demoTimer) {
       clearInterval(demoTimer);
@@ -186,7 +187,7 @@ export function createDepthService(ctx: MainContext): DepthService {
     if (changed) scheduleEmit();
   };
 
-  /** Retries the view's line after a 309 once this client's other lines are gone. */
+  /** Retries the book's line after a 309 once this client's other lines are gone. */
   const retryWhenFree = (failed: number) => {
     retryTimer = setTimeout(() => {
       retryTimer = null;

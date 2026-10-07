@@ -37,7 +37,7 @@ const VISIBLE_OWNERS: ReadonlySet<string> = new Set([
   'options-chain',
   'options-underlying',
   'options-legs',
-  'options-positions',
+  'symbol-activity',
   'options-alerts',
   'alert-form',
 ]);

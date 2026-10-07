@@ -1,29 +1,49 @@
-// Bottom-left panel of the Trade page: positions and open orders of the current symbol
-// (the stock and its derivatives), with Modify / Cancel for this app's working orders.
+// Bottom-left panel of the Trade page, under the chart and under the options desk: positions and
+// open orders of the current symbol (the stock and its derivatives), with Modify / Cancel for this
+// app's working orders. The rows are valued like the Portfolio page (calc.ts → positionRow: one price
+// for value and P&L) from the panel's own quote lines ('symbol-activity', a visible owner; options
+// with their model greeks).
+// Under the options desk (`options`) the panel adds the underlying's exposure (Δ, $Δ, Γ, Θ, Vega:
+// exposure.ts → portfolioGreeks, as on the Positions toolbar), DTE and Δ cells on the rows, and a
+// click on an option row opens its expiry in the chain. An order just placed from a floating panel
+// flashes in the open orders (activityModel.ts → isFreshOrder).
 
 import { useMemo } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
-import { isOrderActive, type Position, type WorkingOrder } from '@shared/types';
-import { lastPrice } from '../../hooks/useQuotes';
+import { isOrderActive, type ContractRef, type Position, type Quote, type QuoteSubscription, type WorkingOrder } from '@shared/types';
+import { lastPrice, useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { confirmCancel } from '../../state/orderActions';
+import { useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
-import { livePrice, positionRow } from '../portfolio/calc';
+import { useDesk } from '../options/deskStore';
+import { modifyOrderInTicket } from '../panels/actions';
+import { livePrice, positionRow, quoteContract, type PositionRow } from '../portfolio/calc';
+import { useMinute } from '../portfolio/data';
+import { optionLine, portfolioGreeks, positionDelta, underlyingKey } from '../portfolio/exposure';
+import { GreeksLine } from '../portfolio/GreeksLine';
 import { showPortfolio } from '../portfolio/uiState';
+import { byInstrument, isFreshOrder } from './activityModel';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
-import { modifyOrderInTicket } from '../panels/actions';
 import { canModifyInTicket, orderPriceText, orderStatusText } from './orderModel';
+import { useNow } from './useNow';
+
+/** The panel's quote owner (main/market/subscriptions.ts counts it as visible). */
+const QUOTE_OWNER = 'symbol-activity';
 
 const signed0 = (n: number | undefined) => (n == null ? '—' : sg(n, f0));
+const isOption = (c: ContractRef) => c.secType === 'OPT' || c.secType === 'FOP';
 
 /** Column templates shared by the rows and their header. */
 const POS_GRID = 'minmax(0,2fr) repeat(6,minmax(0,1fr))';
+/** Under the options desk: DTE and Δ after Qty. */
+const POS_GRID_OPT = 'minmax(0,2fr) repeat(8,minmax(0,1fr))';
 // The time column is sized for the clock format (timeColumn). "qty @ price" keeps room for
 // "100 @ 226.50" and grows little beyond it; the rest goes to contract and status (with its
 // good-after and GTD times, the larger share), which clip first in a narrow window.
@@ -58,32 +78,41 @@ function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Arr
 }
 
 /** Right-aligned number that clips with an ellipsis (full value on hover) instead of overlapping its neighbor. */
-function NumCell({ text, color }: { text: string; color?: string }) {
+function NumCell({ text, color, cell }: { text: string; color?: string; cell?: string }) {
   return (
-    <div className="ellipsis" title={text} style={{ textAlign: 'right', color }}>
+    <div className="ellipsis" data-cell={cell} title={text || undefined} style={{ textAlign: 'right', color }}>
       {text}
     </div>
   );
 }
 
-/** Stock first, then derivatives by label. */
-function byInstrument(a: Position, b: Position): number {
-  const sa = a.contract.secType === 'STK' ? 0 : 1;
-  const sb = b.contract.secType === 'STK' ? 0 : 1;
-  return sa - sb || contractLabel(a.contract).localeCompare(contractLabel(b.contract));
+/** The cells a row adds under the options desk. */
+interface OptionCells {
+  /** Calendar days to expiry (New York's) and whether that is SOON_DAYS or fewer; undefined for the stock. */
+  dte?: { days: number; soon: boolean };
+  /** Share-equivalent delta (exposure.ts → positionDelta); undefined while IB has not sent the greeks. */
+  delta?: number;
+  /** The option's expiry (YYYYMMDD), opened in the chain by a click. */
+  expiry?: string;
 }
 
-function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined }) {
-  // Valued like the Portfolio page: one price for value and P&L (the live quote, else IB's mark).
-  const quote = useStore((s) => s.quotes[contractKey(p.contract)]);
-  const r = positionRow(p, livePrice(p.contract.secType, quote, lastPrice(quote)), netLiq, '');
+function HoldingRow({ r, netLiq, opt }: { r: PositionRow; netLiq: number | undefined; opt?: OptionCells }) {
+  const m = useChartMessages();
+  const p = r.position;
   const mv = r.value;
   const weight = mv != null && netLiq ? `${mv < 0 ? MINUS : ''}${((Math.abs(mv) / netLiq) * 100).toFixed(1)}%` : '—';
+  const expiry = opt?.expiry;
   return (
     <div
+      data-activity="position"
+      data-position={r.key}
+      data-expiry={expiry}
+      onClick={expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : undefined}
+      title={expiry ? m.openExpiry : undefined}
+      className={expiry ? 'hover-p2' : undefined}
       style={{
         display: 'grid',
-        gridTemplateColumns: POS_GRID,
+        gridTemplateColumns: opt ? POS_GRID_OPT : POS_GRID,
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -91,12 +120,19 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
         font: '13px/1 var(--num)',
         fontVariantNumeric: 'tabular-nums',
         boxShadow: 'inset 0 1px 0 var(--ln2)',
+        cursor: expiry ? 'pointer' : undefined,
       }}
     >
       <div className="ellipsis" style={{ fontFamily: 'var(--sans)' }}>
         {contractLabel(p.contract)}
       </div>
       <NumCell text={(p.quantity < 0 ? MINUS : '') + f0(Math.abs(p.quantity))} />
+      {opt && (
+        <>
+          <NumCell cell="dte" text={opt.dte ? f0(opt.dte.days) : ''} color={opt.dte?.soon ? 'var(--ac)' : undefined} />
+          <NumCell cell="delta" text={signed0(opt.delta)} />
+        </>
+      )}
       <NumCell text={px(p.avgPrice)} color="var(--mu)" />
       <NumCell text={f0(mv)} />
       <NumCell text={weight} color="var(--mu)" />
@@ -107,19 +143,21 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
 }
 
 /** Only orders placed by this API client can be modified or cancelled here (as on Portfolio › Orders). */
-function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
+function OrderRow({ o, own, fresh }: { o: WorkingOrder; own: boolean; fresh: boolean }) {
   const m = useChartMessages();
   const common = useCommon();
   const clock = useClock();
   const st = orderStatusText(o, m.status, clock);
   const buy = o.action === 'BUY';
   const modify = () => {
-    // The order's own contract is selected first; a floating ticket collapsed to its bar expands.
+    // The order's own contract is selected first (and the chart shown); a floating ticket collapsed to its bar expands.
     modifyOrderInTicket(o);
     useStore.getState().showToast(m.modifyHint(o.orderId));
   };
   return (
     <div
+      data-activity="order"
+      data-fresh={fresh || undefined}
       style={{
         display: 'grid',
         gridTemplateColumns: orderGrid(clock),
@@ -129,6 +167,7 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
         alignItems: 'center',
         fontSize: 13,
         boxShadow: 'inset 0 -1px 0 var(--ln2)',
+        ...(fresh ? { animation: 'tape-flash 2.4s ease-out' } : null),
       }}
     >
       <div style={{ font: '13px/1 var(--num)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{clock.time(o.createdAt, { seconds: true })}</div>
@@ -159,7 +198,30 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
   );
 }
 
-/** The current symbol's positions (stock first) and working orders (newest first). */
+/** The open orders with their column names; the order a floating panel just placed flashes (for FRESH_MS). */
+function OrderList({ orders, myClientId }: { orders: WorkingOrder[]; myClientId: number }) {
+  const m = useChartMessages();
+  const clock = useClock();
+  const sent = useOrderFeedback((s) => s.sent);
+  const now = useNow(5_000).getTime();
+  return (
+    <div>
+      {/* The actions column has no name. */}
+      <HeaderRow grid={orderGrid(clock)} headers={[...m.orderHeaders, ['', '']]} right={(i) => i === 3} ruled />
+      {/* orderId is unique per API client only (TWS orders all have 0). */}
+      {orders.map((o) => (
+        <OrderRow
+          key={o.permId ?? `${o.clientId}:${o.orderId}`}
+          o={o}
+          own={o.clientId === myClientId}
+          fresh={isFreshOrder(o, sent.ticket, now) || isFreshOrder(o, sent.strategy, now)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** The current symbol's positions (stock first, then options by expiry) and working orders (newest first). */
 function useSymbolActivity() {
   const symbol = useStore((s) => s.symbol);
   const allPositions = useStore((s) => s.positions);
@@ -171,6 +233,39 @@ function useSymbolActivity() {
     [allOrders, sym],
   );
   return { sym, positions, orders };
+}
+
+/**
+ * The positions as rows valued like the Portfolio page, with the quotes they read: each position's
+ * own and an option's underlying's. Subscribes every position: an option with its model greeks
+ * (the options risk watcher already holds those lines in the background, and the chart or the desk
+ * the stock's, so this mostly raises their priority).
+ */
+function useActivityRows(positions: Position[]): { rows: PositionRow[]; quotes: Record<string, Quote>; netLiq: number | undefined } {
+  const netLiq = useStore((s) => s.account?.netLiquidation);
+  const subs = useMemo(() => {
+    const seen = new Set<string>();
+    const out: QuoteSubscription[] = [];
+    for (const p of positions) {
+      const key = contractKey(p.contract);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ contract: quoteContract(p.contract), profile: isOption(p.contract) ? 'option' : 'basic' });
+    }
+    return out;
+  }, [positions]);
+  useQuoteSubscriptionList(QUOTE_OWNER, subs);
+  const keys = useMemo(() => [...new Set(positions.flatMap((p) => (isOption(p.contract) ? [contractKey(p.contract), underlyingKey(p.contract)] : [contractKey(p.contract)])))], [positions]);
+  const quotes = useQuotesByKey(keys);
+  const rows = useMemo(
+    () =>
+      positions.map((p) => {
+        const q = quotes[contractKey(p.contract)];
+        return positionRow(p, livePrice(p.contract.secType, q, lastPrice(q)), netLiq, '');
+      }),
+    [positions, quotes, netLiq],
+  );
+  return { rows, quotes, netLiq };
 }
 
 /** 28px icon button in the panel's header and bar. */
@@ -201,6 +296,7 @@ export function SymbolActivityBar({ onExpand }: { onExpand: () => void }) {
   const { positions, orders } = useSymbolActivity();
   return (
     <div
+      data-activity="bar"
       onClick={onExpand}
       title={m.expandPanel}
       className="hover-tx"
@@ -220,17 +316,27 @@ export function SymbolActivityBar({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void }) {
+/** `options`: under the options desk (the exposure line, DTE and Δ, option rows open their expiry). */
+export function SymbolActivityPanel({ onCollapse, options = false }: { onCollapse?: () => void; options?: boolean }) {
   const m = useChartMessages();
-  const netLiq = useStore((s) => s.account?.netLiquidation);
   const myClientId = useStore((s) => s.connection.clientId);
   const tab = useChartPrefs((s) => s.activityTab);
   const setTab = useChartPrefs((s) => s.setActivityTab);
-  const clock = useClock();
   const { sym, positions, orders } = useSymbolActivity();
+  const { rows, quotes, netLiq } = useActivityRows(positions);
+  const minute = useMinute();
+  // As the Positions toolbar: shown while the symbol's rows hold an option.
+  const greeks = useMemo(() => (options ? portfolioGreeks(rows, quotes) : null), [options, rows, quotes]);
+  const optionCells = (r: PositionRow): OptionCells => {
+    const c = r.position.contract;
+    const line = optionLine(r, quotes, rows, new Date(minute));
+    const expiry = isOption(c) && /^\d{8}/.test(c.lastTradeDate ?? '') ? c.lastTradeDate!.slice(0, 8) : undefined;
+    return { dte: line?.dte != null ? { days: line.dte, soon: line.soon } : undefined, delta: positionDelta(r, quotes), expiry };
+  };
+  const posHeaders = options ? [m.posHeaders[0], m.posHeaders[1], m.dteHeader, m.deltaHeader, ...m.posHeaders.slice(2)] : m.posHeaders;
 
   return (
-    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
+    <div data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
       <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div
           style={{
@@ -253,6 +359,12 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
             onChange={setTab}
           />
           <div style={{ flex: 1 }} />
+          {greeks && greeks.options > 0 && (
+            <div data-activity="exposure" title={m.exposureHint(sym)} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, minWidth: 0, overflow: 'hidden' }}>
+              <span style={{ color: 'var(--mu)', whiteSpace: 'nowrap' }}>{m.exposure}</span>
+              <GreeksLine g={greeks} />
+            </div>
+          )}
           <div onClick={() => showPortfolio('ord')} style={{ display: 'flex', alignItems: 'center', color: 'var(--ac)', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
             {m.allOrders}
           </div>
@@ -264,22 +376,15 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
         </div>
         {tab === 'open' ? (
           orders.length ? (
-            <div>
-              {/* The actions column has no name. */}
-              <HeaderRow grid={orderGrid(clock)} headers={[...m.orderHeaders, ['', '']]} right={(i) => i === 3} ruled />
-              {/* orderId is unique per API client only (TWS orders all have 0). */}
-              {orders.map((o) => (
-                <OrderRow key={o.permId ?? `${o.clientId}:${o.orderId}`} o={o} own={o.clientId === myClientId} />
-              ))}
-            </div>
+            <OrderList orders={orders} myClientId={myClientId} />
           ) : (
             <div style={{ padding: '10px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.noOrders(sym)}</div>
           )
-        ) : positions.length ? (
+        ) : rows.length ? (
           <div>
-            <HeaderRow grid={POS_GRID} headers={m.posHeaders} right={(i) => i > 0} />
-            {positions.map((p) => (
-              <PositionRow key={p.key} p={p} netLiq={netLiq} />
+            <HeaderRow grid={options ? POS_GRID_OPT : POS_GRID} headers={posHeaders} right={(i) => i > 0} />
+            {rows.map((r) => (
+              <HoldingRow key={r.key} r={r} netLiq={netLiq} opt={options ? optionCells(r) : undefined} />
             ))}
           </div>
         ) : (

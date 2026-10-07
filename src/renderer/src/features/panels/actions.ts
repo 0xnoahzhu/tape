@@ -1,5 +1,5 @@
 // Popping panels out of their column and back, collapsing them, and the actions that load a
-// floating panel (B / S, Modify, a depth level, a chain quote): they expand it from its bar first.
+// floating panel (B / S, Modify, a chain quote): they expand it from its bar first.
 // Docked panels are always shown, so for them these behave exactly as before.
 
 import { isTradable, sameContract } from '@shared/contract';
@@ -12,7 +12,7 @@ import { usePanels } from './panelStore';
 
 /**
  * Whether panel `id` is on screen with the page as it is (docked or floating): the ticket in
- * Trade › Chart and Depth, the strategy builder in Trade › Options.
+ * Trade › Chart, the strategy builder in Trade › Options.
  */
 export function panelShown(id: PanelId, s: Pick<StoreState, 'page' | 'view'>): boolean {
   if (s.page !== 'trade') return false;
@@ -63,13 +63,15 @@ export function openTicket(patch: Partial<TicketState>): void {
 }
 
 /**
- * Modify of a working order in the ticket (the activity panel, a floating ticket's working orders and
- * its status strip): the ticket trades the selected instrument, so the order's own contract is
- * selected first when it is another one (a stock order keeps the underlying's name; an option order
- * selects the option), then the order loads and a floating ticket expands with it.
+ * Modify of a working order in the ticket (the activity panel, a floating ticket's status strip): the
+ * ticket trades the selected instrument, so the order's own contract is selected first when it is
+ * another one (a stock order keeps the underlying's name; an option order selects the option), and
+ * the ticket shows on Trade › Chart only, so the options view switches to the chart. Then the order
+ * loads and a floating ticket expands with it.
  */
 export function modifyOrderInTicket(o: WorkingOrder): void {
   const s = useStore.getState();
+  if (s.view === 'opt') s.setView('chart');
   if (!sameContract(o.contract, s.symbol)) {
     const sameUnderlying = o.contract.secType === s.symbol.secType && o.contract.symbol === s.symbol.symbol;
     s.selectSymbol(o.contract, sameUnderlying ? s.symbolName : undefined);

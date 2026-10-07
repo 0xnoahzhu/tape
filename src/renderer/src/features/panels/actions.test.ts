@@ -11,15 +11,14 @@ const panel = (id: 'ticket' | 'strategy') => usePanels.getState().panels[id];
 
 beforeEach(() => {
   useStore.setState(initial, true);
-  useStore.setState((s) => ({ page: 'trade', view: 'chart', symbol: stock('AAPL'), settings: { ...s.settings, features: { ...s.settings.features, depth: true } } }));
+  useStore.setState({ page: 'trade', view: 'chart', symbol: stock('AAPL') });
   for (const id of ['ticket', 'strategy'] as const) dockBack(id);
 });
 
 describe('where the panels show', () => {
-  it('the ticket in Trade › Chart and Depth, the strategy builder in Trade › Options', () => {
+  it('the ticket in Trade › Chart, the strategy builder in Trade › Options', () => {
     const s = useStore.getState();
     expect(panelShown('ticket', s)).toBe(true);
-    expect(panelShown('ticket', { ...s, view: 'depth' })).toBe(true);
     expect(panelShown('ticket', { ...s, view: 'opt' })).toBe(false);
     expect(panelShown('strategy', { ...s, view: 'opt' })).toBe(true);
     expect(panelShown('strategy', s)).toBe(false);
@@ -28,7 +27,7 @@ describe('where the panels show', () => {
 });
 
 describe('triggers while floating', () => {
-  it('Modify (and a depth level) loads the ticket and expands it from its bar', () => {
+  it('Modify loads the ticket and expands it from its bar', () => {
     popOut('ticket');
     setCollapsed('ticket', true);
     openTicket({ modifyingOrderId: 12, qty: 300, limitPrice: 101.5 });
@@ -132,5 +131,15 @@ describe('Modify loads the order’s own contract', () => {
     modifyOrderInTicket(order(stock('AAPL'), 43));
     expect(useStore.getState().symbol).toBe(before);
     expect(useStore.getState().ticket.modifyingOrderId).toBe(43);
+  });
+
+  it('Modify from the options view switches to the chart and loads the order', () => {
+    useStore.setState({ view: 'opt' });
+    const opt = option('AAPL', '20261009', 230, 'C');
+    modifyOrderInTicket(order(opt, 44));
+    expect(useStore.getState().view).toBe('chart');
+    expect(panelShown('ticket', useStore.getState())).toBe(true);
+    expect(sameContract(useStore.getState().symbol, opt)).toBe(true);
+    expect(useStore.getState().ticket).toMatchObject({ modifyingOrderId: 44, qty: 2 });
   });
 });

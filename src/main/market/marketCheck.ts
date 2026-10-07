@@ -10,7 +10,7 @@
 // - indices: SPX on CBOE;
 // - Level 2 (on "Check now", and when Settings › Market Data opens without a Level 2 answer for the
 //   account, renderer logic.ts → autoCheckPlan): one depth line for SPY (DepthService.openLine), or
-//   the line the depth view already holds;
+//   the line the order ticket's book already holds;
 // - the stocks the quotes service found SMART delayed and live on their exchange this session.
 // Owners reuse open lines (an instrument already subscribed is not requested again, and its answer
 // is known at once); everything is released afterwards (owner lines linger 30 s like any other).
@@ -109,9 +109,9 @@ interface DepthAnswer {
   /** The line is still watched: IB may still change the answer (a 2152). */
   open: boolean;
   /**
-   * The final answer once the check's own or the depth view's line is no longer watched; null for
-   * the others (the view's book, whose 2152 its next update clears; demo; no line) and when the
-   * session closed or IB dropped the market data (1101) first.
+   * The final answer once the check's own or the order ticket's book's line is no longer watched;
+   * null for the others (the book's data, whose 2152 its next update clears; demo; no line) and
+   * when the session closed or IB dropped the market data (1101) first.
    */
   settled: Promise<MarketCheckProbe | null>;
 }
@@ -353,7 +353,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
   };
 
   /**
-   * Level 2: the depth view's book, the view's open line (its first answer), else one depth line
+   * Level 2: the order ticket's book, the book's open line (its first answer), else one depth line
    * of the check's own (SPY, SMART depth), released as soon as it answers. The answer is the first
    * book update (live), an error, or no data after DEPTH_TIMEOUT_MS. The line is watched longer:
    * a 2152 up to DEPTH_NOTICE_MS after the request (and DEPTH_LATE_NOTICE_MS after the first
@@ -381,7 +381,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     if (!ctx.ib.api) {
       return Promise.resolve({ probe: { status: 'nodata', exchange: 'SMART', code: OWN_CODE, message: NOT_CONNECTED }, instrument, open: false, settled: unsettled });
     }
-    // The depth view holds a line already: wait for its answer instead of opening a second one.
+    // The order ticket's book holds a line already: wait for its answer instead of opening a second one.
     const view = ctx.depth.lineReqId();
     const own = view == null;
     let reqId: number;
