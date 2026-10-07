@@ -1,8 +1,9 @@
 // The Positions table's column choice, grouping and sort (pure): which columns show in which order
-// and how wide, how the rows are grouped, the stored preferences and how they are read back, where a
-// header dragged across the table lands, the sort cycle, the comparator and the group and row order
-// held while the pointer is over the rows. Persisted by columnStore.ts; the groups themselves are
-// groups.ts.
+// and how wide (and the width a dragged edge gives), how the rows are grouped, the stored preferences
+// and how they are read back, when a header press becomes a drag, where a header dragged across the
+// table lands and how fast it scrolls the card at its sides, the sort cycle, the comparator and the
+// group and row order held while the pointer is over the rows. Persisted by columnStore.ts; the
+// groups themselves are groups.ts.
 
 import type { Lang } from '@shared/types';
 import { COLUMNS, DEFAULT_COLUMNS, PINNED, isColumnId, type CellValue, type ColumnDef, type ColumnId } from './columns';
@@ -117,6 +118,17 @@ export function sizeColumn(widths: ColumnWidths, id: ColumnId, w: number, left: 
   return setColumnWidth(next, id, w);
 }
 
+/**
+ * The width a column's right edge dragged from `x0` to `x` sizes it to (clampWidth), the column drawn
+ * `w0` wide at the press. A column drawn wider than the maximum (its share of a very wide card) is
+ * sized only once the pointer brings it within the maximum: null until then, so a nudge never snaps
+ * it down to the maximum.
+ */
+export function dragWidth(id: ColumnId, w0: number, x0: number, x: number): number | null {
+  const w = w0 + x - x0;
+  return w0 <= MAX_COLUMN_WIDTH || w <= MAX_COLUMN_WIDTH ? clampWidth(id, w) : null;
+}
+
 /** Gives a column back its default width (it shares the spare width again). */
 export function resetColumnWidth(widths: ColumnWidths, id: ColumnId): ColumnWidths {
   if (widths[id] === undefined) return widths;
@@ -220,6 +232,50 @@ export function slotTarget(cols: readonly ColumnId[], id: ColumnId, slot: number
 export function moveColumnToSlot(cols: readonly ColumnId[], id: ColumnId, slot: number): readonly ColumnId[] {
   const to = slotTarget(cols, id, slot);
   return to == null ? cols : moveColumn(cols, id, to);
+}
+
+/**
+ * A press on a header becomes a drag that moves its column once the pointer has gone further than
+ * this sideways (px); a press released before is a click (a sort).
+ */
+export const REORDER_SLOP = 4;
+
+/** The pointer pressed on a header at `x0` and now at `x` drags the header. */
+export const startsReorder = (x0: number, x: number): boolean => Math.abs(x - x0) > REORDER_SLOP;
+
+/** A header's horizontal extent (px, all in one frame, e.g. viewport x). */
+export interface Span {
+  left: number;
+  right: number;
+}
+
+/**
+ * Where a header dragged to `x` lands among the headers `cells` (in column order, Symbol first): the
+ * slot (dropSlot, Symbol's right edge the floor) and the x its mark is drawn at, in the middle of the
+ * `gap` before the slot's column (after the last column for the last slot), never over Symbol (a
+ * column scrolled partly under it is marked just right of Symbol's edge). Null where the column
+ * already is (slotTarget) and without headers.
+ */
+export function dropMark(cells: readonly Span[], x: number, cols: readonly ColumnId[], id: ColumnId, gap: number): { slot: number; x: number } | null {
+  if (!cells.length) return null;
+  const floor = cells[0].right;
+  const slot = dropSlot(cells.map((r) => (r.left + r.right) / 2), x, floor);
+  if (slotTarget(cols, id, slot) == null) return null;
+  const edge = slot < cells.length ? cells[slot].left - gap / 2 : cells[cells.length - 1].right + gap / 2;
+  return { slot, x: Math.max(edge, floor + 1) };
+}
+
+/**
+ * How far a card scrolls sideways in a frame (px, negative = left) while a header pressed at `x0` is
+ * dragged to `x`: within `edge` px of the view's left side `from` (Symbol's right edge) while the
+ * header is dragged leftwards, or of its right side `to` while it is dragged rightwards, the faster
+ * the closer to that side (or past it), up to `max`; else 0. A header pressed near a side and dragged
+ * away from it does not scroll the card.
+ */
+export function edgeScroll(x: number, x0: number, from: number, to: number, edge: number, max: number): number {
+  if (x < x0 && x < from + edge) return -Math.ceil(max * Math.min(1, (from + edge - x) / edge));
+  if (x > x0 && x > to - edge) return Math.ceil(max * Math.min(1, (x - (to - edge)) / edge));
+  return 0;
 }
 
 /** A header click: ascending, then descending, then no sort (the default order). */

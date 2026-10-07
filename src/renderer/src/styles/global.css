@@ -192,18 +192,28 @@ input::placeholder {
   background: var(--p2) !important;
 }
 
-/* The strip on a Positions header's right edge that sizes its column: a hairline in the gap on
-   hover, in the accent while it is dragged. */
+/* The strip on a Positions header's right edge that sizes its column (PositionsTable.tsx →
+   ResizeHandle). At rest a faint 1px rule in the gap between two headers, so the edges can be found
+   (none after the last header); on hover a 2px line, in the accent while it is dragged. */
 .pos-resize::after {
   content: '';
   position: absolute;
-  top: 6px;
-  bottom: 6px;
+  top: 8px;
+  bottom: 8px;
   left: calc(50% - 0.5px);
   width: 1px;
+  background: var(--ln);
   transition: background 0.12s;
 }
-.pos-resize:hover::after {
+[role='columnheader']:last-child > .pos-resize:not(:hover):not([data-active])::after {
+  background: transparent;
+}
+.pos-resize:hover::after,
+.pos-resize[data-active]::after {
+  top: 5px;
+  bottom: 5px;
+  left: calc(50% - 1px);
+  width: 2px;
   background: var(--mu);
 }
 .pos-resize[data-active]::after {
@@ -213,4 +223,9 @@ input::placeholder {
 .pos-resizing,
 .pos-resizing * {
   cursor: col-resize !important;
+}
+/* While a header is dragged to move its column, the pointer keeps the grabbing hand. */
+.pos-reordering,
+.pos-reordering * {
+  cursor: grabbing !important;
 }
