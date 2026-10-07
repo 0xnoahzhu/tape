@@ -1162,17 +1162,27 @@ scrolls both ways). A table that fits keeps the platform's look. Rows are keyed 
 quote or its details change. The tracks reach the header and the rows through the table's
 `--pos-cols`, so sizing a column redraws no row.
 
-**Moving and sizing columns.** A header dragged sideways (HTML drag and drop on the header's button;
-Symbol's is not draggable) moves its column: the slot follows the pointer's x anywhere over the card
-(`dropSlot`: before the first header whose midpoint is right of it, never before Symbol; over the
-sticky Symbol the pointer counts as at its right edge, so a header never lands among the columns
-scrolled under it), an accent line marks it (none at the column's own edges, `slotTarget`, never over
-Symbol), and the drop moves the column in the
-same list the editor shows (`moveToSlot`). The editor's drag, ↑ / ↓ and Alt+↑ / Alt+↓ stay the
-keyboard way. A 10px strip in the gap right of each header (`col-resize`, a hairline on hover) sizes
-its column: from the width it is drawn at, live while the pointer is down, stored on release, between
-its catalog width and `MAX_COLUMN_WIDTH` (640px, `clampWidth`); a press that does not move is no
-resize, and a double-click gives the column its default width back. The strip lies outside the
+**Moving and sizing columns.** Both are pointer gestures followed on the window from the press to
+the release (`followPointer` in `PositionsTable.tsx`), not HTML drag and drop (which needs the
+system's drag session) nor an element's pointer capture alone (a capture that does not hold would
+leave the gesture at the element's edge and its release unseen); Escape, the window losing the focus
+or a context menu undoes either, and the click of a release that ends or follows one is swallowed, so
+no header sorts and no row opens. A header pressed and
+moved more than 4px sideways (`startsReorder`; Symbol's does not move) is dragged: it fades, a ghost
+of it follows the pointer along the header row, the pointer shows the grabbing hand, and the slot
+follows the pointer's x while it is level with the card (`dropMark` → `dropSlot`: before the first
+header whose midpoint is right of it, never before Symbol; over the sticky Symbol the pointer counts
+as at its right edge, so a header never lands among the columns scrolled under it); an accent line
+marks it (none at the column's own edges, `slotTarget`, never over Symbol), the card scrolls sideways
+while the pointer is within 32px of the side it is dragged towards (`edgeScroll`; Symbol's right edge
+on the left), and the release moves the column in the same list the editor shows (`moveToSlot`). A
+press released before that is a click (a sort). The editor's drag, ↑ / ↓ and Alt+↑ / Alt+↓ stay the
+keyboard way. A 10px strip in the gap right of each header (`col-resize`; a faint `--ln` rule at rest
+between two headers, a 2px line on hover, in the accent while it is dragged) sizes its column: from
+the width it is drawn at, live while the pointer is down, stored on release, between its catalog
+width and `MAX_COLUMN_WIDTH` (640px, `dragWidth` → `clampWidth`); a press that does not move is no
+resize, and a double-click gives the column its default width back (not one with a press that sized
+it: a resize soon after a click ends in a double-click to the system). The strip lies outside the
 header's button, so it never sorts or drags the header, and its press is not prevented, so it closes
 the column editor like any press outside it. A sized column's track is its width in px; the others
 keep sharing the spare width. So that the edge follows the pointer, the columns left of it stay at

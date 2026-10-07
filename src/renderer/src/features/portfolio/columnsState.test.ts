@@ -3,8 +3,12 @@ import { COLUMNS, DEFAULT_COLUMNS, type ColumnId } from './columns';
 import {
   MAX_COLUMN_WIDTH,
   clampWidth,
+  REORDER_SLOP,
   compareValues,
+  dragWidth,
+  dropMark,
   dropSlot,
+  edgeScroll,
   gridTemplate,
   heldGroups,
   heldOrder,
@@ -24,6 +28,7 @@ import {
   sizeColumn,
   slotTarget,
   sortBy,
+  startsReorder,
   toggleColumn,
   tracksWidth,
 } from './columnsState';
@@ -159,6 +164,21 @@ describe('column widths', () => {
     expect(sizeColumn(same, 'quantity', 100.2, { symbol: 200 })).toBe(same);
     expect(sizeColumn(same, 'quantity', 100)).toBe(same);
   });
+
+  it('sizes a column by the distance its edge was dragged, clamped', () => {
+    // Pressed at x 500 on Value's edge, Value drawn 150 wide: 120px right makes it 270.
+    expect(dragWidth('value', 150, 500, 620)).toBe(270);
+    expect(dragWidth('value', 150, 500, 500)).toBe(150);
+    expect(dragWidth('value', 150.4, 500, 459.7)).toBe(110);
+    // Never under its catalog width, never over the maximum.
+    expect(dragWidth('value', 150, 500, 100)).toBe(COLUMNS.value.width);
+    expect(dragWidth('value', 150, 500, 5000)).toBe(MAX_COLUMN_WIDTH);
+    // Drawn wider than the maximum (a share of a very wide card): not sized until it is brought within it.
+    expect(dragWidth('symbol', 900, 1000, 990)).toBeNull();
+    expect(dragWidth('symbol', 900, 1000, 1100)).toBeNull();
+    expect(dragWidth('symbol', 900, 1000, 700)).toBe(600);
+    expect(dragWidth('symbol', MAX_COLUMN_WIDTH, 1000, 1100)).toBe(MAX_COLUMN_WIDTH);
+  });
 });
 
 describe('column edits', () => {
@@ -216,6 +236,71 @@ describe('column edits', () => {
     expect(moveColumnToSlot(cols, 'value', 99)).toBe(cols);
     expect(moveColumnToSlot(cols, 'symbol', 3)).toBe(cols);
     expect(moveColumnToSlot(cols, 'bid', 1)).toBe(cols);
+  });
+
+  it('starts a header drag only past a few px sideways; a smaller move is a click', () => {
+    expect(startsReorder(100, 100)).toBe(false);
+    expect(startsReorder(100, 100 + REORDER_SLOP)).toBe(false);
+    expect(startsReorder(100, 100 - REORDER_SLOP)).toBe(false);
+    expect(startsReorder(100, 100 + REORDER_SLOP + 1)).toBe(true);
+    expect(startsReorder(100, 100 - REORDER_SLOP - 0.5)).toBe(true);
+  });
+
+  it('marks where a dragged header lands, in the gap before the slot, never over Symbol', () => {
+    // Headers with 12px gaps: Symbol 0–200, Qty 212–284, Price 296–380, Value 392–488.
+    const cells = [
+      { left: 0, right: 200 },
+      { left: 212, right: 284 },
+      { left: 296, right: 380 },
+      { left: 392, right: 488 },
+    ];
+    // Value dragged left over Qty's right half: between Qty and Price.
+    expect(dropMark(cells, 270, cols, 'value', 12)).toEqual({ slot: 2, x: 290 });
+    // ...to Qty's left edge (left of its midpoint): right after Symbol.
+    expect(dropMark(cells, 212, cols, 'value', 12)).toEqual({ slot: 1, x: 206 });
+    // Over Symbol: as at its right edge.
+    expect(dropMark(cells, 40, cols, 'value', 12)).toEqual({ slot: 1, x: 206 });
+    // Qty dragged past the last header: after it.
+    expect(dropMark(cells, 900, cols, 'quantity', 12)).toEqual({ slot: 4, x: 494 });
+    // No mark where the column already is (either of its own edges).
+    expect(dropMark(cells, 420, cols, 'value', 12)).toBeNull();
+    expect(dropMark(cells, 350, cols, 'value', 12)).toBeNull();
+    expect(dropMark(cells, 300, cols, 'price', 12)).toBeNull();
+    // Scrolled sideways, Qty partly under Symbol: over Symbol, the first slot in view (after Qty).
+    const scrolled = [
+      { left: 0, right: 200 },
+      { left: 150, right: 222 },
+      { left: 234, right: 318 },
+      { left: 330, right: 426 },
+    ];
+    expect(dropMark(scrolled, 100, cols, 'value', 12)).toEqual({ slot: 2, x: 228 });
+    expect(dropMark(scrolled, 180, cols, 'price', 12)).toBeNull();
+    // Price partly under Symbol too: its slot is marked just right of Symbol's edge, not over it.
+    const further = [
+      { left: 0, right: 200 },
+      { left: 100, right: 172 },
+      { left: 184, right: 268 },
+      { left: 280, right: 376 },
+    ];
+    expect(dropMark(further, 100, cols, 'value', 12)).toEqual({ slot: 2, x: 201 });
+    expect(dropMark([], 100, cols, 'value', 12)).toBeNull();
+    expect(dropMark(cells, 100, cols, 'symbol', 12)).toBeNull();
+  });
+
+  it('scrolls the card at the side a header is dragged towards, faster the closer', () => {
+    // The view from Symbol's right edge (200) to 1000; 32px zones; up to 16px a frame.
+    const step = (x: number, x0: number) => edgeScroll(x, x0, 200, 1000, 32, 16);
+    expect(step(600, 500)).toBe(0);
+    expect(step(990, 500)).toBe(Math.ceil(16 * (22 / 32)));
+    expect(step(1000, 500)).toBe(16);
+    expect(step(1200, 500)).toBe(16);
+    expect(step(220, 500)).toBe(-Math.ceil(16 * (12 / 32)));
+    expect(step(150, 500)).toBe(-16);
+    expect(step(232, 500)).toBe(0);
+    // Pressed near a side and dragged away from it: no scroll.
+    expect(step(980, 990)).toBe(0);
+    expect(step(210, 205)).toBe(0);
+    expect(step(990, 990)).toBe(0);
   });
 
   it('moves a column by one place', () => {

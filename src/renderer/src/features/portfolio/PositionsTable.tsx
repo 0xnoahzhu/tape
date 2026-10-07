@@ -15,12 +15,14 @@
 // The card is its own scroll container, so its header row stays on top and the Symbol column on
 // the left when many columns scroll sideways; while they overflow, its scrollbars are always shown
 // (global.css → .pos-scroll), the horizontal one at the card's bottom edge. A header dragged sideways
-// moves its column (Symbol stays first), and the strip on a header's right edge sizes the column (a
-// double-click gives it its default width back); the editor shares the order, and both are
-// remembered (columnStore.ts). A sort orders the groups (by their sum, their label on Symbol, else
-// by their best row) and the rows within each group (groups.ts → orderGroups). Sorting on a value
-// that moves (a price, a P&L) re-sorts at most once a second, and not while the pointer is over the
-// rows: a row or group never moves away under a click. The values still update in place.
+// moves its column (Symbol stays first; useHeaderDrag), and the strip on a header's right edge sizes
+// the column (ResizeHandle; a double-click gives it its default width back). Both follow the pointer
+// on the window from press to release (followPointer), not HTML drag and drop or an element's pointer
+// capture. The editor shares the order, and both are remembered (columnStore.ts). A sort orders the
+// groups (by their sum, their label on Symbol, else by their best row) and the rows within each group
+// (groups.ts → orderGroups). Sorting on a value that moves (a price, a P&L) re-sorts at most once a
+// second, and not while the pointer is over the rows: a row or group never moves away under a click.
+// The values still update in place.
 
 import {
   Fragment,
@@ -33,8 +35,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type DragEvent,
-  type PointerEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -51,14 +52,14 @@ import { positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, formatValue, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
-  MAX_COLUMN_WIDTH,
-  clampWidth,
-  dropSlot,
+  dragWidth,
+  dropMark,
+  edgeScroll,
   gridTemplate,
   heldGroups,
   liveWidths,
   sameGroups,
-  slotTarget,
+  startsReorder,
   tracksWidth,
   type ColumnWidths,
   type OrderGroup,
@@ -82,8 +83,12 @@ const INDENT = 16;
 const GRIP = 10;
 /** A press on that strip that moves less than this (px) is a click, not a resize. */
 const SLOP = 2;
-/** Data type of a dragged header (not text, so it never drops into a text field). */
-const DRAG_TYPE = 'application/x-tape-column';
+/** A dragged header scrolls the card sideways within this far (px) of its sides (Symbol's right edge on the left)... */
+const EDGE = 32;
+/** ...by up to this much a frame (px), at the side itself or past it. */
+const EDGE_SPEED = 16;
+/** The dragged header's ghost reaches this far (px) past the header on either side. */
+const GHOST_PAD = 8;
 
 /**
  * The column being sized and its width while the pointer is down (stored when it is released), with
@@ -99,6 +104,245 @@ interface LiveWidth {
 interface DropMark {
   slot: number;
   x: number;
+}
+
+/**
+ * Swallows the click the release of a drag would cause (a sort on the header under it, or a row
+ * opened). The browser sends it in the same task as the release, so a later click is left alone.
+ */
+function swallowClick(): void {
+  const stop = (e: MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+  window.addEventListener('click', stop, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener('click', stop, { capture: true }), 0);
+}
+
+/**
+ * Follows a pressed pointer on the window until it is released, wherever it goes: neither the
+ * pressed element staying under the pointer nor its pointer capture is relied on (a capture that does
+ * not hold would leave the gesture behind at the element's edge, and its release unseen). `move` gets
+ * each move; `end` gets the release, or null when the gesture is undone: by Escape, the window losing
+ * the focus or a context menu opening (the release is still waited for, and its click swallowed: it
+ * goes to the window the press was in, and would sort the header under it), or by a pointercancel
+ * (no release follows). A release that never comes (it went to another window) is given up at the
+ * pointer's next press. The moves' `buttons` are not read: input that reports none while the button
+ * is down must not end the gesture. Returns what stops following (unmount).
+ */
+function followPointer(pointerId: number, move: (e: globalThis.PointerEvent) => void, end: (e: globalThis.PointerEvent | null) => void): () => void {
+  let cancelled = false;
+  const onMove = (e: globalThis.PointerEvent) => {
+    if (e.pointerId === pointerId) move(e);
+  };
+  const onUp = (e: globalThis.PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    stop();
+    if (cancelled) swallowClick();
+    else end(e);
+  };
+  const onCancel = (e: globalThis.PointerEvent) => {
+    if (e.pointerId !== pointerId) return;
+    stop();
+    if (!cancelled) end(null);
+  };
+  // A new press of the pointer while an undone gesture waits for its release: that release was missed.
+  const onDown = (e: globalThis.PointerEvent) => {
+    if (e.pointerId === pointerId) stop();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    // The Escape is the gesture's: it closes nothing else.
+    e.preventDefault();
+    e.stopPropagation();
+    cancel();
+  };
+  /** Undoes the gesture now; its release is still waited for (onUp swallows its click). */
+  function cancel() {
+    if (cancelled) return;
+    cancelled = true;
+    window.removeEventListener('pointermove', onMove, true);
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('contextmenu', cancel, true);
+    window.removeEventListener('blur', cancel);
+    window.addEventListener('pointerdown', onDown, true);
+    end(null);
+  }
+  function stop() {
+    window.removeEventListener('pointermove', onMove, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onCancel, true);
+    window.removeEventListener('pointerdown', onDown, true);
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('contextmenu', cancel, true);
+    window.removeEventListener('blur', cancel);
+  }
+  window.addEventListener('pointermove', onMove, true);
+  window.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointercancel', onCancel, true);
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('contextmenu', cancel, true);
+  window.addEventListener('blur', cancel);
+  return stop;
+}
+
+/** A pressed header: armed until the pointer goes REORDER_SLOP px sideways (columnsState.ts → startsReorder), then dragged. */
+interface HeaderPress {
+  id: ColumnId;
+  /** The pointer at the press and now (viewport px). */
+  x0: number;
+  x: number;
+  y: number;
+  /** Where in its header the pointer took it (px from the header's left edge), for the ghost. */
+  dx: number;
+  dragged: boolean;
+}
+
+/** The dragged header: its column and its size, for the ghost. */
+interface Dragged {
+  id: ColumnId;
+  w: number;
+  h: number;
+}
+
+/**
+ * Moving a column by dragging its header with the pointer (not HTML drag and drop, which needs the
+ * system's drag session). A press arms it; a move of more than REORDER_SLOP px sideways starts it:
+ * the header fades, a ghost of it follows the pointer along the header row, an accent line marks the
+ * slot while the pointer is level with the card (columnsState.ts → dropMark), and the card scrolls
+ * sideways near its sides (edgeScroll). The release drops the column in that slot and swallows its
+ * click, so no header sorts. A press released without that move is a click (a sort); Escape cancels.
+ */
+function useHeaderDrag(shown: readonly ColumnId[], boxRef: RefObject<HTMLDivElement | null>, tableRef: RefObject<HTMLDivElement | null>, headerRef: RefObject<HTMLDivElement | null>) {
+  const [dragging, setDragging] = useState<Dragged | null>(null);
+  const [drop, setDrop] = useState<DropMark | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const press = useRef<HeaderPress | null>(null);
+  /** The slot a release now drops in (what `drop` draws). */
+  const mark = useRef<DropMark | null>(null);
+  /** Stops following the press (unmount). */
+  const stop = useRef<(() => void) | null>(null);
+  const frame = useRef(0);
+  const cols = useRef(shown);
+  useLayoutEffect(() => {
+    cols.current = shown;
+  });
+
+  /**
+   * The ghost under the pointer: its x follows the pointer, its y the header row. It stays within the
+   * table: past its right edge it would widen what the card scrolls over (and the side scroll would
+   * chase it).
+   */
+  const place = useCallback(() => {
+    const p = press.current;
+    const el = ghostRef.current;
+    const table = tableRef.current?.getBoundingClientRect();
+    const head = headerRef.current?.getBoundingClientRect();
+    if (!p || !el || !table || !head) return;
+    const x = Math.max(0, Math.min(table.width - el.offsetWidth, p.x - p.dx - GHOST_PAD - table.left));
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(head.top - table.top)}px)`;
+  }, [tableRef, headerRef]);
+  // Placed before it is first painted.
+  useLayoutEffect(() => {
+    if (dragging) place();
+  }, [dragging, place]);
+
+  // The pointer keeps the grabbing hand wherever it goes while a header is dragged.
+  const active = !!dragging;
+  useEffect(() => {
+    if (!active) return;
+    const root = document.documentElement;
+    root.classList.add('pos-reordering');
+    return () => root.classList.remove('pos-reordering');
+  }, [active]);
+
+  useEffect(() => () => stop.current?.(), []);
+
+  const onPress = useCallback(
+    (id: ColumnId, e: ReactPointerEvent<HTMLElement>) => {
+      // Not prevented: the press's mousedown still closes the column editor and other popovers.
+      if (e.button !== 0 || stop.current) return;
+      const el = e.currentTarget;
+      const cell = (el.parentElement ?? el).getBoundingClientRect();
+      const p: HeaderPress = { id, x0: e.clientX, x: e.clientX, y: e.clientY, dx: e.clientX - cell.left, dragged: false };
+      /** The slot under the pointer (none while it is above or below the card), and the ghost. */
+      const follow = () => {
+        const box = boxRef.current?.getBoundingClientRect();
+        const table = tableRef.current?.getBoundingClientRect();
+        let next: DropMark | null = null;
+        if (box && table && p.y >= box.top && p.y <= box.bottom) {
+          const cells = Array.from(headerRef.current?.children ?? [], (c) => c.getBoundingClientRect());
+          const at = dropMark(cells, p.x, cols.current, id, GAP);
+          if (at) next = { slot: at.slot, x: Math.round(at.x - table.left) };
+        }
+        const cur = mark.current;
+        if (cur?.slot !== next?.slot || cur?.x !== next?.x) {
+          mark.current = next;
+          setDrop(next);
+        }
+        place();
+      };
+      /** Each frame of the drag: near a side of the card, scroll it (and follow the columns that moved). */
+      const scroll = () => {
+        frame.current = requestAnimationFrame(scroll);
+        const box = boxRef.current;
+        const symbol = headerRef.current?.firstElementChild;
+        if (!box || !symbol || box.scrollWidth <= box.clientWidth) return;
+        const r = box.getBoundingClientRect();
+        if (p.y < r.top || p.y > r.bottom) return;
+        const step = edgeScroll(p.x, p.x0, symbol.getBoundingClientRect().right, r.left + box.clientLeft + box.clientWidth, EDGE, EDGE_SPEED);
+        if (!step) return;
+        const before = box.scrollLeft;
+        box.scrollLeft = before + step;
+        if (box.scrollLeft !== before) follow();
+      };
+      const done = () => {
+        cancelAnimationFrame(frame.current);
+        stop.current = null;
+        press.current = null;
+        mark.current = null;
+        setDrop(null);
+        setDragging(null);
+      };
+      const unfollow = followPointer(
+        e.pointerId,
+        (ev) => {
+          p.x = ev.clientX;
+          p.y = ev.clientY;
+          if (!p.dragged) {
+            if (!startsReorder(p.x0, p.x)) return;
+            p.dragged = true;
+            try {
+              el.setPointerCapture(ev.pointerId);
+            } catch {
+              // Not held: the window follows the pointer all the same.
+            }
+            setDragging({ id, w: cell.width, h: cell.height });
+            frame.current = requestAnimationFrame(scroll);
+          }
+          follow();
+        },
+        (ev) => {
+          if (ev && p.dragged) {
+            p.x = ev.clientX;
+            p.y = ev.clientY;
+            follow();
+            if (mark.current) usePositionColumns.getState().moveToSlot(id, mark.current.slot);
+            swallowClick();
+          }
+          done();
+        },
+      );
+      press.current = p;
+      stop.current = () => {
+        unfollow();
+        done();
+      };
+    },
+    [boxRef, tableRef, headerRef, place],
+  );
+
+  return { dragging, drop, ghostRef, onPress };
 }
 
 /**
@@ -192,18 +436,16 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   const groupBy = usePositionColumns((s) => s.groupBy);
   const collapsed = usePositionColumns((s) => s.collapsed);
   const toggleGroup = usePositionColumns((s) => s.toggleGroup);
-  const moveToSlot = usePositionColumns((s) => s.moveToSlot);
   const defs = useMemo(() => shown.map((id) => COLUMNS[id]), [shown]);
   const { quotes, infos, grossBase, earnings } = usePositionColumnData(rows, defs, corporate);
   const [hold, setHold] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [live, setLive] = useState<LiveWidth | null>(null);
-  const [dragging, setDragging] = useState<ColumnId | null>(null);
-  const [drop, setDrop] = useState<DropMark | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const boxW = useOuterWidth(boxRef);
+  const { dragging, drop, ghostRef, onPress } = useHeaderDrag(shown, boxRef, tableRef, headerRef);
   const words = useMemo<CellWords>(() => ({ ...m.words, kinds: m.kinds }), [m]);
 
   const ctxs = useMemo(() => {
@@ -259,42 +501,6 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   const open = (c: ContractRef) => {
     const t = positionTarget(c);
     openSymbol(t.contract, t.view);
-  };
-
-  const onDrag = useCallback((id: ColumnId | null) => {
-    setDragging(id);
-    if (!id) setDrop(null);
-  }, []);
-  // A dragged header can be dropped anywhere over the card: the slot follows the pointer's x.
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const cells = Array.from(headerRef.current?.children ?? [], (el) => el.getBoundingClientRect());
-    const table = tableRef.current?.getBoundingClientRect();
-    if (!cells.length || !table) return;
-    // Over the sticky Symbol the pointer counts as at its right edge, so a header never lands among
-    // the columns scrolled under it.
-    const floor = cells[0].right;
-    const slot = dropSlot(cells.map((r) => (r.left + r.right) / 2), e.clientX, floor);
-    // No mark where the column already is.
-    if (slotTarget(shown, dragging, slot) == null) {
-      setDrop(null);
-      return;
-    }
-    const edge = slot < cells.length ? cells[slot].left - GAP / 2 : cells[cells.length - 1].right + GAP / 2;
-    // Never drawn over Symbol: a column scrolled partly under it is marked at Symbol's edge.
-    const x = Math.round(Math.max(edge, floor + 1) - table.left);
-    setDrop((d) => (d?.slot === slot && d.x === x ? d : { slot, x }));
-  };
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    e.preventDefault();
-    if (drop) moveToSlot(dragging, drop.slot);
-    onDrag(null);
-  };
-  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
   };
 
   const body: ReactNode[] = [];
@@ -353,16 +559,14 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
       className="pos-scroll"
       data-pos="scroll"
       data-overflow-x={overflowX || undefined}
+      data-dragging={dragging?.id}
       onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
       // Its own stacking context: the sticky header and column stay under the page's popovers.
       style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, overflow: 'auto', isolation: 'isolate' }}
     >
       <div ref={tableRef} role="table" aria-label={m.tabPos} style={{ minWidth, position: 'relative', '--pos-cols': template } as CSSProperties}>
         <div style={{ height: 8 }} />
-        <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging} onDrag={onDrag} onLive={setLive} />
+        <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
         <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
           {body}
         </div>
@@ -373,6 +577,35 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
             data-slot={drop.slot}
             style={{ position: 'absolute', top: 8, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
           />
+        )}
+        {dragging && (
+          // The dragged header, under the pointer along the header row (useHeaderDrag places it).
+          <div
+            ref={ghostRef}
+            aria-hidden
+            data-pos="ghost"
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              zIndex: 5,
+              width: dragging.w + 2 * GHOST_PAD,
+              height: dragging.h,
+              padding: `0 ${GHOST_PAD}px`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: COLUMNS[dragging.id].align === 'right' ? 'flex-end' : 'flex-start',
+              fontSize: 12,
+              color: 'var(--tx)',
+              background: 'var(--p2)',
+              boxShadow: 'inset 0 0 0 1px var(--ln), 0 2px 8px var(--ov)',
+              opacity: 0.95,
+              pointerEvents: 'none',
+              willChange: 'transform',
+            }}
+          >
+            <span className="ellipsis">{m.columns[dragging.id][0]}</span>
+          </div>
         )}
       </div>
       {!rows.length && <Empty style={{ padding: '18px 32px 22px' }}>{connected ? m.noPositions : common.notConnected}</Empty>}
@@ -393,13 +626,14 @@ interface HeaderProps {
   scrolled: boolean;
   /** The column whose header is being dragged. */
   dragging: ColumnId | null;
-  onDrag: (id: ColumnId | null) => void;
+  /** A press on a header's button (useHeaderDrag: a drag once it moves sideways). */
+  onPress: (id: ColumnId, e: ReactPointerEvent<HTMLElement>) => void;
   onLive: (live: LiveWidth | null) => void;
 }
 
 // Re-rendered only when the columns, the sort, the side scroll or a header drag change (not with
 // every price, nor while a column is sized).
-const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, dragging, onDrag, onLive }: HeaderProps) {
+const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, dragging, onPress, onLive }: HeaderProps) {
   return (
     <div
       ref={rowRef}
@@ -425,7 +659,7 @@ const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, draggi
           sticky={i === 0}
           scrolled={scrolled}
           dragged={dragging === d.id}
-          onDrag={onDrag}
+          onPress={onPress}
           onLive={onLive}
         />
       ))}
@@ -439,12 +673,12 @@ interface HeaderCellProps {
   sticky: boolean;
   scrolled: boolean;
   dragged: boolean;
-  onDrag: (id: ColumnId | null) => void;
+  onPress: (id: ColumnId, e: ReactPointerEvent<HTMLElement>) => void;
   onLive: (live: LiveWidth | null) => void;
 }
 
 /** A header: click to sort, drag to move the column (not Symbol), its right edge to size it. */
-function HeaderCell({ def, dir, sticky, scrolled, dragged, onDrag, onLive }: HeaderCellProps) {
+function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: HeaderCellProps) {
   const m = usePortfolioMessages();
   const cycleSort = usePositionColumns((s) => s.cycleSort);
   const right = def.align === 'right';
@@ -459,14 +693,9 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onDrag, onLive }: Hea
       <button
         type="button"
         title={`${columnTip(m, def.id)}\n${sticky ? m.headerSort : m.headerSortMove}`}
-        // Symbol stays first: the other headers are dragged to reorder.
-        draggable={!sticky}
-        onDragStart={(e) => {
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData(DRAG_TYPE, def.id);
-          onDrag(def.id);
-        }}
-        onDragEnd={() => onDrag(null)}
+        // Symbol stays first: the other headers are dragged to reorder (a drag's release does not
+        // reach onClick: useHeaderDrag swallows its click).
+        onPointerDown={sticky ? undefined : (e) => onPress(def.id, e)}
         onClick={() => cycleSort(def.id)}
         className="hover-tx"
         style={{
@@ -499,15 +728,24 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onDrag, onLive }: Hea
 }
 
 /**
- * The strip on a header's right edge (in the gap to the next column): dragging it sizes the column
- * (live while the pointer is down, stored when it is released), a double-click gives the column its
- * default width back. It lies outside the header's button, so it never sorts or starts a header drag.
+ * The strip on a header's right edge (in the gap to the next column, a faint rule at rest: global.css
+ * → .pos-resize): dragging it sizes the column (live while the pointer is down, stored when it is
+ * released; Escape gives back the width it had), a double-click gives the column its default width
+ * back (not one whose press sized it). The pointer is followed on the window from the press to the
+ * release (followPointer), so the column keeps following it once it leaves the strip. The strip lies
+ * outside the header's button, so it never sorts or starts a header drag.
  */
 function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidth | null) => void }) {
   const m = usePortfolioMessages();
-  /** The press: its x, the column's drawn width, the drawn widths left of it; `live` once it is sized. */
-  const drag = useRef<{ x: number; w: number; left: ColumnWidths; moved: boolean; live: boolean } | null>(null);
   const [active, setActive] = useState(false);
+  /** Stops sizing (unmount while the pointer is down). */
+  const stop = useRef<(() => void) | null>(null);
+  /**
+   * Whether the last two presses on the strip moved it. A press that sizes the column soon after a
+   * click is the second of a double-click to the system, and its release a dblclick: only one whose
+   * presses both stayed put resets the width.
+   */
+  const moves = useRef<[boolean, boolean]>([false, false]);
 
   // The pointer keeps the resize cursor wherever it goes while the column is sized.
   useEffect(() => {
@@ -517,16 +755,18 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
     return () => root.classList.remove('pos-resizing');
   }, [active]);
 
-  const down = (e: PointerEvent<HTMLDivElement>) => {
+  useEffect(() => () => stop.current?.(), []);
+
+  const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     const cell = e.currentTarget.parentElement;
     const row = cell?.parentElement;
-    if (e.button !== 0 || !cell || !row) return;
+    if (e.button !== 0 || !cell || !row || stop.current) return;
     // Not prevented: the press's mousedown still closes the column editor and other popovers.
     e.stopPropagation();
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      // The pointer is already gone: the strip still follows it until it is released.
+      // Not held: the window follows the pointer all the same.
     }
     // The tracks' widths as drawn (the sticky Symbol cell reaches over the row's left padding).
     const track = (el: Element) => el.getBoundingClientRect().width - (el === row.firstElementChild ? PAD : 0);
@@ -536,27 +776,39 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
       const id = (el as HTMLElement).dataset.posCol;
       if (isColumnId(id)) left[id] = track(el);
     }
-    drag.current = { x: e.clientX, w: track(cell), left, moved: false, live: false };
+    const x0 = e.clientX;
+    const w0 = track(cell);
+    let moved = false;
+    const done = () => {
+      stop.current = null;
+      setActive(false);
+      onLive(null);
+    };
+    const unfollow = followPointer(
+      e.pointerId,
+      (ev) => {
+        if (!moved && Math.abs(ev.clientX - x0) < SLOP) return;
+        moved = true;
+        const w = dragWidth(def.id, w0, x0, ev.clientX);
+        onLive(w == null ? null : { id: def.id, w, left });
+      },
+      (ev) => {
+        moves.current = [moves.current[1], moved];
+        // A press without a move (a click, half of a double-click) leaves the width as it is, as do
+        // Escape and a cancel (the stored width is drawn again).
+        const w = ev && moved ? dragWidth(def.id, w0, x0, ev.clientX) : null;
+        if (w != null) {
+          usePositionColumns.getState().setWidth(def.id, w, left);
+          swallowClick();
+        }
+        done();
+      },
+    );
+    stop.current = () => {
+      unfollow();
+      done();
+    };
     setActive(true);
-  };
-  const move = (e: PointerEvent<HTMLDivElement>) => {
-    const d = drag.current;
-    if (!d || (!d.moved && Math.abs(e.clientX - d.x) < SLOP)) return;
-    d.moved = true;
-    const w = d.w + e.clientX - d.x;
-    // A column drawn wider than the maximum (its share of a very wide card) is sized only once the
-    // pointer brings it within it: a nudge never snaps it down to the maximum.
-    d.live = d.w <= MAX_COLUMN_WIDTH || w <= MAX_COLUMN_WIDTH;
-    onLive(d.live ? { id: def.id, w: clampWidth(def.id, w), left: d.left } : null);
-  };
-  const end = (e: PointerEvent<HTMLDivElement>, keep: boolean) => {
-    const d = drag.current;
-    if (!d) return;
-    drag.current = null;
-    setActive(false);
-    // A press without a move (a click, half of a double-click) leaves the width as it is.
-    if (keep && d.moved && d.live) usePositionColumns.getState().setWidth(def.id, d.w + e.clientX - d.x, d.left);
-    onLive(null);
   };
 
   return (
@@ -569,11 +821,10 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
       data-active={active || undefined}
       className="pos-resize"
       onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={(e) => end(e, true)}
-      onPointerCancel={(e) => end(e, false)}
       onClick={(e) => e.stopPropagation()}
-      onDoubleClick={() => usePositionColumns.getState().resetWidth(def.id)}
+      onDoubleClick={() => {
+        if (!moves.current.some(Boolean)) usePositionColumns.getState().resetWidth(def.id);
+      }}
       style={{ position: 'absolute', top: 0, bottom: 0, right: -(GAP + GRIP) / 2, width: GRIP, zIndex: 1, cursor: 'col-resize', touchAction: 'none' }}
     />
   );

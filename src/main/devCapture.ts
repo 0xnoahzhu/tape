@@ -19,6 +19,20 @@ interface Step {
   /** Optional window size for this step. */
   width?: number;
   height?: number;
+  /**
+   * Optional real input after `js`: an expression evaluated in the renderer that returns mouse events
+   * ({ type: 'mouseDown' | 'mouseMove' | 'mouseUp', x, y, clickCount?, wait? ms before it }), sent
+   * through webContents.sendInputEvent so the page sees them as a real mouse (drag, cursor, capture).
+   */
+  mouse?: string;
+}
+
+interface MouseStep {
+  type: 'mouseDown' | 'mouseMove' | 'mouseUp';
+  x: number;
+  y: number;
+  clickCount?: number;
+  wait?: number;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -33,6 +47,10 @@ export function setupDevCapture(win: BrowserWindow): void {
 
   win.webContents.once('did-finish-load', async () => {
     await sleep(initialDelay);
+    // The left button is held from a mouseDown to its mouseUp (across steps, so a step can capture a
+    // drag midway). The events between say so (`leftbuttondown`), as a physical mouse's do: without
+    // it Chromium reports buttons 0, so pointer capture never holds and moves are hovers.
+    let held = false;
     for (const step of steps) {
       try {
         if (step.width && step.height) win.setContentSize(step.width, step.height);
@@ -42,6 +60,23 @@ export function setupDevCapture(win: BrowserWindow): void {
         if (step.js) {
           const value: unknown = await win.webContents.executeJavaScript(step.js, true);
           if (value !== undefined) console.log(`[capture] ${step.name}: ${JSON.stringify(value)}`);
+        }
+        if (step.mouse) {
+          const events = (await win.webContents.executeJavaScript(step.mouse, true)) as MouseStep[];
+          for (const e of events) {
+            if (e.wait) await sleep(e.wait);
+            if (e.type === 'mouseDown') held = true;
+            else if (e.type === 'mouseUp') held = false;
+            win.webContents.sendInputEvent({
+              type: e.type,
+              x: Math.round(e.x),
+              y: Math.round(e.y),
+              button: 'left',
+              clickCount: e.clickCount ?? 1,
+              modifiers: held ? ['leftbuttondown'] : [],
+            });
+          }
+          console.log(`[capture] ${step.name}: sent ${events.length} mouse events`);
         }
         await sleep(step.delay ?? 800);
         const image = await win.webContents.capturePage();
