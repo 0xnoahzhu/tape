@@ -171,7 +171,7 @@ const en = {
   } as Record<number, string>,
   cacheTitle: 'Local Cache',
   cacheDesc:
-    'Bars, contract details and option chains are stored on this computer, so charts open at once and IB is asked only for what is missing. Intraday bars are kept for 30 days, charts not opened for 90 days are removed, and the cache stays under 512 MB by removing the least recently used charts first, intraday charts not opened in the past week before all others. Trade history and net liquidation history are always kept.',
+    'Bars, contract details and option chains are stored on this computer, so charts open at once and IB is asked only for what is missing. Intraday bars are kept for 30 days, charts not opened for 90 days are removed, and the cache stays under 512 MB by removing the least recently used charts first, intraday charts not opened in the past week before all others.',
   /** "84.2 MB · 312 series · 1.2M bars" */
   cacheLine: (size: string, series: number, bars: number) => `${size} · ${f0(series)} series · ${compact(bars)} ${bars === 1 ? 'bar' : 'bars'}`,
   cacheOldest: (date: string) => `Least recently used chart: ${date}`,
@@ -183,7 +183,7 @@ const en = {
   cacheSize: 'Size',
   cacheSeries: 'Series',
   cacheBars: 'Bars',
-  cacheClearNote: 'Charts load their bars from IB again, which takes a while for long histories. Trade history and net liquidation history are kept.',
+  cacheClearNote: 'Charts load their bars from IB again, which takes a while for long histories.',
   cacheCleared: 'Local cache cleared',
 
   // Trade
@@ -478,7 +478,7 @@ const zh: typeof en = {
   },
   cacheTitle: '本地缓存',
   cacheDesc:
-    'K线、合约详情和期权链保存在本机，图表可以立即打开，只向 IB 请求缺少的部分。日内K线保留 30 天，90 天未打开的图表会被删除；缓存超过 512 MB 时先删除最久未用的图表，其中一周内未打开的日内图表最先删除。成交记录和净值历史始终保留。',
+    'K线、合约详情和期权链保存在本机，图表可以立即打开，只向 IB 请求缺少的部分。日内K线保留 30 天，90 天未打开的图表会被删除；缓存超过 512 MB 时先删除最久未用的图表，其中一周内未打开的日内图表最先删除。',
   cacheLine: (size: string, series: number, bars: number) => `${size} · ${f0(series)} 个序列 · ${compact(bars)} 根K线`,
   cacheOldest: (date: string) => `最久未用的图表：${date}`,
   cacheLoading: '计算中…',
@@ -489,7 +489,7 @@ const zh: typeof en = {
   cacheSize: '大小',
   cacheSeries: '序列',
   cacheBars: 'K线',
-  cacheClearNote: '图表会重新从 IB 加载K线，较长的历史需要一些时间。成交记录和净值历史会保留。',
+  cacheClearNote: '图表会重新从 IB 加载K线，较长的历史需要一些时间。',
   cacheCleared: '本地缓存已清除',
 
   confirmOrders: '下单前确认',

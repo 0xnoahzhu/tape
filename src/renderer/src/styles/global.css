@@ -104,12 +104,6 @@ a:hover {
 .hover-r:hover {
   color: var(--r) !important;
 }
-/* The equity card's time labels: four clock labels with seconds do not fit a one-column card. */
-@container (max-width: 320px) {
-  .eq-ticks > :not(:first-child):not(:last-child) {
-    display: none;
-  }
-}
 /* The dashboard's "Add widget" tile. */
 .dash-add:hover {
   color: var(--tx) !important;

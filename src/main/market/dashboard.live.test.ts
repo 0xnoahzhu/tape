@@ -5,8 +5,8 @@
 //
 // Through the real services: the account values the header and the margin widget read (net
 // liquidation, excess liquidity, margins, today's realized P&L), the IB dividend tick on a
-// 'dividends' quote line (generic tick 456), earnings (the paper account has no WSH
-// subscription: estimates from IB's market scanner) and SPY's daily bars for the benchmark.
+// 'dividends' quote line (generic tick 456) and earnings (the paper account has no WSH
+// subscription: estimates from IB's market scanner).
 // Market data and account data only; no orders. Use a client id no other program uses.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -48,7 +48,6 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
   const { createAccountService } = await import('../ib/account');
   const { createContractService } = await import('./contracts');
   const { createQuoteService } = await import('./quotes');
-  const { createHistoryService } = await import('./history');
   const { createCorporateEventsService } = await import('./corporateEvents');
 
   const [host, port] = (live ?? '127.0.0.1:4002').split(':');
@@ -59,7 +58,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
     demo: false,
     isDev: true,
     emit: () => undefined,
-    store: { getSettings: () => settings, onSettingsChanged: () => () => undefined, getNav: () => [], setNav: () => undefined },
+    store: { getSettings: () => settings, onSettingsChanged: () => () => undefined },
     notifier: { notify: (n: unknown) => n },
     db: createMemoryDatabase(),
   } as unknown as MainContext;
@@ -67,7 +66,6 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
   ctx.ib = createConnection(ctx);
   ctx.contracts = createContractService(ctx);
   ctx.quotes = createQuoteService(ctx);
-  ctx.history = createHistoryService(ctx);
   ctx.account = createAccountService(ctx);
   ctx.corporateEvents = createCorporateEventsService(ctx);
   await sleep(10);
@@ -179,11 +177,5 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
     } finally {
       off();
     }
-  });
-
-  it('loads SPY daily bars for the benchmark', async () => {
-    const bars = await ctx.history.get({ contract: stock('SPY'), timeframe: '1D', slot: 'dash-bench-SPY' });
-    console.log('[live] SPY bars', bars.length, bars[0] && new Date(bars[0].time * 1000).toISOString().slice(0, 10), bars.at(-1)?.close);
-    expect(bars.length).toBeGreaterThan(200);
   });
 });

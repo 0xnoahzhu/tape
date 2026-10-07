@@ -26,7 +26,6 @@ export const useDashboardMessages = createMessages({
       ['L', 'Full row'],
     ] as Array<[string, string]>,
     catalog: {
-      eq: { name: 'Net liquidation', desc: 'Account value or return curve, 7D to ALL' },
       alloc: { name: 'Sector allocation', desc: 'Pie by sector, including cash' },
       margin: { name: 'Margin cushion', desc: 'Excess liquidity vs. net liq; turns red near a margin call' },
       greeks: { name: 'Portfolio Greeks', desc: 'Delta, Gamma, Theta and Vega across all positions' },
@@ -35,7 +34,6 @@ export const useDashboardMessages = createMessages({
       expiry: { name: 'Option expirations', desc: 'Option positions, soonest first' },
       fills: { name: 'Today’s trades', desc: 'Latest executions' },
       events: { name: 'Earnings & dividends', desc: 'Upcoming earnings and ex-dividend dates for holdings' },
-      bench: { name: 'vs. benchmark', desc: 'Your return vs. SPY and QQQ' },
     } as Record<WidgetId, CatalogText>,
 
     // Margin cushion
@@ -99,13 +97,6 @@ export const useDashboardMessages = createMessages({
     eventsNoteUnavailable: 'Earnings dates unavailable',
     noEvents: 'No upcoming events',
     noDividends: 'No upcoming ex-dividend dates',
-
-    // Benchmark
-    benchTitle: 'vs. benchmark',
-    benchSub: (span: string) => (span ? `${span} · follows chart range` : 'Follows chart range'),
-    portfolio: 'Portfolio',
-    aheadOf: (sym: string, pts: string) => `Ahead of ${sym} by ${pts} pts`,
-    behind: (sym: string, pts: string) => `Behind ${sym} by ${pts} pts`,
   },
   zh: {
     editLayout: '编辑布局',
@@ -122,7 +113,6 @@ export const useDashboardMessages = createMessages({
       ['宽', '整行'],
     ] as Array<[string, string]>,
     catalog: {
-      eq: { name: '净值走势', desc: '账户净值或收益率曲线，7D 到 ALL' },
       alloc: { name: '板块分布', desc: '按板块和现金拆分的饼图' },
       margin: { name: '保证金余量', desc: '剩余流动性占净值比例，接近追保时变红' },
       greeks: { name: '组合 Greeks', desc: '全部持仓汇总的 Delta、Gamma、Theta、Vega' },
@@ -131,7 +121,6 @@ export const useDashboardMessages = createMessages({
       expiry: { name: '期权到期', desc: '按剩余天数排序的期权持仓' },
       fills: { name: '今日成交', desc: '最近的成交记录' },
       events: { name: '财报与除息', desc: '持仓标的的近期财报和除息日' },
-      bench: { name: '基准对比', desc: '组合收益对比 SPY、QQQ' },
     } as Record<WidgetId, CatalogText>,
 
     marginTitle: '保证金余量',
@@ -187,12 +176,6 @@ export const useDashboardMessages = createMessages({
     eventsNoteUnavailable: '暂时无法获取财报日期',
     noEvents: '暂无近期事件',
     noDividends: '暂无近期除息',
-
-    benchTitle: '基准对比',
-    benchSub: (span: string) => (span ? `${span} · 跟随走势图区间` : '跟随走势图区间'),
-    portfolio: '组合',
-    aheadOf: (sym: string, pts: string) => `跑赢 ${sym} ${pts} 个百分点`,
-    behind: (sym: string, pts: string) => `跑输 ${sym} ${pts} 个百分点`,
   },
 });
 

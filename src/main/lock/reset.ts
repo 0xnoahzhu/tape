@@ -40,6 +40,7 @@ export interface ResetFs {
   closeSync(fd: number): void;
 }
 
+// 'nav': nav.json of older versions (no longer read), still removed by a reset.
 const JSON_FILES = ['settings', 'watchlists', 'alerts', 'notifications', 'nav', 'window', 'lock'];
 
 /**

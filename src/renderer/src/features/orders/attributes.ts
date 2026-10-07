@@ -1,7 +1,7 @@
 // How an order's attributes read: fill attributes, trigger method, IB algo, conditions, adjustable
 // stop, OCA group, destination and note. Shared by the order review, the Orders page, the chart's
-// activity panel, the cancel dialog and the CSV export; pure (the labels come from
-// attributeMessages.ts), so it works on requests and working orders alike.
+// activity panel and the cancel dialog; pure (the labels come from attributeMessages.ts), so it
+// works on requests and working orders alike.
 
 import { contractLabel } from '@shared/contract';
 import { f0, px } from '@shared/format';
@@ -161,56 +161,4 @@ export function attributeFlags(o: AttributeFields, L: AttributeLabels, clock?: C
   if (o.route) out.push(L.route(o.route));
   if (o.orderRef) out.push(L.note(o.orderRef));
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// CSV: IB's own codes, readable by a machine
-
-/** "AON;MinQty=5;Hidden;Sweep;Disc=0.05;Display=100;Trigger=8". */
-export function attributeCodes(o: AttributeFields): string {
-  const out: string[] = [];
-  if (o.allOrNone) out.push('AON');
-  if (o.minQty) out.push(`MinQty=${o.minQty}`);
-  if (o.hidden) out.push('Hidden');
-  if (o.sweepToFill) out.push('Sweep');
-  if (o.discretionaryAmt) out.push(`Disc=${o.discretionaryAmt}`);
-  if (o.displaySize) out.push(`Display=${o.displaySize}`);
-  if (o.triggerMethod) out.push(`Trigger=${o.triggerMethod}`);
-  if (o.cashQty) out.push(`CashQty=${o.cashQty}`);
-  if (o.nonGuaranteed) out.push('NonGuaranteed');
-  if (o.adjustStop) {
-    const a = o.adjustStop;
-    out.push(`Adjust=${a.trigger}>${a.type}${a.stopPrice != null ? `@${a.stopPrice}` : ''}${a.limitPrice != null ? `/${a.limitPrice}` : ''}${a.trailAmount != null ? `~${a.trailAmount}${a.trailUnit === 'percent' ? '%' : ''}` : ''}`);
-  }
-  return out.join(';');
-}
-
-/** "Adaptive adaptivePriority=Normal". */
-export function algoCode(a: AlgoSpec | undefined): string {
-  if (!a) return '';
-  return [a.strategy, ...Object.entries(a.params).map(([k, v]) => `${k}=${v}`)].join(' ');
-}
-
-/** "price 265598@SMART >= 235 or time 20261009 10:00:00 US/Eastern" (+ " cancel" / " outsideRth"). */
-export function conditionsCode(c: OrderConditions | undefined): string {
-  if (!c?.items.length) return '';
-  const item = (i: OrderConditionItem): string => {
-    const ref = (x: { symbol: string; conId?: number }) => x.symbol || String(x.conId ?? '');
-    switch (i.kind) {
-      case 'price':
-        return `price ${ref(i.contract)} ${i.operator} ${i.price}${i.triggerMethod ? ` trigger=${i.triggerMethod}` : ''}`;
-      case 'time':
-        return `time ${i.time}`;
-      case 'percentChange':
-        return `change ${ref(i.contract)} ${i.operator} ${i.percent}%`;
-      case 'volume':
-        return `volume ${ref(i.contract)} ${i.operator} ${i.volume}`;
-      case 'margin':
-        return `margin ${i.operator} ${i.percent}%`;
-      case 'execution':
-        return `execution ${i.symbol} ${i.secType}`;
-    }
-  };
-  const body = c.items.map((i, n) => (n === 0 ? '' : ` ${c.items[n - 1].join === 'or' ? 'or' : 'and'} `) + item(i)).join('');
-  return body + (c.cancel ? ' cancel' : '') + (c.outsideRth ? ' outsideRth' : '');
 }

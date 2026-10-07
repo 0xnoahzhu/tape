@@ -97,10 +97,8 @@ describe('createStore', () => {
   it('flush writes every changed file and nothing else', () => {
     const store = createStore();
     store.flush();
-    store.setNav([{ t: 1, netLiq: 100 }]);
     store.setWindowBounds({ width: 1300, height: 800, x: 5, y: 6 });
     store.flush();
-    expect(read('nav.json')).toEqual([{ t: 1, netLiq: 100 }]);
     expect(read('window.json')).toEqual({ width: 1300, height: 800, x: 5, y: 6 });
     expect(existsSync(join(env.dir, 'alerts.json'))).toBe(false);
     expect(readdirSync(env.dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);

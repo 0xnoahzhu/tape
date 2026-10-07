@@ -1,20 +1,13 @@
 // Messages between the main process (client.ts) and the database worker (server.ts).
 // Types only: the two sides are separate bundles and must not share runtime code.
 
-import type { CacheStats, NavPoint } from '@shared/types';
+import type { CacheStats } from '@shared/types';
 import type { BarRetention } from './types';
 
-/** A journaled execution: the JSON text is what ExecutionJournal.since returns. */
-export interface ExecutionRow {
-  execId: string;
-  time: number;
-  json: string;
-}
-
 /**
- * Operations by name: arguments and result. Bars travel both ways and NAV points back as packed
- * Float64Arrays (transferred, not copied): bars as [time, o, h, l, c, v] * n, NAV as [t, netLiq] * n.
- * Packing is done separately on each side (the bundles share no runtime code).
+ * Operations by name: arguments and result. Bars travel both ways as packed Float64Arrays
+ * (transferred, not copied): [time, o, h, l, c, v] * n. Packing is done separately on each side
+ * (the bundles share no runtime code).
  */
 export interface DbOps {
   'bars.get': [args: [series: string, fromTime: number | null, toTime: number | null], result: Float64Array];
@@ -23,22 +16,12 @@ export interface DbOps {
   'kv.get': [args: [ns: string, key: string], result: { json: string; updatedAt: number } | null];
   'kv.set': [args: [ns: string, key: string, json: string, updatedAt: number], result: void];
   'kv.delete': [args: [ns: string, key: string], result: void];
-  'executions.put': [args: [rows: ExecutionRow[]], result: void];
-  /** JSON array text, newest first. */
-  'executions.since': [args: [since: number], result: string];
-  /** account null: unattributed points (the nav.json import). */
-  'nav.append': [args: [account: string | null, points: NavPoint[]], result: void];
-  'nav.get': [args: [account: string], result: Float64Array];
-  /** Every row, unattributed ones included. */
-  'nav.all': [args: [], result: Float64Array];
-  'nav.lastAccount': [args: [], result: string | null];
-  'nav.replace': [args: [account: string, points: NavPoint[]], result: void];
   /** Runs retention and vacuum now (tests, diagnostics). */
   maintain: [args: [], result: void];
   'cache.stats': [args: [], result: CacheStats];
   /**
-   * Deletes the cached market data (not executions or NAV); answered once the freed space is
-   * returned to the file system (other requests are served meanwhile).
+   * Deletes the cached market data; answered once the freed space is returned to the file system
+   * (other requests are served meanwhile).
    */
   'cache.clear': [args: [], result: void];
   /** Commits pending writes, checkpoints the WAL and closes the database. */

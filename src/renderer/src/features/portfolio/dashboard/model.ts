@@ -1,12 +1,11 @@
 // Pure computations behind the dashboard widgets (margin cushion, portfolio greeks,
-// concentration, today's P&L contributions, option expirations, today's fills, upcoming
-// corporate events and the benchmark comparison). No React and no store access; every value
+// concentration, today's P&L contributions, option expirations, today's fills and upcoming
+// corporate events). No React and no store access; every value
 // comes from the account summary, the position rows (valued by the one-price rule, calc.ts),
 // quotes, executions and IB's corporate events.
 
 import { contractKey, daysToExpiry, multiplierOf } from '@shared/contract';
-import { NEW_YORK, zonedToUtc } from '@shared/orderTiming';
-import type { Bar, ContractRef, CorporateEarnings, Execution, NavPoint, Quote, QuoteDividends } from '@shared/types';
+import type { ContractRef, CorporateEarnings, Execution, Quote, QuoteDividends } from '@shared/types';
 import { newestExecutions } from '../../orders/model';
 import { todaysExecutions, underlyingOf, type PositionRow } from '../calc';
 
@@ -342,114 +341,3 @@ export function earningsState(earnings: CorporateEarnings | undefined, connected
   if (earnings?.status === 'ok' && earnings.source === 'scanner') return earnings.partial ? 'estimatedUs' : 'estimated';
   return 'ok';
 }
-
-// ---------------------------------------------------------------------------
-// Benchmark
-
-/**
- * Close of a daily bar, unix ms: 16:00 New York of its day (daily bars are stamped with their day
- * at 00:00 UTC). Half days close earlier; counting them at 16:00 only matters for a start in
- * those three hours.
- */
-export function dailyCloseTime(b: Bar): number {
-  const d = new Date(b.time * 1000);
-  const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
-  return zonedToUtc(ymd, '16:00', NEW_YORK);
-}
-
-/** The last daily close at or before `t` (unix ms); bars ascending. */
-export function closeAtOrBefore(bars: readonly Bar[], t: number): number | undefined {
-  for (let i = bars.length - 1; i >= 0; i--) {
-    if (dailyCloseTime(bars[i]) > t) continue;
-    const close = bars[i].close;
-    return finite(close) && close > 0 ? close : undefined;
-  }
-  return undefined;
-}
-
-/**
- * Price at `t` (unix ms) from intraday bars of `barSec` seconds (ascending, regular hours): the
- * close of the last bar that began at or before `t` when it had ended by then (between sessions:
- * the last close), else its open. Undefined before the first bar.
- */
-export function priceAt(bars: readonly Bar[], barSec: number, t: number): number | undefined {
-  const sec = t / 1000;
-  for (let i = bars.length - 1; i >= 0; i--) {
-    const b = bars[i];
-    if (b.time > sec) continue;
-    const p = b.time + barSec <= sec ? b.close : b.open;
-    return finite(p) && p > 0 ? p : undefined;
-  }
-  return undefined;
-}
-
-/** True when intraday bars (ascending) reach back to `t` (unix ms). */
-export const intradayCovers = (bars: readonly Bar[], t: number): boolean => bars.length > 0 && bars[0].time * 1000 <= t;
-
-/** True when the daily bars (ascending) hold a close at or before `start`. */
-export const barsCover = (bars: readonly Bar[], start: number): boolean => bars.length > 0 && dailyCloseTime(bars[0]) <= start;
-
-const DAY_MS = 86_400_000;
-
-/**
- * Intraday bars that reach back to a start this old (calendar days): IB's windows are 10 sessions
- * of 5-minute bars and 20 of hourly ones (main/market/historyParams.ts), with room for weekends
- * and holidays. An older start is priced at a daily close.
- */
-export function intradayTimeframe(start: number, now: number): '5m' | '1h' | undefined {
-  const age = now - start;
-  if (age <= 9 * DAY_MS) return '5m';
-  if (age <= 25 * DAY_MS) return '1h';
-  return undefined;
-}
-
-/** A benchmark's bars: daily, and intraday ones when the start is recent enough for them. */
-export interface BenchmarkBars {
-  daily: readonly Bar[];
-  intraday?: { bars: readonly Bar[]; barSec: number };
-}
-
-/**
- * The benchmark's price at the comparison's start (unix ms): from the intraday bars when they
- * reach back to it, so a start during a session is priced at that moment (as the portfolio's
- * first NAV sample is), else the daily close at or before it.
- */
-export function startPrice(bars: BenchmarkBars, start: number): number | undefined {
-  const i = bars.intraday;
-  if (i && intradayCovers(i.bars, start)) return priceAt(i.bars, i.barSec, start);
-  return closeAtOrBefore(bars.daily, start);
-}
-
-/**
- * Return of a benchmark over the equity chart's range, in percent: the live price (else the
- * newest bar's close) against its price at the range's first NAV sample (`startPrice`).
- * Undefined when the bars do not reach back that far.
- */
-export function benchmarkReturn(bars: BenchmarkBars, start: number | undefined, live: number | undefined): number | undefined {
-  if (!finite(start)) return undefined;
-  const base = startPrice(bars, start);
-  const newest = bars.intraday?.bars.at(-1)?.close ?? bars.daily.at(-1)?.close;
-  const last = finite(live) && live > 0 ? live : newest;
-  return base !== undefined && finite(last) ? (last / base - 1) * 100 : undefined;
-}
-
-export interface BenchmarkRow {
-  key: 'portfolio' | 'SPY' | 'QQQ';
-  pct?: number;
-  /** |pct| / the largest |pct| (bar length, 0–1). */
-  frac: number;
-}
-
-/** The widget's three rows and the difference to SPY in percentage points (undefined without both). */
-export function benchmarkRows(portfolio: number | undefined, spy: number | undefined, qqq: number | undefined): { rows: BenchmarkRow[]; vsSpy?: number } {
-  const vals = [portfolio, spy, qqq];
-  const max = vals.reduce<number>((m, v) => (finite(v) ? Math.max(m, Math.abs(v)) : m), 0);
-  const row = (key: BenchmarkRow['key'], pct: number | undefined): BenchmarkRow => ({ key, pct, frac: finite(pct) && max > 0 ? Math.abs(pct) / max : 0 });
-  return {
-    rows: [row('portfolio', portfolio), row('SPY', spy), row('QQQ', qqq)],
-    vsSpy: finite(portfolio) && finite(spy) ? portfolio - spy : undefined,
-  };
-}
-
-/** Start of the comparison: the first NAV sample of the equity chart's range. */
-export const rangeStartTime = (points: readonly NavPoint[]): number | undefined => points[0]?.t;

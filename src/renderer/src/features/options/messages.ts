@@ -3,7 +3,6 @@
 import { createMessages } from '../../i18n';
 import type { StrategyKey } from './strategies';
 import type { ColumnKey, ColumnPreset, ExpiryKind } from './chain';
-import type { FlowSide, FlowTag } from './flow';
 
 const strategiesEn: Record<StrategyKey, string> = {
   single: 'Single option',
@@ -81,7 +80,7 @@ const columnsZh: Record<ColumnKey, string> = {
 
 export const useM = createMessages({
   en: {
-    tabs: { chain: 'Chain', vol: 'Volatility', flow: 'Flow', pos: 'Positions' },
+    tabs: { chain: 'Chain', vol: 'Volatility', pos: 'Positions' },
     presets: { key: 'Key', quotes: 'Quotes', greeks: 'Greeks', value: 'Value & prob.' } as Record<ColumnPreset, string>,
     allStrikes: 'All',
     columns: columnsEn,
@@ -95,6 +94,7 @@ export const useM = createMessages({
     ivPct: 'IV Pctl',
     em: 'Exp. move',
     pc: 'P/C vol',
+    pco: 'P/C OI',
     w52: '52w',
     days30: '30d',
     todayAll: 'Today',
@@ -173,27 +173,9 @@ export const useM = createMessages({
     noSmile: 'No IV data for this expiration yet',
     noTerm: 'No ATM IV across expirations yet',
     noHist: 'IV history unavailable',
-    // Flow
-    flowT: 'Unusual activity',
-    flowNote: (exp: string, n: number) => `Derived from the visible chain (${exp}, ${n} strikes): today's volume against open interest, per contract.`,
-    cvol: 'Call volume',
-    pvol: 'Put volume',
-    pcv: 'P/C volume',
-    pco: 'P/C open int.',
-    flagged: 'Flagged contracts',
-    time: 'Time',
-    contract: 'Contract',
-    side: 'Last trade',
-    size: 'Volume',
-    price: 'Price',
-    prem: 'Premium',
-    voi: 'Vol/OI',
-    tag: 'Type',
-    sides: { ask: 'At ask', bid: 'At bid', mid: 'Mid' } as Record<FlowSide, string>,
-    flowTags: { voi: 'Vol > OI', elevated: 'Elevated', large: 'Large' } as Record<FlowTag, string>,
-    noFlow: 'No unusual activity in the visible chain',
     // Positions
     expo: 'Option exposure',
+    contract: 'Contract',
     dte: 'DTE',
     qty: 'Qty',
     avg: 'Avg',
@@ -224,7 +206,7 @@ export const useM = createMessages({
     retry: 'Retry',
   },
   zh: {
-    tabs: { chain: '期权链', vol: '波动率', flow: '异动', pos: '持仓' },
+    tabs: { chain: '期权链', vol: '波动率', pos: '持仓' },
     presets: { key: '常用', quotes: '报价', greeks: '希腊值', value: '价值与概率' } as Record<ColumnPreset, string>,
     allStrikes: '全部',
     columns: columnsZh,
@@ -237,6 +219,7 @@ export const useM = createMessages({
     ivPct: 'IV 百分位',
     em: '预期波动',
     pc: 'P/C 成交比',
+    pco: 'P/C 未平仓比',
     w52: '52 周',
     days30: '30 天',
     todayAll: '今日',
@@ -312,25 +295,8 @@ export const useM = createMessages({
     noSmile: '该到期日暂无 IV 数据',
     noTerm: '暂无各到期日平值 IV',
     noHist: 'IV 历史不可用',
-    flowT: '大单 / 异常成交',
-    flowNote: (exp: string, n: number) => `基于当前可见期权链（${exp}，${n} 档行权价）：按合约比较今日成交量与未平仓量。`,
-    cvol: 'Call 成交量',
-    pvol: 'Put 成交量',
-    pcv: 'P/C 成交比',
-    pco: 'P/C 未平仓比',
-    flagged: '异常合约',
-    time: '时间',
-    contract: '合约',
-    side: '最新成交',
-    size: '成交量',
-    price: '价格',
-    prem: '权利金',
-    voi: '量/仓',
-    tag: '类型',
-    sides: { ask: 'Ask 成交', bid: 'Bid 成交', mid: '中间价' } as Record<FlowSide, string>,
-    flowTags: { voi: '量 > 仓', elevated: '放量', large: '大额' } as Record<FlowTag, string>,
-    noFlow: '当前可见期权链没有异常成交',
     expo: '账户期权暴露',
+    contract: '合约',
     dte: '剩余',
     qty: '数量',
     avg: '均价',

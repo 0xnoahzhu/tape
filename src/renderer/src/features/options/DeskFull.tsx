@@ -8,7 +8,6 @@ import { ChainPanel } from './ChainPanel';
 import { DeskHeader } from './DeskHeader';
 import { DeskTabs } from './DeskTabs';
 import { useDesk } from './deskStore';
-import { FlowTab } from './FlowTab';
 import { useM } from './messages';
 import { useDeskModel, type DeskModel } from './model';
 import { PositionsTab, useOptionPositions } from './PositionsTab';
@@ -49,7 +48,6 @@ export function DeskFull() {
           </div>
         )}
         {tab === 'vol' && <VolatilityTab model={model} />}
-        {tab === 'flow' && <FlowTab model={model} />}
         {tab === 'pos' && <PositionsTab model={model} />}
       </div>
     </div>

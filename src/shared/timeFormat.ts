@@ -8,8 +8,8 @@
 //            give one clock reading several names and make the period's width jump.
 //   24-hour: "09:41", "14:35:07" in both languages.
 //
-// Only what a person reads goes through here. The API log (milliseconds), CSV exports and
-// everything sent to IB keep their fixed 24-hour forms (format.ts hms / hmsMs, orderTiming.ts).
+// Only what a person reads goes through here. The API log (milliseconds) and everything sent to
+// IB keep their fixed 24-hour forms (format.ts hms / hmsMs, orderTiming.ts).
 
 import type { Lang } from './types';
 

@@ -9,11 +9,10 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 ## Feature tour
 
-**Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; an equity curve built from
-sampled net liquidation values (kept locally, per account); a positions table with
-average cost, last price, market value and P&L; a sector allocation chart; a performance view. The
-Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's P&L by position, option
-expirations, today's trades, a benchmark comparison and **earnings & dividends** for the holdings.
+**Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; a positions table with
+average cost, last price, market value and P&L; a sector allocation chart; an account view (balances,
+margin, today's P&L). The Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's
+P&L by position, option expirations, today's trades and **earnings & dividends** for the holdings.
 Ex-dividend dates and amounts come with IB's quotes. Earnings dates come from Wall Street Horizon when
 the account has that IBKR subscription; otherwise Tape estimates them from IB's market scanner (US stocks:
 the date and before the open / after the close, marked *Est.*, since IB marks none as confirmed).
@@ -60,9 +59,8 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
   entered in the order ticket.
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type, ATM IV and
   expected move; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
-  non-guaranteed; volatility view; unusual options flow; option
-  positions with risk alerts. Always available: without OPRA the quotes are delayed, and the flow is
-  computed from the chain quotes on screen.
+  non-guaranteed; volatility view; option positions with risk alerts. Always available: without OPRA the
+  quotes are delayed.
 - **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the
   switch in *Settings › Market Data* (off by default: an open book uses one of the depth lines IB allows per
   user, 3 by default, shared with TWS and other API clients). Tape tests Level 2 when the section opens
@@ -71,7 +69,7 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
   the switch yourself, and a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
   note under the switch.
 
-**Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions, CSV export.
+**Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions.
 
 **Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
 events appear in the bell; each kind can also be pushed to the system notification center, with sound and
@@ -86,7 +84,7 @@ daily log files, retention and export.
 **General** — dark, light or system theme (the dock / window icon follows the theme, and on macOS so does
 Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention, English and
 中文, and 12-hour ("9:41 AM", "上午 9:41"; the default) or 24-hour ("09:41") clock times everywhere you read
-them; the API log, CSV exports and what is sent to IB stay 24-hour.
+them; the API log and what is sent to IB stay 24-hour.
 
 **Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
 idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).
@@ -167,7 +165,8 @@ pnpm dev        # Vite dev server + Electron, restarts on main / preload changes
 ```
 
 Tape connects on launch (Settings › Connection › auto-connect). To try the interface without market data
-permissions, run with simulated quotes: `TAPE_DEMO=1 pnpm dev`.
+permissions, run a development build with simulated quotes: `TAPE_DEMO=1 pnpm dev` (ignored by packaged
+builds).
 
 ## Scripts
 
@@ -186,7 +185,7 @@ permissions, run with simulated quotes: `TAPE_DEMO=1 pnpm dev`.
 
 | Variable | Effect |
 | --- | --- |
-| `TAPE_DEMO=1` | Market data (quotes, bars, depth, option chains) comes from a built-in simulator |
+| `TAPE_DEMO=1` | Development builds only: market data (quotes, bars, depth, option chains) comes from a built-in simulator (ignored when packaged) |
 | `TAPE_NO_CONNECT=1` | Do not auto-connect on launch |
 | `TAPE_CLIENT_ID=<n>` | Override the API client id |
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
@@ -211,8 +210,7 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 | `notifications.json` | The last 200 notifications |
 | `window.json` | Window position and size |
 | `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
-| `tape.db` | SQLite database (with `-wal` / `-shm` files): net liquidation history for the equity curve, per account (samples from older versions have no account: an account's first sample takes those within a factor of 2 of its value, the rest stay hidden), and a journal of executions with commissions; its cache tables expire (seconds bars after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days) |
-| `nav.json` | Older versions' equity curve data; imported into `tape.db` once (as samples without an account), then emptied |
+| `tape.db` | SQLite database (with `-wal` / `-shm` files) caching market data from IB: bars, contract details and option chain parameters; seconds bars expire after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days. Tape keeps no trade or account history of its own (older versions kept net liquidation samples and an executions journal here; they are dropped on upgrade) |
 
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`
 and the defaults are used instead; an unreadable `tape.db` is moved aside as `tape.db.corrupt-<timestamp>`
@@ -323,9 +321,9 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   to prevent trading, lock the computer itself or log out of IB Gateway.
 - **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes all of
   Tape's local data: settings, watchlists, price alerts, notifications, API logs, the PIN, the database
-  (equity curve history, executions journal, caches) and the window position; only the language and the
-  theme are kept. Tape then restarts like a fresh install, on *Settings › Connection*, without connecting.
-  Your IBKR account, positions and orders on IB's servers are not affected.
+  (market data caches) and the window position; only the language and the theme are kept. Tape then
+  restarts like a fresh install, on *Settings › Connection*, without connecting. Your IBKR account,
+  positions and orders on IB's servers are not affected.
 - **Touch ID** (macOS) needs a Mac or Magic Keyboard with Touch ID and an enrolled fingerprint; it is not
   available while the lid is closed without a Touch ID keyboard. The system sheet may also offer your Mac
   password. **Windows Hello** needs Windows 11, or Windows 10 where the API is present, with Windows Hello

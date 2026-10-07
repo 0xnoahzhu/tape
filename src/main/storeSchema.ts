@@ -15,7 +15,6 @@ import type {
   DeepPartial,
   LocalizedName,
   LocalizedText,
-  NavPoint,
   NotificationKind,
   PriceAlert,
   SecType,
@@ -342,18 +341,7 @@ export function capNotifications(list: AppNotification[]): AppNotification[] {
 }
 
 // ---------------------------------------------------------------------------
-// NAV history and window bounds
-
-function sanitizeNavPoint(raw: unknown): NavPoint | null {
-  if (!isObject(raw) || !isFiniteNumber(raw.t) || !isFiniteNumber(raw.netLiq)) return null;
-  return { t: raw.t, netLiq: raw.netLiq };
-}
-
-/** Oldest first. */
-export function sanitizeNav(raw: unknown): NavPoint[] | null {
-  const list = sanitizeList(raw, sanitizeNavPoint);
-  return list && list.sort((a, b) => a.t - b.t);
-}
+// Window bounds
 
 export function sanitizeWindowBounds(raw: unknown): WindowBounds | null {
   if (!isObject(raw) || !isFiniteNumber(raw.width) || !isFiniteNumber(raw.height)) return null;

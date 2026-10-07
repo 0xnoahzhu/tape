@@ -65,7 +65,6 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
     watchlists: defaultWatchlists(),
     priceAlerts: stored.alerts,
     notifications: [],
-    nav: { account: '', points: [] },
     logFilePath: '',
     lock: { locked: false, hasPin: false, biometrics: { available: false } } as unknown as AppSnapshot['lock'],
     afterReset: false,

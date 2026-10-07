@@ -6,7 +6,6 @@ import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { ConnectionState, OrderRequest, Settings } from '@shared/types';
 import type { MainContext } from '../context';
-import { createMemoryDatabase } from '../db/memory';
 import { createConnection, FIRST_REQ_ID } from './connection';
 import { createOrderService, NOT_CONNECTED_MESSAGE } from './orders';
 import { FakeTws } from './tws/__fixtures__/fakeTws';
@@ -671,7 +670,6 @@ describe('IbConnection with the TWS client', () => {
       apiLog: { note: () => undefined },
       contracts: { resolve: async (c: unknown) => c, getInfo: async () => null },
       account: { getPositions: () => [] },
-      db: createMemoryDatabase(),
     } as unknown as MainContext;
     ctx.ib = createConnection(ctx);
     ctx.orders = createOrderService(ctx);

@@ -3,22 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Bar, Execution } from '@shared/types';
+import type { Bar } from '@shared/types';
 import { createSqliteClient, type DbTransport, type SqliteClient } from './client';
 import { createSlicer, MAINTENANCE_DELAY_MS, MAINTENANCE_INTERVAL_MS, serve, SLICE_MS, type ServerOptions } from './server';
 import { openStore, type MaintenanceStep, type SqliteStore } from './sqlite';
 
 const bar = (time: number, close = 100): Bar => ({ time, open: close, high: close + 1, low: close - 1, close, volume: 10 });
-const exec = (execId: string, time: number): Execution => ({
-  execId,
-  orderId: 1,
-  key: 'AAPL',
-  contract: { symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' },
-  side: 'BUY',
-  shares: 1,
-  price: 1,
-  time,
-});
 
 /** Client and server in one thread, connected by a MessageChannel (the app uses a Worker). */
 function connect(file: string, opts: Partial<ServerOptions> = {}) {
@@ -99,21 +89,6 @@ describe('database client <-> worker protocol', () => {
     expect(got?.updatedAt).toBeGreaterThan(0);
     await db.kv.delete('contract', '1');
     expect(await db.kv.get('contract', '1')).toBeUndefined();
-    await db.executions.put([exec('a.01', 1000), exec('b.01', 2000)]);
-    expect((await db.executions.since(1500)).map((e) => e.execId)).toEqual(['b.01']);
-    expect(await db.executions.since(0)).toEqual([exec('b.01', 2000), exec('a.01', 1000)]);
-    await db.nav.append(null, [{ t: 5, netLiq: 1_000 }, { t: 6, netLiq: 3 }]);
-    await db.nav.append('DU1', [{ t: 2, netLiq: 20 }, { t: 1, netLiq: 10 }]);
-    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 10 }, { t: 2, netLiq: 20 }]);
-    expect(await db.nav.lastAccount()).toBe('DU1');
-    // U2's first sample claims the unattributed row within a factor of 2 of it.
-    await db.nav.append('U2', [{ t: 7, netLiq: 2.5 }]);
-    expect(await db.nav.get('U2')).toEqual([{ t: 6, netLiq: 3 }, { t: 7, netLiq: 2.5 }]);
-    expect(await db.nav.lastAccount()).toBe('U2');
-    await db.nav.replace('DU1', [{ t: 3, netLiq: 30 }]);
-    expect(await db.nav.get('DU1')).toEqual([{ t: 3, netLiq: 30 }]);
-    expect(await db.nav.get('none')).toEqual([]);
-    expect(await db.nav.all()).toEqual([{ t: 3, netLiq: 30 }, { t: 5, netLiq: 1_000 }, { t: 6, netLiq: 3 }, { t: 7, netLiq: 2.5 }]);
     expect(c.logs).toEqual([]);
   });
 
@@ -122,7 +97,7 @@ describe('database client <-> worker protocol', () => {
     db = connect(file, { open }).db;
     await db.ready;
     const writes = Array.from({ length: 200 }, (_, i) => db!.kv.set('ns', String(i), i));
-    writes.push(db.nav.append('DU1', [{ t: 1, netLiq: 1 }]), db.bars.put('X|1D', [bar(1)]));
+    writes.push(db.kv.delete('ns', 'x'), db.bars.put('X|1D', [bar(1)]));
     await Promise.all(writes);
     expect(stats.transactions).toBe(1);
     expect((await db.kv.get('ns', '199'))?.value).toBe(199);
@@ -131,9 +106,9 @@ describe('database client <-> worker protocol', () => {
   it('reads see the writes sent before them', async () => {
     db = connect(file).db;
     void db.bars.put('AAPL|1D', [bar(100)]);
-    void db.nav.append('DU1', [{ t: 5, netLiq: 5 }]);
+    void db.kv.set('ns', 'k', 5);
     expect(await db.bars.get('AAPL|1D')).toEqual([bar(100)]);
-    expect(await db.nav.get('DU1')).toEqual([{ t: 5, netLiq: 5 }]);
+    expect((await db.kv.get('ns', 'k'))?.value).toBe(5);
   });
 
   it('logs failed writes and resolves them; failed reads reject', async () => {
@@ -145,8 +120,8 @@ describe('database client <-> worker protocol', () => {
     await expect(db.bars.get('X|1D', {} as never)).rejects.toThrow(/bound/);
     // A failed write does not take the other writes of its batch down.
     void db.bars.put(null as never, [bar(1)]);
-    await db.nav.append('DU1', [{ t: 7, netLiq: 7 }]);
-    expect(await db.nav.all()).toEqual([{ t: 7, netLiq: 7 }]);
+    await db.kv.set('ns', 'k', 7);
+    expect((await db.kv.get('ns', 'k'))?.value).toBe(7);
   });
 
   it('falls back to memory when SQLite cannot open the file, replaying pending calls', async () => {
@@ -157,13 +132,6 @@ describe('database client <-> worker protocol', () => {
     await expect(put).resolves.toBeUndefined();
     expect(await read).toEqual([bar(1)]);
     expect(db.kind).toBe('memory');
-    // The same NAV rules in memory: unattributed rows, claimed by an account's first sample.
-    await db.nav.append(null, [{ t: 1, netLiq: 1 }]);
-    expect(await db.nav.get('DU1')).toEqual([]);
-    expect(await db.nav.lastAccount()).toBeUndefined();
-    await db.nav.append('DU1', [{ t: 2, netLiq: 1.5 }]);
-    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 1 }, { t: 2, netLiq: 1.5 }]);
-    expect(await db.nav.lastAccount()).toBe('DU1');
     expect(c.logs.filter((l) => /SQLite unavailable/.test(l))).toHaveLength(1);
   });
 
@@ -172,27 +140,26 @@ describe('database client <-> worker protocol', () => {
     db = c.db;
     await db.ready;
     await db.kv.set('a', 'b', 1);
-    const pending = db.nav.append('DU1', [{ t: 1, netLiq: 1 }]);
+    const pending = db.bars.put('X|1D', [bar(1)]);
     c.fail(new Error('database worker exited with code 1'));
     c.fail(new Error('again'));
     await expect(pending).resolves.toBeUndefined();
     expect(db.kind).toBe('memory');
-    expect(await db.nav.get('DU1')).toEqual([{ t: 1, netLiq: 1 }]);
+    expect(await db.bars.get('X|1D')).toEqual([bar(1)]);
     expect(c.logs.filter((l) => /SQLite unavailable/.test(l))).toHaveLength(1);
     c.close();
   });
 
   it('close() commits pending writes; later calls neither fail nor reach the file', async () => {
     db = connect(file).db;
-    for (let i = 0; i < 50; i++) void db.nav.append('DU1', [{ t: i, netLiq: i + 1 }]);
-    void db.executions.put([exec('x.01', 1)]);
+    for (let i = 0; i < 50; i++) void db.kv.set('ns', String(i), i);
     await db.close();
-    await expect(db.nav.append('DU1', [{ t: 999, netLiq: 1 }])).resolves.toBeUndefined();
+    await expect(db.kv.set('ns', 'late', 1)).resolves.toBeUndefined();
     // Closing checkpointed the WAL into the main file (and SQLite removed it).
     expect(readdirSync(dir).filter((f) => f.endsWith('-wal'))).toEqual([]);
     const store = openStore(file);
-    expect(store.navAll().length / 2).toBe(50);
-    expect(JSON.parse(store.executionsSince(0))).toHaveLength(1);
+    expect(store.kvGet('ns', '49')?.json).toBe('49');
+    expect(store.kvGet('ns', 'late')).toBeNull();
     store.close();
     db = null;
   });
@@ -242,27 +209,25 @@ describe('database client <-> worker protocol', () => {
     await db.bars.put('A|1 day|TRADES|1', [bar(86_400), bar(2 * 86_400)]);
     await db.bars.put('B|1 min|TRADES|1', [bar(Math.floor(Date.now() / 1000) - 60)]);
     await db.kv.set('coverage', 'A|1 day|TRADES|1', { ranges: [] });
-    await db.executions.put([exec('x.01', 1)]);
-    await db.nav.append('DU1', [{ t: 1, netLiq: 1 }]);
-    expect(await db.stats()).toMatchObject({ series: 2, bars: 3, executions: 1 });
+    expect(await db.stats()).toMatchObject({ series: 2, bars: 3 });
 
     vi.advanceTimersByTime(6_000);
     // The notice arrives before the answer to the next request.
     expect(await db.kv.get('coverage', 'A|1 day|TRADES|1')).toBeUndefined();
     expect(evicted).toEqual(['A|1 day|TRADES|1', 'B|1 min|TRADES|1']);
-    expect(await db.stats()).toMatchObject({ series: 0, bars: 0, executions: 1 });
+    expect(await db.stats()).toMatchObject({ series: 0, bars: 0 });
 
-    // Clearing: listeners hear 'all' before the worker is asked; executions and NAV stay.
+    // Clearing: listeners hear 'all' before the worker is asked; other kv namespaces stay.
     await db.bars.put('A|1 day|TRADES|1', [bar(86_400)]);
     await db.kv.set('contract', '1', { symbol: 'A' });
+    await db.kv.set('ns', 'k', 1);
     const clearing = db.clearMarketData();
     expect(evicted.at(-1)).toBe('all');
     await clearing;
     expect(await db.bars.get('A|1 day|TRADES|1')).toEqual([]);
     expect(await db.kv.get('contract', '1')).toBeUndefined();
-    expect(await db.executions.since(0)).toHaveLength(1);
-    expect(await db.nav.all()).toEqual([{ t: 1, netLiq: 1 }]);
-    expect(await db.stats()).toMatchObject({ series: 0, bars: 0, executions: 1 });
+    expect((await db.kv.get('ns', 'k'))?.value).toBe(1);
+    expect(await db.stats()).toMatchObject({ series: 0, bars: 0 });
   });
 
   it('a clear answers requests sent meanwhile while it returns the space, then truncates the WAL', async () => {
@@ -288,10 +253,10 @@ describe('database client <-> worker protocol', () => {
     };
     db = connect(file, { open: slowVacuum, now: () => clock }).db;
     await db.ready;
-    await db.executions.put([exec('x.01', 1)]);
+    await db.kv.set('ns', 'k', 1);
     const order: string[] = [];
     const cleared = db.clearMarketData().then(() => order.push('clear'));
-    const read = db.executions.since(0).then((list) => order.push(`read ${list.length}`));
+    const read = db.kv.get<number>('ns', 'k').then((row) => order.push(`read ${row?.value}`));
     const bars = db.bars.get('S0|1 day|TRADES|1').then((list) => order.push(`bars ${list.length}`));
     await Promise.all([cleared, read, bars]);
     expect(vacuumSteps).toBeGreaterThan(2);

@@ -1,6 +1,6 @@
 // Retention of tape.db: schema v2 (series.last_access, bar_count), access batching, eviction of
 // unused series, the size cap, chunked maintenance and clearing the market data cache; the later
-// migrations (v3 retention classes, v4 NAV per account).
+// migrations (v3 retention classes, v5 dropping Tape's own records).
 
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,10 +13,9 @@ import { CONTRACT_NS } from '../market/contracts';
 import { COVERAGE_NS } from '../market/history';
 import { historySpec, seriesKey } from '../market/historyParams';
 import { SECDEF_NS } from '../market/options';
-import { unpackBars, unpackNav } from './client';
+import { unpackBars } from './client';
 import { configure, migrate, SCHEMA_VERSION, schemaVersion } from './schema';
 import { MEMORY_MARKET_DATA_NS } from './memory';
-import { LIVE, LIVE_ROWS, PAPER, PAPER_ROWS, USER_ROWS } from './navCases';
 import type { BarRetention } from './types';
 import {
   ACCESS_WRITE_MS,
@@ -55,6 +54,9 @@ const seriesKeys = (s: SqliteStore) => (s.db.prepare('SELECT key FROM series ORD
 const seriesRow = (s: SqliteStore, key: string) =>
   s.db.prepare('SELECT last_access, bar_count FROM series WHERE key = ?').get(key) as { last_access: number; bar_count: number } | undefined;
 const countBars = (s: SqliteStore) => (s.db.prepare('SELECT count(*) AS n FROM bars').get() as { n: number }).n;
+/** Names of the tables or indexes the file has (SQLite's own left out). */
+const schemaNames = (db: DatabaseSync, type: 'table' | 'index') =>
+  (db.prepare("SELECT name FROM sqlite_schema WHERE type = ? AND name NOT LIKE 'sqlite_%' ORDER BY name").all(type) as Array<{ name: string }>).map((r) => r.name);
 const plan = (db: DatabaseSync, sql: string) =>
   (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>).map((r) => r.detail).join(' | ');
 
@@ -120,9 +122,9 @@ describe('tape.db retention', () => {
     }
     expect(unpackBars(store.barsGet(AAPL_D, null)).map((b) => b.close)).toEqual([1, 2]);
     expect(store.kvGet('coverage', AAPL_D)?.json).toBe('{"ranges":[[86400,172801]]}');
-    expect(store.stats()).toMatchObject({ series: 3, bars: 3, executions: 1 });
-    expect(unpackNav(store.navAll())).toEqual([{ t: 1000, netLiq: 5 }]);
-    expect(store.navGet('DU1').length).toBe(0); // no account (v4) until one claims it
+    expect(store.stats()).toMatchObject({ series: 3, bars: 3 });
+    // v5 dropped the executions journal and the NAV samples, rows and all.
+    expect(schemaNames(store.db, 'table')).toEqual(['bars', 'kv', 'series']);
     expect(store.db.prepare('SELECT key, retention FROM series ORDER BY id').all().map((r) => ({ ...r }))).toEqual([
       { key: AAPL_D, retention: 'daily' },
       { key: 'STK:AAPL|1 min|TRADES|1', retention: 'minutes' },
@@ -183,33 +185,31 @@ describe('tape.db retention', () => {
     expect(store.db.prepare("SELECT count(*) AS n FROM pragma_table_info('series') WHERE name = 'intraday'").get()).toEqual({ n: 0 });
   });
 
-  it("migrates v3 to v4: the NAV rows keep their values without an account (the paper and live accounts' samples, mixed), shown by no account until claimed", () => {
+  it("migrates v4 to v5: Tape's own records (the NAV samples and the executions journal) go with their indexes, the caches stay", () => {
     store.close();
     rmSync(dir, { recursive: true, force: true });
     dir = mkdtempSync(join(tmpdir(), 'tape-ret-'));
     file = join(dir, 'tape.db');
-    const v3 = new DatabaseSync(file);
-    configure(v3);
-    migrate(v3, 3);
-    const insert = v3.prepare('INSERT INTO nav (t, net_liq) VALUES (?, ?)');
-    for (const p of USER_ROWS) insert.run(p.t, p.netLiq);
-    v3.close();
+    const v4 = new DatabaseSync(file);
+    configure(v4);
+    migrate(v4, 4);
+    v4.exec(`
+      INSERT INTO series (id, key, last_access, bar_count, retention) VALUES (1, '${AAPL_D}', ${T0}, 1, 'daily');
+      INSERT INTO bars (series_id, time, o, h, l, c, v) VALUES (1, 86400, 1, 2, 0, 1, 10);
+      INSERT INTO kv (ns, key, value, updated_at) VALUES ('contract', '265598', '{"symbol":"AAPL"}', 1000);
+      INSERT INTO executions (exec_id, time, json) VALUES ('e.1', 1000, '{"execId":"e.1"}');
+      INSERT INTO nav (t, net_liq, account) VALUES (1000, 5, 'DU1'), (2000, 6, NULL);
+    `);
+    v4.close();
 
     store = open();
     expect(store.recovered).toBeUndefined();
-    expect(schemaVersion(store.db)).toBe(4);
-    expect((store.db.prepare('PRAGMA index_list(nav)').all() as Array<{ name: string }>).map((i) => i.name)).toContain('nav_account_t');
-    expect(store.db.prepare('SELECT count(*) AS n FROM nav WHERE account IS NULL').get()).toEqual({ n: USER_ROWS.length });
-    expect(unpackNav(store.navAll())).toEqual(USER_ROWS);
-    expect(store.navGet(PAPER).length).toBe(0);
-    expect(store.navLastAccount()).toBeNull();
-    // The paper account's first sample takes its rows; the live account's three wait for it.
-    const sample = { t: Date.UTC(2026, 9, 7, 14), netLiq: 1_051_800 };
-    store.navAppend(PAPER, [sample]);
-    expect(unpackNav(store.navGet(PAPER))).toEqual([...PAPER_ROWS, sample]);
-    expect(unpackNav(store.navGet(LIVE))).toEqual([]);
-    store.navAppend(LIVE, [{ t: sample.t + 60_000, netLiq: 31_040 }]);
-    expect(unpackNav(store.navGet(LIVE))).toEqual([...LIVE_ROWS, { t: sample.t + 60_000, netLiq: 31_040 }]);
+    expect(schemaVersion(store.db)).toBe(5);
+    expect(schemaNames(store.db, 'table')).toEqual(['bars', 'kv', 'series']);
+    expect(schemaNames(store.db, 'index')).toEqual([]);
+    expect(unpackBars(store.barsGet(AAPL_D, null))).toEqual([{ time: 86400, open: 1, high: 2, low: 0, close: 1, volume: 10 }]);
+    expect(store.kvGet('contract', '265598')).toEqual({ json: '{"symbol":"AAPL"}', updatedAt: 1000 });
+    expect(store.stats()).toMatchObject({ series: 1, bars: 1 });
   });
 
   it('keeps the bar count exact through overlapping puts, retention and eviction', () => {
@@ -399,30 +399,26 @@ describe('tape.db retention', () => {
     expect(seriesRow(store, AAPL_D)?.bar_count).toBe(left);
   });
 
-  it('clearing the market data keeps executions, the NAV history and other kv, and shrinks the file', () => {
+  it('clearing the market data keeps other kv and shrinks the file', () => {
     for (let s = 0; s < 20; s++) store.barsPut(`S${s}|1 day|TRADES|1`, barsBefore(t0, 2_000, DAY), 'daily');
     for (const ns of MARKET_DATA_NS) store.kvSet(ns, 'k', '{}', T0);
     store.kvSet('other', 'k', '{}', T0);
-    store.executionsPut([{ execId: 'e.1', time: 1, json: '{"execId":"e.1"}' }]);
-    store.navAppend('DU1', [{ t: 1, netLiq: 1 }]);
     store.checkpoint();
     const before = store.stats();
-    expect(before).toMatchObject({ series: 20, bars: 40_000, executions: 1, oldestAccess: T0 });
+    expect(before).toMatchObject({ series: 20, bars: 40_000, oldestAccess: T0 });
 
     store.clearMarketData();
-    expect(store.stats()).toMatchObject({ series: 0, bars: 0, executions: 1 });
+    expect(store.stats()).toMatchObject({ series: 0, bars: 0 });
     // The space comes back in vacuum steps (the worker serves requests between them).
     expect(pragma(store.db, 'freelist_count')).toBeGreaterThan(0);
     for (const step of store.vacuum()) expect(step).toBeUndefined();
     expect(pragma(store.db, 'freelist_count')).toBe(0);
     store.checkpoint();
     const after = store.stats();
-    expect(after).toEqual({ bytes: after.bytes, series: 0, bars: 0, executions: 1 });
+    expect(after).toEqual({ bytes: after.bytes, series: 0, bars: 0 });
     expect(after.bytes).toBeLessThan(before.bytes / 4);
     for (const ns of MARKET_DATA_NS) expect(store.kvGet(ns, 'k')).toBeNull();
     expect(store.kvGet('other', 'k')).not.toBeNull();
-    expect(JSON.parse(store.executionsSince(0))).toEqual([{ execId: 'e.1' }]);
-    expect(unpackNav(store.navAll())).toEqual([{ t: 1, netLiq: 1 }]);
 
     // The recreated table is the same (clustered, no scans); series are stored again.
     expect((store.db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'bars'").get() as { sql: string }).sql).toMatch(/WITHOUT ROWID/);

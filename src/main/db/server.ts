@@ -14,7 +14,7 @@ import type { DbMessage, DbOp, DbRequest, DbWorkerData } from './protocol';
 import { SCHEMA_VERSION } from './schema';
 import { isCorruption, openStore, type MaintenanceStep, type SqliteStore } from './sqlite';
 
-const WRITE_OPS: ReadonlySet<DbOp> = new Set<DbOp>(['bars.put', 'kv.set', 'kv.delete', 'executions.put', 'nav.append', 'nav.replace']);
+const WRITE_OPS: ReadonlySet<DbOp> = new Set<DbOp>(['bars.put', 'kv.set', 'kv.delete']);
 /** First maintenance after startup (once the worker is idle). */
 export const MAINTENANCE_DELAY_MS = 2 * 60_000;
 /** Maintenance while the app keeps running. */
@@ -225,12 +225,6 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
         return store.kvSet(a[0], a[1], a[2], a[3]);
       case 'kv.delete':
         return store.kvDelete(a[0], a[1]);
-      case 'executions.put':
-        return store.executionsPut(a[0]);
-      case 'nav.append':
-        return store.navAppend(a[0], a[1]);
-      case 'nav.replace':
-        return store.navReplace(a[0], a[1]);
       default:
         throw new Error(`Unknown write ${req.op}`);
     }
@@ -245,14 +239,6 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
         return store.barsLast(a[0]);
       case 'kv.get':
         return store.kvGet(a[0], a[1]);
-      case 'executions.since':
-        return store.executionsSince(a[0]);
-      case 'nav.get':
-        return store.navGet(a[0]);
-      case 'nav.all':
-        return store.navAll();
-      case 'nav.lastAccount':
-        return store.navLastAccount();
       case 'maintain': {
         const steps = startMaintenance();
         const evicted: string[] = [];

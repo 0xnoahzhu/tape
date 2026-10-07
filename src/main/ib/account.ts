@@ -1,6 +1,4 @@
-// Account service: account summary, portfolio and positions, P&L, and NAV history sampling
-// (the active account's own NetLiquidation, persisted per account in the database's NAV log, see
-// navHistory.ts).
+// Account service: account summary, portfolio and positions, P&L.
 //
 // On every handshake: reqAccountSummary (headline values), reqAccountUpdates (portfolio with
 // market prices and P&L), reqPositions (cross-check), reqPnL (account P&L) and one
@@ -11,7 +9,6 @@ import { contractKey, multiplierOf } from '@shared/contract';
 import type { AccountSummary, Position } from '@shared/types';
 import type { AccountService, MainContext } from '../context';
 import { fromIbContract, num } from './ibContract';
-import { createNavRecorder, NAV_SAMPLE_MS } from './navHistory';
 
 /** reqAccountSummary tags and the summary fields they fill. */
 const SUMMARY_TAGS = {
@@ -75,16 +72,6 @@ export function createAccountService(ctx: MainContext): AccountService {
   const conIdByPnlReq = new Map<number, number>();
   /** Positions reported during the current reqPositions round (stale ones are removed at positionEnd). */
   let positionsSeen: Set<string> | null = null;
-
-  let navTimer: ReturnType<typeof setInterval> | null = null;
-  let navSampled = false;
-  /** The account whose history was last sent for this connection ('' while none is known). */
-  let navSent = '';
-  // Partial contexts (unit tests) may come without a database: NAV then stays in memory.
-  const navHistory = createNavRecorder(ctx.db as MainContext['db'] | undefined, {
-    get: () => ctx.store.getNav?.() ?? [],
-    clear: () => ctx.store.setNav([]),
-  });
 
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let dirtySummary = false;
@@ -208,29 +195,6 @@ export function createAccountService(ctx: MainContext): AccountService {
   }
 
   // ---------------------------------------------------------------------------
-  // NAV history
-
-  /**
-   * Records the active account's net liquidation. Only a value known to be that account's: with no
-   * account known yet (''), isActive() lets every managed account's rows patch the summary, so
-   * nothing is recorded (navSampled stays false: the next NetLiquidation or the timer records once
-   * the account is known). patchSummary starts a new summary when the account changes.
-   */
-  function sampleNav(): void {
-    const account = summary?.account;
-    const netLiq = summary?.netLiquidation;
-    if (!account || account !== activeAccount() || !netLiq || netLiq <= 0) return;
-    navSampled = true;
-    void navHistory.add(account, { t: Date.now(), netLiq }).then((points) => account === activeAccount() && ctx.emit({ type: 'nav', account, points }));
-  }
-
-  /** Sends `account`'s history, also an empty one: after an account switch it replaces the other's. */
-  function sendNavHistory(account: string): void {
-    navSent = account;
-    if (account) void navHistory.history(account).then((h) => account === activeAccount() && ctx.emit({ type: 'nav', ...h }));
-  }
-
-  // ---------------------------------------------------------------------------
   // IB events
 
   function onReady(api: IBApi): void {
@@ -252,15 +216,9 @@ export function createAccountService(ctx: MainContext): AccountService {
       api.reqPnL(pnlReqId, account);
     }
     syncPnlSingles();
-    navSampled = false;
-    if (navTimer) clearInterval(navTimer);
-    navTimer = setInterval(() => ctx.ib.isConnected() && sampleNav(), NAV_SAMPLE_MS);
-    sendNavHistory(account);
   }
 
   function onClosed(): void {
-    if (navTimer) clearInterval(navTimer);
-    navTimer = null;
     summaryReqId = pnlReqId = -1;
     pnlSingleByConId.clear();
     conIdByPnlReq.clear();
@@ -268,32 +226,15 @@ export function createAccountService(ctx: MainContext): AccountService {
   }
 
   setImmediate(() => {
-    // Import nav.json and compact the history shown now (before the first connect: that of the
-    // account of the newest sample), so the first snapshot already has it.
-    void navHistory
-      .history(activeAccount() || undefined)
-      .then((h) => h.account && (!activeAccount() || h.account === activeAccount()) && ctx.emit({ type: 'nav', ...h }));
-
     const ib = ctx.ib;
     ib.onReady(onReady);
     ib.onClosed(onClosed);
-
-    // managedAccounts can come after the handshake (connection.ts stops waiting for it after 2 s):
-    // an account named only then gets its history now and its samples from the next
-    // NetLiquidation on. connection.ts has updated its state before forwarding the event.
-    ib.on(EventName.managedAccounts, () => {
-      const account = activeAccount();
-      if (!ctx.ib.isConnected() || !account || account === navSent) return;
-      navSampled = false;
-      sendNavHistory(account);
-    });
 
     ib.on(EventName.accountSummary, (reqId: number, account: string, tag: string, value: string, currency: string) => {
       if (reqId !== summaryReqId || !isActive(account)) return;
       const field = (SUMMARY_TAGS as Record<string, NumericField>)[tag];
       if (!field) return;
       patchSummary({ [field]: num(value), ...(tag === 'NetLiquidation' && currency ? { currency } : {}) });
-      if (tag === 'NetLiquidation' && !navSampled) sampleNav();
     });
 
     ib.on(EventName.updateAccountValue, (key: string, value: string, currency: string, account: string) => {

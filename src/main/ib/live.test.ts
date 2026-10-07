@@ -3,11 +3,11 @@
 //
 //   TAPE_LIVE_IB=127.0.0.1:4002 TAPE_CLIENT_ID=165 pnpm vitest run src/main/ib/live.test.ts
 //
-// It connects, loads account / positions / orders / executions and the NAV history (through an
-// in-memory ctx.db), checks the API log and its on-demand streaming, tries to place a GTC limit
-// order far below the market (rejected when the API is read-only; otherwise cancelled right
-// away and checked to be gone), and lets a settings change fail its first attempt (closed port)
-// to check that it retries. Use a client id no other program uses.
+// It connects, loads account / positions / orders / executions, checks the API log and its
+// on-demand streaming, tries to place a GTC limit order far below the market (rejected when the
+// API is read-only; otherwise cancelled right away and checked to be gone), and lets a settings
+// change fail its first attempt (closed port) to check that it retries. Use a client id no other
+// program uses.
 //
 // Every order id it uses is recorded. Whatever fails (a cancel without answer, place() throwing
 // after IB took the order, a lost connection), the orders it sent are cancelled again, after a
@@ -25,7 +25,6 @@ import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import { isOrderActive, type OrderStatus, type Settings } from '@shared/types';
 import type { MainContext } from '../context';
-import { createMemoryDatabase } from '../db/memory';
 import type { Contract, Order, OrderState } from './tws';
 
 const live = process.env.TAPE_LIVE_IB;
@@ -69,13 +68,9 @@ describe.skipIf(!live)('live IB Gateway', async () => {
         settingsListeners.push(l);
         return () => undefined;
       },
-      // No legacy nav.json to import: NAV goes to ctx.db.nav only.
-      getNav: () => [],
-      setNav: () => undefined,
     },
     notifier: { notify: (n: NewNotification) => (notices.push(n), n) },
     contracts: { getInfo: async () => null, resolve: async (c: unknown) => c },
-    db: createMemoryDatabase(),
   } as unknown as MainContext;
   ctx.apiLog = createApiLog(ctx);
   ctx.ib = createConnection(ctx);
@@ -196,9 +191,6 @@ describe.skipIf(!live)('live IB Gateway', async () => {
     expect(summary?.netLiquidation).toBeGreaterThan(0);
     console.log('positions', ctx.account.getPositions().length, 'orders', ctx.orders.getOrders().length, 'executions', ctx.orders.getExecutions().length);
     for (const o of ctx.orders.getOrders()) console.log('order', o.clientId, o.orderId, o.permId, o.action, o.totalQuantity, o.contract.symbol, o.orderType, o.status, o.message ?? '');
-    const nav = await ctx.db.nav.all();
-    console.log('nav', JSON.stringify(nav));
-    expect(nav.length).toBeGreaterThan(0);
   });
 
   it('records and names the frames', () => {

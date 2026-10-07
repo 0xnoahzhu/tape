@@ -1,5 +1,5 @@
 // Settings › Market data › Local cache: what tape.db holds (size, series, bars) and a button that
-// clears the cached market data after a confirmation. Executions and the NAV history are kept.
+// clears the cached market data after a confirmation.
 
 import { useCallback, useEffect, useState } from 'react';
 import { compact, f0, ymd } from '@shared/format';

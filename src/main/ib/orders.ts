@@ -34,16 +34,12 @@
 // complete once the margin arrives or a moment after the last part. Previews run
 // one at a time, and an identical request within 10 s gets the same answer (IB asks for few
 // what-if requests).
-//
-// Every execution (with its commission) is written to the database's execution journal; on start
-// today's journaled fills are restored, since IB may not resend them after a Gateway restart.
-// Restored fills of accounts the connected login does not have are dropped on the handshake.
 
 import { EventName, type CommissionReport, type Contract, type ContractDetails, type Execution as IbExecution, type IBApi, type Order, type OrderState } from './tws';
 import { contractLabel } from '@shared/contract';
 import { modifyProblems, MODIFY_PROBLEM_TEXT, requestConditions, withOrderAttributes, type OrderRulesContext } from '@shared/orderRules';
 import { parseIbDateTime, sessionOf, tifChangeAllowed } from '@shared/orderTiming';
-import { nyClock, nyDayStart } from '@shared/session';
+import { nyClock } from '@shared/session';
 import { isOrderActive, type ContractRef, type Execution, type OrderConditions, type OrderPreview, type OrderRequest, type PlaceOrderResult, type WorkingOrder } from '@shared/types';
 import { LOCKED_MESSAGE } from '@shared/ipc';
 import type { MainContext, OrderService } from '../context';
@@ -176,12 +172,6 @@ export function createOrderService(ctx: MainContext): OrderService {
   let previewChain: Promise<unknown> = Promise.resolve();
   const previewCache = new Map<string, { at: number; result: Promise<OrderPreview> }>();
 
-  /** Executions (by base id) to write to the journal, and the JSON last written per base id. */
-  const journalDirty = new Set<string>();
-  const journaled = new Map<string, string>();
-  /** Base ids of executions restored from the journal that IB has not sent in this session. */
-  const restored = new Set<string>();
-
   /** Notifications start after the first complete load (openOrderEnd / execDetailsEnd). */
   let ordersLoaded = false;
   let executionsLoaded = false;
@@ -210,77 +200,6 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (dirtyOrders) ctx.emit({ type: 'orders', orders: orderList() });
     if (dirtyExecutions) ctx.emit({ type: 'executions', executions: executionList() });
     dirtyOrders = dirtyExecutions = false;
-    writeJournal();
-  }
-
-  // ---------------------------------------------------------------------------
-  // Execution journal (partial contexts in unit tests have no database)
-
-  function journal(base: string): void {
-    journalDirty.add(base);
-    markDirty(false, true);
-  }
-
-  /** Writes changed executions in one call (IB resends the whole day on every reconnect). */
-  function writeJournal(): void {
-    if (!journalDirty.size) return;
-    const changed: Execution[] = [];
-    for (const base of journalDirty) {
-      const e = executions.get(base);
-      const json = e && JSON.stringify(e);
-      if (!e || !json || journaled.get(base) === json) continue;
-      journaled.set(base, json);
-      changed.push(e);
-    }
-    journalDirty.clear();
-    if (changed.length) void ctx.db?.executions.put(changed);
-  }
-
-  /** Restores today's journaled fills that IB has not (re)sent; IB's own data always wins. */
-  async function restoreJournal(): Promise<void> {
-    const db = ctx.db as MainContext['db'] | undefined;
-    if (!db) return;
-    const latest = new Map<string, Execution>();
-    for (const e of await db.executions.since(nyDayStart(Date.now()))) {
-      const base = execBaseId(e.execId);
-      const cur = latest.get(base);
-      // A correction (".01" -> ".02") replaces the original.
-      if (!cur || e.execId > cur.execId) latest.set(base, e);
-    }
-    let changed = false;
-    for (const [base, e] of latest) {
-      if (executions.has(base) || !ofThisLogin(e)) continue;
-      executions.set(base, e);
-      journaled.set(base, JSON.stringify(e));
-      restored.add(base);
-      changed = true;
-    }
-    if (changed) markDirty(false, true);
-  }
-
-  /**
-   * Whether an execution belongs to the connected login. The journal holds every account traded
-   * today (e.g. paper earlier, live now), IB reports only the login's own; before the first
-   * handshake the accounts are unknown and everything is kept.
-   */
-  function ofThisLogin(e: Execution): boolean {
-    const { accounts, account } = ctx.ib.getState();
-    const known = accounts.length ? accounts : account ? [account] : [];
-    return !e.account || !known.length || known.includes(e.account);
-  }
-
-  /** Drops restored executions of other logins (called once the handshake named the accounts). */
-  function dropForeignRestored(): void {
-    let dropped = false;
-    for (const base of restored) {
-      const e = executions.get(base);
-      if (e && ofThisLogin(e)) continue;
-      executions.delete(base);
-      journaled.delete(base);
-      restored.delete(base);
-      dropped = true;
-    }
-    if (dropped) markDirty(false, true);
   }
 
   function notify(n: NoticeText, contract: ContractRef, kind: 'fill' | 'order'): void {
@@ -463,11 +382,10 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (commission != null) merged.commission = commission;
     if (realized != null) merged.realizedPnL = realized;
     executions.set(base, merged);
-    restored.delete(base);
     const avg = num(exec.avgPrice);
     if (avg) execAvgPrice.set(base, avg);
     rememberSymbol(contract);
-    journal(base);
+    markDirty(false, true);
     // Fills after the first load are new: live ones (reqId -1) and those found on reconnect.
     if (executionsLoaded && !prev) scheduleFillNotice(base);
   }
@@ -501,7 +419,7 @@ export function createOrderService(ctx: MainContext): OrderService {
       if (commission != null) next.commission = commission;
       if (realized != null) next.realizedPnL = realized;
       executions.set(base, next);
-      journal(base);
+      markDirty(false, true);
     }
     if (pendingFills.has(base)) announceFill(base);
   }
@@ -922,7 +840,6 @@ export function createOrderService(ctx: MainContext): OrderService {
   // Wiring
 
   function onReady(api: IBApi): void {
-    dropForeignRestored();
     // Client 0 can bind orders entered in TWS so they can be modified and cancelled here.
     if (myClientId() === 0) api.reqAutoOpenOrders(true);
     api.reqAllOpenOrders();
@@ -939,8 +856,6 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   setImmediate(() => {
-    restoreJournal().catch((err) => console.error('[orders] execution journal could not be read:', err));
-
     const ib = ctx.ib;
     ib.onReady(onReady);
     ib.onClosed(onClosed);

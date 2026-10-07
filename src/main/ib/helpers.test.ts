@@ -3,7 +3,6 @@ import { expiredLogFiles, logFileDay, logFileName } from './apiLogFiles';
 import { connectionNotices, connectionParams, failureReason, isPaperAccount, parseAccounts } from './connectionModel';
 import { cleanIbMessage, farmUpdate, isErrorCode, isInfoCode } from './errorCodes';
 import { fromIbContract, num, parseIbTime, toIbContract } from './ibContract';
-import { addNavPoint, compactNav } from './navHistory';
 import type { Settings } from '@shared/types';
 import { defaultSettings } from '@shared/defaults';
 
@@ -163,37 +162,5 @@ describe('ib contracts', () => {
     expect(parseIbTime('20261005 10:31:44 China Standard Time')).toBe(new Date(2026, 9, 5, 10, 31, 44).getTime());
     expect(parseIbTime('1791084178')).toBe(1791084178000);
     expect(parseIbTime('')).toBeUndefined();
-  });
-});
-
-describe('nav history', () => {
-  const day = 86_400_000;
-  // 20:00 UTC = 16:00 New York (EDT): late in the NY trading day.
-  const at = (d: number, h: number) => Date.UTC(2026, 8, d, h);
-
-  it('keeps every sample of the last ten days', () => {
-    let pts = addNavPoint([], { t: at(20, 14), netLiq: 100 });
-    pts = addNavPoint(pts, { t: at(20, 15), netLiq: 101 });
-    pts = addNavPoint(pts, { t: at(21, 14), netLiq: 102 });
-    expect(pts.map((p) => p.netLiq)).toEqual([100, 101, 102]);
-  });
-
-  it('reduces older days to their last sample', () => {
-    const pts = [
-      { t: at(1, 14), netLiq: 1 },
-      { t: at(1, 19), netLiq: 2 },
-      { t: at(2, 14), netLiq: 3 },
-      { t: at(20, 14), netLiq: 4 },
-      { t: at(20, 15), netLiq: 5 },
-    ];
-    expect(compactNav(pts, at(21, 0)).map((p) => p.netLiq)).toEqual([2, 3, 4, 5]);
-    expect(compactNav(pts, at(21, 0) + 30 * day).map((p) => p.netLiq)).toEqual([2, 3, 5]);
-  });
-
-  it('ignores invalid samples and replaces duplicates', () => {
-    const pts = addNavPoint([{ t: 1, netLiq: 10 }], { t: 1, netLiq: 11 });
-    expect(pts).toEqual([{ t: 1, netLiq: 11 }]);
-    expect(addNavPoint(pts, { t: 2, netLiq: 0 })).toEqual(pts);
-    expect(addNavPoint(pts, { t: 2, netLiq: NaN })).toEqual(pts);
   });
 });

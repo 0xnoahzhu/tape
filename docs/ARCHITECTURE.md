@@ -23,8 +23,7 @@ IB Gateway / TWS ──socket──▶ main (services) ──TapeEvent──▶ 
 ```
 
 * The main process is the single source of truth for everything that comes from IB or is persisted
-  (settings, watchlists, price alerts, notifications in JSON files; NAV history per account and the
-  executions journal in `tape.db`).
+  (settings, watchlists, price alerts, notifications in JSON files; market data caches in `tape.db`).
 * The renderer receives a snapshot on startup (`getSnapshot`) and then push events
   (`src/shared/ipc.ts → TapeEvent`). `src/renderer/src/state/bridge.ts` applies them to the store.
 * Renderer writes go through `window.tape.*` (`TapeApi`). The main process persists and broadcasts
@@ -40,15 +39,15 @@ through the shared `MainContext` (never inside their factory).
 
 | Module | Responsibility |
 | --- | --- |
-| `store.ts` | JSON persistence in `userData` (settings, watchlists, alerts, notifications, window bounds; `nav.json` only for its one-time import into `tape.db`); the lock PIN is not here (`lock/lockFile.ts`) |
-| `db/` | `ctx.db`: SQLite caches and journals in a worker thread (see *Database*) |
+| `store.ts` | JSON persistence in `userData` (settings, watchlists, alerts, notifications, window bounds); the lock PIN is not here (`lock/lockFile.ts`) |
+| `db/` | `ctx.db`: SQLite caches in a worker thread (see *Database*) |
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary, positions/portfolio, P&L, NAV sampling per account (the active account's own NetLiquidation only; `navHistory.ts`, stored in `ctx.db.nav`) |
-| `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (journaled in `ctx.db.executions`) |
+| `ib/account.ts` | Account summary, positions/portfolio, P&L |
+| `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
-| `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` |
+| `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
@@ -108,8 +107,8 @@ OPG (2109). Bracket children take the parent's TIF, and IB rejects a stop-loss w
 the API precaution "Bypass Redirect Order warning for Stock API orders" off, IB refuses them
 (10329) and the toast says where to turn it on. `orderMapping.ts` maps the OVERNIGHT venue,
 `includeOvernight` / "OVERNIGHT + DAY" and `goodTillDate` back into `WorkingOrder.session` /
-`tif` / `goodTillDate` (the contract stays the SMART one), so the orders list, notifications, CSV
-export and "Modify" keep them. A working order cannot change its session (IB answers 105 for another venue, 462 for
+`tif` / `goodTillDate` (the contract stays the SMART one), so the orders list, notifications and
+"Modify" keep them. A working order cannot change its session (IB answers 105 for another venue, 462 for
 `includeOvernight`), and its TIF only between DAY and GTC or to IOC (462 for any change to or from
 GTD or OPG; a GTD expiry can change): `shared/orderTiming.ts → tifChangeAllowed`. While modifying,
 the ticket locks the session and the TIFs IB refuses, a "Modify" from any list starts from the
@@ -263,19 +262,18 @@ names and listener arguments), built on `node:net` and `node:events` only.
 ### Database (`src/main/db`)
 
 `ctx.db` (`db/types.ts`) persists caches of what IB would otherwise have to send again (bar series
-in `bars`, JSON documents by namespace in `kv`) and what IB does not keep for the API (the
-executions journal, the NAV history). It is `userData/tape.db`, opened with `node:sqlite` in a
-worker thread (`worker.ts` → `server.ts` → `sqlite.ts`), so database work never blocks the socket
-or IPC; the main side (`client.ts`) is an async RPC.
+in `bars`, JSON documents by namespace in `kv`); Tape keeps no records of its own there. It is
+`userData/tape.db`, opened with `node:sqlite` in a worker thread (`worker.ts` → `server.ts` →
+`sqlite.ts`), so database work never blocks the socket or IPC; the main side (`client.ts`) is an
+async RPC.
 
 * Schema (`schema.ts`): `series` (`key`, `retention`, `last_access`, `bar_count`) + `bars`
-  (WITHOUT ROWID, clustered by series and time), `kv` (`ns`, `key`, JSON, `updated_at`),
-  `executions` (by `exec_id`, indexed by time), `nav` (`t`, `net_liq`, `account`, indexed by
-  account and time). WAL; versioned migrations (v2 added `last_access`, set to the migration time,
-  and `bar_count`, counted once; v3 replaced the `intraday` flag by the retention class `seconds` /
-  `minutes` / `hours` / `daily`, taken from the bar size in the series key; every bar is kept; v4
-  added `account`: older rows have none and are claimed by an account's first sample within a
-  factor of 2, unclaimed rows are kept, never shown).
+  (WITHOUT ROWID, clustered by series and time), `kv` (`ns`, `key`, JSON, `updated_at`). WAL;
+  versioned migrations (v2 added `last_access`, set to the migration time, and `bar_count`,
+  counted once; v3 replaced the `intraday` flag by the retention class `seconds` / `minutes` /
+  `hours` / `daily`, taken from the bar size in the series key; every bar is kept; v4 gave the
+  former NAV samples an account; v5 dropped the `nav` and `executions` tables with their indexes,
+  so `tape.db` holds caches only).
 * Writes never reject (best-effort, logged); writes that arrive together commit in one transaction.
   Reads reject on database errors.
 * Series access: every `bars.get` / `bars.put` notes the series in the worker's memory; its
@@ -291,27 +289,7 @@ or IPC; the main side (`client.ts`) is an async RPC.
   | Any series (in practice daily and longer) | Evicted with its coverage and head timestamp when not read or written for 90 days |
   | Size cap | Above 512 MB (`tape.db` + WAL), series are evicted until the data is under 80% of the cap: first those not used for 7 days (seconds, then minutes and hours, then daily; least recently used first), then the recently used ones, least recently used first (the chart on screen goes last) |
   | `kv` (contract details, option chains, coverage, head timestamps, the last market data check) | Entries not rewritten for 180 days are deleted |
-  | Executions | Never deleted automatically (the trade journal is the user's record) |
-  | NAV | All of it; each account's history compacted to one point per day after 10 days by `navHistory.ts`; rows without an account are left as they are |
 
-* NAV history (`ib/navHistory.ts`, `ctx.db.nav`): IB keeps no NAV history for the socket API, so
-  Tape samples the active account's `NetLiquidation` from `reqAccountSummary` while connected (the
-  first value after each connect, then every 5 minutes) and keeps one history per account. Only a
-  value known to be the active account's is recorded; with no account known (no
-  `managedAccounts`) nothing is. The account shown is the connection's account, else (before the
-  first connect of a run) the account of the newest sample. Main sends that account's history in
-  the snapshot, on every connect whose account is known, else once `managedAccounts` names it
-  (connection.ts stops waiting for it 2 s after `nextValidId`) — an empty one too, so a switch
-  replaces the other account's — and after each sample; the renderer (`portfolio/calc.ts → shownNavSeries`) uses a history and the
-  live net liquidation only when they belong to the account shown, so accounts are never mixed.
-* The v4 migration adds `nav.account`: rows written before (and the one-time `nav.json` import)
-  have none. An account's first sample (it has no rows yet) claims the rows without an account
-  within a factor of 2 of its value, in the same transaction as the sample (`sqlite.ts →
-  navAppend`): a paper account of about 1.05M and a live one of 31k sampled into the same old
-  history each get their own rows, when each next records a sample. Rows nobody claims are kept
-  and never shown; two accounts within a factor of 2 of each other cannot be told apart (the first
-  to record a sample takes both). An insert never takes a time another account (or no account)
-  holds.
 * Maintenance runs in the worker about 2 minutes after startup and then every 6 hours, once the
   port has been quiet for 5 s: retention deletes, the size cap, `PRAGMA incremental_vacuum` in
   steps, `wal_checkpoint(TRUNCATE)`, `PRAGMA optimize`. It is a generator of steps: one transaction
@@ -329,12 +307,12 @@ or IPC; the main side (`client.ts`) is an async RPC.
   series is fetched again instead of being answered from bars that are gone. A load whose bar
   read was answered after the eviction while it held the old coverage (`pairedRead`) does not
   trust that coverage: the newest bars load cold, a page reads again.
-* Settings › Market data › Local cache shows `getCacheStats()` (file + WAL size, series, bars,
-  executions) and `clearMarketDataCache()` deletes bars, series and the `coverage` / `contract` /
+* Settings › Market data › Local cache shows `getCacheStats()` (file + WAL size, series, bars)
+  and `clearMarketDataCache()` deletes bars, series and the `coverage` / `contract` /
   `secdef` namespaces (dropping and recreating `bars`: about 0.1 s for millions of rows, much
   faster than deleting them; requests wait for that statement), then returns the freed pages in
   the same vacuum slices, serving other requests in between (0.2–1 s of vacuum steps for a full
-  cache), and answers once the space is back and the WAL truncated; executions and NAV are kept.
+  cache), and answers once the space is back and the WAL truncated; other `kv` namespaces are kept.
   Listeners hear `'all'` before the clear is sent.
 * A corrupt or unreadable file is moved aside as `tape.db.corrupt-<ts>` and recreated; a file from a
   newer Tape version, or a worker that cannot start, falls back to the in-memory implementation
@@ -552,8 +530,8 @@ replaces it). A session that closes, or IB dropping the market data requests (11
 ready again), before the watch is over decides nothing and leaves the answer `unconfirmed`, as do the depth
 view's book (whose 2152 its next update clears) and demo. Settings saved before `depthSetByUser` existed
 count Level 2 on as the user's choice (`storeSchema.ts → loadSettings`; it was off by default) and lose
-the removed `features.options` / `features.flow`: the Options view and the desk's Flow tab are always
-there (option quotes work delayed without OPRA, and the flow comes from the chain quotes on screen).
+the removed `features.options` / `features.flow` (the Options view is always there; option quotes work
+delayed without OPRA).
 
 The result (`MarketDataCheck`: account, client id, trigger, per market status, both probes, codes and
 messages, the time) is kept in main, persisted in `kv` (`mdcheck` / `last`, not cleared with the market
@@ -835,7 +813,7 @@ relative order's offset mode, switching off a discretionary amount or good-after
 and session / TIF as before; orders sized by cash are not offered for "Modify".
 
 The review (`layout/Dialogs.tsx`) lists every chosen attribute (`orders/attributes.ts`, shared with
-the lists, the cancel dialog and the CSV) and, for new single-instrument orders while connected,
+the lists and the cancel dialog) and, for new single-instrument orders while connected,
 IB's estimate from `previewOrder`: asking, then commission, initial and maintenance margin change
 (before → after), equity with loan and IB's notice, or IB's refusal in red. Sending never waits for
 it.
@@ -915,11 +893,12 @@ own remembered position (first: the bottom-right corner of the content area).
 ### Portfolio dashboard (`features/portfolio/dashboard`)
 
 The Dashboard tab is a 3-column grid of widgets the user arranges in edit mode.
-`layout.ts` is the catalog (ten widgets with their default spans; the default layout shows all of
+`layout.ts` is the catalog (eight widgets with their default spans; the default layout shows all of
 them) and the pure edits (move into the drop target's place: before it when dragged backwards,
 after it when dragged forwards, or to the end on the "Add widget" tile; S / M / L span, remove, add
 at the default span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
-`{ id, span }`, read and written in try/catch; unknown ids dropped, a missing or invalid value is
+`{ id, span }`, read and written in try/catch; unknown ids dropped, among them those no longer in the
+catalog (the removed `eq` net liquidation and `bench` benchmark widgets), a missing or invalid value is
 the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
 locking ends them (`state/lockActions.ts`).
 
@@ -936,12 +915,10 @@ Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
 | Option expirations | Days to expiry (local calendar) and moneyness from the underlying price (futures options: only IB's model underlying price, never their own premium) |
 | Today's trades | `executions` since New York midnight (`shared/session.ts → nyDayStart`, re-checked every minute: main keeps the session's fills, so after midnight the list still holds yesterday's) |
 | Earnings & dividends | `getEarnings` (Wall Street Horizon with IB's subscription, else estimates from IB's market scanner: "Est.", an exact time in the user's clock format ("8:30 AM ET", 24-hour "08:30 ET") when known, before the open / after the close otherwise, a tooltip saying it is not a confirmed date) and `Quote.dividends` (tick 456, live lines only); the note says where earnings dates come from, that the scanner is still looking them up, or why they are missing (IB refused both, or unavailable while connected). The catalog no longer marks the widget as needing a subscription |
-| vs. benchmark | The equity card's range return against SPY / QQQ: live price over their price at the range's first NAV sample of the account shown, so both start at the same moment. A start within 9 days is priced from 5-minute bars, within 25 days from hourly ones (the close of the last bar that ended by then, else the open of the bar it falls in); an older one, or one the intraday window misses, at the daily close (16:00 New York) at or before it (older pages for long ALL ranges). Bars through `getHistory`, regular hours |
 
 The hooks subscribe only while their widget is on the layout, under their own quote owners:
-`dashboard-und` (option underlyings, basic), `dashboard-div` (the holdings' stocks, `dividends`)
-and `dashboard-bench` (SPY, QQQ). Option greeks need no line of their own (the `portfolio` owner
-subscribes every position).
+`dashboard-und` (option underlyings, basic) and `dashboard-div` (the holdings' stocks, `dividends`).
+Option greeks need no line of their own (the `portfolio` owner subscribes every position).
 
 ### Watchlists
 
@@ -1002,7 +979,7 @@ formatter, pure and used by both processes:
 * Stored texts: notification titles and bodies are built once but read later, so their times are
   tokens (`TOKEN_CLOCK` writes "⟦t:<ms>:<flags>⟧"); `resolveTimeTokens` writes them in the current
   format when the bell list draws them and when main shows the OS notification.
-* Not affected: the API log (milliseconds), CSV exports and everything sent to IB.
+* Not affected: the API log (milliseconds) and everything sent to IB.
 * The chart (`features/chart`) follows the setting too. Its label functions (`chartMath.ts →
   formatBarTime`, `timeTicks`, `timeAxisLabels`) take a `LabelClock` (the format and language of a
   `Clock`; `PriceChart` passes `useClock()`). Intraday axis ticks and the crosshair chip write every
@@ -1026,7 +1003,7 @@ formatter, pure and used by both processes:
 * Code, comments and docs are English. Chinese appears only in `zh` message tables.
 * Numbers use `src/shared/format.ts` (`f2`, `f0`, `sg`, `pct`, `px`, …) with U+2212 for negatives.
 * Clock times people read go through `src/shared/timeFormat.ts` (see *Time format*); `format.ts`'s
-  `hms` / `hmsMs` stay for the API log and CSV exports, and IB gets its own 24-hour strings
+  `hms` / `hmsMs` stay for the API log, and IB gets its own 24-hour strings
   (`orderTiming.ts`).
 * Instruments are `ContractRef`; use `contractKey()` for map keys and `contractLabel()` for display.
 * No border radius anywhere; borders are `box-shadow: inset 0 0 0 1px var(--ln)`.
@@ -1052,7 +1029,7 @@ Environment variables for development:
 
 | Variable | Effect |
 | --- | --- |
-| `TAPE_DEMO=1` | Market data (quotes, bars, depth, option chains) comes from a built-in simulator |
+| `TAPE_DEMO=1` | Development builds only: market data (quotes, bars, depth, option chains) comes from a built-in simulator (ignored when packaged) |
 | `TAPE_NO_CONNECT=1` | Do not auto-connect on launch |
 | `TAPE_CLIENT_ID=<n>` | Override the API client id |
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |

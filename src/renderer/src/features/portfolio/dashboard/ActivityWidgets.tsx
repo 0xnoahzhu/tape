@@ -1,9 +1,8 @@
-// Activity and market widgets (design v6): today's trades, earnings & dividends and the
-// benchmark comparison.
+// Activity widgets (design v6): today's trades and earnings & dividends.
 
 import { useMemo } from 'react';
 import { contractLabel } from '@shared/contract';
-import { DASH, f0, f2, pct, px, signColor } from '@shared/format';
+import { f0, f2, px } from '@shared/format';
 import { useClock } from '../../../i18n';
 import { useCommon } from '../../../i18n/common';
 import { useStore } from '../../../state/store';
@@ -11,9 +10,7 @@ import { timeCell } from '../../orders/model';
 import { showOrderTrades } from '../../orders/OrdersPage';
 import { useOrdersMessages } from '../../orders/messages';
 import type { PositionRow } from '../calc';
-import { spanLabel } from '../EquityCard';
-import { usePortfolioMessages } from '../messages';
-import { useBenchmark, useEarnings, useHoldingDividends, useHoldingUnderlyings, useNyDayStart } from './data';
+import { useEarnings, useHoldingDividends, useHoldingUnderlyings, useNyDayStart } from './data';
 import { useDashboardMessages } from './messages';
 import { earningsState, etClock, recentFills, upcomingEvents, type CorporateEvent } from './model';
 import { EmptyLine, List, Note, WidgetCard } from './WidgetCard';
@@ -138,49 +135,6 @@ export function EventsWidget({ rows }: { rows: readonly PositionRow[] }) {
         {!events.length && <EmptyLine>{empty}</EmptyLine>}
       </List>
       {note && <Note>{note}</Note>}
-    </WidgetCard>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// vs. benchmark
-
-export function BenchWidget() {
-  const m = useDashboardMessages();
-  const pm = usePortfolioMessages();
-  const { range, points, covered, rows, vsSpy } = useBenchmark();
-  const span = spanLabel(pm, range, covered, points[0]);
-
-  return (
-    <WidgetCard title={m.benchTitle} sub={m.benchSub(span)}>
-      <List gap={12}>
-        {rows.map((r) => {
-          const own = r.key === 'portfolio';
-          const known = r.pct != null && Number.isFinite(r.pct);
-          const bar = known && r.pct! < 0 ? 'var(--dn)' : own ? 'var(--ac)' : 'var(--mu)';
-          return (
-            <div key={r.key} style={{ display: 'grid', gridTemplateColumns: '56px minmax(0,1fr) 64px', alignItems: 'center', gap: 12 }}>
-              <div className="ellipsis" style={{ fontSize: 13, color: own ? 'var(--tx)' : 'var(--mu)' }}>
-                {own ? m.portfolio : r.key}
-              </div>
-              <div style={{ height: 8, background: 'var(--p2)' }}>
-                <div style={{ height: '100%', width: `${(r.frac * 100).toFixed(1)}%`, background: bar, opacity: own ? 1 : 0.55 }} />
-              </div>
-              <div
-                className="selectable"
-                style={{ textAlign: 'right', font: '13px/1 var(--num)', color: own ? signColor(r.pct) : 'var(--mu)', whiteSpace: 'nowrap' }}
-              >
-                {known ? pct(r.pct) : DASH}
-              </div>
-            </div>
-          );
-        })}
-      </List>
-      {vsSpy != null && (
-        <div style={{ fontSize: 13, color: signColor(vsSpy) }}>
-          {vsSpy >= 0 ? m.aheadOf('SPY', f2(Math.abs(vsSpy), 1)) : m.behind('SPY', f2(Math.abs(vsSpy), 1))}
-        </div>
-      )}
     </WidgetCard>
   );
 }

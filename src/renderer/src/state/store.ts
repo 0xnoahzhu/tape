@@ -24,7 +24,6 @@ import type {
   LocalizedName,
   LockState,
   MarketDataCheckState,
-  NavHistory,
   OcaType,
   OrderAction,
   OrderRequest,
@@ -238,8 +237,6 @@ interface DataState {
   notifications: AppNotification[];
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
-  /** One account's NAV history (main sends the account shown; calc.ts → shownNavSeries never mixes accounts). */
-  nav: NavHistory;
   /** Mirror of main's lock state (main is the only authority). */
   lock: LockState;
 }
@@ -418,7 +415,6 @@ export const useStore = create<StoreState>()((set, get) => ({
   notifications: [],
   watchlists: [],
   priceAlerts: [],
-  nav: { account: '', points: [] },
   lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui

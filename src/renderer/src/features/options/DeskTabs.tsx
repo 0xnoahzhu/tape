@@ -1,4 +1,4 @@
-// Desk tab bar: Chain / Volatility / Flow / Positions and the expiration chips.
+// Desk tab bar: Chain / Volatility / Positions and the expiration chips.
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { shortExpiry, daysToExpiry } from '@shared/contract';
