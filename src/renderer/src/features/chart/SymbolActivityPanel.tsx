@@ -21,6 +21,41 @@ import { canModifyInTicket, orderPriceText, orderStatusText } from './orderModel
 
 const signed0 = (n: number | undefined) => (n == null ? '—' : sg(n, f0));
 
+/** Column templates shared by the rows and their header. */
+const POS_GRID = 'minmax(0,2fr) repeat(6,minmax(0,1fr))';
+// The time column is sized for the clock format (timeColumn). "qty @ price" keeps room for
+// "100 @ 226.50" and grows little beyond it; the rest goes to contract and status (with its
+// good-after and GTD times, the larger share), which clip first in a narrow window.
+const orderGrid = (clock: Parameters<typeof timeColumn>[0]) => `${timeColumn(clock)} 48px minmax(0,1.2fr) minmax(96px,0.5fr) minmax(0,2fr) 110px`;
+
+/**
+ * The column names above the rows: [label, full name on hover]; `right` marks the numeric columns.
+ * `ruled`: a rule under the names, for rows that draw theirs below (orders) rather than above (positions).
+ */
+function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Array<[string, string]>; right: (i: number) => boolean; ruled?: boolean }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: grid,
+        gap: 12,
+        padding: '0 24px',
+        height: 30,
+        alignItems: 'center',
+        fontSize: 12,
+        color: 'var(--dm)',
+        boxShadow: ruled ? 'inset 0 -1px 0 var(--ln2)' : undefined,
+      }}
+    >
+      {headers.map(([label, full], i) => (
+        <div key={i} className="ellipsis" title={full} style={{ textAlign: right(i) ? 'right' : 'left' }}>
+          {label}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Right-aligned number that clips with an ellipsis (full value on hover) instead of overlapping its neighbor. */
 function NumCell({ text, color }: { text: string; color?: string }) {
   return (
@@ -47,7 +82,7 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(0,2fr) repeat(6,minmax(0,1fr))',
+        gridTemplateColumns: POS_GRID,
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -86,10 +121,7 @@ function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
     <div
       style={{
         display: 'grid',
-        // The time column is sized for the clock format (timeColumn). "qty @ price" keeps room for
-        // "100 @ 226.50" and grows little beyond it; the rest goes to contract and status (with its
-        // good-after and GTD times, the larger share), which clip first in a narrow window.
-        gridTemplateColumns: `${timeColumn(clock)} 48px minmax(0,1.2fr) minmax(96px,0.5fr) minmax(0,2fr) 110px`,
+        gridTemplateColumns: orderGrid(clock),
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -194,6 +226,7 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
   const setPage = useStore((s) => s.setPage);
   const tab = useChartPrefs((s) => s.activityTab);
   const setTab = useChartPrefs((s) => s.setActivityTab);
+  const clock = useClock();
   const { sym, positions, orders } = useSymbolActivity();
 
   return (
@@ -231,13 +264,20 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
         </div>
         {tab === 'open' ? (
           orders.length ? (
-            // orderId is unique per API client only (TWS orders all have 0).
-            orders.map((o) => <OrderRow key={o.permId ?? `${o.clientId}:${o.orderId}`} o={o} own={o.clientId === myClientId} />)
+            <div>
+              {/* The actions column has no name. */}
+              <HeaderRow grid={orderGrid(clock)} headers={[...m.orderHeaders, ['', '']]} right={(i) => i === 3} ruled />
+              {/* orderId is unique per API client only (TWS orders all have 0). */}
+              {orders.map((o) => (
+                <OrderRow key={o.permId ?? `${o.clientId}:${o.orderId}`} o={o} own={o.clientId === myClientId} />
+              ))}
+            </div>
           ) : (
             <div style={{ padding: '10px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.noOrders(sym)}</div>
           )
         ) : positions.length ? (
           <div>
+            <HeaderRow grid={POS_GRID} headers={m.posHeaders} right={(i) => i > 0} />
             {positions.map((p) => (
               <PositionRow key={p.key} p={p} netLiq={netLiq} />
             ))}
