@@ -324,7 +324,8 @@ export const useTicketM = createMessages({
     algoPct: (name: string) => `${name} (%)`,
     algoTime: (name: string) => `${name} (ET)`,
     attr: useAttrM.for('en'),
-    bpAfter: 'BP after order',
+    /** The totals' what-if rows: "IBKR what-if · Asking IBKR…", or IBKR's refusal. */
+    whatIf: 'IBKR what-if',
     submit: (side: string, qty: string, label: string) => `${side} ${qty} ${label}`,
     /** Quantity with its unit: English trading UIs omit it ("Sell 100 AAPL"). */
     units: (qty: string, _secType: SecType) => qty,
@@ -674,7 +675,7 @@ export const useTicketM = createMessages({
     algoPct: (name: string) => `${name}（%）`,
     algoTime: (name: string) => `${name}（美东）`,
     attr: useAttrM.for('zh'),
-    bpAfter: '下单后购买力',
+    whatIf: 'IBKR 预估',
     submit: (side: string, qty: string, label: string) => `${side} ${qty} ${label}`,
     units: (qty: string, secType: SecType) => (secType === 'OPT' || secType === 'FOP' ? `${qty} 张` : secType === 'STK' ? `${qty} 股` : qty),
     modify: (id: number) => `改单 #${id}`,

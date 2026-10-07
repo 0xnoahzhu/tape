@@ -1,4 +1,4 @@
-// Data hooks of the options desk: the underlying, its chain parameters and history.
+// Data hooks of the options desk: the underlying, its chain parameters and IV history.
 
 import { useMemo } from 'react';
 import { contractKey, stock } from '@shared/contract';
@@ -16,7 +16,7 @@ export function underlyingOf(c: ContractRef): ContractRef | null {
 
 const HOUR = 3_600_000;
 const chainKey = (u: ContractRef) => `chain:${contractKey(u)}`;
-const historyKey = (u: ContractRef, what: string) => `hist:${what}:${contractKey(u)}`;
+const ivHistoryKey = (u: ContractRef) => `hist:OPTION_IMPLIED_VOLATILITY:${contractKey(u)}`;
 
 export interface ChainData {
   status: 'idle' | 'loading' | 'ready' | 'empty' | 'error';
@@ -39,10 +39,10 @@ export function useChain(underlying: ContractRef | null): ChainData {
   return { status: 'empty', expiries, retry };
 }
 
-/** Daily closes of the underlying (TRADES) or of its 30-day implied volatility. Null while unavailable. */
-export function useDailyCloses(underlying: ContractRef | null, whatToShow: 'TRADES' | 'OPTION_IMPLIED_VOLATILITY'): { closes: number[] | null; error?: string } {
-  const key = underlying ? historyKey(underlying, whatToShow) : null;
-  const req: HistoryRequest | null = underlying ? { contract: underlying, timeframe: '1D', ...(whatToShow === 'TRADES' ? {} : { whatToShow }) } : null;
+/** Daily closes of the underlying's 30-day implied volatility (IB's OPTION_IMPLIED_VOLATILITY bars). Null while unavailable. */
+function useIvCloses(underlying: ContractRef | null): { closes: number[] | null; error?: string } {
+  const key = underlying ? ivHistoryKey(underlying) : null;
+  const req: HistoryRequest | null = underlying ? { contract: underlying, timeframe: '1D', whatToShow: 'OPTION_IMPLIED_VOLATILITY' } : null;
   const entry = useCachedRequest<Bar[]>(key, () => window.tape.getHistory(req!), HOUR / 6, (d) => !d.length);
   const bars = entry?.data;
   const closes = useMemo(() => (bars && bars.length ? bars.map((b) => b.close).filter((c) => Number.isFinite(c) && c > 0) : null), [bars]);
@@ -54,7 +54,7 @@ export function useDailyCloses(underlying: ContractRef | null, whatToShow: 'TRAD
  * with IV rank / percentile of `current` (the underlying's 30-day IV, else the last bar).
  */
 export function useIvHistory(underlying: ContractRef | null, current: number | undefined) {
-  const { closes, error } = useDailyCloses(underlying, 'OPTION_IMPLIED_VOLATILITY');
+  const { closes, error } = useIvCloses(underlying);
   const hist = useMemo(() => (closes ? closes.slice(-252) : null), [closes]);
   const now = current != null && current > 0 ? current : hist?.[hist.length - 1];
   const stats = hist && now != null ? ivRank(hist, now) : null;
@@ -66,7 +66,7 @@ export function useIvHistory(underlying: ContractRef | null, current: number | u
 //
 //   __tape.options.seedChain('AAPL', [{ exchange: 'SMART', tradingClass: 'AAPL', multiplier: 100,
 //     underlyingConId: 265598, expirations: ['20261009', …], strikes: [200, 202.5, …] }])
-//   __tape.options.seedHistory('AAPL', 'TRADES', bars)   // or 'OPTION_IMPLIED_VOLATILITY'
+//   __tape.options.seedHistory('AAPL', bars)              // daily IV bars (OPTION_IMPLIED_VOLATILITY)
 //   __tape.options.desk.setState({ tab: 'vol' })          // feature-local UI state
 //
 // A string symbol means a US stock; pass a ContractRef for an index.
@@ -79,6 +79,6 @@ export function attachDebugHandle(desk: unknown): void {
   w.__tape.options = {
     desk,
     seedChain: (u: string | ContractRef, params: OptionChainParams[]) => seedRequest(chainKey(asUnderlying(u)), params),
-    seedHistory: (u: string | ContractRef, what: 'TRADES' | 'OPTION_IMPLIED_VOLATILITY', bars: Bar[]) => seedRequest(historyKey(asUnderlying(u), what), bars),
+    seedHistory: (u: string | ContractRef, bars: Bar[]) => seedRequest(ivHistoryKey(asUnderlying(u)), bars),
   };
 }

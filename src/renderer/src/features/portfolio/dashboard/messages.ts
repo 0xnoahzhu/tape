@@ -27,7 +27,6 @@ export const useDashboardMessages = createMessages({
     ] as Array<[string, string]>,
     catalog: {
       alloc: { name: 'Sector allocation', desc: 'Pie by sector, including cash' },
-      margin: { name: 'Margin cushion', desc: 'Excess liquidity vs. net liq; turns red near a margin call' },
       greeks: { name: 'Portfolio Greeks', desc: 'Delta, Gamma, Theta and Vega across all positions' },
       conc: { name: 'Concentration', desc: 'Stock and options combined per underlying; flags >20%' },
       contrib: { name: 'Today’s P&L by position', desc: 'Positions moving your P&L most today' },
@@ -35,15 +34,6 @@ export const useDashboardMessages = createMessages({
       fills: { name: 'Today’s trades', desc: 'Latest executions' },
       events: { name: 'Earnings & dividends', desc: 'Upcoming earnings and ex-dividend dates for holdings' },
     } as Record<WidgetId, CatalogText>,
-
-    // Margin cushion
-    marginTitle: 'Margin cushion',
-    marginSub: 'Below 10% nears a margin call',
-    cushionLabel: 'Excess liquidity / net liq',
-    excessLiquidity: 'Excess liquidity',
-    maintMargin: 'Maintenance margin',
-    initMargin: 'Initial margin',
-    leverage: 'Leverage',
 
     // Greeks
     greeksTitle: 'Portfolio Greeks',
@@ -114,7 +104,6 @@ export const useDashboardMessages = createMessages({
     ] as Array<[string, string]>,
     catalog: {
       alloc: { name: '板块分布', desc: '按板块和现金拆分的饼图' },
-      margin: { name: '保证金余量', desc: '剩余流动性占净值比例，接近追保时变红' },
       greeks: { name: '组合 Greeks', desc: '全部持仓汇总的 Delta、Gamma、Theta、Vega' },
       conc: { name: '持仓集中度', desc: '按标的合并股票和期权，单只超过 20% 标出' },
       contrib: { name: '今日盈亏贡献', desc: '今天影响最大的持仓' },
@@ -122,14 +111,6 @@ export const useDashboardMessages = createMessages({
       fills: { name: '今日成交', desc: '最近的成交记录' },
       events: { name: '财报与除息', desc: '持仓标的的近期财报和除息日' },
     } as Record<WidgetId, CatalogText>,
-
-    marginTitle: '保证金余量',
-    marginSub: '低于 10% 接近追保',
-    cushionLabel: '剩余流动性 / 净清算值',
-    excessLiquidity: '剩余流动性',
-    maintMargin: '维持保证金',
-    initMargin: '初始保证金',
-    leverage: '杠杆率',
 
     greeksTitle: '组合 Greeks',
     greeksSub: '含正股，按股数等效',

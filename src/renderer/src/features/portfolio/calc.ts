@@ -1,5 +1,5 @@
-// Pure portfolio computations: sector allocation, position rows and account totals. No React and
-// no store access, so everything is unit tested.
+// Pure portfolio computations: sector allocation, position rows, account totals and the margin
+// cushion. No React and no store access, so everything is unit tested.
 
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
@@ -261,7 +261,7 @@ export function sortRows(rows: PositionRow[]): PositionRow[] {
 }
 
 /** Sum of a field over rows; undefined when any contributing row lacks it. 0 for no rows. */
-export function sumRows(rows: readonly PositionRow[], field: 'value' | 'unrealized' | 'dayPnl', filter?: (r: PositionRow) => boolean): number | undefined {
+export function sumRows(rows: readonly PositionRow[], field: 'value' | 'valueBase' | 'unrealized' | 'dayPnl', filter?: (r: PositionRow) => boolean): number | undefined {
   let sum = 0;
   for (const r of rows) {
     if (filter && !filter(r)) continue;
@@ -285,15 +285,14 @@ export function grossValue(rows: readonly PositionRow[]): number | undefined {
 export interface AccountTotals {
   dayPnl?: number;
   unrealized?: number;
+  /**
+   * Stocks and options, shorts negative (the header's Stocks / Options): the rows' values in the
+   * account currency, so they move with the same prices as the positions table; IB's
+   * StockMarketValue / OptionMarketValue when a row has none.
+   */
   stockValue?: number;
   optionValue?: number;
   gross?: number;
-  /**
-   * Stocks + options, shorts negative (the header's Market Value): the rows' values, so it moves
-   * with the same prices as the positions table; IB's stock + option market values when a row
-   * has no value.
-   */
-  marketValue?: number;
   /** P&L of positions closed today (the header's Realized Today). */
   realized?: number;
 }
@@ -307,15 +306,13 @@ export function accountTotals(a: AccountSummary | null, rows: readonly PositionR
   const ofType = (t: SecType) => (r: PositionRow) => r.position.contract.secType === t;
   // IB's account P&L is computed at the P&L engine's marks; re-mark it to the prices the rows show.
   const adjust = rows.reduce((sum, r) => sum + remark(r.position, r.value), 0);
-  const ibMarketValue = finite(a.stockMarketValue) || finite(a.optionMarketValue) ? (a.stockMarketValue ?? 0) + (a.optionMarketValue ?? 0) : undefined;
   return {
     // Positions closed today only show up in the account figure, so there is no fallback without positions.
     dayPnl: finite(a.dailyPnL) ? a.dailyPnL + adjust : rows.length ? sumRows(rows, 'dayPnl') : undefined,
     unrealized: finite(a.unrealizedPnL) ? a.unrealizedPnL + adjust : sumRows(rows, 'unrealized'),
-    stockValue: a.stockMarketValue ?? sumRows(rows, 'value', ofType('STK')),
-    optionValue: a.optionMarketValue ?? sumRows(rows, 'value', ofType('OPT')),
+    stockValue: sumRows(rows, 'valueBase', ofType('STK')) ?? a.stockMarketValue,
+    optionValue: sumRows(rows, 'valueBase', ofType('OPT')) ?? a.optionMarketValue,
     gross: a.grossPositionValue ?? grossValue(rows),
-    marketValue: sumRows(rows, 'value', (r) => r.position.contract.secType === 'STK' || r.position.contract.secType === 'OPT') ?? ibMarketValue,
     realized: finite(a.realizedPnL) ? a.realizedPnL : executions ? realizedFromExecutions(executions) : undefined,
   };
 }
@@ -341,4 +338,29 @@ export function leverage(gross: number | undefined, netLiq: number | undefined):
 /** "1.38×"; "—" when unknown. */
 export function leverageLabel(lev: number | undefined): string {
   return finite(lev) ? `${f2(lev)}×` : DASH;
+}
+
+// ---------------------------------------------------------------------------
+// Margin
+
+/** Cushion (excess liquidity / net liquidation) below which a margin call is near. */
+export const MARGIN_CALL_CUSHION = 10;
+
+export interface MarginCushion {
+  /** Excess liquidity in percent of net liquidation. */
+  pct: number;
+  /** Bar fill in percent (0–100). */
+  fill: number;
+  /** Below MARGIN_CALL_CUSHION. */
+  warn: boolean;
+}
+
+/**
+ * Excess liquidity / net liquidation: the same fraction as IB's "Cushion" (an account-updates
+ * value), computed from the summary values the header already has.
+ */
+export function marginCushion(excessLiquidity: number | undefined, netLiq: number | undefined): MarginCushion | null {
+  if (!finite(excessLiquidity) || !finite(netLiq) || netLiq <= 0) return null;
+  const pct = (excessLiquidity / netLiq) * 100;
+  return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct < MARGIN_CALL_CUSHION };
 }

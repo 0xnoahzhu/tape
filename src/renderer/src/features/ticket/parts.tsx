@@ -17,6 +17,7 @@ import type { TicketMessages } from './messages';
 import { isTrailing, money, priceInput, priceText, stepQty } from './ticketModel';
 import { toLocalInput } from './timing';
 import type { TicketCtl } from './useTicket';
+import { WhatIfRows } from './WhatIf';
 
 export const label12: CSSProperties = { fontSize: 12, color: 'var(--dm)' };
 export const column6: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 };
@@ -648,9 +649,9 @@ export function AdvancedBlock({ T, session = true }: { T: TicketCtl; session?: b
   );
 }
 
-/** Estimated amount and buying power after the order. `children`: more rows (the floating ticket's what-if). */
-export function Totals({ T, S, children }: { T: TicketCtl; S: TicketScale; children?: ReactNode }) {
-  const { c, m, est, bpAfter, symbol } = T;
+/** Estimated amount and IBKR's what-if (initial margin change, commission). */
+export function Totals({ T, S }: { T: TicketCtl; S: TicketScale }) {
+  const { c, est, symbol } = T;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: S.totals, color: 'var(--mu)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -659,13 +660,7 @@ export function Totals({ T, S, children }: { T: TicketCtl; S: TicketScale; child
           {money(est, symbol.currency)}
         </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <div>{m.bpAfter}</div>
-        <div className="num selectable" style={{ color: 'var(--tx)' }}>
-          {f0(bpAfter)}
-        </div>
-      </div>
-      {children}
+      <WhatIfRows T={T} />
     </div>
   );
 }

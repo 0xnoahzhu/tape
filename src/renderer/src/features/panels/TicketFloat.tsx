@@ -5,23 +5,22 @@
 //   header      Order · AAPL, name and exchange, last, change, session · collapse, dock back
 //   market      bid / ask (a click fills the limit price), 5 depth levels, the position, working orders
 //   entry       buy / sell, order type, quantity (chips), price (± one tick, bid / mid / ask), TIF, session
-//   confirm     Advanced as one-line sections (scrolling), the status strip, then fixed: totals,
-//               IBKR's what-if, the submit button
+//   confirm     Advanced as one-line sections (scrolling), the status strip, then fixed: the totals
+//               (with IBKR's what-if, as docked), the submit button
 //
 // After a submit the button reads "Submitting…" until IB answers and the status strip follows
 // the order (OrderStrip); an accepted order collapses the panel to its bar (state/orderActions.ts).
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { contractKey, isTradable } from '@shared/contract';
 import { change, f0, MINUS, px, sg, signColor } from '@shared/format';
 import { usEquitySession } from '@shared/session';
-import { isOrderActive, type OrderPreview, type WorkingOrder } from '@shared/types';
+import { isOrderActive, type WorkingOrder } from '@shared/types';
 import { lastPrice, useMarketDataAvailable, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
-import { commissionText, marginText } from '../../layout/Dialogs';
 import { setDepthOwner } from '../../state/depthSubscription';
-import { errorText, confirmCancel } from '../../state/orderActions';
+import { confirmCancel } from '../../state/orderActions';
 import { isSending, useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import { useContractInfo as useChartContractInfo } from '../chart/contractInfo';
@@ -459,71 +458,6 @@ function EntryColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
   );
 }
 
-type PreviewState = { status: 'loading' } | { status: 'done'; preview: OrderPreview } | { status: 'error'; message: string };
-
-/**
- * IBKR's what-if for the order as it stands (as in the review dialog), asked again a moment after
- * the user changes the ticket; prices that follow the market do not ask again (main also answers an
- * identical request from its last answer).
- */
-function useWhatIf(T: TicketCtl, enabled: boolean): PreviewState | null {
-  const [state, setState] = useState<PreviewState | null>(null);
-  const request = useRef(T.composed);
-  request.current = T.composed;
-  const key = enabled ? JSON.stringify([contractKey(T.symbol), T.t, T.session]) : null;
-  useEffect(() => {
-    if (!key) {
-      setState(null);
-      return;
-    }
-    let alive = true;
-    const timer = setTimeout(() => {
-      setState({ status: 'loading' });
-      window.tape.previewOrder(request.current).then(
-        (preview) => alive && setState({ status: 'done', preview }),
-        (err: unknown) => alive && setState({ status: 'error', message: errorText(err) }),
-      );
-    }, 600);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [key]);
-  return state;
-}
-
-function WhatIfRows({ T }: { T: TicketCtl }) {
-  const pm = usePanelMessages();
-  const c = useCommon();
-  const connected = useStore((s) => s.connection.status === 'connected');
-  const enabled = connected && T.tradable && T.modifying == null && T.symbol.secType !== 'BAG' && !T.timingIssue && !T.combo;
-  const state = useWhatIf(T, enabled);
-  if (!enabled || !state) return null;
-  const p = state.status === 'done' ? state.preview : null;
-  const margin = p ? marginText(p.initMargin) : null;
-  const commission = p ? commissionText(p) : null;
-  const row = (label: string, value: string, title?: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }} title={title}>
-      <div>{label}</div>
-      <div className="num selectable ellipsis" style={{ color: 'var(--tx)', minWidth: 0 }}>
-        {value}
-      </div>
-    </div>
-  );
-  return (
-    <>
-      {state.status === 'loading' && row(pm.whatIf, c.preview.loading)}
-      {state.status === 'error' && (
-        <div className="ellipsis" title={state.message} style={{ color: 'var(--r)' }}>
-          {pm.whatIf} · {state.message}
-        </div>
-      )}
-      {margin && row(c.preview.initMargin, margin.value, margin.sub)}
-      {commission && row(c.preview.commission, commission)}
-    </>
-  );
-}
-
 /** Advanced (scrolling), the status strip, and the fixed bottom block. */
 function ConfirmColumn({ T, S, pad, gap }: { T: TicketCtl; S: TicketScale; pad: number; gap: number }) {
   const { label, busy } = useSubmitLabel(T);
@@ -534,9 +468,7 @@ function ConfirmColumn({ T, S, pad, gap }: { T: TicketCtl; S: TicketScale; pad: 
       </div>
       <div style={{ flexShrink: 0, padding: pad, display: 'flex', flexDirection: 'column', gap, boxShadow: 'inset 0 1px 0 var(--ln2)', marginTop: pad }}>
         <OrderStrip id="ticket" />
-        <Totals T={T} S={S}>
-          <WhatIfRows T={T} />
-        </Totals>
+        <Totals T={T} S={S} />
         <SubmitBlock T={T} S={S} label={label} busy={busy} cancelModify={false} />
       </div>
     </>

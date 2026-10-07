@@ -75,10 +75,5 @@ export function defaultWatchlists(): Watchlist[] {
         },
       ],
     },
-    {
-      id: 'w-options',
-      name: { en: 'Options watch', zh: '期权观察' },
-      groups: [{ id: 'g-hiv', name: { en: 'High IV', zh: '高 IV' }, items: [s('TSLA', 'Tesla'), s('NVDA', 'NVIDIA'), s('AMD', 'AMD')] }],
-    },
   ];
 }

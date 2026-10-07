@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { contractLabel, isTradable, multiplierOf } from '@shared/contract';
 import { roundToTick } from '@shared/format';
 import { isTimingProblem, sessionOf, tifChangeAllowed, timingProblem, unavailableReason, type TimingField, type TimingInput } from '@shared/orderTiming';
-import { algoParamProblem, isOrderProblem, MAIN_ORDER_TYPES, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
+import { algoParamProblem, isOrderProblem, MAIN_ORDER_TYPES, orderProblems, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
 import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
@@ -19,7 +19,7 @@ import type { PanelId } from '../panels/model';
 import { buildOrderRequest, choiceProblem, combinationProblem, composeOrder, pendingOrder, type OrderInput, type ReviewLabels, type TicketError } from './buildOrder';
 import type { Choices } from './controls';
 import { useTicketM } from './messages';
-import { buyingPowerAfter, conditionContract, positive, resolveTicket, type TicketMarket } from './ticketModel';
+import { conditionContract, positive, resolveTicket, type TicketMarket } from './ticketModel';
 import { goodTillTime, ticketTiming } from './timing';
 import { useContractInfo } from './useContractInfo';
 import { useTicketKeys } from './useTicketKeys';
@@ -47,8 +47,6 @@ export function useTicket(origin?: PanelId) {
   const symbol = useStore((s) => s.symbol);
   const t = useStore((s) => s.ticket);
   const patch = useStore((s) => s.patchTicket);
-  const buyingPower = useStore((s) => s.account?.buyingPower);
-  const accountCurrency = useStore((s) => s.account?.currency);
   const connected = useStore((s) => s.connection.status === 'connected');
   const feedIssue = useStore((s) => s.connection.marketDataIssue);
   // The order being modified keeps its session (IB refuses to move it); the ticket shows that one.
@@ -208,11 +206,12 @@ export function useTicket(origin?: PanelId) {
   const timingIssue = tradable ? (tifLock(t.tif) ?? (problem ? m.problems[problem] : null)) : null;
   const combo = tradable && !timingIssue ? combinationProblem(input) : null;
   const est = tradable ? model.est : undefined;
-  const bpAfter = tradable ? buyingPowerAfter({ buyingPower, currency: accountCurrency }, est, symbol.currency, buy) : undefined;
   const cashSized = t.cashQtyOn && symbol.secType === 'CASH';
 
   // What the Advanced section holds when something in it is on.
-  const composed = composeOrder(input).request;
+  const { request: composed, error: composeError } = composeOrder(input);
+  // Nothing left to type and no rule broken (what `submit` checks): only then is IB's what-if asked.
+  const complete = composeError == null && orderProblems(composed, input.rules).length === 0;
   const advancedItems = [
     ...(session !== 'regular' ? [c.sessions[session]] : []),
     ...(composed.bracket ? [m.tpSlShort] : []),
@@ -272,9 +271,9 @@ export function useTicket(origin?: PanelId) {
     timingIssue,
     combo,
     est,
-    bpAfter,
     cashSized,
     composed,
+    complete,
     advancedItems,
   };
 }

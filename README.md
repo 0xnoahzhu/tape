@@ -9,19 +9,20 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 ## Feature tour
 
-**Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; a positions table
-(average cost, price, market value and P&L by default) that sorts by any column, with a **column
-editor** for IB's own P&L figures, contract details, quote fields, option greeks, 52-week ranges,
-volatility, option and trading activity, short-sale data, dividends, earnings dates, ETF NAV, futures
-open interest and bond details (145 columns; those Tape calculates are marked ƒ and give their formula,
-those not yet checked against IB's data say so, and the extra quote fields are asked of IB only while
-their column is shown, on the positions' own quote lines); a sector allocation chart; an account view
-(balances, margin, today's P&L). In the positions table, drag a header to move its column or its right
-edge to size it (the columns left of it keep their widths; double-click the edge for the default
-width); a wide table scrolls sideways with its
-scrollbar always shown, and Tape remembers the columns, their order and widths and the sort per device.
-The Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's
-P&L by position, option expirations, today's trades and **earnings & dividends** for the holdings.
+**Portfolio** — a two-tier account header: net liquidation, day / unrealized / realized P&L, buying
+power and excess liquidity with the margin cushion (red below 10%); under it cash (or margin loan),
+stock and option value, initial and maintenance margin, leverage and accrued dividends. Tabs Dashboard
+and Positions: a positions table (average cost, price, market value and P&L by default) that sorts by
+any column, with a **column editor** for IB's own P&L figures, contract details, quote fields, option
+greeks, 52-week ranges, volatility, option and trading activity, short-sale data, dividends, earnings
+dates, ETF NAV, futures open interest and bond details (145 columns; those Tape calculates are marked ƒ
+and give their formula, those not yet checked against IB's data say so, and the extra quote fields are
+asked of IB only while their column is shown, on the positions' own quote lines); a sector allocation
+chart. In the positions table, drag a header to move its column or its right edge to size it (the
+columns left of it keep their widths; double-click the edge for the default width); a wide table scrolls
+sideways with its scrollbar always shown, and Tape remembers the columns, their order and widths and the
+sort per device. The Dashboard's widgets add portfolio Greeks, concentration, today's P&L by position,
+option expirations, today's trades and **earnings & dividends** for the holdings.
 Ex-dividend dates and amounts come with IB's quotes. Earnings dates come from Wall Street Horizon when
 the account has that IBKR subscription; otherwise Tape estimates them from IB's market scanner (US stocks:
 the date and before the open / after the close, marked *Est.*, since IB marks none as confirmed).
@@ -51,8 +52,9 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
   (Adaptive, VWAP, TWAP, Arrival price, Close price, % of volume and its variants, Dark ice, Accumulate /
   distribute, and for options Minimise impact and Balance impact and risk) with their parameters; **OCA
   groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
-  the reason. Optional confirmation before every order, with IBKR's **margin and commission estimate**
-  (what-if); keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
+  the reason. The totals show IBKR's **what-if** (initial margin change and commission) as you edit,
+  and optional confirmation before every order repeats IBKR's margin and commission estimate; keyboard
+  entry (B / S, ↑ / ↓ for quantity, ⏎ to submit).
 - **Floating order ticket and strategy builder**: the pop-out icon at the top right of the order ticket
   or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart,
   depth or option chain then uses the full width. Drag it by its header, resize it from any edge or
@@ -66,8 +68,9 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
   in the right column. Tape remembers per device which panels float, where, and whether collapsed.
 - **Symbol search** (⌘K / Ctrl+K): find a ticker or company and open it on the Trade page; orders are
   entered in the order ticket.
-- **Options**: chain with quotes, greeks, value and probability columns, expiries by type, ATM IV and
-  expected move; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
+- **Options**: chain with quotes, greeks, value and probability columns, expiries by type; ATM IV, IV
+  rank and percentile, expected move and put / call volume (call and put volume on hover) and
+  open-interest ratios in the desk header; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
   non-guaranteed; volatility view; option positions with risk alerts. Always available: without OPRA the
   quotes are delayed.
 - **Depth**: 10-level book (Level 2) on the Trade page and 5 levels a side in the floating order ticket, behind the

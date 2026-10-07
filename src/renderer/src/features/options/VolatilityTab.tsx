@@ -1,5 +1,5 @@
-// Volatility tab: HV / IV cards, smile of the selected expiry, ATM term structure and
-// 52-week IV history (IB OPTION_IMPLIED_VOLATILITY bars).
+// Volatility tab: HV, IV / HV and skew cards, smile of the selected expiry, ATM term structure and
+// 52-week IV history (IB OPTION_IMPLIED_VOLATILITY bars). IV Rank is in the desk header.
 
 import type { ReactNode } from 'react';
 import { shortExpiry } from '@shared/contract';
@@ -28,7 +28,6 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
     { l: m.hv, v: pctText(hv), d: m.realized },
     { l: m.ivHv, v: ratio != null ? ratio.toFixed(2) : DASH, d: ratio == null ? '' : ratio > 1.2 ? m.rich : ratio < 0.9 ? m.cheap : m.fair },
     { l: m.skew, v: skew != null ? sg(skew * 100) + '%' : DASH, d: m.skewD },
-    { l: m.ivRank, v: iv.stats ? (iv.stats.rank * 100).toFixed(0) : DASH, d: m.w52 },
   ];
 
   return (
@@ -45,7 +44,7 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
         background: 'var(--gbg)',
       }}
     >
-      <div style={{ gridColumn: '1 / 3', display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 'var(--gap)' }}>
+      <div style={{ gridColumn: '1 / 3', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 'var(--gap)' }}>
         {cards.map((x) => (
           <div key={x.l} style={{ background: 'var(--p)', padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 12, color: 'var(--mu)' }}>{x.l}</div>
@@ -195,7 +194,6 @@ function IvHistory({ hist, current, stats }: { hist: number[] | null; current: n
           <div>
             {m.now} <span style={{ fontFamily: 'var(--num)', color: 'var(--ac)' }}>{pctText(current)}</span>
           </div>
-          <div>IV Rank {val(stats ? (stats.rank * 100).toFixed(0) : DASH)}</div>
           <div>
             {m.hi52} {val(pctText(stats?.max))}
           </div>

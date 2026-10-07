@@ -6,9 +6,9 @@
 import { useEffect, type DragEvent, type ReactNode } from 'react';
 import type { AccountSummary } from '@shared/types';
 import { GripIcon } from '../../../ui/icons';
-import type { AccountTotals, PositionRow } from '../calc';
+import type { PositionRow } from '../calc';
 import { AllocationCard } from '../AllocationCard';
-import { ConcentrationWidget, GreeksWidget, MarginWidget } from './AccountWidgets';
+import { ConcentrationWidget, GreeksWidget } from './AccountWidgets';
 import { EventsWidget, FillsWidget } from './ActivityWidgets';
 import { useOptionQuotes } from './data';
 import { CATALOG, SPANS, dropSide, hasWidget, type DropTarget, type LayoutItem, type WidgetId } from './layout';
@@ -19,7 +19,6 @@ import { ContribWidget, ExpiryWidget } from './PositionWidgets';
 export interface DashboardProps {
   rows: PositionRow[];
   account: AccountSummary | null;
-  totals: AccountTotals;
   /** Currency symbol of the account ('$' or ''). */
   symbol: string;
 }
@@ -76,12 +75,10 @@ export function DashboardControls() {
 }
 
 function Widget({ id, props, quotes }: { id: WidgetId; props: DashboardProps; quotes: ReturnType<typeof useOptionQuotes> }) {
-  const { rows, account, totals, symbol } = props;
+  const { rows, account, symbol } = props;
   switch (id) {
     case 'alloc':
       return <AllocationCard rows={rows} cash={account?.totalCashValue} netLiq={account?.netLiquidation} symbol={symbol} />;
-    case 'margin':
-      return <MarginWidget account={account} totals={totals} />;
     case 'greeks':
       return <GreeksWidget rows={rows} quotes={quotes} known={account != null} />;
     case 'conc':

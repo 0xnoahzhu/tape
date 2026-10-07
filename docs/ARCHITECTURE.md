@@ -876,6 +876,20 @@ IB's estimate from `previewOrder`: asking, then commission, initial and maintena
 (before → after), equity with loan and IB's notice, or IB's refusal in red. Sending never waits for
 it.
 
+The totals (`parts.tsx → Totals`) show the estimated amount and IBKR's what-if for the order as it
+stands (`ticket/WhatIf.tsx → useWhatIf`): the initial margin change (before → after in its tooltip)
+and the commission, or IB's refusal in red. It asks 600 ms after the ticket changes (the symbol, the
+ticket state or the session; a price that follows the market is not in the ticket state, so quote
+ticks do not ask again) and is skipped while disconnected, locked, modifying, for combos and while
+the order is incomplete (`useTicket → complete`: a value still to be typed, a price waiting for the
+quote, a timing or rule problem, as `submit` checks), so Tape's own checks never show as IB's answer;
+the order turning complete (the quote arriving) asks. A change drops the previous answer at once.
+Main serializes previews and answers an identical request within 10 s from its last answer
+(`orders.ts → preview`). The docked and the floating ticket show the same rows (only one of them is
+mounted); the review dialog asks on its own. The strategy builder shows no margin of its own: a
+single-leg strategy order gets IB's estimate in the review, a combo (BAG, two legs or more) none, since
+the review and the ticket both skip what-if for BAG.
+
 ### Floating panels (`features/panels`)
 
 The order ticket (Trade › Chart and Depth, 340px column) and the options strategy builder (Trade ›
@@ -921,9 +935,8 @@ when the depth feature is on and IB sends one, sharing the single depth line wit
 orders with Modify / Cancel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position,
 price ± one tick with Bid / Mid / Ask on the tick — the mid rounds to the passive side, `quickActions.ts`
 —, TIF, the trading session; "Modifying #1234 · Cancel modify" on top while modifying), confirm (the
-Advanced sections as one-line rows that scroll, then fixed: the status strip, totals, IBKR's what-if
-margin and commission — asked 600 ms after the ticket changes, not on price ticks — and the submit
-button). Strategy (`StrategyFloat.tsx`, its own model and quote owners in
+Advanced sections as one-line rows that scroll, then fixed: the status strip, the totals (with IBKR's
+what-if, as docked) and the submit button). Strategy (`StrategyFloat.tsx`, its own model and quote owners in
 `options/strategyPanelModel.ts`): legs (template, the legs, "+ Add from the chain", net greeks), a
 large expiry P&L chart with the statistics, and the order (net price ± a cent, `deskStore.netPrice`,
 dropped when the legs change; type, TIF, condition, estimated cost, strip, send).
@@ -947,6 +960,27 @@ S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the str
 chain quote (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
 from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
 own remembered position (first: the bottom-right corner of the content area).
+
+### Portfolio header (`features/portfolio/PortfolioPage.tsx`)
+
+A sticky header over both tabs (Dashboard, Positions) in two tiers. Tier 1 (36 / 22px): net
+liquidation, day P&L, unrealized P&L, realized today, buying power and excess liquidity. Under excess
+liquidity hangs the margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
+`MARGIN_CALL_CUSHION`. It is positioned absolutely under the stat, so tier 1 keeps
+`alignItems: flex-end` and the values their common bottom line; the row's bottom padding holds it,
+and excess liquidity stays the last stat so that a wrapped row carries it on its last line. Tier 2 is
+one 13px line of balances and margin that wraps item by item. Totals are `calc.ts → accountTotals`
+(re-marked to the rows' prices).
+
+| Figure | Source |
+| --- | --- |
+| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L (since New York midnight) |
+| Excess Liquidity, cushion | `ExcessLiquidity`; cushion = `ExcessLiquidity` / `NetLiquidation` (`calc.ts → marginCushion`, the fraction IB's account-updates `Cushion` value holds), red below `MARGIN_CALL_CUSHION` (10 %) |
+| Cash / Margin loan | `TotalCashValue`; a negative value reads Margin loan, shown positive |
+| Stocks, Options | The position rows' values in the account currency (`valueBase`, the one-price rule) per type, IB's `StockMarketValue` / `OptionMarketValue` when a row of the type has none; IB's figures are in the tooltip (account updates; paper accounts send them only as `$LEDGER-…` keys, read from their `BASE` row, `account.ts → accountValueField`) |
+| Init margin, Maint margin | `InitMarginReq`, `MaintMarginReq` |
+| Leverage | Gross position value / net liquidation |
+| Accrued div | `AccruedDividend` |
 
 ### Portfolio positions table (`features/portfolio`)
 
@@ -972,6 +1006,8 @@ tables complete in English and Chinese. A cell is empty when the column does not
 instrument (Strike on a stock) and "—" when it applies but IB has not sent the value; no value is
 carried over from an older one. The default Price, Value, Unrl. P&L and Day P&L are calculations (the
 one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L group next to them.
+The bell's option risk alerts (`options/risk.ts`) measure a loss against the premium with the same row
+P&L (`positionRow`).
 
 | Group | Columns | Source |
 | --- | --- | --- |
@@ -1089,22 +1125,19 @@ The editor's open state is not stored; leaving the page and locking close it (`s
 ### Portfolio dashboard (`features/portfolio/dashboard`)
 
 The Dashboard tab is a 3-column grid of widgets the user arranges in edit mode.
-`layout.ts` is the catalog (eight widgets with their default spans; the default layout shows all of
+`layout.ts` is the catalog (seven widgets with their default spans; the default layout shows all of
 them) and the pure edits (move into the drop target's place: before it when dragged backwards,
 after it when dragged forwards, or to the end on the "Add widget" tile; S / M / L span, remove, add
 at the default span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
 `{ id, span }`, read and written in try/catch; unknown ids dropped, among them those no longer in the
-catalog (the removed `eq` net liquidation and `bench` benchmark widgets), a missing or invalid value is
-the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
+catalog (the removed `eq` net liquidation and `bench` benchmark widgets, and `margin`, which moved to
+the Portfolio header), a missing or invalid value is the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
 locking ends them (`state/lockActions.ts`).
 
 Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
 
-| Widget / header | Source |
+| Widget | Source |
 | --- | --- |
-| Market Value | The position rows' values of stocks and options (the one-price rule), IB's stock + option market values when a row has none (`calc.ts → accountTotals`; account updates' `StockMarketValue` / `OptionMarketValue`, which paper accounts send only as `$LEDGER-…` keys, read from their `BASE` row, `account.ts → accountValueField`) |
-| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L (since New York midnight) |
-| Excess Liquidity, margin cushion | `ExcessLiquidity` / `NetLiquidation` (the fraction IB's account-updates `Cushion` value holds, computed from the summary values the dashboard already has); red below 10 %; leverage = gross position value / net liquidation |
 | Portfolio greeks | IB's per-share model greeks (tick 13) of each option × quantity × multiplier, stocks count their shares; totals are "—" while an option still waits for its greeks; dollar delta at the option's model underlying price, else the underlying's quote |
 | Concentration | Σ \|value\| per underlying (stock and options) / net liquidation, flagged from 20 % |
 | P&L contributions | The rows' re-marked day P&L, largest first |

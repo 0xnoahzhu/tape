@@ -89,23 +89,6 @@ export function money(n: number | undefined, currency: string | undefined): stri
   return !currency || currency === 'USD' || !Number.isFinite(n) ? usd(n) : `${f2(n)} ${currency}`;
 }
 
-/**
- * Buying power left after the order. A buy subtracts the estimate, which is only possible when it
- * is in the account's currency (no FX rate is known here); otherwise undefined ("—").
- */
-export function buyingPowerAfter(
-  account: { buyingPower?: number; currency?: string } | null | undefined,
-  est: number | undefined,
-  currency: string,
-  buy: boolean,
-): number | undefined {
-  const bp = account?.buyingPower;
-  if (bp == null || !Number.isFinite(bp)) return undefined;
-  if (!buy) return bp;
-  if (est == null || (account?.currency || 'USD') !== (currency || 'USD')) return undefined;
-  return bp - est;
-}
-
 const round = (n: number | undefined, minTick: number): number | undefined => (positive(n) ? roundToTick(n, minTick) : undefined);
 
 /** Quantity steps from the design: ±100 at 100 and above, ±10 above 10, ±1 below. */

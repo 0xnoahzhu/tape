@@ -3,7 +3,7 @@
 
 import { create } from 'zustand';
 
-export type PortfolioTab = 'dash' | 'pos' | 'account';
+export type PortfolioTab = 'dash' | 'pos';
 
 interface PortfolioUi {
   tab: PortfolioTab;

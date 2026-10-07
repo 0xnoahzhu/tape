@@ -44,6 +44,16 @@ describe('computeRiskAlerts', () => {
     expect(alerts.find((x) => x.rule === 'loss')).toMatchObject({ lossPct: 75, severity: 'info' });
   });
 
+  it('measures the loss at the live mark, like the positions table', () => {
+    const loss = (p: Position, q: Partial<Quote>) => computeRiskAlerts([p], { [p.key]: quote(q) }, () => undefined, now).find((x) => x.rule === 'loss');
+    // IB's unrealized P&L is stale (−20); the mark of 0.90 against 2.00 paid is a 55% loss.
+    expect(loss(pos('20261120', 300, 'C', 1, 2, { unrealizedPnL: -20 }), { mark: 0.9 })).toMatchObject({ lossPct: expect.closeTo(55, 9), severity: 'info' });
+    // IB says −75%, the mark of 1.50 only −25%: no alert.
+    expect(loss(pos('20261120', 300, 'C', 1, 2, { unrealizedPnL: -150 }), { mark: 1.5 })).toBeUndefined();
+    // A short call at the midpoint of 4.90 / 5.10 against 2.00 received: 150% of the premium.
+    expect(loss(pos('20261120', 300, 'C', -1, 2), { bid: 4.9, ask: 5.1 })).toMatchObject({ lossPct: expect.closeTo(150, 9), severity: 'warn' });
+  });
+
   it('sorts high severity first and ignores non-options', () => {
     const stk: Position = { account: 'DU1', key: 'STK:AAPL', contract: stock('AAPL'), quantity: 100, avgPrice: 1, multiplier: 1, updatedAt: 0 };
     const e = pos('20261009', 250, 'C', 1);
