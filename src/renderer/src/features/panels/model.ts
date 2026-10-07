@@ -1,4 +1,4 @@
-// Floating panels: the order ticket (Trade › Chart / Depth) and the options strategy builder
+// Floating panels: the order ticket (Trade › Chart) and the options strategy builder
 // (Trade › Options) can leave their right column and float inside the main window, above the page
 // content. Pure geometry of the expanded panel and its collapsed bar, in CSS pixels relative to
 // the content area (the part of the window under the top bar).

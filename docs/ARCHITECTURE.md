@@ -468,15 +468,16 @@ open interest, the volume rate), since IB sends some of them only once a line. S
 send on the current line (dividends on a delayed one) shows "—", never an older value; values blank for
 a moment after each re-request until IB sends them again.
 
-The Level 2 book (`market/depth.ts`) uses one depth line at a time (IB allows 3 per
-account, TWS and other clients included); the market data check may hold one more for a few seconds
+The Level 2 book (`market/depth.ts`), which the order ticket's Book shows, uses one depth line at a
+time with 5 rows a side (`depthBook.ts → DEPTH_ROWS`; IB allows 3 lines per account, TWS and other
+clients included); the market data check may hold one more for a few seconds
 (`DepthService.openLine` / `closeLine`). IB can take 10 s and more to start a depth stream (SPY SMART
 depth, seen live: first updates after 6–13 s), and a `cancelMktDepth` that arrives before the stream
 has started is ignored: the stream starts anyway, a later cancel answers 310, and the line streams
 unheard and holds one of the account's 3 until the session ends. So `depth.ts` cancels a line only once
 it has answered (a book update or a 317 reset): a line released before that is cancelled on its first
 update, dropped on an error that ended it, and cancelled anyway 60 s after the request
-(`CANCEL_CAP_MS`). A 309 for the view while another line of this client is open or being cancelled, or
+(`CANCEL_CAP_MS`). A 309 for the book while another line of this client is open or being cancelled, or
 right after a cancel, is retried once, when those lines are gone.
 
 Main-process owners (`QuoteService.setSubscriptions`: price alerts, the market data check `md-check`) get
@@ -553,7 +554,7 @@ seconds:
 | US stocks | SPY via the `md-check` owner (SMART) and a probe on SPY's primary exchange (ARCA) | SMART's status; live "via" the exchange when only that line is live; the stocks the fallback found SMART delayed and live on their exchange this session (`fallbacks()`, also when their line has gone) |
 | US options | an option line a view already holds with an answer, else the SPY call of the first expiration after today with the whole strike nearest SPY's price (chain → contract details) | its status |
 | Indices | SPX on CBOE via the owner | its status |
-| Level 2 | on *Check now*, and when Settings › Market Data opens without a Level 2 answer for the connected account (only the last result is kept, so also after an account switch): the depth view's book when it has levels, the depth view's open line (its first answer) when it has none yet, else one depth line of its own (SPY, SMART depth, 5 rows, `DepthService.openLine`), released when it answers | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354, or no update within 20 s (`DEPTH_TIMEOUT_MS`), no data |
+| Level 2 | on *Check now*, and when Settings › Market Data opens without a Level 2 answer for the connected account (only the last result is kept, so also after an account switch): the order ticket's book when it has levels, the book's open line (its first answer) when it has none yet, else one depth line of its own (SPY, SMART depth, 5 rows, `DepthService.openLine`), released when it answers | live on the first update; "via" the exchanges IB's 2152 lists when it lacks others; 309 / 10092 / 354, or no update within 20 s (`DEPTH_TIMEOUT_MS`), no data |
 
 Contracts another owner holds, or whose line lingers, answer at once from their quote (their type or
 error; nothing is requested). Otherwise a line's answer is its `marketDataType` (1 live, 2 frozen, 3 / 4
@@ -571,8 +572,8 @@ result (persisted and pushed again). Until then the account's previous 2152 stan
 is dropped. The check's own depth line is released when it answers; the depth service cancels it once
 IB has started it (see Quote subscriptions), so a slow start never leaves it streaming.
 
-The Level 2 switch (`settings.features.depth`: the Trade page's Depth tab and the floating ticket's
-book) is off by default, since an open book uses one of the depth lines IB allows per user (3 by default,
+The Level 2 switch (`settings.features.depth`: the order ticket's Book, docked or floating) is
+off by default, since an open book uses one of the depth lines IB allows per user (3 by default,
 shared with TWS and other API clients; 309 when none is free) and an exchange-limited book (IEX only) can
 mislead. `features.depthSetByUser` records that the user set it in Settings › Market Data
 (`logic.ts → depthSwitchPatch`); until then the final Level 2 answer of a check turns it on when it is a
@@ -585,8 +586,8 @@ stored `unconfirmed` meanwhile; a 2152 then still patches the result and keeps t
 book. When the watch is over (`DepthAnswer.settled`) the switch follows only the latest Level 2 check, and
 only while its answer is still the one shown (a check without Level 2 keeps it; a newer Level 2 check
 replaces it). A session that closes, or IB dropping the market data requests (1101: the connection fires
-ready again), before the watch is over decides nothing and leaves the answer `unconfirmed`, as do the depth
-view's book (whose 2152 its next update clears) and demo. Settings saved before `depthSetByUser` existed
+ready again), before the watch is over decides nothing and leaves the answer `unconfirmed`, as do the order
+ticket's book (whose 2152 its next update clears) and demo. Settings saved before `depthSetByUser` existed
 count Level 2 on as the user's choice (`storeSchema.ts → loadSettings`; it was off by default) and lose
 the removed `features.options` / `features.flow` (the Options view is always there; option quotes work
 delayed without OPRA).
@@ -838,7 +839,7 @@ the sliders icon). The Portfolio page has the tabs Positions, Orders and Trades
 (`features/portfolio/uiState.ts`: `pos | ord | fill`, kept across page switches); `showPortfolio(tab?)`
 opens the page on a tab, or on the last one. ⌘1 / Ctrl+1 and the menu's Portfolio open Positions,
 ⌘3 / Ctrl+3 and the menu's Orders (the `page-orders` command, `menuTemplate.ts`) Portfolio › Orders,
-and the top bar's Portfolio keeps the last tab; the chart's activity panel's "All orders ›" opens
+and the top bar's Portfolio keeps the last tab; the Trade page's activity panel's "All orders ›" opens
 Portfolio › Orders. A notification's click: in the bell, `notifications/model.ts → notificationTarget`
 (a fill → `trades`, an order update → `orders`, an option risk alert → `opt`, anything else → `chart`
 from Settings, else null: only the instrument is selected); from the system notification center, main's
@@ -848,6 +849,33 @@ notices only, through the store too): Portfolio › Orders lists working orders 
 goes where any other notification does.
 Both end in `orders/navigation.ts → openNotificationTarget`: `trades` / `orders` select the instrument
 and open Portfolio › Trades / Orders, `opt` opens the option chain of the underlying, `chart` the chart.
+
+### Trade page (`pages/TradePage.tsx`)
+
+Two fixed views, Chart and Options (`tradeViews.ts → TRADE_VIEWS`; `TradeView` is in memory only,
+`chart` at launch); Level 2 is the order ticket's Book, not a view. Both views live in one grid (one
+element, so `useSplitHeight`'s measurement, bound once to it, stays current): the view top-left, the
+activity panel (`chart/SymbolActivityPanel.tsx`) under it and, on Chart with the ticket docked, the
+order ticket in a 340px column. The panel has one height and one collapse state for both views
+(`tape.trade.activityHeight`, `tape.trade.activityCollapsed`; 150px by default, at least 76px; a drag
+36px below that collapses it to a 32px bar) and stays mounted when the view changes; what must stay
+above it differs: 200px of chart, 320px under the options desk (its header, tabs and a usable chain).
+
+**Activity panel.** The current symbol's positions (the stock and its derivatives: stock first, then
+options by expiry, strike and right, `activityModel.ts → byInstrument`) and its open orders (newest
+first), each under column names, with Modify / Cancel for this client's orders and "All orders ›"
+(Portfolio › Orders). Rows are valued like the Portfolio page (`portfolio/calc.ts → positionRow`, one
+price for value and P&L) from the panel's own quote owner, `symbol-activity` (visible; options with the
+`option` profile: their lines are mostly open already for the options risk watcher, and the stock's for
+the chart or the desk). Under the options desk it adds the underlying's exposure in its header while an
+option is held (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`, as on the
+Positions toolbar: Δ sh, $Δ, Γ, Θ/day, Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New
+York days, `optionLine`, in the accent within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares,
+so the column adds up to the exposure's Δ) after Qty, and a click on an option row selects its expiry
+and the Chain tab (`useDesk`). Modify from the options view switches to the chart, where the ticket is.
+An order just placed from a floating panel flashes for 15 s from IB's acceptance
+(`activityModel.ts → isFreshOrder`, `state/orderFeedback.ts`). The options desk itself has the tabs
+Chain and Volatility.
 
 ### Order ticket (`features/ticket`)
 
@@ -870,7 +898,21 @@ collapsed "Advanced" section. Everything else is one step away:
 The ticket's state, rules and submit flow are one controller (`useTicket.ts`); `parts.tsx` holds its
 parts (quote boxes, side, order types with the More menu, quantity, price, TIF, Advanced, totals, submit)
 with a size scale. The docked ticket (`OrderTicket.tsx`, `DOCKED_SCALE`: the design's column exactly) and
-the floating ticket (`features/panels/TicketFloat.tsx`) lay out the same parts.
+the floating ticket (`features/panels/TicketFloat.tsx`) lay out the same parts, the Book included.
+
+**Book** (`DepthBlock.tsx`, `depthModel.ts`). With Level 2 on (Settings › Market Data), for a tradable
+instrument, five levels a side (`BOOK_LEVELS`; asks above bids, size bars in the bid / ask colors, a rule
+over the best bid). The docked ticket (and the floating ticket's narrow layout) shows it between the bid /
+ask and the side switch, the floating landscape layout in its market column; a click behaves the same in
+every layout: it loads a limit order at the level, buying at an ask and selling at a bid, and drops the
+previous trigger and limit offset (`levelPatch`); while modifying only the price follows (the box a quote
+fills, `quickActions.ts → priceTarget`: the limit, or the trigger of a stop or if-touched order; side and
+type stay; a market order takes nothing), and the tooltip says which (`levelTarget`). It keeps a fixed
+height while shown, five rows a side (blank where IB sends fewer, "Waiting for the book…" before the first
+levels, "No book (code)" after an error that ended the line), so the entry fields under it never move;
+IB's 2152 (some exchanges only) leaves the levels shown. One renderer depth owner, `ticket-book` (the
+docked and the floating ticket are never both mounted), through `state/depthSubscription.ts`. Settings ›
+Market Data's Level 2 note explains a book error (subscriptions and lines).
 
 `buildOrder.ts → composeOrder` turns the ticket into a request (always, noting the first problem);
 `buildOrderRequest` refuses a problem and then runs `orderProblems`. The same composed request
@@ -880,14 +922,16 @@ values still to be typed (a group name, an algo parameter). The ticket's current
 problem is shown in red under the TIF row. The contract's `orderTypes` and `validExchanges`
 (`useContractInfo`) feed the rules.
 
-"Modify" (`orders/model.ts → ticketPatchFromOrder`, used by Portfolio › Orders and the chart's
-activity panel) loads every attribute of the working order into the ticket and opens the sections
-it uses; a modify sends switched-off attributes explicitly (false / 0 / ''), since IB replaces the
-whole order. What IB does not change on a working order is locked with the reason: side, order
-type, algo (its parameters stay editable), OCA group, conditions' kinds, operators, joins and mode
-(their values stay editable), destination, adjustable stop, trigger method, sweep to fill, a
-relative order's offset mode, switching off a discretionary amount or good-after time the order has,
-and session / TIF as before; orders sized by cash are not offered for "Modify".
+"Modify" (`orders/model.ts → ticketPatchFromOrder`, used by Portfolio › Orders, the Trade page's
+activity panel and the floating ticket's status strip; from the options view it switches to the chart,
+where the ticket is: `panels/actions.ts → modifyOrderInTicket`) loads every attribute of the working
+order into the ticket and opens the sections it uses; a modify sends switched-off attributes explicitly
+(false / 0 / ''), since IB replaces the whole order. What IB does not change on a working order is
+locked with the reason: side, order type, algo (its parameters stay editable), OCA group, conditions'
+kinds, operators, joins and mode (their values stay editable), destination, adjustable stop, trigger
+method, sweep to fill, a relative order's offset mode, switching off a discretionary amount or
+good-after time the order has, and session / TIF as before; orders sized by cash are not offered for
+"Modify".
 
 The review (`layout/Dialogs.tsx`) lists every chosen attribute (`orders/attributes.ts`, shared with
 the lists and the cancel dialog) and, for new single-instrument orders while connected,
@@ -911,9 +955,9 @@ the review and the ticket both skip what-if for BAG.
 
 ### Floating panels (`features/panels`)
 
-The order ticket (Trade › Chart and Depth, 340px column) and the options strategy builder (Trade ›
+The order ticket (Trade › Chart, 340px column) and the options strategy builder (Trade ›
 Options, 384px) have a pop-out icon at the top right of their header. It turns the panel into a
-floating panel inside the main window; the column goes and the chart, depth or chain takes the full
+floating panel inside the main window; the column goes and the chart or chain takes the full
 width. The panel's dock-back icon puts it back in its column with the same state (the state lives in
 the stores; nothing is copied). There is no separate OS window and no setting.
 
@@ -921,7 +965,7 @@ the stores; nothing is copied). There is no separate OS window and no setting.
 `inert` app root) is an absolutely positioned layer that passes clicks through; its z-index (1) puts the
 panels above the page content and below menus and popovers (4+), the top bar and its dropdowns, the
 notifications panel, dialogs, toasts and the lock screen. The panels are non-modal: everything around
-them stays usable. The ticket shows where the docked ticket would (Trade › Chart, Depth), the strategy
+them stays usable. The ticket shows where the docked ticket would (Trade › Chart), the strategy
 builder in Trade › Options (`actions.ts → panelShown`).
 
 **Frame** (`FloatingPanel.tsx`, geometry in `model.ts`, pure and tested). The popovers' elevation (1px
@@ -948,10 +992,9 @@ launch.
 `layout.ts`): below 900px the docked panel's single column (the same component with the panel header
 and the status strip); from 900px three columns that scale up a little from 1240px (narrower, the
 ticket's ask box and More, and the strategy's leg descriptions, would be cut). Ticket
-(`TicketFloat.tsx`): market (bid / ask boxes, a click fills the limit price; 5 levels a side of the book
-when the depth feature is on and IB sends one, sharing the single depth line with the depth view through
-`state/depthSubscription.ts`; the position valued as on the Portfolio page; the instrument's working
-orders with Modify / Cancel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position,
+(`TicketFloat.tsx`): market (bid / ask boxes, a click fills the limit price; the Book,
+`ticket/DepthBlock.tsx`, as docked; the position and working orders are in the Trade page's activity
+panel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position,
 price ± one tick with Bid / Mid / Ask on the tick — the mid rounds to the passive side, `quickActions.ts`
 —, TIF, the trading session; "Modifying #1234 · Cancel modify" on top while modifying), confirm (the
 Advanced sections as one-line rows that scroll, then fixed: the status strip, the totals (with IBKR's
@@ -967,7 +1010,8 @@ disabled until IB answers; the review dialog (when enabled) works as before. The
 live status: pre-submitted / working → partially filled with progress → filled with the average price,
 the position change and the commission; cancelled; or IB's rejection in red (also the late Inactive /
 201 case) with "Fix and resubmit" — the form keeps its values. Inline Modify / Cancel while it works;
-× dismisses it; the next order replaces it. The new order flashes at the top of the working orders. An
+× dismisses it; the next order replaces it. The new order flashes in the Trade page's activity panel
+(`chart/activityModel.ts → isFreshOrder`, 15 s from IB's acceptance). An
 accepted order (placed or modified) always collapses the panel to its bar; a rejection keeps it
 expanded, and a late rejection expands a panel its order collapsed. The docked panels keep their
 toasts.
@@ -975,8 +1019,8 @@ toasts.
 **Collapsed bar** (`CollapsedBar.tsx`): about 420 × 40 with the drag handle (symbol and last price;
 strategy: name and net price), the latest order's status ("Buy 100 · 60/100", "Filled"), Buy / Sell
 (ticket) and ▴. A click on the bar (without dragging) or the chevron expands it, as do ⏎ on the bar, B /
-S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the strip), a depth level and a
-chain quote (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
+S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the strip) and a chain quote
+(`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
 from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
 own remembered position (first: the bottom-right corner of the content area).
 
@@ -1191,7 +1235,9 @@ stock row of it (a futures option only the model price: its own quote is the pre
 portfolio greeks, shown while options are held (`portfolioGreeks`): IB's per-share model greeks of each
 option × quantity × multiplier, stocks count their shares in delta; "Greeks: waiting for IB on N
 options" (dimmed) while an option still waits for its greeks, never a partial sum; dollar delta at the
-same underlying price, "—" without one.
+same underlying price, "—" without one (`GreeksLine.tsx`). The Trade page's activity panel under the
+options desk reuses `portfolioGreeks`, `optionLine` and `GreeksLine` for one underlying, with
+`positionDelta` (one row's share of the delta) per row.
 
 **Events** (`events.ts`, pure). `nextEvents` keeps per held underlying the soonest of its earnings
 (`getEarnings`: Wall Street Horizon, else the scanner's estimate) and its ex-dividend date

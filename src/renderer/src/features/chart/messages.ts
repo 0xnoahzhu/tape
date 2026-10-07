@@ -1,4 +1,4 @@
-// Strings of the chart view, depth view and symbol activity panel.
+// Strings of the chart view and the symbol activity panel.
 
 import type { Timeframe } from '@shared/types';
 import type { MarketSession } from '@shared/session';
@@ -119,6 +119,12 @@ export const useChartMessages = createMessages({
       ['Qty @ Price', 'Quantity @ limit or stop price'],
       ['Status', 'Order status at IB'],
     ] as Array<[string, string]>,
+    /** The cells the panel adds after Qty under the options desk. */
+    dteHeader: ['DTE', 'Days to expiry (New York calendar)'] as [string, string],
+    deltaHeader: ['Δ', 'Share-equivalent delta: shares for the stock, IB’s model delta × quantity × multiplier for an option'] as [string, string],
+    exposure: 'Exposure',
+    exposureHint: (sym: string) => `${sym}: the stock and its options together`,
+    openExpiry: 'Show this expiry in the option chain',
     collapsePanel: 'Collapse',
     expandPanel: 'Expand',
     resizePanel: 'Drag to resize · double-click to reset',
@@ -130,18 +136,6 @@ export const useChartMessages = createMessages({
     clientN: (id: number) => `Client ${id}`,
     modifyHint: (id: number) => `Modify order #${id}: edit it in the order ticket and resubmit`,
     status: statusEn,
-    // Depth
-    depthTitle: (sym: string) => `Depth · ${sym}`,
-    depthSub: (levels: number, spread: string) => `${levels} levels · spread ${spread}`,
-    depthHint: 'Click a level to set the order price',
-    bidSize: 'Bid size',
-    price: 'Price',
-    askSize: 'Ask size',
-    depthWaiting: 'Waiting for market depth…',
-    depthEmpty: 'No depth data. The book is empty outside trading hours.',
-    depthError: (msg: string) => `Market depth unavailable: ${msg}`,
-    depthNeedsL2: 'Market depth needs a Level 2 subscription (e.g. NASDAQ TotalView or NYSE OpenBook).',
-    depthIndex: 'Indices have no order book.',
   },
   zh: {
     timeframes: {
@@ -223,6 +217,11 @@ export const useChartMessages = createMessages({
       ['数量 @ 价格', '数量 @ 限价或止损价'],
       ['状态', 'IB 的订单状态'],
     ] as Array<[string, string]>,
+    dteHeader: ['剩余天数', '距到期天数（按纽约日历）'] as [string, string],
+    deltaHeader: ['Δ', '股数等效 Delta：正股按股数，期权按 IB 模型 Delta × 数量 × 乘数'] as [string, string],
+    exposure: '风险敞口',
+    exposureHint: (sym: string) => `${sym} 正股与期权合计`,
+    openExpiry: '在期权链中查看该到期日',
     collapsePanel: '收起',
     expandPanel: '展开',
     resizePanel: '拖动调整高度 · 双击恢复默认',
@@ -234,16 +233,5 @@ export const useChartMessages = createMessages({
     clientN: (id: number) => `客户端 ${id}`,
     modifyHint: (id: number) => `改单 #${id}：在下单面板修改后重新提交`,
     status: statusZh,
-    depthTitle: (sym: string) => `盘口 · ${sym}`,
-    depthSub: (levels: number, spread: string) => `${levels} 档 · 价差 ${spread}`,
-    depthHint: '点击价位填入下单',
-    bidSize: '买量',
-    price: '价格',
-    askSize: '卖量',
-    depthWaiting: '等待盘口数据…',
-    depthEmpty: '暂无盘口数据，非交易时段盘口为空。',
-    depthError: (msg: string) => `盘口不可用：${msg}`,
-    depthNeedsL2: '盘口深度需要 Level 2 行情订阅（如 NASDAQ TotalView 或 NYSE OpenBook）。',
-    depthIndex: '指数没有盘口。',
   },
 });

@@ -116,7 +116,7 @@ const en = {
   markets: {
     stk: { l: 'US stocks', d: 'Stocks and ETFs, incl. extended hours' },
     opt: { l: 'US options', d: 'Option quotes and trades' },
-    depth: { l: 'Level 2', d: '10-level book' },
+    depth: { l: 'Level 2', d: '5-level book' },
     ind: { l: 'Indices', d: 'SPX, VIX and more' },
   } as Record<MarketRow, Pair>,
   obsNone: 'No quotes yet',
@@ -129,7 +129,7 @@ const en = {
   obsDepth: (sym: string, n: number) => `${sym} · ${n} levels`,
   depthTitle: 'Market Depth',
   depthDesc:
-    'A 10-level book on the Trade page and 5 levels a side in the order ticket. While open it uses one of your IB depth lines (3 by default, shared with TWS).',
+    'Five levels a side of the book in the order ticket, docked or floating, under the bid and ask; a click on a level loads a limit order at its price, buying at an ask and selling at a bid (while you modify an order, only its price moves). While the ticket shows it, it uses one of your IB depth lines (3 by default, shared with TWS).',
   depthSwitch: 'Show Level 2',
   depthTesting: 'Testing what IB sends…',
   /** The line under the Level 2 switch (logic.ts → depthNote); `depth`: the exchanges IB sends a book from. */
@@ -428,7 +428,7 @@ const zh: typeof en = {
   markets: {
     stk: { l: '美股', d: '股票和 ETF，含盘前盘后' },
     opt: { l: '美股期权', d: '期权报价与成交' },
-    depth: { l: 'Level 2 盘口', d: '10 档盘口' },
+    depth: { l: 'Level 2 盘口', d: '5 档盘口' },
     ind: { l: '指数', d: 'SPX、VIX 等' },
   },
   obsNone: '暂无报价',
@@ -440,7 +440,7 @@ const zh: typeof en = {
   obsError: (code: number | undefined, n: number) => `错误 ${code ?? '?'}${n > 1 ? ` ×${n}` : ''}`,
   obsDepth: (sym: string, n: number) => `${sym} · ${n} 档`,
   depthTitle: '深度行情',
-  depthDesc: '在交易页显示 10 档盘口，在下单面板显示买卖各 5 档。显示期间占用一条 IB 深度线路（默认 3 条，与 TWS 共用）。',
+  depthDesc: '在下单面板（停靠或浮动）的买卖价下方显示买卖各 5 档盘口，点击价位按该价下限价单：点卖盘买入，点买盘卖出（改单时只改价格）。显示期间占用一条 IB 深度线路（默认 3 条，与 TWS 共用）。',
   depthSwitch: '显示 Level 2 盘口',
   depthTesting: '正在检测 IB 提供的盘口…',
   depthNote: {

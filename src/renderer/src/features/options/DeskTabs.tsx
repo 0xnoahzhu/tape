@@ -1,4 +1,4 @@
-// Desk tab bar: Chain / Volatility / Positions and the expiration chips.
+// Desk tab bar: Chain / Volatility and the expiration chips.
 
 import { useLayoutEffect, useRef, useState } from 'react';
 import { shortExpiry, daysToExpiry } from '@shared/contract';
@@ -13,14 +13,14 @@ const kindColor = (k: ExpiryKind) => (k === 'W' ? 'var(--dm)' : k === 'L' ? 'var
 const FIRST_CHIPS = 6;
 const CHIP_GAP = 4;
 
-export function DeskTabs({ expiries, selected, posCount }: { expiries: ChainExpiry[]; selected?: string; posCount: number }) {
+export function DeskTabs({ expiries, selected }: { expiries: ChainExpiry[]; selected?: string }) {
   const m = useM();
   const tab = useDesk((s) => s.tab);
   const patch = useDesk((s) => s.patch);
   return (
     <div style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 26, padding: '0 24px', background: 'var(--p)', boxShadow: 'inset 0 -1px 0 var(--ln2)', flexShrink: 0 }}>
       <TabItems
-        tabs={DESK_TABS.map((k) => ({ key: k, label: m.tabs[k], count: k === 'pos' && posCount ? posCount : undefined }))}
+        tabs={DESK_TABS.map((k) => ({ key: k, label: m.tabs[k] }))}
         value={tab}
         onChange={(k) => patch({ tab: k })}
       />

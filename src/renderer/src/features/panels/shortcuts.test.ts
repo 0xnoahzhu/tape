@@ -12,7 +12,6 @@ describe('B / S on the floating ticket’s bar', () => {
   it('picks the side while the ticket is collapsed to its bar', () => {
     expect(barShortcutSide(key('b'), trade(), true)).toBe('BUY');
     expect(barShortcutSide(key('S'), trade(), true)).toBe('SELL');
-    expect(barShortcutSide(key('s'), { ...trade(), view: 'depth' }, true)).toBe('SELL');
   });
 
   it('does nothing when expanded or docked, typing, off the ticket’s views, with a dialog, an index or a modify', () => {

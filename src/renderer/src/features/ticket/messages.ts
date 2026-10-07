@@ -335,6 +335,18 @@ export const useTicketM = createMessages({
     /** Bid / ask from the stock's primary exchange (SMART is delayed for it): "Live · NASDAQ: …". */
     quoteVia: (x: string, type: number | undefined) =>
       `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}: ${x}’s own bid/ask, not the consolidated quote (NBBO)`,
+    /** The Level 2 book between the bid / ask and the entry fields (DepthBlock.tsx). */
+    book: 'Book',
+    /** What a click on a level does (depthModel.ts → levelTarget): a new order, or the order being modified. */
+    bookHint: {
+      order: 'Click a level for a limit order at its price: buy at an ask, sell at a bid',
+      limitPrice: "Click a level to move the order's limit price to it (its side and type stay)",
+      stopPrice: "Click a level to move the order's trigger price to it (its side and type stay)",
+      none: 'This order has no price a level can set',
+    },
+    bookWaiting: 'Waiting for the book…',
+    /** The book's line ended with an IB error (Settings › Market Data's Level 2 note says why). */
+    noBook: (code: number) => (code > 0 ? `No book (${code})` : 'No book'),
     extras: {
       bracket: ' · with bracket',
       conditional: ' · conditional',
@@ -683,6 +695,15 @@ export const useTicketM = createMessages({
     noMarketData: (code: number) => `无行情数据（${code}）`,
     quoteVia: (x: string, type: number | undefined) =>
       `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}：${x} 自己的买卖价，不是全市场合并报价（NBBO）`,
+    book: '盘口',
+    bookHint: {
+      order: '点击价位按该价下限价单：点卖盘买入，点买盘卖出',
+      limitPrice: '点击价位把该单的限价改为该价（方向和类型不变）',
+      stopPrice: '点击价位把该单的触发价改为该价（方向和类型不变）',
+      none: '该订单没有可由盘口价位设置的价格',
+    },
+    bookWaiting: '等待盘口…',
+    noBook: (code: number) => (code > 0 ? `无盘口（${code}）` : '无盘口'),
     extras: {
       bracket: ' · 附止盈止损',
       conditional: ' · 条件单',

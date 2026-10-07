@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import type { ContractRef, Position, Quote } from '@shared/types';
 import { positionRow, type PositionRow } from './calc';
-import { lastQuotePrice, optionLine, portfolioGreeks, sameOptionLine } from './exposure';
+import { lastQuotePrice, optionLine, portfolioGreeks, positionDelta, sameOptionLine } from './exposure';
 
 function row(contract: ContractRef, quantity: number, over: Partial<Position> = {}, livePx?: number, netLiq = 1_000_000): PositionRow {
   const p: Position = {
@@ -59,6 +59,19 @@ describe('portfolio greeks', () => {
     const g = portfolioGreeks([callRow], { [contractKey(call)]: noUnd });
     expect(g.delta).toBeCloseTo(583);
     expect(g.dollarDelta).toBeUndefined();
+  });
+
+  it('gives each row’s share of the delta: a stock its shares, an option its model delta × quantity × multiplier', () => {
+    const quotes = { [contractKey(call)]: greeks };
+    expect(positionDelta(aapl, quotes)).toBe(200);
+    expect(positionDelta(callRow, quotes)).toBeCloseTo(583);
+    expect(positionDelta(row(call, -2, {}, 2), quotes)).toBeCloseTo(-116.6);
+    // No greeks from IB yet, or an instrument without a delta of its own here.
+    expect(positionDelta(callRow, {})).toBeUndefined();
+    expect(positionDelta(row({ secType: 'FUT', symbol: 'ES', lastTradeDate: '20261218', exchange: 'CME', currency: 'USD' }, 1), quotes)).toBeUndefined();
+    // The rows add up to the portfolio delta.
+    const rows = [aapl, callRow];
+    expect(rows.reduce((sum, r) => sum + positionDelta(r, quotes)!, 0)).toBeCloseTo(portfolioGreeks(rows, quotes).delta!);
   });
 
   it('reads the underlying quote’s last trade, else its midpoint, mark or previous close', () => {

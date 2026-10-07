@@ -74,7 +74,7 @@ async function setup(opts: { lines?: Lines; book?: DepthBook | null; depthLine?:
       return opts.chain ? opts.chain() : CHAIN;
     },
   } as OptionsService;
-  // The real depth service (it holds the check's depth line); a test may stand in for the view's book and line.
+  // The real depth service (it holds the check's depth line); a test may stand in for the order ticket's book and line.
   const depth = createDepthService(ctx);
   ctx.depth = {
     ...depth,
@@ -344,7 +344,7 @@ describe('market data check', () => {
     expect(item(svc.getState().result!, 'depth')!.probe.code).toBeUndefined();
   });
 
-  it('waits for the depth view’s open line instead of opening a second depth line', async () => {
+  it('waits for the order ticket book’s open line instead of opening a second depth line', async () => {
     const { fake, svc } = await setup({
       depthLine: 77,
       book: { key: 'STK:NVDA', bids: [], asks: [], updatedAt: NOW },
@@ -439,7 +439,7 @@ describe('market data check', () => {
     expect(svc.getState().depth).toBeUndefined();
   });
 
-  it('reports a full depth allowance (309) without cancelling, and reuses the depth view’s book', async () => {
+  it('reports a full depth allowance (309) without cancelling, and reuses the order ticket’s book', async () => {
     const book: DepthBook = { key: 'STK:NVDA', bids: [{ price: 1, size: 1 }], asks: [], updatedAt: NOW };
     const { fake, svc } = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
     fake.onCall = (name, args) => {
@@ -686,7 +686,7 @@ describe('the Level 2 switch', () => {
     expect(lost.depthNow()).toMatchObject({ status: 'live', unconfirmed: true });
   });
 
-  it('switches nothing on from the depth view’s book (its 2152 is gone after its next update)', async () => {
+  it('switches nothing on from the order ticket’s book (its 2152 is gone after its next update)', async () => {
     const book: DepthBook = { key: 'STK:NVDA', bids: [{ price: 1, size: 1 }], asks: [], updatedAt: NOW };
     const view = await setup({ book, lines: all });
     await finish(view.svc.run({ depth: true, trigger: 'user' }));

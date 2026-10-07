@@ -23,7 +23,7 @@ export interface SentOrder {
   orderId?: number;
   clientId?: number;
   error?: string;
-  /** When IB accepted it (ms; the new order's highlight in the panel's working orders). */
+  /** When IB accepted it (ms; the new order's highlight in the Trade page's activity panel: chart/activityModel.ts). */
   acceptedAt?: number;
   /** The panel collapsed to its bar when this order was accepted. */
   autoCollapsed?: boolean;

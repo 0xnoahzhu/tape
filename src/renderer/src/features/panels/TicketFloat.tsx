@@ -3,7 +3,7 @@
 // work, built from the same parts and controller (ticket/parts.tsx, ticket/useTicket.ts):
 //
 //   header      Order · AAPL, name and exchange, last, change, session · collapse, dock back
-//   market      bid / ask (a click fills the limit price), 5 depth levels, the position, working orders
+//   market      bid / ask (a click fills the limit price) and the 5-level Book (Level 2 on; as docked)
 //   entry       buy / sell, order type, quantity (chips), price (± one tick, bid / mid / ask), TIF, session
 //   confirm     Advanced as one-line sections (scrolling), the status strip, then fixed: the totals
 //               (with IBKR's what-if, as docked), the submit button
@@ -11,26 +11,21 @@
 // After a submit the button reads "Submitting…" until IB answers and the status strip follows
 // the order (OrderStrip); an accepted order collapses the panel to its bar (state/orderActions.ts).
 
-import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { contractKey, isTradable } from '@shared/contract';
-import { change, f0, MINUS, px, sg, signColor } from '@shared/format';
+import { change, f0, px, signColor } from '@shared/format';
 import { usEquitySession } from '@shared/session';
-import { isOrderActive, type WorkingOrder } from '@shared/types';
-import { lastPrice, useMarketDataAvailable, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
+import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
-import { setDepthOwner } from '../../state/depthSubscription';
-import { confirmCancel } from '../../state/orderActions';
 import { isSending, useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import { useContractInfo as useChartContractInfo } from '../chart/contractInfo';
-import { buildLadder } from '../chart/depthModel';
 import { useChartMessages } from '../chart/messages';
 import { sessionQuote, usesUsEquitySession } from '../chart/sessionQuote';
 import { useNow } from '../chart/useNow';
-import { canModifyInTicket } from '../orders/model';
-import { livePrice, positionRow } from '../portfolio/calc';
 import { SessionControl } from '../ticket/AdvancedPanel';
+import { DepthBlock } from '../ticket/DepthBlock';
 import { OrderTicket } from '../ticket/OrderTicket';
 import {
   AdvancedBlock,
@@ -50,11 +45,11 @@ import {
 } from '../ticket/parts';
 import { priceText } from '../ticket/ticketModel';
 import { useTicket, type TicketCtl } from '../ticket/useTicket';
-import { barSide, modifyOrderInTicket } from './actions';
+import { barSide } from './actions';
 import { PanelTitleBar } from './chrome';
 import { CollapsedBar } from './CollapsedBar';
 import { columnSpacing, panelLayout, ticketScale, type PanelLayout } from './layout';
-import { usePanelMessages, type PanelMessages } from './messages';
+import { usePanelMessages } from './messages';
 import { OrderStrip } from './OrderStrip';
 import { closingSide, positionQty, priceTarget, QTY_CHIPS, qtyChipText, quotePrice, stepPrice } from './quickActions';
 
@@ -91,8 +86,6 @@ function NarrowFooter({ T }: { T: TicketCtl }) {
     </>
   );
 }
-
-const sectionTitle: CSSProperties = { fontSize: 12, color: 'var(--mu)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 };
 
 function LandscapeTicket({ layout }: { layout: PanelLayout }) {
   const T = useTicket('ticket');
@@ -182,8 +175,8 @@ function TicketTitleBar({ T, compact = false }: { T: TicketCtl; compact?: boolea
 }
 
 /**
- * A price from the quote into the ticket (quickActions.ts → priceTarget): the bid / ask boxes and
- * depth levels fill the limit; the chips under the price box fill that box.
+ * A price from the quote into the ticket (quickActions.ts → priceTarget): the bid / ask boxes fill
+ * the limit; the chips under the price box fill that box.
  */
 export function fillPrice(T: TicketCtl, price: number, source: 'quote' | 'chip' = 'quote'): void {
   const target = priceTarget(T.type, T.main.key, T.modifying != null, source);
@@ -193,7 +186,6 @@ export function fillPrice(T: TicketCtl, price: number, source: 'quote' | 'chip' 
 
 function MarketColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
   const pm = usePanelMessages();
-  const c = useCommon();
   const pick = (which: 'bid' | 'ask') => {
     const p = quotePrice(which, T.market, T.minTick, T.t.side);
     if (p != null) fillPrice(T, p);
@@ -207,160 +199,9 @@ function MarketColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
             .join('\n')
         } />
       <MarketIssue T={T} />
-      <DepthBlock T={T} />
-      <PositionBlock T={T} m={pm} />
-      <WorkingOrders T={T} m={pm} sell={c.sellShort} buy={c.buyShort} />
+      {/* The position and working orders are in the Trade page's activity panel. */}
+      <DepthBlock T={T} S={S} />
     </>
-  );
-}
-
-const DEPTH_OWNER = 'ticket-panel';
-
-/** How long a newly placed order is highlighted in the working orders. */
-const FRESH_MS = 15_000;
-
-/** Five levels a side of the book (colored as the bid / ask boxes above), when the depth feature is on and IB sends a book (one shared depth line). */
-function DepthBlock({ T }: { T: TicketCtl }) {
-  const pm = usePanelMessages();
-  const enabled = useStore((s) => s.settings.features.depth);
-  const connected = useMarketDataAvailable();
-  const key = contractKey(T.symbol);
-  const wanted = enabled && connected && T.tradable && isTradable(T.symbol);
-  const book = useStore((s) => (s.depth && s.depth.key === key ? s.depth : null));
-  useEffect(() => {
-    if (!wanted) return;
-    void setDepthOwner(DEPTH_OWNER, T.symbol, true).catch(() => undefined);
-    return () => void setDepthOwner(DEPTH_OWNER, null).catch(() => undefined);
-    // The key identifies the contract; resubscribe after a reconnect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, wanted]);
-  const ladder = useMemo(() => buildLadder(book, 5), [book]);
-  if (!wanted || !book || book.error || !ladder.rows.length) return null;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={sectionTitle}>{pm.depth}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', font: '12px/1 var(--num)', fontVariantNumeric: 'tabular-nums' }}>
-        {ladder.rows.map((r) => {
-          const ask = r.side === 'ask';
-          return (
-            <div
-              key={`${r.side}${r.price}`}
-              onClick={() => fillPrice(T, r.price)}
-              className="hover-p2"
-              style={{ position: 'relative', height: 22, display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', padding: '0 8px', cursor: 'pointer', boxShadow: r.best ? 'inset 0 1px 0 var(--ln)' : undefined }}
-            >
-              <div style={{ position: 'absolute', top: 3, bottom: 3, right: 0, width: `${(r.width * 50).toFixed(0)}%`, background: ask ? 'var(--up)' : 'var(--dn)', opacity: 0.14 }} />
-              <div style={{ position: 'relative', color: ask ? 'var(--up)' : 'var(--dn)' }}>{priceText(r.price, T.minTick)}</div>
-              <div style={{ position: 'relative', textAlign: 'right', color: 'var(--mu)' }}>{f0(r.size)}</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** This instrument's position: quantity, average cost and unrealized P&L (valued as on the Portfolio page). */
-function PositionBlock({ T, m }: { T: TicketCtl; m: PanelMessages }) {
-  const key = contractKey(T.symbol);
-  const position = useStore((s) => s.positions.find((p) => contractKey(p.contract) === key && p.quantity !== 0));
-  const netLiq = useStore((s) => s.account?.netLiquidation);
-  const quote = useQuote(T.symbol);
-  const row = position ? positionRow(position, livePrice(position.contract.secType, quote, lastPrice(quote)), netLiq, '') : null;
-  const cell = (label: string, value: ReactNode, color?: string) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-      <div style={{ fontSize: 11, color: 'var(--dm)' }}>{label}</div>
-      <div className="num ellipsis selectable" style={{ font: '500 13px/1 var(--num)', color }}>
-        {value}
-      </div>
-    </div>
-  );
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={sectionTitle}>{m.position}</div>
-      {position && row ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 10, padding: '10px 12px', background: 'var(--p2)' }}>
-          {cell(m.qty, (position.quantity < 0 ? MINUS : '') + f0(Math.abs(position.quantity)))}
-          {cell(m.avgCost, px(position.avgPrice), 'var(--mu)')}
-          {cell(m.unrealized, row.unrealized == null ? '—' : sg(row.unrealized, f0), signColor(row.unrealized))}
-        </div>
-      ) : (
-        <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.noPosition}</div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Working orders of this instrument (as its position above: the stock's, not its options'), newest
- * first, with Modify / Cancel as in the activity panel.
- */
-function WorkingOrders({ T, m, buy, sell }: { T: TicketCtl; m: PanelMessages; buy: string; sell: string }) {
-  const key = contractKey(T.symbol);
-  const all = useStore((s) => s.orders);
-  const myClientId = useStore((s) => s.connection.clientId);
-  const sent = useOrderFeedback((s) => s.sent.ticket);
-  const orders = useMemo(() => all.filter((o) => isOrderActive(o.status) && contractKey(o.contract) === key).sort((a, b) => b.createdAt - a.createdAt), [all, key]);
-  const now = useNow(5_000).getTime();
-  // The order just placed from the panel flashes at the top of the list (while it is new).
-  const fresh = (o: WorkingOrder) =>
-    sent?.phase === 'sent' && sent.kind === 'place' && sent.orderId === o.orderId && o.clientId === sent.clientId && sent.acceptedAt != null && now - sent.acceptedAt < FRESH_MS;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={sectionTitle}>
-        <span>{m.workingOrders}</span>
-        {orders.length > 0 && <span style={{ color: 'var(--dm)' }}>{orders.length}</span>}
-      </div>
-      {orders.length === 0 && <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.noWorkingOrders}</div>}
-      {orders.map((o) => {
-        const own = o.clientId === myClientId;
-        const isBuy = o.action === 'BUY';
-        return (
-          <div
-            key={o.permId ?? `${o.clientId}:${o.orderId}`}
-            data-testid="panel-order"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '32px minmax(0,1fr) auto',
-              gap: 8,
-              alignItems: 'center',
-              minHeight: 32,
-              padding: '5px 0',
-              fontSize: 12,
-              boxShadow: 'inset 0 -1px 0 var(--ln2)',
-              ...(fresh(o) ? { animation: 'tape-flash 2.4s ease-out' } : null),
-            }}
-          >
-            <div style={{ color: isBuy ? 'var(--up)' : 'var(--dn)', fontWeight: 500 }}>{isBuy ? buy : sell}</div>
-            {/* The fill progress gets a line of its own: it is what the user follows, never cut. */}
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3, fontVariantNumeric: 'tabular-nums' }}>
-              <div className="ellipsis num" title={`#${o.orderId}`}>
-                {f0(o.totalQuantity)} @ {o.orderType === 'MKT' ? 'MKT' : px(o.limitPrice ?? o.auxPrice)}
-              </div>
-              {o.filled > 0 && (
-                <div className="num" style={{ fontSize: 11, color: 'var(--mu)', whiteSpace: 'nowrap' }}>
-                  {f0(o.filled)}/{f0(o.totalQuantity)}
-                </div>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 10, whiteSpace: 'nowrap' }}>
-              {own && o.status !== 'PendingCancel' && (
-                <>
-                  {canModifyInTicket(o) && (
-                    <div onClick={() => modifyOrderInTicket(o)} style={{ color: 'var(--ac)', cursor: 'pointer' }}>
-                      {m.modify}
-                    </div>
-                  )}
-                  <div onClick={() => confirmCancel(o)} className="hover-tx" style={{ color: 'var(--dm)', cursor: 'pointer' }}>
-                    {m.cancel}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 

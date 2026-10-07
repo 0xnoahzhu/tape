@@ -2,7 +2,8 @@
 
 import type { DepthLevel } from '@shared/types';
 
-export const DEPTH_ROWS = 10;
+/** Rows a side requested from IB: the order ticket's Book shows 5 levels. */
+export const DEPTH_ROWS = 5;
 
 export const DepthOp = { insert: 0, update: 1, remove: 2 } as const;
 export const DepthSide = { ask: 0, bid: 1 } as const;

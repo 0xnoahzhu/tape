@@ -5,9 +5,9 @@ import { create } from 'zustand';
 import type { ColumnPreset } from './chain';
 import { addLeg, type Leg, type NewLeg, type StrategyKey } from './strategies';
 
-export type DeskTab = 'chain' | 'vol' | 'pos';
-/** The desk's tabs, in order. */
-export const DESK_TABS: readonly DeskTab[] = ['chain', 'vol', 'pos'];
+export type DeskTab = 'chain' | 'vol';
+/** The desk's tabs, in order. The underlying's positions are in the Trade page's activity panel under the desk. */
+export const DESK_TABS: readonly DeskTab[] = ['chain', 'vol'];
 /** Strikes on each side of ATM (design ranges). */
 export type StrikeRange = 5 | 12 | 25 | 'all';
 

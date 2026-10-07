@@ -1,5 +1,6 @@
 // Options desk entry point (design OptionsDesk.dc.html).
-//   mode "full":   option chain, volatility, positions and the strategy builder (Trade › Options)
+//   mode "full":   option chain, volatility and the strategy builder (Trade › Options; the
+//                  underlying's positions are in the activity panel under it)
 //   mode "alerts": live option risk alerts for the bell panel's Alerts tab
 //
 // Development captures can seed data through window.__tape.options (see data.ts).

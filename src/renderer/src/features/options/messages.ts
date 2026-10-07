@@ -80,7 +80,7 @@ const columnsZh: Record<ColumnKey, string> = {
 
 export const useM = createMessages({
   en: {
-    tabs: { chain: 'Chain', vol: 'Volatility', pos: 'Positions' },
+    tabs: { chain: 'Chain', vol: 'Volatility' },
     presets: { key: 'Key', quotes: 'Quotes', greeks: 'Greeks', value: 'Value & prob.' } as Record<ColumnPreset, string>,
     allStrikes: 'All',
     columns: columnsEn,
@@ -174,17 +174,6 @@ export const useM = createMessages({
     noSmile: 'No IV data for this expiration yet',
     noTerm: 'No ATM IV across expirations yet',
     noHist: 'IV history unavailable',
-    // Positions
-    expo: 'Option exposure',
-    contract: 'Contract',
-    dte: 'DTE',
-    qty: 'Qty',
-    avg: 'Avg',
-    mark: 'Mark',
-    pl: 'P/L',
-    itm: 'ITM%',
-    ddol: '$Δ',
-    noPositions: (sym: string) => `No option positions in ${sym}`,
     // Alerts
     aExp: (n: number) => (n <= 0 ? 'Expires today' : n === 1 ? 'Expires tomorrow' : `Expires in ${n} days`),
     aAsg: 'Short leg near the money: assignment risk',
@@ -207,7 +196,7 @@ export const useM = createMessages({
     retry: 'Retry',
   },
   zh: {
-    tabs: { chain: '期权链', vol: '波动率', pos: '持仓' },
+    tabs: { chain: '期权链', vol: '波动率' },
     presets: { key: '常用', quotes: '报价', greeks: '希腊值', value: '价值与概率' } as Record<ColumnPreset, string>,
     allStrikes: '全部',
     columns: columnsZh,
@@ -296,16 +285,6 @@ export const useM = createMessages({
     noSmile: '该到期日暂无 IV 数据',
     noTerm: '暂无各到期日平值 IV',
     noHist: 'IV 历史不可用',
-    expo: '账户期权暴露',
-    contract: '合约',
-    dte: '剩余',
-    qty: '数量',
-    avg: '均价',
-    mark: '现价',
-    pl: '盈亏',
-    itm: '价内概率',
-    ddol: '$Δ',
-    noPositions: (sym: string) => `没有 ${sym} 的期权持仓`,
     aExp: (n: number) => (n <= 0 ? '今天到期' : `${n} 天后到期`),
     aAsg: '空头接近平值，有被指派风险',
     aAsgItm: '空头已价内，有被指派风险',

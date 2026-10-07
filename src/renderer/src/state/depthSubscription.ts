@@ -1,7 +1,8 @@
-// The Level 2 book has one subscription (main keeps one depth line; IB allows three): the depth
-// view and the floating ticket's depth block share it. Each owner names the instrument it wants
-// (null: none); the subscription is the newest owner's wish, and it is released when nobody
-// wants one. Owners follow the selected instrument, so they never want different books for long.
+// The Level 2 book has one subscription (main keeps one depth line; IB allows three). Its renderer
+// owner is the order ticket's Book (ticket/DepthBlock.tsx: docked or floating, one mounted at a
+// time). Each owner names the instrument it wants (null: none); the subscription is the newest
+// owner's wish, and it is released when nobody wants one. Owners follow the selected instrument,
+// so they never want different books for long.
 
 import { contractKey } from '@shared/contract';
 import type { ContractRef } from '@shared/types';

@@ -6,6 +6,7 @@ import type { TapeEvent } from '@shared/ipc';
 import type { ContractInfo, DepthBook, OptionChainParams } from '@shared/types';
 import { CONTRACT_REFRESH_MS, createContractService, REFETCH_GAP_MS, REFETCH_MAX, SEARCH_TTL_MS } from './contracts';
 import { CANCEL_CAP_MS, createDepthService } from './depth';
+import { DEPTH_ROWS } from './depthBook';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
 import { createHistoryService } from './history';
 import { NOT_CONNECTED } from './ibRequest';
@@ -401,7 +402,9 @@ describe('DepthService', () => {
     fake.ready();
     await ctx.depth.set(stock('AAPL'));
     const [id, contract, rows, smart, opts] = fake.callsOf('reqMktDepth')[0];
-    expect([contract, rows, smart, opts]).toEqual([{ symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' }, 10, true, []]);
+    // The order ticket's Book shows 5 levels a side; IB streams that many.
+    expect(DEPTH_ROWS).toBe(5);
+    expect([contract, rows, smart, opts]).toEqual([{ symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' }, DEPTH_ROWS, true, []]);
     expect(books(events).at(-1)).toMatchObject({ key: 'STK:AAPL', bids: [], asks: [] });
     fake.emit('updateMktDepthL2', id, 0, 'NSDQ', 0, 1, 227.47, 300, true);
     fake.emit('updateMktDepthL2', id, 0, 'ARCA', 0, 0, 227.49, 200, true);
@@ -559,8 +562,8 @@ describe('DepthService', () => {
     await settle();
     await ctx.depth.set(stock('AAPL'));
     const book = books(events).at(-1)!;
-    expect(book.bids).toHaveLength(10);
-    expect(book.asks).toHaveLength(10);
+    expect(book.bids).toHaveLength(DEPTH_ROWS);
+    expect(book.asks).toHaveLength(DEPTH_ROWS);
     await ctx.depth.set(null);
     expect(fake.calls).toEqual([]);
   });
