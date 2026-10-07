@@ -1,26 +1,16 @@
-// Desk header: instrument, price, 60-day sparkline and volatility metrics.
+// Desk header: instrument, price and volatility metrics.
 
 import { contractKey, shortExpiry } from '@shared/contract';
-import { DASH, f2, pct, signColor } from '@shared/format';
+import { DASH, f0, f2, pct, signColor } from '@shared/format';
 import type { ContractInfo } from '@shared/types';
 import { changePct } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { chainTotals } from './chain';
-import { useDailyCloses, useIvHistory } from './data';
+import { useIvHistory } from './data';
 import { useM } from './messages';
 import type { DeskModel } from './model';
 import { useCachedRequest } from './requests';
-
-const SPARK_POINTS = 60;
-
-function sparkline(closes: number[]): string {
-  const a = closes.slice(-SPARK_POINTS);
-  const mn = Math.min(...a);
-  const mx = Math.max(...a);
-  const span = mx - mn || 1;
-  return a.map((x, i) => `${((i / Math.max(1, a.length - 1)) * 120).toFixed(1)},${(34 - ((x - mn) / span) * 32).toFixed(1)}`).join(' ');
-}
 
 export function DeskHeader({ model }: { model: DeskModel }) {
   const m = useM();
@@ -33,13 +23,13 @@ export function DeskHeader({ model }: { model: DeskModel }) {
     3_600_000,
   );
   const name = nameOf(storeName, lang) || info?.data?.longName || '';
-  const { closes } = useDailyCloses(underlying, 'TRADES');
   const iv = useIvHistory(underlying, uq?.impliedVol);
   const chg = changePct(uq);
   const expLabel = exp ? shortExpiry(exp.expiry) : '';
 
   // P/C volume: the underlying's day totals (ticks 29/30), else the quoted rows of the visible
-  // chain. P/C open interest comes only from the underlying's totals (ticks 27/28).
+  // chain; its tooltip has the call and put volume. P/C open interest comes only from the
+  // underlying's totals (ticks 27/28).
   const chain = chainTotals(
     model.quotedRows.flatMap((r) => [
       { right: 'C' as const, quote: model.quotes[contractKey(r.callContract)] },
@@ -50,13 +40,16 @@ export function DeskHeader({ model }: { model: DeskModel }) {
   const dayVol = uq?.putVolume != null && !!uq.callVolume;
   const pcVol = dayVol ? ratio(uq?.putVolume, uq?.callVolume) : ratio(chain.putVol, chain.callVol);
   const pcOi = ratio(uq?.putOpenInterest, uq?.callOpenInterest);
+  // The chain's totals are 0 / 0 before any of its rows has a volume: no tooltip then.
+  const vols = dayVol ? { calls: uq?.callVolume, puts: uq?.putVolume } : chain.callVol || chain.putVol ? { calls: chain.callVol, puts: chain.putVol } : null;
+  const pcTitle = vols ? m.pcTip(f0(vols.calls), f0(vols.puts)) : undefined;
 
-  const metrics = [
+  const metrics: Array<{ l: string; v: string; sub: string; title?: string }> = [
     { l: m.ivAtm, v: model.ivAtm != null ? (model.ivAtm * 100).toFixed(1) + '%' : DASH, sub: model.ivAtmSource === 'underlying' ? m.days30 : expLabel },
     { l: m.ivRank, v: iv.stats ? (iv.stats.rank * 100).toFixed(0) : DASH, sub: m.w52 },
     { l: m.ivPct, v: iv.stats ? (iv.stats.percentile * 100).toFixed(0) + '%' : DASH, sub: m.w52 },
     { l: m.em, v: model.em != null ? '±' + f2(model.em) : DASH, sub: model.em != null && spot ? '±' + ((model.em / spot) * 100).toFixed(1) + '%' : expLabel },
-    { l: m.pc, v: pcVol, sub: dayVol ? m.todayAll : expLabel },
+    { l: m.pc, v: pcVol, sub: dayVol ? m.todayAll : expLabel, title: pcTitle },
     { l: m.pco, v: pcOi, sub: '' },
   ];
 
@@ -77,14 +70,9 @@ export function DeskHeader({ model }: { model: DeskModel }) {
           <div style={{ font: '13px/1 var(--num)', color: signColor(chg) }}>{pct(chg)}</div>
         </div>
       </div>
-      {closes && closes.length > 1 && (
-        <svg viewBox="0 0 120 36" preserveAspectRatio="none" style={{ width: 120, height: 36, display: 'block', flexShrink: 0 }}>
-          <polyline points={sparkline(closes)} style={{ fill: 'none', stroke: 'var(--ac)', strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' }} />
-        </svg>
-      )}
       <div style={{ display: 'flex', gap: 22, minWidth: 0, overflow: 'hidden' }}>
         {metrics.map((x) => (
-          <div key={x.l} style={{ display: 'flex', flexDirection: 'column', gap: 5, whiteSpace: 'nowrap' }}>
+          <div key={x.l} title={x.title} style={{ display: 'flex', flexDirection: 'column', gap: 5, whiteSpace: 'nowrap' }}>
             <div style={{ fontSize: 11, color: 'var(--dm)' }}>{x.l}</div>
             <div style={{ font: '500 15px/1 var(--num)', fontVariantNumeric: 'tabular-nums', color: 'var(--tx)' }}>{x.v}</div>
             <div style={{ fontSize: 11, color: 'var(--dm)', minHeight: 11 }}>{x.sub}</div>

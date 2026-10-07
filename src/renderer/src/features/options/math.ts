@@ -174,8 +174,6 @@ export interface StrategyAnalysis {
   breakevens: number[];
   /** Probability of a positive P/L at the first expiry; null without a volatility. */
   pop: number | null;
-  /** Rough margin estimate (max loss, or 20% of the underlying per short contract when unlimited). */
-  margin: number;
   /** Horizon of the analysis in years. */
   horizon: number;
 }
@@ -236,10 +234,7 @@ export function analyzeStrategy(legs: PayoffLeg[], spot: number, sigma: number |
     pop = Math.min(1, Math.max(0, pop));
   }
 
-  const shortContracts = legs.filter((l) => l.sign < 0 && l.kind !== 'S').reduce((a, l) => a + l.qty * l.multiplier, 0);
-  const margin = lossUnlimited ? shortContracts * 0.2 * spot : Math.max(0, -maxLoss);
-
-  return { cost: netCost(legs), maxProfit, maxLoss, profitUnlimited, lossUnlimited, breakevens, pop, margin, horizon };
+  return { cost: netCost(legs), maxProfit, maxLoss, profitUnlimited, lossUnlimited, breakevens, pop, horizon };
 }
 
 /** Sampled P/L curve between `lo` and `hi` (inclusive), `n` intervals. */

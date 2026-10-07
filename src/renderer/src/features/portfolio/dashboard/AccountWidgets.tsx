@@ -1,59 +1,17 @@
-// Account-level widgets (design v6): margin cushion, portfolio greeks and concentration.
+// Account-level widgets (design v6): portfolio greeks and concentration.
 
 import { useMemo } from 'react';
 import { DASH, f0, f2, sg, signColor } from '@shared/format';
-import type { AccountSummary, Quote } from '@shared/types';
+import type { Quote } from '@shared/types';
 import { useCommon } from '../../../i18n/common';
 import { useStore } from '../../../state/store';
-import { leverage, leverageLabel, type AccountTotals, type PositionRow } from '../calc';
+import type { PositionRow } from '../calc';
 import { usePortfolioMessages } from '../messages';
 import { useDashboardMessages } from './messages';
-import { MARGIN_CALL_CUSHION, concentration, marginCushion, portfolioGreeks } from './model';
+import { concentration, portfolioGreeks } from './model';
 import { BigFigure, EmptyLine, List, Note, WidgetCard, pct1 } from './WidgetCard';
 
 const ROW_RULE = 'inset 0 -1px 0 var(--ln2)';
-
-// ---------------------------------------------------------------------------
-// Margin cushion
-
-export function MarginWidget({ account, totals }: { account: AccountSummary | null; totals: AccountTotals }) {
-  const m = useDashboardMessages();
-  const a = account;
-  const cushion = marginCushion(a?.excessLiquidity, a?.netLiquidation);
-  // The design's red (#d9534f) is the theme's --r, as the old margin warning used.
-  const tone = cushion?.warn ? 'var(--r)' : 'var(--ac)';
-  const rows: Array<[string, string]> = [
-    [m.excessLiquidity, f0(a?.excessLiquidity)],
-    [m.maintMargin, f0(a?.maintMarginReq)],
-    [m.initMargin, f0(a?.initMarginReq)],
-    [m.leverage, leverageLabel(leverage(totals.gross, a?.netLiquidation))],
-  ];
-
-  return (
-    <WidgetCard title={m.marginTitle} sub={m.marginSub}>
-      <BigFigure value={pct1(cushion?.pct)} label={m.cushionLabel} color={cushion ? tone : undefined} />
-      <div style={{ height: 8, background: 'var(--p2)', position: 'relative' }}>
-        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${cushion?.fill ?? 0}%`, background: tone }} />
-        <div style={{ position: 'absolute', left: `${MARGIN_CALL_CUSHION}%`, top: -3, bottom: -3, width: 1, background: 'var(--mu)' }} />
-      </div>
-      <List>
-        {rows.map(([label, value]) => (
-          <div
-            key={label}
-            style={{ height: 32, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13, boxShadow: ROW_RULE }}
-          >
-            <div className="ellipsis" style={{ color: 'var(--mu)' }}>
-              {label}
-            </div>
-            <div className="selectable" style={{ fontFamily: 'var(--num)', whiteSpace: 'nowrap' }}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </List>
-    </WidgetCard>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Portfolio greeks

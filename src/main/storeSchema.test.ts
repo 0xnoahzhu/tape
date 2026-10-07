@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { stock } from '@shared/contract';
 import { defaultSettings, defaultWatchlists } from '@shared/defaults';
 import type { AppNotification } from '@shared/types';
 import {
@@ -237,6 +238,19 @@ describe('sanitizeWatchlists', () => {
 
   it('keeps valid lists unchanged', () => {
     expect(sanitizeWatchlists(defaults, defaults)).toEqual(defaults);
+  });
+
+  it('the defaults are the two built-in lists', () => {
+    expect(defaults.map((l) => l.id)).toEqual(['main', 'idx']);
+  });
+
+  it('keeps a saved list the defaults no longer have (the sample Options watch of older versions)', () => {
+    const sample = {
+      id: 'w-options',
+      name: { en: 'Options watch', zh: '期权观察' },
+      groups: [{ id: 'g-hiv', name: { en: 'High IV', zh: '高 IV' }, items: [{ contract: stock('TSLA'), name: 'Tesla' }, { contract: stock('NVDA'), name: 'NVIDIA' }] }],
+    };
+    expect(sanitizeWatchlists([...defaults, sample], defaults)).toEqual([...defaults, sample]);
   });
 
   it('restores deleted built-in lists and their names', () => {

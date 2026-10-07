@@ -45,7 +45,7 @@ export const useWatchlistMessages = createMessages({
     /** A group named with its list: "Watchlist · Tech". */
     place: (list: string, group: string) => `${list} · ${group}`,
     // The chart header's star (WatchStar.tsx): tooltips, picker.
-    /** Every group holding the symbol: "In Watchlist · Tech, Options watch · High IV". */
+    /** Every group holding the symbol: "In Watchlist · Tech, Indices · US". */
     starIn: (places: string[]) => `In ${places.join(', ')}`,
     starPick: 'Add to watchlist…',
     noLists: 'No watchlists',

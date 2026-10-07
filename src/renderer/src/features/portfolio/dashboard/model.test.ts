@@ -9,7 +9,6 @@ import {
   etClock,
   expirations,
   holdingUnderlyings,
-  marginCushion,
   portfolioGreeks,
   recentFills,
   upcomingEvents,
@@ -33,18 +32,6 @@ const q = (key: string, over: Partial<Quote>): Quote => ({ key, updatedAt: 0, ..
 
 // Tuesday 2026-10-06, local time.
 const NOW = new Date(2026, 9, 6, 11, 0);
-
-describe('margin cushion', () => {
-  it('is excess liquidity over net liquidation, red below 10 %', () => {
-    // The paper account: 961,118.10 / 1,019,763.12.
-    expect(marginCushion(961_118.1, 1_019_763.12)).toEqual({ pct: expect.closeTo(94.25, 2), fill: expect.closeTo(94.25, 2), warn: false });
-    expect(marginCushion(9, 100)).toEqual({ pct: 9, fill: 9, warn: true });
-    expect(marginCushion(10, 100)?.warn).toBe(false);
-    expect(marginCushion(-5, 100)).toEqual({ pct: -5, fill: 0, warn: true });
-    expect(marginCushion(undefined, 100)).toBeNull();
-    expect(marginCushion(5, 0)).toBeNull();
-  });
-});
 
 describe('portfolio greeks', () => {
   const aapl = row(stock('AAPL'), 200, {}, 250);

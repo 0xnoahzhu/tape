@@ -32,7 +32,6 @@ export const usePanelMessages = createMessages({
     modifying: (id: number) => `Modifying #${id}`,
     cancelModify: 'Cancel modify',
     confirmModify: 'Confirm modify',
-    whatIf: 'IBKR what-if',
     // Status strip and bar
     submitting: 'Submitting…',
     submitted: (id: number) => `Submitted #${id}`,
@@ -83,7 +82,6 @@ export const usePanelMessages = createMessages({
     modifying: (id: number) => `改单 #${id}`,
     cancelModify: '取消改单',
     confirmModify: '确认改单',
-    whatIf: 'IBKR 预估',
     submitting: '提交中…',
     submitted: (id: number) => `已提交 #${id}`,
     modified: (id: number) => `已修改 #${id}`,

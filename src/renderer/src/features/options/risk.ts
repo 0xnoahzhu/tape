@@ -2,6 +2,7 @@
 
 import { contractKey, daysToExpiry, stock } from '@shared/contract';
 import type { ContractRef, Position, Quote, Watchlist } from '@shared/types';
+import { livePrice, positionRow } from '../portfolio/calc';
 import { markOf } from './chain';
 
 /** IB position contracts may lack an exchange; market data requests need one. */
@@ -87,11 +88,12 @@ export function computeRiskAlerts(
       out.push({ id: `move:${c.symbol}`, rule: 'move', severity: 'info', position: p, movePct: chg });
     }
 
-    const cost = Math.abs(p.avgPrice * p.quantity * (p.multiplier || 100));
-    const mark = markOf(q) ?? p.marketPrice;
-    const pnl = p.unrealizedPnL ?? (mark != null ? (mark - p.avgPrice) * p.quantity * (p.multiplier || 100) : undefined);
-    if (cost > 0 && pnl != null && pnl < 0) {
-      const lossPct = (-pnl / cost) * 100;
+    // The positions table's P&L: the live mark (IB's mark, else the midpoint), else IB's portfolio
+    // figures. livePrice ignores `last` for options, so none is passed.
+    const row = positionRow(p, livePrice(c.secType, q, undefined), undefined, '');
+    // unrealizedPct is in percent of |cost| (quantity × average price × multiplier).
+    if (row.unrealized != null && row.unrealized < 0 && row.unrealizedPct != null) {
+      const lossPct = -row.unrealizedPct;
       if (lossPct >= (short ? 100 : 50)) out.push({ id: `loss:${key}`, rule: 'loss', severity: short ? 'warn' : 'info', position: p, lossPct });
     }
   }

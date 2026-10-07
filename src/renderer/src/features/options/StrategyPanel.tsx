@@ -349,7 +349,6 @@ export function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
     { l: m.maxProfit, v: !a ? DASH : a.profitUnlimited ? m.unl : usd(a.maxProfit, 0), col: 'var(--up)' },
     { l: m.maxLoss, v: !a ? DASH : a.lossUnlimited ? m.unl : usd(Math.max(0, -a.maxLoss), 0), col: 'var(--dn)' },
     { l: m.be, v: a?.breakevens.length ? a.breakevens.map((x) => f2(x)).join(' / ') : DASH, col: 'var(--tx)', wrap: true },
-    { l: m.margin, v: a ? usd(a.margin, 0) : DASH, col: 'var(--tx)' },
     { l: m.dteL, v: `${view.minDte} ${m.dUnit}`, col: 'var(--tx)' },
     { l: m.rr, v: !a || a.profitUnlimited || a.lossUnlimited ? DASH : (a.maxProfit / Math.max(1, Math.abs(a.maxLoss))).toFixed(2), col: 'var(--tx)' },
   ];

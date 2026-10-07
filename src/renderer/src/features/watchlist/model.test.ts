@@ -36,7 +36,23 @@ import {
 } from './model';
 
 const DEFAULT = { en: 'Default', zh: '默认' };
-const lists = defaultWatchlists();
+/** A user list: the sample Options watch the defaults of older versions had. */
+const SAVED: Watchlist = {
+  id: 'w-options',
+  name: { en: 'Options watch', zh: '期权观察' },
+  groups: [
+    {
+      id: 'g-hiv',
+      name: { en: 'High IV', zh: '高 IV' },
+      items: [
+        { contract: stock('TSLA'), name: 'Tesla' },
+        { contract: stock('NVDA'), name: 'NVIDIA' },
+        { contract: stock('AMD'), name: 'AMD' },
+      ],
+    },
+  ],
+};
+const lists = [...defaultWatchlists(), SAVED];
 const main = lists.find((l) => l.id === 'main')!;
 const idx = lists.find((l) => l.id === 'idx')!;
 const custom = lists.find((l) => !l.builtin)!;

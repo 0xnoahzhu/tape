@@ -4,11 +4,11 @@ import { defaultLayout, dropSide, moveWidget, removeWidget, sanitizeLayout, setS
 const ids = (l: Layout) => l.map((w) => w.id);
 
 describe('dashboard layout', () => {
-  it('defaults to every widget at its catalog span, in three rows of three columns', () => {
+  it('defaults to every widget at its catalog span, in three rows of three columns (one cell free)', () => {
     const l = defaultLayout();
-    expect(ids(l)).toEqual(['alloc', 'margin', 'greeks', 'conc', 'contrib', 'expiry', 'fills', 'events']);
-    expect(l.map((w) => w.span)).toEqual([1, 1, 1, 1, 2, 1, 1, 1]);
-    expect(l.reduce((n, w) => n + w.span, 0)).toBe(9);
+    expect(ids(l)).toEqual(['alloc', 'greeks', 'conc', 'contrib', 'expiry', 'fills', 'events']);
+    expect(l.map((w) => w.span)).toEqual([1, 1, 1, 2, 1, 1, 1]);
+    expect(l.reduce((n, w) => n + w.span, 0)).toBe(8);
   });
 
   it('sanitizes a stored layout', () => {
@@ -25,11 +25,13 @@ describe('dashboard layout', () => {
   });
 
   it('drops the removed widgets of older versions from a stored layout', () => {
-    // 'eq' (net liquidation curve) and 'bench' (vs. benchmark) are no longer in the catalog.
+    // 'eq' (net liquidation curve), 'bench' (vs. benchmark) and 'margin' (margin cushion, now in the
+    // Portfolio header) are no longer in the catalog.
     expect(
       sanitizeLayout([
         { id: 'eq', span: 2 },
         { id: 'alloc', span: 1 },
+        { id: 'margin', span: 1 },
         { id: 'bench', span: 1 },
         { id: 'fills', span: 2 },
       ]),
@@ -38,6 +40,7 @@ describe('dashboard layout', () => {
       { id: 'fills', span: 2 },
     ]);
     expect(sanitizeLayout([{ id: 'eq' }, { id: 'bench' }])).toEqual([]);
+    expect(sanitizeLayout([{ id: 'margin', span: 1 }])).toEqual([]);
   });
 
   it('moves the dragged widget into the place of the target', () => {
@@ -45,8 +48,8 @@ describe('dashboard layout', () => {
     // Backwards: before the target.
     expect(ids(moveWidget(l, 'events', 'alloc')).slice(0, 2)).toEqual(['events', 'alloc']);
     // Forwards: after the target, so a widget can step past its right neighbour.
-    expect(ids(moveWidget(l, 'alloc', 'margin')).slice(0, 2)).toEqual(['margin', 'alloc']);
-    expect(ids(moveWidget(l, 'alloc', 'conc')).slice(0, 4)).toEqual(['margin', 'greeks', 'conc', 'alloc']);
+    expect(ids(moveWidget(l, 'alloc', 'greeks')).slice(0, 2)).toEqual(['greeks', 'alloc']);
+    expect(ids(moveWidget(l, 'alloc', 'conc')).slice(0, 3)).toEqual(['greeks', 'conc', 'alloc']);
     // The "Add widget" tile: after the last widget.
     expect(ids(moveWidget(l, 'alloc', 'end')).at(-1)).toBe('alloc');
     expect(moveWidget(l, 'events', 'end')).toBe(l);
@@ -61,7 +64,7 @@ describe('dashboard layout', () => {
   it('says on which side of the target the drop lands', () => {
     const l = defaultLayout();
     expect(dropSide(l, 'events', 'alloc')).toBe('before');
-    expect(dropSide(l, 'alloc', 'margin')).toBe('after');
+    expect(dropSide(l, 'alloc', 'greeks')).toBe('after');
     expect(dropSide(l, 'alloc', 'end')).toBe('after');
     expect(dropSide(l, 'events', 'end')).toBeNull();
     expect(dropSide(l, 'alloc', 'alloc')).toBeNull();
@@ -71,10 +74,10 @@ describe('dashboard layout', () => {
 
   it('changes spans, removes and toggles widgets without touching the input', () => {
     const l = defaultLayout();
-    const wide = setSpan(l, 'margin', 3);
-    expect(wide.find((w) => w.id === 'margin')?.span).toBe(3);
-    expect(l.find((w) => w.id === 'margin')?.span).toBe(1);
-    expect(setSpan(l, 'margin', 1)).toBe(l);
+    const wide = setSpan(l, 'greeks', 3);
+    expect(wide.find((w) => w.id === 'greeks')?.span).toBe(3);
+    expect(l.find((w) => w.id === 'greeks')?.span).toBe(1);
+    expect(setSpan(l, 'greeks', 1)).toBe(l);
     const without = removeWidget(l, 'events');
     expect(ids(without)).not.toContain('events');
     expect(removeWidget(without, 'events')).toBe(without);
@@ -147,6 +150,7 @@ describe('remembered dashboard layout', () => {
     const saved = [
       { id: 'eq', span: 2 },
       { id: 'alloc', span: 1 },
+      { id: 'margin', span: 1 },
       { id: 'bench', span: 1 },
     ];
     vi.stubGlobal('localStorage', memoryStorage({ 'tape.dash.v1': JSON.stringify(saved) }));
@@ -160,7 +164,7 @@ describe('remembered dashboard layout', () => {
     store.getState().setEdit(true);
     store.getState().setPickerOpen(true);
     store.getState().setDrag('alloc');
-    store.getState().setOver('margin');
+    store.getState().setOver('greeks');
     expect(storage.data.size).toBe(0);
     store.getState().closeTransient();
     expect(store.getState()).toMatchObject({ edit: false, pickerOpen: false, drag: null, over: null });

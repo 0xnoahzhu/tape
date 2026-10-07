@@ -1,8 +1,7 @@
-// Pure computations behind the dashboard widgets (margin cushion, portfolio greeks,
-// concentration, today's P&L contributions, option expirations, today's fills and upcoming
-// corporate events). No React and no store access; every value
-// comes from the account summary, the position rows (valued by the one-price rule, calc.ts),
-// quotes, executions and IB's corporate events.
+// Pure computations behind the dashboard widgets (portfolio greeks, concentration, today's P&L
+// contributions, option expirations, today's fills and upcoming corporate events). No React and
+// no store access; every value comes from the account summary, the position rows (valued by the
+// one-price rule, calc.ts), quotes, executions and IB's corporate events.
 
 import { contractKey, daysToExpiry, multiplierOf } from '@shared/contract';
 import type { ContractRef, CorporateEarnings, Execution, Quote, QuoteDividends } from '@shared/types';
@@ -60,31 +59,6 @@ export function holdingUnderlyings(rows: readonly PositionRow[]): Map<string, Co
     }
   }
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// Margin cushion
-
-/** Cushion (excess liquidity / net liquidation) below which a margin call is near. */
-export const MARGIN_CALL_CUSHION = 10;
-
-export interface MarginCushion {
-  /** Excess liquidity in percent of net liquidation. */
-  pct: number;
-  /** Bar fill in percent (0–100). */
-  fill: number;
-  /** Below MARGIN_CALL_CUSHION. */
-  warn: boolean;
-}
-
-/**
- * Excess liquidity / net liquidation: the same fraction as IB's "Cushion" (an account-updates
- * value), computed from the summary values the dashboard already has.
- */
-export function marginCushion(excessLiquidity: number | undefined, netLiq: number | undefined): MarginCushion | null {
-  if (!finite(excessLiquidity) || !finite(netLiq) || netLiq <= 0) return null;
-  const pct = (excessLiquidity / netLiq) * 100;
-  return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct < MARGIN_CALL_CUSHION };
 }
 
 // ---------------------------------------------------------------------------

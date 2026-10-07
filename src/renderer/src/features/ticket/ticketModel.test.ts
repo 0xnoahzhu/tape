@@ -3,7 +3,7 @@ import { defaultSettings } from '@shared/defaults';
 import { index, option, stock } from '@shared/contract';
 import { initialTicket, type TicketState } from '../../state/store';
 import { newCondition } from './ticketConditions';
-import { buyingPowerAfter, conditionContract, money, priceInput, resolveTicket, stepQty, tickDecimals, trailStop, type TicketMarket } from './ticketModel';
+import { conditionContract, money, priceInput, resolveTicket, stepQty, tickDecimals, trailStop, type TicketMarket } from './ticketModel';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 const mkt: TicketMarket = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
@@ -125,25 +125,11 @@ describe('conditionContract', () => {
   });
 });
 
-describe('money and buying power', () => {
+describe('money', () => {
   it('formats amounts in the instrument currency', () => {
     expect(money(46393, 'USD')).toBe('$46,393.00');
     expect(money(46393, 'EUR')).toBe('46,393.00 EUR');
     expect(money(undefined, 'EUR')).toBe('—');
     expect(money(12.5, '')).toBe('$12.50');
-  });
-
-  it('subtracts a buy only when it is in the account currency', () => {
-    const acct = { buyingPower: 1_000_000, currency: 'USD' };
-    expect(buyingPowerAfter(acct, 46393, 'USD', true)).toBe(953_607);
-    expect(buyingPowerAfter(acct, 46393, 'EUR', true)).toBeUndefined();
-    expect(buyingPowerAfter({ buyingPower: 500_000, currency: 'EUR' }, 46393, 'EUR', true)).toBe(453_607);
-    expect(buyingPowerAfter(acct, undefined, 'USD', true)).toBeUndefined();
-  });
-
-  it('leaves buying power unchanged for sells and unknown without an account', () => {
-    expect(buyingPowerAfter({ buyingPower: 1000, currency: 'USD' }, 46393, 'EUR', false)).toBe(1000);
-    expect(buyingPowerAfter(null, 100, 'USD', true)).toBeUndefined();
-    expect(buyingPowerAfter({ currency: 'USD' }, 100, 'USD', false)).toBeUndefined();
   });
 });

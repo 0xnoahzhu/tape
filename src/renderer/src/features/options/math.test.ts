@@ -87,7 +87,6 @@ describe('strategy payoff', () => {
     expect(a.maxLoss).toBeCloseTo(-250, 6);
     expect(a.breakevens).toHaveLength(1);
     expect(a.breakevens[0]).toBeCloseTo(102.5, 3);
-    expect(a.margin).toBeCloseTo(250, 6);
   });
 
   it('bull call vertical: bounded profit and loss', () => {
@@ -110,10 +109,9 @@ describe('strategy payoff', () => {
     expect(a.breakevens[0]).toBeCloseTo(96, 3);
   });
 
-  it('short call: unlimited loss with a 20% margin estimate', () => {
+  it('short call: unlimited loss', () => {
     const a = analyzeStrategy([call(100, 2, -1)], 100, 0.3)!;
     expect(a.lossUnlimited).toBe(true);
-    expect(a.margin).toBeCloseTo(0.2 * 100 * 100, 6);
   });
 
   it('iron condor: two breakevens around the body', () => {
