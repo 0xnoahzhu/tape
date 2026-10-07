@@ -5,16 +5,22 @@
 // The rule behind the catalog: a column shows IB's own data ('ib') or a calculation by Tape
 // ('calc'), and a calculated column reads as one (a dim ƒ after its header, a tooltip giving the
 // formula). A cell is empty when the column does not apply to the instrument, and "—" when it
-// applies but IB has not sent the value. Every column here is computed from data Tape already
-// receives: the position and portfolio updates, reqPnLSingle, the account's exchange rates, the
-// contract details fetched once per position and the ticks of the position's own quote line.
+// applies but IB has not sent the value. Most columns are computed from data Tape already receives:
+// the position and portfolio updates, reqPnLSingle, the account's exchange rates, the contract
+// details fetched once per position and the ticks of the position's own quote line. A column with a
+// `profile` needs more generic ticks on that line: they are asked for only while the column is
+// shown, and only for the positions it applies to (addOnSubscriptions, the 'positions-table' quote
+// owner). The earnings columns read the holdings' earnings dates (getEarnings). A column whose unit
+// or source a live check has not confirmed yet is `unverified`, which its tooltip says.
 
-import { contractLabel, daysToExpiry } from '@shared/contract';
+import { contractKey, contractLabel, daysToExpiry } from '@shared/contract';
+import { addOnApplies, type AddOnProfile } from '@shared/quoteProfiles';
 import { wallClockAt } from '@shared/timeFormat';
-import type { ContractInfo, ContractRef, Quote, SecType } from '@shared/types';
-import { livePrice, underlyingOf, type PositionRow } from './calc';
+import type { ContractInfo, ContractRef, EarningsEvent, Quote, QuoteDividends, QuoteSubscription, SecType } from '@shared/types';
+import type { CellWords } from './cells';
+import { isExchangeTraded, livePrice, quoteContract, underlyingOf, type PositionRow } from './calc';
 
-export const COLUMN_GROUPS = ['position', 'ibPnl', 'contract', 'quote', 'options'] as const;
+export const COLUMN_GROUPS = ['position', 'ibPnl', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other'] as const;
 export type ColumnGroup = (typeof COLUMN_GROUPS)[number];
 
 /** Every column id in catalog order (the editor's order within each group). */
@@ -67,6 +73,11 @@ export const COLUMN_IDS = [
   'timeZone',
   'tradingHours',
   'liquidHours',
+  'contractMonth',
+  'lastTradeTime',
+  'realExpiration',
+  'isin',
+  'marketName',
   // Quote
   'last',
   'lastSize',
@@ -90,6 +101,49 @@ export const COLUMN_IDS = [
   'halted',
   'dataType',
   'quoteStatus',
+  // Statistics
+  'high52w',
+  'low52w',
+  'from52wHigh',
+  'from52wLow',
+  'high26w',
+  'low26w',
+  'high13w',
+  'low13w',
+  'avgVolume',
+  'relVolume',
+  'impliedVol30',
+  'rtHistVol',
+  'callVolume',
+  'putVolume',
+  'callOpenInterest',
+  'putOpenInterest',
+  'avgOptionVolume',
+  'tradeCount',
+  'tradeRate',
+  'volumeRate',
+  'volume3m',
+  'volume5m',
+  'volume10m',
+  'vwap',
+  'auctionPrice',
+  'auctionVolume',
+  'auctionImbalance',
+  'regImbalance',
+  // Short selling
+  'shortable',
+  'shortableShares',
+  'borrowFee',
+  // Dividends and earnings
+  'divPast12m',
+  'divNext12m',
+  'divNextDate',
+  'divNextAmount',
+  'divYield',
+  'annualDividends',
+  'daysToDividend',
+  'nextEarnings',
+  'nextEarningsEst',
   // Options
   'optIv',
   'delta',
@@ -109,6 +163,22 @@ export const COLUMN_IDS = [
   'positionGamma',
   'positionTheta',
   'positionVega',
+  // ETF NAV, futures and bonds
+  'etfNav',
+  'etfNavHigh',
+  'etfNavLow',
+  'navPremium',
+  'futuresOpenInterest',
+  'bidYield',
+  'askYield',
+  'lastYield',
+  'bondFactor',
+  'cusip',
+  'coupon',
+  'maturity',
+  'bondType',
+  'bondFeatures',
+  'bondDesc',
 ] as const;
 export type ColumnId = (typeof COLUMN_IDS)[number];
 
@@ -124,7 +194,10 @@ export const isColumnId = (v: unknown): v is ColumnId => typeof v === 'string' &
  * How a value is written (cells.ts): qty = position size, px = price, pnl = signed money, chg =
  * signed price, pctS = signed percent, pctU = unsigned percent (shares), pctFine = unsigned percent
  * of small ratios (3 decimals below 1 %: a spread), vol = a volatility fraction as percent, big = compact count (12.4K), dec = as many decimals as it has, id = a
- * plain integer, kind / right / halt / dataType = IB codes as words, hours = today's sessions.
+ * plain integer, kind / right / halt / dataType / shortable = IB codes as words, hours = today's
+ * sessions, month = YYYYMM, stamp = "YYYYMMDD HH:MM" (a date and a wall time), earn = an earnings
+ * date and its time of day ("YYYYMMDD|amc"), ratio = a multiple (1.25×), features = a bond's
+ * features as words.
  */
 export type Fmt =
   | 'text'
@@ -132,6 +205,7 @@ export type Fmt =
   | 'px'
   | 'num0'
   | 'num2'
+  | 'num3'
   | 'num4'
   | 'dec'
   | 'id'
@@ -151,7 +225,13 @@ export type Fmt =
   | 'right'
   | 'halt'
   | 'dataType'
-  | 'hours';
+  | 'hours'
+  | 'month'
+  | 'stamp'
+  | 'shortable'
+  | 'earn'
+  | 'ratio'
+  | 'features';
 
 /** A cell's raw value: what sorts and what is formatted (never the formatted label). */
 export type CellValue = number | string | undefined;
@@ -165,12 +245,14 @@ export interface CellCtx {
   info?: ContractInfo | null;
   /** Σ |value in the account currency| of all rows; undefined while a row's is unknown. */
   grossBase?: number;
+  /** The next earnings of the position's underlying (undefined while unknown or while no shown column reads them). */
+  earnings?: EarningsEvent;
   /** Unix ms (days to expiry, today's trading hours). */
   now: number;
 }
 
 /** Editor notes of type-specific columns. */
-export type ColumnNote = 'options' | 'derivatives' | 'stocks' | 'stocksOptions';
+export type ColumnNote = 'options' | 'derivatives' | 'stocks' | 'stocksOptions' | 'stocksFutures' | 'etfs' | 'futures' | 'bonds';
 
 export interface ColumnDef {
   id: ColumnId;
@@ -187,9 +269,18 @@ export interface ColumnDef {
   sort: 'num' | 'text';
   /** The instrument types the column applies to (all when absent); other rows get an empty cell. */
   types?: readonly SecType[];
+  /** A narrower test within `types` (ETF columns: stocks IB types as exchange-traded). */
+  when?(row: PositionRow): boolean;
   note?: ColumnNote;
-  /** Data beyond the position row: the position's quote, its contract details, or the rows' gross value. */
-  needs?: 'quote' | 'details' | 'gross';
+  /** Data beyond the position row: the position's quote, its contract details, the rows' gross value, or the holdings' earnings. */
+  needs?: 'quote' | 'details' | 'gross' | 'earnings';
+  /**
+   * Generic ticks the column needs beyond the position's basic line: asked for, on the positions it
+   * applies to, only while it is shown (addOnSubscriptions).
+   */
+  profile?: AddOnProfile | 'dividends';
+  /** A live check has not confirmed the value's unit or source yet (messages.ts → unverified gives why). */
+  unverified?: true;
   fmt: Fmt;
   color?: 'sign' | 'muted';
   value(c: CellCtx): CellValue;
@@ -198,7 +289,7 @@ export interface ColumnDef {
   /** A second, smaller line (Unrealized P&L: its percent). */
   sub?: { value(c: CellCtx): number | undefined; fmt: Fmt };
   /** The cell's tooltip (a status message, the zone of trading hours). */
-  title?(c: CellCtx): string | undefined;
+  title?(c: CellCtx, w: CellWords): string | undefined;
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -208,8 +299,12 @@ const text = (s: string | undefined | null): string | undefined => (s && s.trim(
 const OPTIONS: readonly SecType[] = ['OPT', 'FOP'];
 const OPTIONS_WAR: readonly SecType[] = ['OPT', 'FOP', 'WAR'];
 const EXPIRING: readonly SecType[] = ['OPT', 'FOP', 'FUT', 'WAR'];
+const MONTHLY: readonly SecType[] = ['OPT', 'FOP', 'FUT'];
 const STOCKS: readonly SecType[] = ['STK'];
 const STOCKS_OPTIONS: readonly SecType[] = ['STK', 'OPT'];
+const STOCKS_FUTURES: readonly SecType[] = ['STK', 'FUT'];
+const FUTURES: readonly SecType[] = ['FUT'];
+const BONDS: readonly SecType[] = ['BOND'];
 /** Instruments whose quotes carry trades (IDEALPRO forex quotes bid / ask only). */
 const TRADED: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'BOND', 'WAR', 'CFD', 'CRYPTO'];
 const SESSIONED: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'CASH', 'WAR', 'CFD', 'CRYPTO'];
@@ -217,17 +312,44 @@ const WITH_CLOSE: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'CASH', 'CFD
 const HALTABLE: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'WAR'];
 const DELTA: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP'];
 /**
- * Instruments whose contract details carry IB's own name and minimum tick. A bond's details arrive
- * without them (contracts.ts keeps only bondContractDetails' contract), so its ContractInfo holds
- * Tape's defaults (the symbol, 0.01), which must not read as IB's.
+ * Instruments whose contract details carry IB's own name and minimum tick (a bond's arrive whole
+ * from bondContractDetails, contracts.ts).
  */
-const NAMED: readonly SecType[] = ['STK', 'OPT', 'IND', 'FUT', 'FOP', 'CASH', 'BAG', 'CFD', 'WAR', 'CRYPTO'];
+const NAMED: readonly SecType[] = ['STK', 'OPT', 'IND', 'FUT', 'FOP', 'CASH', 'BAG', 'CFD', 'WAR', 'CRYPTO', 'BOND'];
+/** Instruments IB has contract details of (a combo has none of its own). */
+const DETAILED: readonly SecType[] = NAMED.filter((t) => t !== 'BAG');
 
 export const isOptionType = (t: SecType): boolean => t === 'OPT' || t === 'FOP';
 
+/** A stock IB types as exchange-traded (ETF, ETN, ETC, ETP): the ETF NAV columns apply to it. */
+const isEtf = (row: PositionRow): boolean => row.position.contract.secType === 'STK' && isExchangeTraded(row.position.stockType);
+
 /** Whether a column applies to a row's instrument (else its cell is empty). */
 export function applies(def: ColumnDef, row: PositionRow): boolean {
-  return !def.types || def.types.includes(row.position.contract.secType);
+  return (!def.types || def.types.includes(row.position.contract.secType)) && (!def.when || def.when(row));
+}
+
+/**
+ * The extra generic ticks the shown columns need: one subscription per position's quote contract
+ * (the same keys as the 'portfolio' owner, so no new line opens) and profile, for the positions a
+ * column applies to and whose type the profile has ticks for ('dividends': stocks). Option lines
+ * carry the mark already. Sorted, so the list is the same for the same columns and positions.
+ */
+export function addOnSubscriptions(rows: readonly PositionRow[], defs: readonly ColumnDef[]): QuoteSubscription[] {
+  const out = new Map<string, QuoteSubscription>();
+  for (const def of defs) {
+    const profile = def.profile;
+    if (!profile) continue;
+    for (const row of rows) {
+      const secType = row.position.contract.secType;
+      if (!applies(def, row) || (profile === 'dividends' ? secType !== 'STK' : !addOnApplies(profile, secType))) continue;
+      if (profile === 'mark' && isOptionType(secType)) continue;
+      const contract = quoteContract(row.position.contract);
+      const k = `${contractKey(contract)}|${profile}`;
+      if (!out.has(k)) out.set(k, { contract, profile });
+    }
+  }
+  return [...out.keys()].sort().map((k) => out.get(k)!);
 }
 
 /** A row's identity: its conId (contract keys collide for SPX / SPXW, or bonds of one issuer), else its key. */
@@ -335,6 +457,37 @@ export function todaysHours(hours: string | undefined, timeZone: string | undefi
   }
   if (ranges.length) return ranges.join(',');
   return closed ? 'CLOSED' : undefined;
+}
+
+/**
+ * The instant (unix ms) of a wall time, "YYYYMMDD" and "HH:MM", in an instrument's zone (IB's ids,
+ * 'US/Central', are IANA ones). Without a zone, or with one the runtime does not know, the wall time
+ * is read as UTC.
+ */
+export function zonedInstant(day: string, time: string, zone: string | undefined): number | undefined {
+  const d = /^(\d{4})(\d{2})(\d{2})$/.exec(day);
+  const t = /^(\d{2}):(\d{2})/.exec(time);
+  if (!d || !t) return undefined;
+  const wall = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]), Number(t[1]), Number(t[2]));
+  if (!zone) return wall;
+  try {
+    // The zone's offset at that instant, found by reading the guess back (twice: across a DST change).
+    let at = wall;
+    for (let i = 0; i < 2; i++) {
+      const r = wallClockAt(at, zone);
+      at += wall - Date.UTC(r.y, r.mo - 1, r.d, r.h, r.m, r.s);
+    }
+    return at;
+  } catch {
+    return wall;
+  }
+}
+
+/** The last trading day and time as "YYYYMMDD HH:MM" (the stamp format), in the instrument's zone. */
+function lastTradeStamp(c: CellCtx): string | undefined {
+  const day = c.info?.contract.lastTradeDate ?? c.row.position.contract.lastTradeDate;
+  const time = c.info?.lastTradeTime;
+  return day && /^\d{8}$/.test(day) && time && /^\d{2}:\d{2}/.test(time) ? `${day} ${time.slice(0, 5)}` : undefined;
 }
 
 type Def = Omit<ColumnDef, 'id' | 'group'>;
@@ -483,7 +636,27 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
   },
   strike: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'px', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.strike },
   right: { kind: 'ib', align: 'left', width: 68, sort: 'text', fmt: 'right', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.right },
-  underlying: { kind: 'ib', align: 'left', width: 80, sort: 'text', fmt: 'text', types: OPTIONS_WAR, note: 'options', value: (c) => text(c.row.position.contract.symbol) },
+  // IB's underSymbol (a futures option's is its future, 'ESZ6'); an option's or warrant's own symbol
+  // until the details come.
+  underlying: {
+    kind: 'ib',
+    align: 'left',
+    width: 80,
+    sort: 'text',
+    fmt: 'text',
+    types: ['OPT', 'FOP', 'WAR', 'FUT', 'CFD'],
+    note: 'derivatives',
+    needs: 'details',
+    value: (c) => {
+      const k = c.row.position.contract;
+      return text(c.info?.underSymbol) ?? (k.secType === 'OPT' || k.secType === 'WAR' ? text(k.symbol) : undefined);
+    },
+    title: (c) => {
+      const i = c.info;
+      if (!i?.underSecType && !i?.underConId) return undefined;
+      return [text(i.underSecType), i.underConId ? `conId ${i.underConId}` : undefined].filter(Boolean).join(' · ');
+    },
+  },
   industry: {
     kind: 'ib',
     align: 'left',
@@ -556,6 +729,48 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     value: (c) => todaysHours(c.info?.liquidHours, c.info?.timeZoneId, c.now),
     title: (c) => text(c.info?.timeZoneId),
   },
+  contractMonth: {
+    kind: 'ib',
+    align: 'left',
+    width: 104,
+    sort: 'text',
+    fmt: 'month',
+    types: MONTHLY,
+    note: 'derivatives',
+    needs: 'details',
+    value: (c) => (/^\d{6}$/.test(c.info?.contractMonth ?? '') ? c.info!.contractMonth : undefined),
+  },
+  // The last trading day and time, in the instrument's zone (the cell's tooltip); sorts by the
+  // instant, so 08:30 US/Central comes after 09:00 US/Eastern.
+  lastTradeTime: {
+    kind: 'ib',
+    align: 'left',
+    width: 148,
+    sort: 'num',
+    fmt: 'stamp',
+    types: EXPIRING,
+    note: 'derivatives',
+    needs: 'details',
+    value: lastTradeStamp,
+    sortValue: (c) => {
+      const stamp = lastTradeStamp(c);
+      return stamp ? zonedInstant(stamp.slice(0, 8), stamp.slice(9), c.info?.lastTradeZone ?? c.info?.timeZoneId) : undefined;
+    },
+    title: (c) => text(c.info?.lastTradeZone),
+  },
+  realExpiration: {
+    kind: 'ib',
+    align: 'left',
+    width: 92,
+    sort: 'text',
+    fmt: 'date',
+    types: EXPIRING,
+    note: 'derivatives',
+    needs: 'details',
+    value: (c) => (/^\d{8}$/.test(c.info?.realExpirationDate ?? '') ? c.info!.realExpirationDate : undefined),
+  },
+  isin: { kind: 'ib', align: 'left', width: 100, sort: 'text', fmt: 'text', types: ['STK', 'BOND'], needs: 'details', value: (c) => text(c.info?.isin) },
+  marketName: { kind: 'ib', align: 'left', width: 72, sort: 'text', fmt: 'text', types: DETAILED, needs: 'details', value: (c) => text(c.info?.marketName) },
 };
 
 /** A quote field as IB sent it. */
@@ -627,8 +842,8 @@ const QUOTE: Partial<Record<ColumnId, Def>> = {
   high: tick('px', (q) => q.high, SESSIONED),
   low: tick('px', (q) => q.low, SESSIONED),
   volume: tick('big', (q) => q.volume, TRADED),
-  // Option lines ask for the mark (generic tick 221); stock lines do not.
-  mark: tick('px', (q) => q.mark, OPTIONS, 'options'),
+  // Option lines always ask for the mark (generic tick 221); the others while the column is shown.
+  mark: { ...tick('px', (q) => q.mark, ['STK', 'OPT', 'FOP', 'FUT', 'CASH', 'CRYPTO']), profile: 'mark' },
   lastRthTrade: { ...tick('px', (q) => q.lastRthTrade, STOCKS, 'stocks'), width: 100 },
   halted: {
     ...tick('halt', (q) => q.haltCode ?? (q.halted == null ? undefined : q.halted ? 1 : 0), HALTABLE),
@@ -636,7 +851,199 @@ const QUOTE: Partial<Record<ColumnId, Def>> = {
     width: 80,
   },
   dataType: { ...tick('dataType', (q) => q.marketDataType), align: 'left', width: 96 },
-  quoteStatus: { ...tick('id', (q) => q.error?.code), align: 'left', width: 96, title: (c) => c.q?.error?.message },
+  // IB's last error, else 321 while IB refused the line's extra generic ticks (it runs without them).
+  quoteStatus: {
+    ...tick('id', (q) => q.error?.code ?? (q.ticksRefused ? 321 : undefined)),
+    align: 'left',
+    width: 96,
+    title: (c, w) => c.q?.error?.message ?? (c.q?.ticksRefused ? w.ticksRefused[c.q.ticksRefused] : undefined),
+  },
+};
+
+/** A quote field that comes with an add-on profile's generic ticks. */
+const extra = (profile: ColumnDef['profile'], fmt: Fmt, read: (q: Quote) => number | undefined, types: readonly SecType[], note: ColumnNote, width?: number): Def => ({
+  ...tick(fmt, read, types, note),
+  profile,
+  ...(width ? { width } : {}),
+});
+
+/** A calculation on the quote (with an add-on profile's ticks): `f(quote, row)`. */
+const calcQ = (profile: ColumnDef['profile'], fmt: Fmt, f: (q: Quote, c: CellCtx) => number | undefined, types: readonly SecType[], note: ColumnNote, width: number): Def => ({
+  kind: 'calc',
+  align: 'right',
+  width,
+  sort: 'num',
+  fmt,
+  needs: 'quote',
+  types,
+  note,
+  profile,
+  value: (c) => (c.q ? f(c.q, c) : undefined),
+});
+
+/**
+ * Relative difference below which a reference counts as the price itself: IB sends the week ranges
+ * (ticks 15–20) as 32-bit floats (a 52-week high of 345.34 arrives as 345.33999634), whose rounding
+ * error is under 2⁻²⁴ of the value.
+ */
+const FLOAT32_EPS = 2 ** -23;
+
+/** (Price ÷ ref − 1) × 100, at the row's valuation price; 0 when they differ only by the float32 noise. */
+function fromRef(c: CellCtx, ref: number | undefined): number | undefined {
+  if (!pos(c.row.last) || !pos(ref)) return undefined;
+  const r = c.row.last / ref - 1;
+  return Math.abs(r) < FLOAT32_EPS ? 0 : r * 100;
+}
+
+const STATS: Partial<Record<ColumnId, Def>> = {
+  high52w: extra('range', 'px', (q) => q.week52High, STOCKS, 'stocks'),
+  low52w: extra('range', 'px', (q) => q.week52Low, STOCKS, 'stocks'),
+  from52wHigh: { ...calcQ('range', 'pctS', (q, c) => fromRef(c, q.week52High), STOCKS, 'stocks', 112), color: 'sign' },
+  from52wLow: { ...calcQ('range', 'pctS', (q, c) => fromRef(c, q.week52Low), STOCKS, 'stocks', 112), color: 'sign' },
+  high26w: extra('range', 'px', (q) => q.week26High, STOCKS, 'stocks'),
+  low26w: extra('range', 'px', (q) => q.week26Low, STOCKS, 'stocks'),
+  high13w: extra('range', 'px', (q) => q.week13High, STOCKS, 'stocks'),
+  low13w: extra('range', 'px', (q) => q.week13Low, STOCKS, 'stocks'),
+  avgVolume: extra('range', 'big', (q) => q.avgVolume, STOCKS, 'stocks', 84),
+  relVolume: { ...calcQ('range', 'ratio', (q) => (finite(q.volume) && pos(q.avgVolume) ? q.volume / q.avgVolume : undefined), STOCKS, 'stocks', 92), unverified: true },
+  impliedVol30: extra('volatility', 'vol', (q) => q.impliedVol, STOCKS_FUTURES, 'stocksFutures', 104),
+  rtHistVol: { ...extra('volatility', 'vol', (q) => q.rtHistVol, STOCKS, 'stocks', 104), unverified: true },
+  callVolume: extra('optionFlow', 'big', (q) => q.callVolume, STOCKS, 'stocks', 100),
+  putVolume: extra('optionFlow', 'big', (q) => q.putVolume, STOCKS, 'stocks', 100),
+  callOpenInterest: extra('optionFlow', 'big', (q) => q.callOpenInterest, STOCKS_FUTURES, 'stocksFutures'),
+  putOpenInterest: extra('optionFlow', 'big', (q) => q.putOpenInterest, STOCKS_FUTURES, 'stocksFutures'),
+  avgOptionVolume: extra('optionFlow', 'big', (q) => q.avgOptionVolume, STOCKS, 'stocks', 104),
+  tradeCount: { ...extra('activity', 'big', (q) => q.tradeCount, STOCKS, 'stocks', 80), unverified: true },
+  tradeRate: extra('activity', 'big', (q) => q.tradeRate, STOCKS, 'stocks', 100),
+  volumeRate: extra('activity', 'big', (q) => q.volumeRate, STOCKS_FUTURES, 'stocksFutures', 88),
+  volume3m: extra('activity', 'big', (q) => q.volume3m, STOCKS, 'stocks', 84),
+  volume5m: extra('activity', 'big', (q) => q.volume5m, STOCKS, 'stocks', 84),
+  volume10m: extra('activity', 'big', (q) => q.volume10m, STOCKS, 'stocks', 88),
+  vwap: { ...extra('vwap', 'px', (q) => q.vwap, STOCKS, 'stocks'), unverified: true },
+  auctionPrice: { ...extra('auction', 'px', (q) => q.auctionPrice, STOCKS, 'stocks', 88), unverified: true },
+  auctionVolume: { ...extra('auction', 'big', (q) => q.auctionVolume, STOCKS, 'stocks', 104), unverified: true },
+  auctionImbalance: { ...extra('auction', 'big', (q) => q.auctionImbalance, STOCKS, 'stocks', 88), unverified: true },
+  regImbalance: { ...extra('auction', 'big', (q) => q.regulatoryImbalance, STOCKS, 'stocks', 100), unverified: true },
+};
+
+const SHORT: Partial<Record<ColumnId, Def>> = {
+  // IB's code as a word; sorts by the code (more to borrow, higher).
+  shortable: {
+    ...extra('shortSale', 'shortable', (q) => q.shortable, STOCKS, 'stocks', 72),
+    align: 'left',
+    title: (c) => (finite(c.q?.shortable) ? `IB ${c.q.shortable}` : undefined),
+  },
+  shortableShares: extra('shortSale', 'big', (q) => q.shortableShares, STOCKS, 'stocks', 112),
+  borrowFee: { ...extra('shortSale', 'dec', (q) => q.borrowFee, STOCKS, 'stocks', 80), unverified: true },
+};
+
+/**
+ * IB's dividend summary (tick 59) of a stock's line, with an empty 12-month sum read as 0: IB sent
+ * the summary and it has none (",,," for a stock that pays no dividend). "—" only while IB has sent
+ * no summary (a delayed line never gets one).
+ */
+const dividendsOf = (q: Quote): (QuoteDividends & { past12m: number; next12m: number }) | undefined =>
+  q.dividends ? { ...q.dividends, past12m: q.dividends.past12m ?? 0, next12m: q.dividends.next12m ?? 0 } : undefined;
+
+/** A field of IB's dividend summary (dividendsOf). */
+const div = (fmt: Fmt, read: (d: NonNullable<ReturnType<typeof dividendsOf>>) => number | undefined, width: number): Def =>
+  extra(
+    'dividends',
+    fmt,
+    (q) => {
+      const d = dividendsOf(q);
+      return d ? read(d) : undefined;
+    },
+    STOCKS,
+    'stocks',
+    width,
+  );
+
+/** An earnings date as 'YYYYMMDD|time' (the earn format), from IB's Wall Street Horizon or Tape's estimate. */
+const earningsOf = (e: EarningsEvent | undefined, estimated: boolean): string | undefined =>
+  e && !!e.estimated === estimated && /^\d{8}$/.test(e.date) ? `${e.date}|${e.time ?? ''}` : undefined;
+
+/**
+ * Where a release of each time of day falls within its date, in minutes after midnight New York (for
+ * sorting): before the open, during the session, after the close; one of unknown time last.
+ */
+const EARNINGS_MINUTES: Record<NonNullable<EarningsEvent['time']>, number> = { bmo: 9 * 60 + 29, dmh: 16 * 60 - 1, amc: 24 * 60 - 2 };
+
+/** An earnings column's sort key: the date, then the release time (IB's exact one when pinned), as a number. */
+function earningsOrder(e: EarningsEvent | undefined, estimated: boolean): number | undefined {
+  if (!e || !earningsOf(e, estimated)) return undefined;
+  const minutes = e.minutes ?? (e.time ? EARNINGS_MINUTES[e.time] : 24 * 60 - 1);
+  return Number(e.date) * 1440 + minutes;
+}
+
+const INCOME: Partial<Record<ColumnId, Def>> = {
+  divPast12m: div('px', (d) => d.past12m, 92),
+  divNext12m: div('px', (d) => d.next12m, 92),
+  divNextDate: {
+    kind: 'ib',
+    align: 'left',
+    width: 92,
+    sort: 'text',
+    fmt: 'date',
+    needs: 'quote',
+    types: STOCKS,
+    note: 'stocks',
+    profile: 'dividends',
+    value: (c) => c.q?.dividends?.nextDate,
+  },
+  divNextAmount: div('px', (d) => d.nextAmount, 72),
+  divYield: calcQ(
+    'dividends',
+    'pctFine',
+    (q, c) => {
+      const next12m = dividendsOf(q)?.next12m;
+      return finite(next12m) && pos(c.row.last) ? (next12m / c.row.last) * 100 : undefined;
+    },
+    STOCKS,
+    'stocks',
+    80,
+  ),
+  annualDividends: {
+    ...calcQ(
+      'dividends',
+      'pnl',
+      (q, c) => {
+        const next12m = dividendsOf(q)?.next12m;
+        // None for a stock that pays none, short or long (never −0).
+        return finite(next12m) ? (next12m ? next12m * c.row.position.quantity : 0) : undefined;
+      },
+      STOCKS,
+      'stocks',
+      124,
+    ),
+    color: 'sign',
+  },
+  daysToDividend: calcQ('dividends', 'days', (q, c) => (/^\d{8}$/.test(q.dividends?.nextDate ?? '') ? daysToExpiry(q.dividends!.nextDate!, new Date(c.now)) : undefined), STOCKS, 'stocks', 92),
+  nextEarnings: {
+    kind: 'ib',
+    align: 'left',
+    width: 120,
+    sort: 'num',
+    fmt: 'earn',
+    types: STOCKS_OPTIONS,
+    note: 'stocksOptions',
+    needs: 'earnings',
+    unverified: true,
+    value: (c) => earningsOf(c.earnings, false),
+    sortValue: (c) => earningsOrder(c.earnings, false),
+  },
+  nextEarningsEst: {
+    kind: 'calc',
+    align: 'left',
+    width: 120,
+    sort: 'num',
+    fmt: 'earn',
+    types: STOCKS_OPTIONS,
+    note: 'stocksOptions',
+    needs: 'earnings',
+    value: (c) => earningsOf(c.earnings, true),
+    sortValue: (c) => earningsOrder(c.earnings, true),
+  },
 };
 
 const OPTION: Partial<Record<ColumnId, Def>> = {
@@ -738,7 +1145,65 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
   },
 };
 
-const BY_GROUP: Record<ColumnGroup, Partial<Record<ColumnId, Def>>> = { position: POSITION, ibPnl: IB_PNL, contract: CONTRACT, quote: QUOTE, options: OPTION };
+/** An ETF's NAV field (generic ticks 577, 614, 623); the frozen NAV stands in for the live one. */
+const nav = (read: (q: Quote) => number | undefined, width?: number): Def => ({ ...extra('etfNav', 'px', read, STOCKS, 'etfs', width), when: isEtf, unverified: true });
+
+/** A bond's details field (bondContractDetails). */
+const bond = (fmt: Fmt, read: (b: NonNullable<ContractInfo['bond']>) => string | number | undefined, width: number, align: 'left' | 'right' = 'left'): Def => ({
+  kind: 'ib',
+  align,
+  width,
+  sort: align === 'left' ? 'text' : 'num',
+  fmt,
+  types: BONDS,
+  note: 'bonds',
+  needs: 'details',
+  unverified: true,
+  value: (c) => {
+    const v = c.info?.bond ? read(c.info.bond) : undefined;
+    return typeof v === 'string' ? text(v) : v;
+  },
+});
+
+const OTHER: Partial<Record<ColumnId, Def>> = {
+  etfNav: nav((q) => q.etfNav),
+  etfNavHigh: nav((q) => q.etfNavHigh),
+  etfNavLow: nav((q) => q.etfNavLow),
+  navPremium: { ...calcQ('etfNav', 'pctS', (q, c) => fromRef(c, q.etfNav), STOCKS, 'etfs', 92), color: 'sign', when: isEtf, unverified: true },
+  futuresOpenInterest: extra('futuresOi', 'big', (q) => q.futuresOpenInterest, FUTURES, 'futures'),
+  // Bond lines carry the yields with their prices (ticks 50–52, delayed 103 / 104): as sent.
+  bidYield: { ...tick('num3', (q) => q.bidYield, BONDS, 'bonds'), width: 80, unverified: true },
+  askYield: { ...tick('num3', (q) => q.askYield, BONDS, 'bonds'), width: 80, unverified: true },
+  lastYield: { ...tick('num3', (q) => q.lastYield, BONDS, 'bonds'), width: 80, unverified: true },
+  bondFactor: { ...extra('bondFactor', 'dec', (q) => q.bondFactor, BONDS, 'bonds', 80), unverified: true },
+  cusip: bond('text', (b) => b.cusip, 80),
+  coupon: bond('dec', (b) => b.coupon, 72, 'right'),
+  maturity: bond('date', (b) => b.maturity, 92),
+  bondType: bond('text', (b) => b.bondType, 80),
+  // Callable, putable, convertible as words; 'none' when IB says it is none of them.
+  bondFeatures: bond(
+    'features',
+    (b) => {
+      if (b.callable === undefined && b.putable === undefined && b.convertible === undefined) return undefined;
+      const on = (['callable', 'putable', 'convertible'] as const).filter((k) => b[k]);
+      return on.length ? on.join(',') : 'none';
+    },
+    112,
+  ),
+  bondDesc: { ...bond('text', (b) => b.descAppend, 140), title: (c) => text(c.info?.bond?.notes) },
+};
+
+const BY_GROUP: Record<ColumnGroup, Partial<Record<ColumnId, Def>>> = {
+  position: POSITION,
+  ibPnl: IB_PNL,
+  contract: CONTRACT,
+  quote: QUOTE,
+  stats: STATS,
+  short: SHORT,
+  income: INCOME,
+  options: OPTION,
+  other: OTHER,
+};
 
 /** Every column by id. */
 export const COLUMNS = Object.fromEntries(

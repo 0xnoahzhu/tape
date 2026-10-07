@@ -67,7 +67,7 @@ describe('quote subscriptions with IB', () => {
     expect(fake.callsOf('reqMarketDataType')).toEqual([[4]]);
     const reqs = fake.callsOf('reqMktData');
     expect(reqs.map((r) => [(r[1] as { symbol: string }).symbol, r[2], r[3], r[4]])).toEqual([
-      ['AAPL', '100,101,104,106,165,318,456', false, false],
+      ['AAPL', '100,101,106,165,318,411,456', false, false],
       ['SPX', '', false, false],
     ]);
   });
@@ -127,7 +127,7 @@ describe('quote subscriptions with IB', () => {
     reconciled();
     const first = fake.callsOf('reqMktData')[0][0];
     expect(fake.callsOf('cancelMktData')).toEqual([[first]]);
-    expect(fake.callsOf('reqMktData')[1][2]).toBe('100,101,104,106,165,318,456');
+    expect(fake.callsOf('reqMktData')[1][2]).toBe('100,101,106,165,318,411,456');
     // Dropping the underlying profile keeps the richer line.
     svc.setRendererSubscriptions('options-underlying', []);
     reconciled();
@@ -362,6 +362,231 @@ describe('quote subscriptions with IB', () => {
   });
 });
 
+describe('generic ticks of a line', () => {
+  const sym = (r: unknown[]) => (r[1] as { symbol: string }).symbol;
+  const REFUSED = "Error validating request.-'bW' : cause - Incorrect generic tick list of 165,318,456.  Legal ones for (STK) are: 100(Option Volume),101(Option Open Interest)";
+  const silence = () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    cleanup.push(() => warn.mockRestore());
+    return warn;
+  };
+
+  it('requests each held line once more for the shown columns’ extra ticks, opens no line, and keeps the wider line when they go', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    const call = option('AAPL', '20261016', 230, 'C');
+    svc.setRendererSubscriptions('portfolio', [stock('AAPL'), stock('MSFT'), call].map((contract) => ({ contract, profile: 'basic' as const })));
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    // The default columns ask for nothing.
+    svc.setRendererSubscriptions('positions-table', []);
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    svc.setRendererSubscriptions('positions-table', [
+      { contract: stock('AAPL'), profile: 'range' },
+      { contract: stock('MSFT'), profile: 'range' },
+    ]);
+    reconciled();
+    const reqs = fake.callsOf('reqMktData');
+    expect(reqs.slice(3).map((r) => [sym(r), r[2]])).toEqual([
+      ['AAPL', '165,318'],
+      ['MSFT', '165,318'],
+    ]);
+    // One cancel per re-request: as many lines as before.
+    expect(fake.callsOf('cancelMktData')).toEqual([[reqs[0][0]], [reqs[1][0]]]);
+    // Hiding the column keeps the wider lines (no request, no cancel).
+    svc.setRendererSubscriptions('positions-table', []);
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(5);
+    expect(fake.callsOf('cancelMktData')).toHaveLength(2);
+  });
+
+  it('requests a line again without RTVolume once VWAP is hidden', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [
+      { contract: stock('AAPL'), profile: 'range' },
+      { contract: stock('AAPL'), profile: 'vwap' },
+    ]);
+    reconciled();
+    const first = fake.callsOf('reqMktData');
+    expect(first.map((r) => r[2])).toEqual(['165,233,318']);
+    // VWAP hidden, 52w high still shown: 233 (a message per trade) goes, the range stays.
+    svc.setRendererSubscriptions('positions-table', [{ contract: stock('AAPL'), profile: 'range' }]);
+    reconciled();
+    expect(fake.callsOf('reqMktData').map((r) => r[2])).toEqual(['165,233,318', '165,318']);
+    expect(fake.callsOf('cancelMktData')).toEqual([[first[0][0]]]);
+    // Hiding the range column keeps that line (its extra tick is a quiet one).
+    svc.setRendererSubscriptions('positions-table', []);
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    expect(fake.callsOf('cancelMktData')).toHaveLength(1);
+  });
+
+  it('requests a new position once when its extra ticks come with its portfolio line', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [{ contract: stock('AAPL'), profile: 'range' }]);
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+    // A fill opens MSFT while 52w high is shown: both owners change in the same commit.
+    svc.setRendererSubscriptions('portfolio', [stock('AAPL'), stock('MSFT')].map((contract) => ({ contract, profile: 'basic' as const })));
+    svc.setRendererSubscriptions('positions-table', [stock('AAPL'), stock('MSFT')].map((contract) => ({ contract, profile: 'range' as const })));
+    reconciled();
+    const reqs = fake.callsOf('reqMktData');
+    expect(reqs.slice(1).map((r) => [sym(r), r[2]])).toEqual([['MSFT', '165,318']]);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+  });
+
+  it('requests a line again without the add-ons when IB refuses its generic tick list (321), and skips that list for other lines', async () => {
+    const { fake, svc, events } = await setup();
+    const warn = silence();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [
+      { contract: stock('AAPL'), profile: 'dividends' },
+      { contract: stock('AAPL'), profile: 'range' },
+    ]);
+    reconciled();
+    const first = fake.callsOf('reqMktData')[0];
+    expect(first[2]).toBe('165,318,456');
+    fake.emit('marketDataType', first[0], 1);
+    fake.emit('tickPrice', first[0], TICK.LAST, 334);
+    fake.error(first[0] as number, 321, REFUSED);
+    // Once more at the core level (the dividends stay), without a cancel: IB dropped the request.
+    const again = fake.callsOf('reqMktData');
+    expect(again).toHaveLength(2);
+    expect(again[1][2]).toBe('318,456');
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    let q = svc.getQuote('STK:AAPL')!;
+    expect(q.error).toBeUndefined();
+    expect(q.ticksRefused).toBe('addOns');
+    // The price keeps coming on the new line.
+    fake.emit('tickPrice', again[1][0], TICK.LAST, 334.5);
+    expect(svc.getQuote('STK:AAPL')?.last).toBe(334.5);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:AAPL']).toMatchObject({ last: 334.5, ticksRefused: 'addOns' });
+    // The kept line is not requested again; another stock with the same list goes straight to core.
+    svc.setRendererSubscriptions('portfolio', [stock('AAPL'), stock('MSFT')].map((contract) => ({ contract, profile: 'basic' as const })));
+    svc.setRendererSubscriptions(
+      'positions-table',
+      [stock('AAPL'), stock('MSFT')].flatMap((contract) => [
+        { contract, profile: 'dividends' as const },
+        { contract, profile: 'range' as const },
+      ]),
+    );
+    reconciled();
+    const all = fake.callsOf('reqMktData');
+    expect(all.slice(2).map((r) => [sym(r), r[2]])).toEqual([['MSFT', '318,456']]);
+    expect(svc.getQuote('STK:MSFT')?.ticksRefused).toBe('addOns');
+    // Without the add-on columns the lines hold every tick wanted: kept, and no longer short of any.
+    svc.setRendererSubscriptions('positions-table', []);
+    reconciled();
+    expect(fake.callsOf('reqMktData')).toHaveLength(3);
+    q = svc.getQuote('STK:MSFT')!;
+    expect(q.ticksRefused).toBeUndefined();
+    expect(svc.getQuote('STK:AAPL')?.ticksRefused).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps a contract down to no generic ticks on any other 321, then ends the line', async () => {
+    const { fake, svc } = await setup();
+    const warn = silence();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('XYZ'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [{ contract: stock('XYZ'), profile: 'shortSale' }]);
+    reconciled();
+    const message = 'Error validating request.-cause - Invalid ticker action';
+    const ticks = () => fake.callsOf('reqMktData').map((r) => r[2]);
+    expect(ticks()).toEqual(['236,318,499']);
+    fake.error(fake.callsOf('reqMktData')[0][0] as number, 321, message);
+    expect(ticks()).toEqual(['236,318,499', '318']);
+    expect(svc.getQuote('STK:XYZ')?.ticksRefused).toBe('addOns');
+    fake.error(fake.callsOf('reqMktData')[1][0] as number, 321, message);
+    expect(ticks()).toEqual(['236,318,499', '318', '']);
+    expect(svc.getQuote('STK:XYZ')?.ticksRefused).toBe('all');
+    expect(svc.getQuote('STK:XYZ')?.error).toBeUndefined();
+    // No generic tick left: the line ends as before.
+    fake.error(fake.callsOf('reqMktData')[2][0] as number, 321, message);
+    expect(ticks()).toHaveLength(3);
+    expect(svc.getQuote('STK:XYZ')?.error).toEqual({ code: 321, message, final: true });
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // The contract stays at that level for the run, reconnects included.
+    fake.ready();
+    expect(ticks()[3]).toBe('');
+  });
+
+  it('starts every new line without the old line’s generic values', async () => {
+    const { fake, svc, events } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [
+      { contract: stock('AAPL'), profile: 'dividends' },
+      { contract: stock('AAPL'), profile: 'range' },
+    ]);
+    reconciled();
+    const id = reqIdOf(fake, 'AAPL');
+    fake.emit('marketDataType', id, 1);
+    fake.emit('tickPrice', id, TICK.LAST, 334);
+    fake.emit('tickString', id, TICK.IB_DIVIDENDS, '1.06,1.10,20261109,0.27');
+    fake.emit('tickPrice', id, TICK.HIGH_52_WEEK, 345.34);
+    fake.emit('tickSize', id, TICK.AVG_VOLUME, 45_588_678);
+    vi.advanceTimersByTime(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:AAPL']).toMatchObject({ dividends: { next12m: 1.1 }, week52High: 345.34 });
+    // IB drops the market data (1101): the new line is delayed, and IB sends no dividends there.
+    fake.ready();
+    const id2 = reqIdOf(fake, 'AAPL');
+    expect(id2).not.toBe(id);
+    fake.emit('marketDataType', id2, 3);
+    fake.emit('tickPrice', id2, TICK.DELAYED_LAST, 333.9);
+    const q = svc.getQuote('STK:AAPL')!;
+    expect(q).toMatchObject({ last: 333.9, marketDataType: 3 });
+    expect([q.dividends, q.week52High, q.avgVolume]).toEqual([undefined, undefined, undefined]);
+    vi.advanceTimersByTime(100);
+    const patch = quoteEvents(events).at(-1)!.quotes['STK:AAPL'];
+    for (const k of ['dividends', 'week52High', 'avgVolume'] as const) {
+      expect(k in patch, k).toBe(true);
+      expect(patch[k]).toBeUndefined();
+    }
+  });
+
+  it('clears the live-only values when a line turns from live to delayed, keeping the mark and the once-a-line ranges', async () => {
+    const { fake, svc } = await setup();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('positions-table', [
+      { contract: stock('AAPL'), profile: 'dividends' },
+      { contract: stock('AAPL'), profile: 'mark' },
+      { contract: stock('AAPL'), profile: 'range' },
+    ]);
+    reconciled();
+    const id = reqIdOf(fake, 'AAPL');
+    expect(fake.callsOf('reqMktData')[0][2]).toBe('165,221,318,456');
+    fake.emit('marketDataType', id, 1);
+    fake.emit('tickString', id, TICK.IB_DIVIDENDS, '1.06,1.10,20261109,0.27');
+    fake.emit('tickPrice', id, TICK.MARK_PRICE, 334);
+    fake.emit('tickPrice', id, TICK.LAST_RTH_TRADE, 333.6);
+    fake.emit('tickPrice', id, TICK.HIGH_52_WEEK, 345.34);
+    // Frozen is live data too: nothing goes.
+    fake.emit('marketDataType', id, 2);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 2, mark: 334, lastRthTrade: 333.6, dividends: { next12m: 1.1 } });
+    fake.emit('marketDataType', id, 3);
+    const q = svc.getQuote('STK:AAPL')!;
+    // IB sends the ranges once a line, on delayed lines too: they stay.
+    expect(q).toMatchObject({ marketDataType: 3, mark: 334, week52High: 345.34 });
+    expect(q.dividends).toBeUndefined();
+    expect(q.lastRthTrade).toBeUndefined();
+    // What the delayed line sends counts again.
+    fake.emit('tickPrice', id, TICK.LAST_RTH_TRADE, 333.7);
+    fake.emit('marketDataType', id, 4);
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ marketDataType: 4, lastRthTrade: 333.7 });
+  });
+});
+
 describe('probe lines and main-process owners', () => {
   it('opens a probe line within the line budget, forwards its answers and cancels it on close', async () => {
     const { fake, svc } = await setup();
@@ -586,7 +811,7 @@ describe('primary-exchange fallback', () => {
     svc.setRendererSubscriptions('options-underlying', [{ contract: stock('AAPL'), profile: 'underlying' }]);
     reconciled();
     const [, contract, ticks] = lastReq(fake) as [number, { exchange: string }, string];
-    expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,104,106,165,318,456']);
+    expect([contract.exchange, ticks]).toEqual(['NASDAQ', '100,101,106,165,318,411,456']);
     expect(svc.getQuote('STK:AAPL')?.source).toEqual({ kind: 'primary', exchange: 'NASDAQ' });
     // Options, an index and a stock routed to its exchange already are never moved.
     const n = resolved.length;
@@ -808,6 +1033,24 @@ describe('primary-exchange fallback', () => {
     expect(fake.callsOf('reqMktData')).toHaveLength(2);
     expect(lastReq(fake)[1]).toMatchObject({ conId: 265598, exchange: 'NASDAQ' });
     expect(resolved).toHaveLength(1);
+  });
+
+  it('switches to the exchange line without the SMART line’s generic values, keeping what the exchange line sent', async () => {
+    const { fake, svc, smartId } = await fallbackSetup();
+    fake.emit('marketDataType', smartId, 3);
+    fake.emit('tickPrice', smartId, TICK.DELAYED_LAST, 331.85);
+    fake.emit('tickPrice', smartId, TICK.LAST_RTH_TRADE, 331.2);
+    fake.emit('tickPrice', smartId, TICK.HIGH_52_WEEK, 345.34); // not asked for: a stray value
+    expect(svc.getQuote('STK:AAPL')).toMatchObject({ lastRthTrade: 331.2, week52High: 345.34 });
+    await flushAsync();
+    const sideId = lastReq(fake)[0];
+    fake.emit('tickPrice', sideId, TICK.BID, 332.41);
+    fake.emit('tickPrice', sideId, TICK.LAST_RTH_TRADE, 330.9);
+    fake.emit('tickPrice', sideId, TICK.LAST_RTH_TRADE, 331.0); // the latest per field counts
+    fake.emit('marketDataType', sideId, 1);
+    const q = svc.getQuote('STK:AAPL')!;
+    expect(q).toMatchObject({ source: { kind: 'primary', exchange: 'NASDAQ' }, bid: 332.41, lastRthTrade: 331.0 });
+    expect(q.week52High).toBeUndefined();
   });
 
   it('does not move stocks whose primary exchange is not a US one IB serves directly', async () => {

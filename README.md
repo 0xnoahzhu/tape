@@ -11,8 +11,11 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 **Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; a positions table
 (average cost, price, market value and P&L by default) that sorts by any column, with a **column
-editor** for IB's own P&L figures, contract details, quote fields and option greeks (85 columns; those
-Tape calculates are marked ƒ and give their formula); a sector allocation chart; an account view
+editor** for IB's own P&L figures, contract details, quote fields, option greeks, 52-week ranges,
+volatility, option and trading activity, short-sale data, dividends, earnings dates, ETF NAV, futures
+open interest and bond details (145 columns; those Tape calculates are marked ƒ and give their formula,
+those not yet checked against IB's data say so, and the extra quote fields are asked of IB only while
+their column is shown, on the positions' own quote lines); a sector allocation chart; an account view
 (balances, margin, today's P&L). In the positions table, drag a header to move its column or its right
 edge to size it (the columns left of it keep their widths; double-click the edge for the default
 width); a wide table scrolls sideways with its

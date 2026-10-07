@@ -1,6 +1,7 @@
 // Domain models shared by the main process and the renderer.
 // Everything here must stay serializable (structured clone) because it crosses IPC.
 
+import type { AddOnProfile } from './quoteProfiles';
 import type { TimeFormat } from './timeFormat';
 
 export type SecType = 'STK' | 'OPT' | 'IND' | 'FUT' | 'FOP' | 'CASH' | 'BAG' | 'CFD' | 'BOND' | 'WAR' | 'CRYPTO';
@@ -61,6 +62,45 @@ export interface ContractInfo {
   stockType?: string;
   /** IB's price magnifier: 100 when prices are in the currency's minor unit (pence on the LSE). */
   priceMagnifier?: number;
+  /**
+   * Version of the mapping that built the entry (shared/contract.ts → CONTRACT_DETAILS_VERSION);
+   * absent: 1. Persisted entries below the current version are fetched again (market/contracts.ts).
+   */
+  v?: number;
+  /** The ISIN from IB's secIdList (stocks and ETFs; options carry none). */
+  isin?: string;
+  /** IB's market name: 'NMS' for a Nasdaq stock, the trading class for options and futures. */
+  marketName?: string;
+  /** Derivatives: the contract month, YYYYMM. */
+  contractMonth?: string;
+  /** Derivatives: IB's real expiration date, YYYYMMDD. */
+  realExpirationDate?: string;
+  /** Derivatives: the last trading time, 'HH:MM:SS' (or 'HH:MM'), in `lastTradeZone`. */
+  lastTradeTime?: string;
+  lastTradeZone?: string;
+  /** The underlying: its symbol (a futures option's is the future's local symbol, 'ESZ6'), conId and type. */
+  underSymbol?: string;
+  underConId?: number;
+  underSecType?: string;
+  /** Bonds: IB's bondContractDetails. */
+  bond?: BondDetails;
+}
+
+/** A bond's own details as IB sends them (bondContractDetails). */
+export interface BondDetails {
+  cusip?: string;
+  /** The coupon as IB sends it. */
+  coupon?: number;
+  /** YYYYMMDD. */
+  maturity?: string;
+  issueDate?: string;
+  bondType?: string;
+  couponType?: string;
+  callable?: boolean;
+  putable?: boolean;
+  convertible?: boolean;
+  descAppend?: string;
+  notes?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,12 +112,14 @@ export type MarketDataType = 1 | 2 | 3 | 4; // live, frozen, delayed, delayed-fr
 /**
  * Generic tick profiles. The main process maps each profile to a genericTickList:
  * - basic:      quotes for watchlists, positions, ticket (318 = last RTH trade on stocks)
- * - underlying: dividends + option volume/OI, historical and implied volatility, 52w stats
+ * - underlying: dividends + option volume/OI, real-time historical and implied volatility, 52w stats
  *               (indices: without 318 and 456)
  * - option:     option contract quotes with model greeks, volume and open interest
  * - dividends:  basic + IB's dividend summary (generic tick 456, stocks only; live data only)
+ * - add-ons:    basic + the extra ticks of one column family (shared/quoteProfiles.ts), asked for
+ *               only while a column shows them
  */
-export type QuoteProfile = 'basic' | 'underlying' | 'option' | 'dividends';
+export type QuoteProfile = 'basic' | 'underlying' | 'option' | 'dividends' | AddOnProfile;
 
 export interface QuoteSubscription {
   contract: ContractRef;
@@ -206,13 +248,55 @@ export interface Quote {
   pvDividend?: number;
   /** Open interest of an option contract (ticks 27/28). */
   openInterest?: number;
-  // Underlying statistics (profile 'underlying').
+  // Underlying statistics (profile 'underlying', add-ons 'range', 'volatility', 'optionFlow').
   histVol?: number; // tick 23, 30-day historical volatility
+  /** Tick 58 (generic 411), real-time historical volatility. */
+  rtHistVol?: number;
   impliedVol?: number; // tick 24, 30-day implied volatility
   callVolume?: number; // tick 29
   putVolume?: number; // tick 30
   callOpenInterest?: number; // tick 27
   putOpenInterest?: number; // tick 28
+  /** Tick 87 (generic 105), average option volume in contracts. */
+  avgOptionVolume?: number;
+  week13Low?: number; // tick 15 (generic 165)
+  week13High?: number; // tick 16
+  week26Low?: number; // tick 17
+  week26High?: number; // tick 18
+  // Short sale (add-on 'shortSale').
+  /** IB's shortable code (tick 46): above 2.5 at least 1000 shares to borrow, above 1.5 on locate, else none. */
+  shortable?: number;
+  /** Shares available to borrow (tick 89). */
+  shortableShares?: number;
+  /** IB's securities-lending fee rate (tick 111, generic 499), as sent. */
+  borrowFee?: number;
+  // Trading activity (add-ons 'activity', 'vwap', 'auction').
+  tradeCount?: number; // tick 54
+  tradeRate?: number; // tick 55, trades per minute
+  volumeRate?: number; // tick 56, shares (futures: contracts) per minute
+  volume3m?: number; // tick 63
+  volume5m?: number; // tick 64
+  volume10m?: number; // tick 65
+  /** The day's VWAP, field 5 of RTVolume (tick 48, generic 233). */
+  vwap?: number;
+  auctionVolume?: number; // tick 34
+  auctionPrice?: number; // tick 35
+  auctionImbalance?: number; // tick 36
+  regulatoryImbalance?: number; // tick 61
+  // ETF NAV, futures and bonds (add-ons 'etfNav', 'futuresOi', 'bondFactor'; bond yields come with every bond line).
+  etfNav?: number; // tick 96, else the frozen 97
+  etfNavHigh?: number; // tick 98
+  etfNavLow?: number; // tick 99
+  futuresOpenInterest?: number; // tick 86
+  bidYield?: number; // tick 50 (delayed 103)
+  askYield?: number; // tick 51 (delayed 104)
+  lastYield?: number; // tick 52
+  bondFactor?: number; // tick 60
+  /**
+   * IB refused the line's generic ticks (error 321) and it runs without them: 'addOns' without the
+   * add-on profiles' ticks, 'all' without any generic tick. Prices keep coming (market/quotes.ts).
+   */
+  ticksRefused?: 'addOns' | 'all';
   /**
    * IB's dividend summary (profile 'dividends', tick 59). An empty object: IB reports no
    * dividend for the instrument. Absent: not asked, or not sent (delayed lines carry none).

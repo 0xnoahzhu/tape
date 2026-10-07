@@ -7,7 +7,8 @@
 //   switch re-declares several owners) becomes one pass;
 // - a contract no owner wants any more keeps its line for LINGER_MS before cancelMktData, so
 //   switching back and forth reuses the live line; a line whose generic ticks already cover a
-//   new profile set is kept as well;
+//   new profile set is kept as well, unless it carries RTVolume (233, a message per trade) that no
+//   owner wants any more (subscriptions.ts → lineServes);
 // - lingering lines are the first to go when the line limit is reached, and visible views get
 //   lines before background owners (subscriptions.ts).
 // Renderer batches carry only the fields that changed per key; a key the renderer does not hold
@@ -48,6 +49,19 @@
 // probe before then, until a new session) and the fallback findings of this account (a stock found
 // SMART delayed and its exchange live, until SMART or the exchange says otherwise), which the
 // market data check reports.
+//
+// Generic ticks. A line asks for the union of its owners' profiles (subscriptions.ts), within the ids
+// IB accepts. Should IB still refuse the list (error 321), IB has dropped the request and the line is
+// requested again with less, so its prices never stop: 'full' → 'core' (without the add-on profiles)
+// → 'none' (no generic tick); only a 321 on a line without generic ticks ends it. A 321 naming the
+// generic tick list is remembered for the run per instrument type and list (other lines of that type
+// skip it), any other 321 per contract; each is logged once, and the quote's `ticksRefused` says what
+// the line runs without. A line's generic values never outlive it: every new line starts without
+// them and without the bond yields (tickMap.ts → clearGenericFields; only the mark stays, when the
+// new line asks for it too). A line whose data type changes between live (1, 2) and delayed (3, 4)
+// loses those IB sends on live lines only, and the yields (clearLiveOnlyFields); it keeps the ones IB
+// sends on delayed lines too, some only once a line (the week ranges, open interest). So a field IB
+// does not send there shows "—" instead of an older value.
 
 import { EventName } from '../ib/tws';
 import { contractLabel } from '@shared/contract';
@@ -56,8 +70,8 @@ import type { FallbackFinding, MainContext, ProbeEvent, QuoteService } from '../
 import { DEMO_TICK_MS, demoMarket } from './demo';
 import { toIbContract } from './ibContract';
 import { afterStartup, isIbConnected, isWarningCode } from './ibRequest';
-import { allocateLines, coversTicks, genericTicksFor, LINE_LIMIT_ERROR, MAX_MARKET_DATA_LINES, SubscriptionBook, type WantedContract } from './subscriptions';
-import { applyTick, type TickContext, type TickEvent } from './tickMap';
+import { allocateLines, coversTicks, genericTicksFor, LINE_LIMIT_ERROR, lineServes, MAX_MARKET_DATA_LINES, SubscriptionBook, type TickLevel, type WantedContract } from './subscriptions';
+import { applyTick, clearGenericFields, clearLiveOnlyFields, type TickContext, type TickEvent } from './tickMap';
 
 const FLUSH_MS = 100;
 /** Owner changes within this window are reconciled in one pass. */
@@ -82,6 +96,8 @@ const DELAYED_SIGNALS = new Set([DELAYED_FALLBACK_CODE, 354, 10168]);
 const COMPETING_SESSION = 10197;
 /** Primary exchanges IB serves market data on directly (checked live for NASDAQ, NYSE, ARCA, AMEX, BATS). */
 export const US_PRIMARY_EXCHANGES: ReadonlySet<string> = new Set(['NASDAQ', 'NYSE', 'ARCA', 'AMEX', 'BATS', 'IEX']);
+/** "Error validating request": for an owner line with generic ticks, IB refused (some of) them. */
+const TICKS_REFUSED = 321;
 /** A side line without a data type by then has failed. */
 export const SIDE_TIMEOUT_MS = 10_000;
 /** No new primary-exchange probe for this long after one was not live. */
@@ -90,8 +106,6 @@ export const PRIMARY_GIVE_UP_MS = 30 * 60_000;
 export const SMART_RETRY_MS = 10 * 60_000;
 /** Retry after a side line found no free market data line. */
 const NO_LINE_RETRY_MS = 60_000;
-/** Ticks a side line keeps until it becomes the quote's line. */
-const SIDE_BUFFER = 64;
 /** The end of a 10197 episode re-probes routes at most this often. */
 export const COMPETING_END_MIN_MS = 60_000;
 /** A line whose quote has prices but no previous close this long after the first one is requested again. */
@@ -105,6 +119,10 @@ interface Line {
   key: string;
   reqId: number;
   ticks: string;
+  /** How much of the wanted generic tick list the line asked for (see the header). */
+  level: TickLevel;
+  /** The line's last marketDataType (undefined until IB sends one). */
+  dataType?: MarketDataType;
   contract: ContractRef;
   /** Passed to applyTick for every tick of the line (built once). */
   tickContext: TickContext;
@@ -126,8 +144,8 @@ interface Side {
   contract: ContractRef;
   dead: boolean;
   timer: ReturnType<typeof setTimeout>;
-  /** Ticks received before the switch, applied when it happens. */
-  buffer: TickEvent[];
+  /** Ticks received before the switch, the latest per kind and field, applied when it happens. */
+  buffer: Map<string, TickEvent>;
 }
 
 /** Fallback state of a contract (see the header). */
@@ -161,6 +179,11 @@ const sameError = (a: QuoteError | undefined, b: QuoteError | undefined): boolea
   a === b || (!!a && !!b && a.code === b.code && a.message === b.message && !!a.final === !!b.final);
 
 const isLineLimit = (e: QuoteError | undefined): boolean => e?.code === LINE_LIMIT_ERROR.code && e.message === LINE_LIMIT_ERROR.message;
+
+/** Delayed data (3, 4) as opposed to live (1, 2): IB sends some generic ticks on live lines only. */
+const delayedType = (t: MarketDataType): boolean => t === 3 || t === 4;
+
+const lowerLevel = (l: TickLevel): TickLevel => (l === 'full' ? 'core' : 'none');
 
 /** A quote that carries more than its key and timestamp. */
 function hasData(q: Quote): boolean {
@@ -236,6 +259,15 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const competingIds = new Set<number>();
   let competingEndedAt = -Infinity;
   let ready = false;
+  /**
+   * Generic tick lists IB refused (321 naming the list), as `${secType}|${ticks}`, and contracts IB
+   * refused a line of for another reason, with the level they are requested at now. Kept for the
+   * app's run (not cleared on reconnect), so IB's refusal is not repeated after every 1101.
+   */
+  const refusedLists = new Set<string>();
+  const keyLevels = new Map<string, TickLevel>();
+  /** Refusals already logged. */
+  const warned = new Set<string>();
 
   // Demo feed.
   const demoWanted = new Map<string, WantedContract>();
@@ -343,6 +375,21 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     else forgetRoute(line.key);
   };
 
+  /**
+   * The generic tick list a line of `key` asks for: the wanted profiles at the contract's level, one
+   * level lower while IB refused the list (see the header); `refused` says what it runs without.
+   */
+  const lineTicks = (key: string, contract: ContractRef, profiles: WantedContract['profiles']): { level: TickLevel; ticks: string; refused?: Quote['ticksRefused'] } => {
+    let level = keyLevels.get(key) ?? 'full';
+    let ticks = genericTicksFor(contract, profiles, level);
+    while (ticks && refusedLists.has(`${contract.secType}|${ticks}`)) {
+      level = lowerLevel(level);
+      ticks = genericTicksFor(contract, profiles, level);
+    }
+    if (ticks === genericTicksFor(contract, profiles, 'full')) return { level, ticks };
+    return { level, ticks, refused: ticks === genericTicksFor(contract, profiles, 'core') ? 'addOns' : 'all' };
+  };
+
   /** Requests a line (on the primary exchange while the contract's fallback is active); false when there is no session. */
   const requestLine = (w: WantedContract, wantedContract: ContractRef = w.contract, resolved = false): boolean => {
     const api = liveApi();
@@ -351,10 +398,12 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     const onPrimary = !!r?.primary && !!r.primaryContract && wantedContract === w.contract;
     const contract = onPrimary ? r!.primaryContract! : wantedContract;
     const isOption = contract.secType === 'OPT' || contract.secType === 'FOP';
+    const { level, ticks, refused } = lineTicks(w.key, contract, w.profiles);
     const line: Line = {
       key: w.key,
       reqId: ctx.ib.nextReqId(),
-      ticks: genericTicksFor(contract, w.profiles),
+      ticks,
+      level,
       contract,
       tickContext: { isOption, right: contract.right, isCombo: contract.secType === 'BAG' },
       dead: false,
@@ -367,12 +416,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     clearCloseCheck(w.key);
     // A fresh request starts without the previous line's error; IB repeats it if it still applies.
     if (quotes.get(w.key)?.error) setError(w.key, undefined);
-    else ensureQuote(w.key);
-    const q = quotes.get(w.key)!;
+    const q = ensureQuote(w.key);
+    // Nor with its generic values: the new line sends again what it still gets.
+    let changed = clearGenericFields(q, line.ticks);
+    if (q.ticksRefused !== refused) {
+      q.ticksRefused = refused;
+      changed = true;
+    }
     if (!onPrimary && q.source) {
       q.source = undefined; // back on SMART (a new session, or the fallback was dropped)
-      publish(q);
+      changed = true;
     }
+    if (changed) publish(q);
     try {
       api.reqMktData(line.reqId, toIbContract(contract), line.ticks, false, false);
     } catch (err) {
@@ -482,7 +537,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     const api = liveApi();
     if (!api) return false;
     if (openLineCount() >= MAX_MARKET_DATA_LINES) return false;
-    const side: Side = { key: line.key, reqId: ctx.ib.nextReqId(), target, contract, dead: false, buffer: [], timer: undefined! };
+    const side: Side = { key: line.key, reqId: ctx.ib.nextReqId(), target, contract, dead: false, buffer: new Map(), timer: undefined! };
     side.timer = setTimeout(() => sideAnswered(side), SIDE_TIMEOUT_MS);
     sides.set(side.reqId, side);
     routeOf(line.key).side = side;
@@ -610,8 +665,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         console.error('[quotes] cancelMktData failed:', err);
       }
     }
-    // Same tick context: a close the old line sent stays the reference for the same session's data.
-    const next: Line = { ...line, reqId: side.reqId, contract: side.contract, dead: false, resolved: true, route: side.target };
+    // The tick context goes along: a close the old line sent stays the reference for the same
+    // session's data (its NAV does not: the side line's own comes with its buffer).
+    const next: Line = {
+      ...line,
+      reqId: side.reqId,
+      contract: side.contract,
+      dead: false,
+      resolved: true,
+      route: side.target,
+      dataType: type,
+      tickContext: { ...line.tickContext, hasNav: false },
+    };
     lines.set(next.key, next);
     byReqId.set(next.reqId, next);
     const q = ensureQuote(next.key);
@@ -631,7 +696,9 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     q.marketDataType = type;
     q.error = undefined;
-    for (const t of side.buffer) applyTick(q, t, next.tickContext);
+    // The old line's generic values go with it; the side line brings its own.
+    clearGenericFields(q, next.ticks);
+    for (const t of side.buffer.values()) applyTick(q, t, next.tickContext);
     publish(q);
   };
 
@@ -673,9 +740,19 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     for (const line of [...lines.values()]) {
       const w = activeByKey.get(line.key);
       if (w) {
-        // Reused as long as its ticks cover the profiles now wanted; otherwise requested again below.
-        if (coversTicks(line.ticks, genericTicksFor(line.contract, w.profiles))) line.releasedAt = undefined;
-        else cancelLine(line);
+        // Reused as long as its ticks cover the profiles now wanted and it carries no heavy tick they
+        // no longer need (RTVolume once VWAP is hidden); otherwise requested again below.
+        const want = lineTicks(line.key, line.contract, w.profiles);
+        if (lineServes(line.ticks, want.ticks)) {
+          line.releasedAt = undefined;
+          // A line that runs without refused ticks may hold every one wanted now (their columns went).
+          const refused = coversTicks(line.ticks, genericTicksFor(line.contract, w.profiles)) ? undefined : want.refused;
+          const q = quotes.get(line.key);
+          if (q && q.ticksRefused !== refused) {
+            q.ticksRefused = refused;
+            publish(q);
+          }
+        } else cancelLine(line);
       } else if (book.has(line.key)) {
         cancelLine(line); // still wanted, but a contract with a higher priority gets the line
       } else {
@@ -767,6 +844,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       return;
     }
     const q = ensureQuote(w.key);
+    // The snapshot has what the wanted profiles bring: values of a profile no longer wanted go.
+    clearGenericFields(q, genericTicksFor(w.contract, w.profiles));
     Object.assign(q, snapshot);
     if (q.error) q.error = undefined;
     publish(q);
@@ -845,7 +924,10 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     const side = sides.get(reqId);
     if (side) {
-      if (side.buffer.length < SIDE_BUFFER) side.buffer.push(tick);
+      // The latest per kind and field, in the order they last changed (a NAV after a frozen one).
+      const k = `${tick.kind}:${tick.field}`;
+      side.buffer.delete(k);
+      side.buffer.set(k, tick);
       return;
     }
     const line = byReqId.get(reqId);
@@ -861,6 +943,35 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     if (q.close === undefined) watchClose(line, q);
     else if (closeRetries.size) closeRetries.delete(line.key); // a close came: the back-off starts over
     if (changed) publish(q);
+  };
+
+  /**
+   * IB refused a line's generic ticks (321) and dropped the request: the line is requested again one
+   * level lower (see the header), so its prices keep coming.
+   */
+  const refuseTicks = (line: Line, message: string) => {
+    const w = line.releasedAt === undefined ? book.wanted().find((x) => x.key === line.key) : undefined;
+    const named = /generic tick/i.test(message);
+    const refusal = named ? `${line.contract.secType}|${line.ticks}` : line.key;
+    if (named) refusedLists.add(refusal);
+    else {
+      // The next level that asks for less than the refused list.
+      let level = lowerLevel(line.level);
+      while (w && level !== 'none' && genericTicksFor(line.contract, w.profiles, level) === line.ticks) level = lowerLevel(level);
+      keyLevels.set(line.key, level);
+    }
+    if (!warned.has(refusal)) {
+      warned.add(refusal);
+      console.warn(`[quotes] IB refused the generic ticks ${line.ticks} of ${contractLabel(line.contract)}; requested again with fewer: ${message}`);
+    }
+    line.dead = true; // nothing to cancel: a cancel would only answer 300
+    if (!w) {
+      dropLine(line);
+      return;
+    }
+    cancelLine(line);
+    // The same contract: one resolved after error 200 keeps its conId (requestLine keeps the primary route).
+    requestLine(w, line.route === 'smart' && line.resolved ? line.contract : w.contract, line.resolved);
   };
 
   const onLineError = (e: { reqId: number; code: number; message: string }) => {
@@ -883,6 +994,11 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     }
     const line = byReqId.get(e.reqId);
     if (!line) return;
+    // A line without generic ticks takes the dead path below.
+    if (e.code === TICKS_REFUSED && line.ticks) {
+      refuseTicks(line, e.message);
+      return;
+    }
     if (e.code === COMPETING_SESSION) {
       competing = true;
       competingIds.add(line.reqId);
@@ -990,7 +1106,15 @@ export function createQuoteService(ctx: MainContext): QuoteService {
         else scheduleSmartRetry(line.key, 0); // the exchange went delayed: back to SMART if it is live
       } else if (line.route === 'smart') dropFinding(line.key);
       const q = ensureQuote(line.key);
-      if (q.marketDataType === type) return;
+      // Between live and delayed data the values IB sends on live lines only go (see the header).
+      const prev = line.dataType;
+      line.dataType = type as MarketDataType;
+      let cleared = false;
+      if (prev !== undefined && delayedType(prev) !== delayedType(type as MarketDataType)) {
+        line.tickContext.hasNav = false;
+        cleared = clearLiveOnlyFields(q);
+      }
+      if (q.marketDataType === type && !cleared) return;
       q.marketDataType = type as MarketDataType;
       publish(q);
     });

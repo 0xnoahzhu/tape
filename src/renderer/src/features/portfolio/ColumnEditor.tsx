@@ -1,7 +1,9 @@
 // The Positions tab's column editor: a "Columns" button in the tab row opens a popover with a
 // search box, the shown columns in order (drag, ↑ / ↓ or Alt+↑ / Alt+↓ to reorder, × to hide;
 // Symbol stays first) and every column by group with a check to show or hide it. Calculated
-// columns carry a "Calc." chip. It is not modal: the table updates behind it, and a header dragged
+// columns carry a "Calc." chip; a column's note names the instruments it applies to ("No holdings of
+// this type" when none is held), whether it asks IB for extra market data while shown and whether
+// its values are not verified yet. It is not modal: the table updates behind it, and a header dragged
 // in the table moves the same list. "Reset to default" also gives every column its default width. A
 // press outside, Escape, leaving the page and locking Tape close it (state/lockActions.ts).
 
@@ -10,7 +12,7 @@ import { useStore } from '../../state/store';
 import { GripIcon, SlidersIcon } from '../../ui/icons';
 import { GlyphButton, Popover, TextInput } from '../../ui/primitives';
 import type { PositionRow } from './calc';
-import { COLUMN_GROUPS, COLUMN_IDS, COLUMNS, PINNED, applies, type ColumnId } from './columns';
+import { COLUMN_GROUPS, COLUMN_IDS, COLUMNS, PINNED, applies, type ColumnDef, type ColumnId } from './columns';
 import { usePositionColumns, useShownColumns } from './columnStore';
 import { columnTip, usePortfolioMessages, type PortfolioMessages } from './messages';
 
@@ -39,6 +41,16 @@ function matches(id: ColumnId, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();
   return [usePortfolioMessages.for('en'), usePortfolioMessages.for('zh')].some((m) => m.columns[id].some((s) => s.toLowerCase().includes(q)));
+}
+
+/**
+ * A column's note: its instrument types, "Extra market data" and "Unverified" (" · " between them).
+ * Extra data: a column with a profile (generic ticks on the positions' lines) or one of the earnings
+ * columns (Wall Street Horizon requests, else the market scanner, for every stock held).
+ */
+function columnNote(def: ColumnDef, m: PortfolioMessages): string {
+  const extra = !!def.profile || def.needs === 'earnings';
+  return [def.note ? m.notes[def.note] : '', extra ? m.extraData : '', def.unverified ? m.unverifiedLabel : ''].filter(Boolean).join(' · ');
 }
 
 function CalcChip({ id, m }: { id: ColumnId; m: PortfolioMessages }) {
@@ -149,7 +161,7 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                 {ids.map((id) => {
                   const on = shown.includes(id);
                   const def = COLUMNS[id];
-                  const note = unheld.has(id) ? m.noHoldings : def.note ? m.notes[def.note] : '';
+                  const note = unheld.has(id) ? m.noHoldings : columnNote(def, m);
                   return (
                     <div
                       key={id}
@@ -157,7 +169,7 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                       aria-checked={on}
                       aria-disabled={id === PINNED || undefined}
                       tabIndex={0}
-                      title={columnTip(m, id)}
+                      title={note ? `${columnTip(m, id)}\n${note}` : columnTip(m, id)}
                       onClick={() => toggle(id)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -173,7 +185,12 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                         {m.columns[id][0]}
                       </div>
                       <CalcChip id={id} m={m} />
-                      {note && <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{note}</div>}
+                      {note && (
+                        // Shrinks before the column's name does (the full note is in the row's tooltip).
+                        <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
+                          {note}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

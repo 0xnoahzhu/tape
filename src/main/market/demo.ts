@@ -5,7 +5,7 @@
 // deterministic hash-based price). Options are priced with Black–Scholes on a skewed smile.
 // Nothing here talks to IB.
 
-import { contractKey } from '@shared/contract';
+import { CONTRACT_DETAILS_VERSION, contractKey } from '@shared/contract';
 import { isIntraday } from '@shared/timeframes';
 import type {
   Bar,
@@ -174,24 +174,49 @@ function listingContract(l: Listing): ContractRef {
   };
 }
 
+/** ISINs of some built-in stocks (as IB's secIdList reports them). */
+const DEMO_ISIN: Record<string, string> = { AAPL: 'US0378331005', SPY: 'US78462F1030', MSFT: 'US5949181045', NVDA: 'US67066G1040' };
+
 /**
  * Offline contract details. Deliberately without conId: a made-up conId must never reach an
  * order or a later live session.
  */
 export function demoContractInfo(c: ContractRef): ContractInfo | null {
   if (!c.symbol) return null;
+  const v = CONTRACT_DETAILS_VERSION;
   const l = BY_SYMBOL.get(c.symbol.toUpperCase());
   if (c.secType === 'OPT' || c.secType === 'FOP') {
-    return { contract: { ...c, multiplier: c.multiplier ?? 100 }, longName: l?.name ?? c.symbol, minTick: 0.01, timeZoneId: 'US/Eastern' };
+    const info: ContractInfo = { contract: { ...c, multiplier: c.multiplier ?? 100 }, longName: l?.name ?? c.symbol, minTick: 0.01, timeZoneId: 'US/Eastern', v };
+    info.marketName = c.tradingClass ?? c.symbol;
+    info.underSymbol = c.symbol;
+    info.underSecType = l?.secType ?? 'STK';
+    if (c.lastTradeDate && /^\d{8}$/.test(c.lastTradeDate)) {
+      Object.assign(info, { contractMonth: c.lastTradeDate.slice(0, 6), realExpirationDate: c.lastTradeDate, lastTradeTime: '16:00:00', lastTradeZone: 'US/Eastern' });
+    }
+    return info;
   }
   if (l && l.secType === c.secType) {
-    const info: ContractInfo = { contract: { ...c, ...listingContract(l) }, longName: l.name, minTick: 0.01, timeZoneId: l.secType === 'STK' ? 'US/Eastern' : 'US/Central' };
+    const info: ContractInfo = { contract: { ...c, ...listingContract(l) }, longName: l.name, minTick: 0.01, timeZoneId: l.secType === 'STK' ? 'US/Eastern' : 'US/Central', v };
     if (l.industry) info.industry = l.industry;
     if (l.category) info.category = l.category;
+    if (l.secType === 'STK') info.marketName = l.primaryExchange === 'NASDAQ' ? 'NMS' : l.symbol;
+    if (DEMO_ISIN[l.symbol]) info.isin = DEMO_ISIN[l.symbol];
     return info;
   }
   if (c.secType === 'STK' && /^[A-Z.]{1,6}$/i.test(c.symbol)) {
-    return { contract: { ...c, symbol: c.symbol.toUpperCase() }, longName: c.symbol.toUpperCase(), minTick: 0.01, timeZoneId: 'US/Eastern' };
+    return { contract: { ...c, symbol: c.symbol.toUpperCase() }, longName: c.symbol.toUpperCase(), minTick: 0.01, timeZoneId: 'US/Eastern', v };
+  }
+  if (c.secType === 'BOND') {
+    // A US Treasury note, as bondContractDetails would describe one.
+    return {
+      contract: c,
+      longName: c.symbol,
+      minTick: 0.0001,
+      timeZoneId: 'US/Eastern',
+      v,
+      marketName: 'US-T',
+      bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115', issueDate: '20241115', bondType: 'US-T', couponType: 'FIXED', callable: false, putable: false, convertible: false, descAppend: 'T 4 1/4 11/15/34' },
+    };
   }
   return null;
 }
@@ -369,22 +394,66 @@ export class DemoMarket {
       });
       if (c.secType === 'STK') q.lastRthTrade = inst.price;
     }
-    if (profiles.includes('underlying')) {
-      Object.assign(q, {
-        week52High: inst.week52High,
-        week52Low: inst.week52Low,
-        histVol: inst.histVol,
-        impliedVol: round(smileVol(inst.vol, 1, 1, 30), 4),
-        callVolume: inst.callVolume,
-        putVolume: inst.putVolume,
-        callOpenInterest: inst.callOpenInterest,
-        putOpenInterest: inst.putOpenInterest,
-      });
+    const has = (...p: QuoteProfile[]) => p.some((x) => profiles.includes(x));
+    const stk = c.secType === 'STK';
+    const fut = c.secType === 'FUT';
+    // Generic tick 165: the 13 / 26 / 52-week ranges (and the average volume, stocks only).
+    if (has('underlying') || (stk && has('range'))) {
+      Object.assign(q, this.ranges(inst));
       if (c.secType !== 'IND') q.avgVolume = inst.avgVolume;
     }
+    if (has('underlying') || ((stk || fut) && has('volatility'))) q.impliedVol = round(smileVol(inst.vol, 1, 1, 30), 4);
+    if (has('underlying')) q.histVol = inst.histVol;
+    if (has('underlying') || (stk && has('volatility'))) q.rtHistVol = round(inst.histVol * 1.03, 4);
+    if (has('underlying') || (stk && has('optionFlow'))) Object.assign(q, { callVolume: inst.callVolume, putVolume: inst.putVolume });
+    if (has('underlying') || ((stk || fut) && has('optionFlow'))) Object.assign(q, { callOpenInterest: inst.callOpenInterest, putOpenInterest: inst.putOpenInterest });
+    if (stk && has('optionFlow')) q.avgOptionVolume = Math.round((inst.callVolume + inst.putVolume) * 1.1);
+    if (stk && has('activity')) Object.assign(q, this.activity(inst));
+    if (fut && has('activity')) q.volumeRate = this.activity(inst).volumeRate;
+    if (stk && has('vwap')) q.vwap = round((inst.open + inst.high + inst.low + inst.price) / 4, inst.decimals);
+    if (stk && has('auction')) Object.assign(q, this.auction(inst));
+    if ((stk || fut || c.secType === 'CASH' || c.secType === 'CRYPTO') && has('mark')) q.mark = inst.price;
+    if (stk && has('shortSale')) Object.assign(q, { shortable: 3, shortableShares: Math.round(inst.avgVolume * 2.5), borrowFee: 0.0025 });
+    if (stk && has('etfNav')) {
+      const nav = round(inst.price * 0.9998, inst.decimals);
+      Object.assign(q, { etfNav: nav, etfNavHigh: round(Math.max(nav, inst.high * 0.9998), inst.decimals), etfNavLow: round(Math.min(nav, inst.low * 0.9998), inst.decimals) });
+    }
+    if (fut && has('futuresOi')) q.futuresOpenInterest = Math.round(inst.avgVolume * 0.8);
+    if (c.secType === 'BOND') {
+      Object.assign(q, { bidYield: 4.212, askYield: 4.198, lastYield: 4.205 });
+      if (has('bondFactor')) q.bondFactor = 1;
+    }
     // Stock underlying lines carry tick 456 too (subscriptions.ts).
-    if ((profiles.includes('dividends') || profiles.includes('underlying')) && c.secType === 'STK') q.dividends = this.dividends(c.symbol);
+    if (has('dividends', 'underlying') && stk) q.dividends = this.dividends(c.symbol);
     return q;
+  }
+
+  /** The 13 / 26 / 52-week lows and highs (generic tick 165), nested and around today's range. */
+  private ranges(inst: Instrument): Pick<Quote, 'week13Low' | 'week13High' | 'week26Low' | 'week26High' | 'week52Low' | 'week52High'> {
+    const lo13 = round(Math.min(inst.low, inst.week52Low + (inst.price - inst.week52Low) * 0.7), inst.decimals);
+    const hi13 = round(Math.max(inst.high, inst.week52High - (inst.week52High - inst.price) * 0.6), inst.decimals);
+    const lo26 = round(Math.min(lo13, inst.week52Low + (lo13 - inst.week52Low) * 0.5), inst.decimals);
+    const hi26 = round(Math.max(hi13, inst.week52High - (inst.week52High - hi13) * 0.4), inst.decimals);
+    return { week13Low: lo13, week13High: hi13, week26Low: lo26, week26High: hi26, week52Low: Math.min(inst.week52Low, inst.low), week52High: Math.max(inst.week52High, inst.high) };
+  }
+
+  /** Trade count, rates and short-term volumes (generic ticks 293–295, 595) from the day's volume. */
+  private activity(inst: Instrument): Pick<Quote, 'tradeCount' | 'tradeRate' | 'volumeRate' | 'volume3m' | 'volume5m' | 'volume10m'> {
+    const perMin = Math.max(1, Math.round(inst.avgVolume / 390));
+    return {
+      tradeCount: Math.round(inst.volume / 120),
+      tradeRate: Math.max(1, Math.round(perMin / 120)),
+      volumeRate: perMin,
+      volume3m: perMin * 3,
+      volume5m: perMin * 5,
+      volume10m: perMin * 10,
+    };
+  }
+
+  /** The opening / closing auction (generic tick 225): a price near the last, a volume and imbalances. */
+  private auction(inst: Instrument): Pick<Quote, 'auctionPrice' | 'auctionVolume' | 'auctionImbalance' | 'regulatoryImbalance'> {
+    const imbalance = Math.round(inst.avgVolume * 0.002 * (inst.x >= 0 ? 1 : -1));
+    return { auctionPrice: inst.price, auctionVolume: Math.round(inst.avgVolume * 0.04), auctionImbalance: imbalance, regulatoryImbalance: Math.round(imbalance / 2) };
   }
 
   /**

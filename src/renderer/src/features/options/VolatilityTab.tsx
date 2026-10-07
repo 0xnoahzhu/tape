@@ -16,7 +16,10 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
   const { uq, ivAtm, rows, spot } = model;
   const iv = useIvHistory(model.underlying, uq?.impliedVol);
 
-  const hv = uq?.histVol && uq.histVol > 0 ? uq.histVol : undefined;
+  // 30-day historical volatility: tick 23, else the real-time one (tick 58, generic tick 411, which the
+  // underlying profile asks for since IB refuses 104 in a generic tick list).
+  const hvTick = uq?.histVol ?? uq?.rtHistVol;
+  const hv = hvTick && hvTick > 0 ? hvTick : undefined;
   const ratio = ivAtm != null && hv != null ? ivAtm / hv : undefined;
   // Skew: OTM put IV two strikes below ATM minus OTM call IV two strikes above (design).
   const c = model.centerRow;

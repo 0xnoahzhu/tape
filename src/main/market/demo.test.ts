@@ -72,6 +72,37 @@ describe('demo quotes', () => {
     expect(u.putOpenInterest).toBeGreaterThan(0);
   });
 
+  it('adds each add-on profile’s values only for that profile and the types it applies to', () => {
+    const m = new DemoMarket(() => OPEN);
+    const basic = m.quote(stock('AAPL'), ['basic'])!;
+    for (const k of ['week13Low', 'rtHistVol', 'avgOptionVolume', 'tradeCount', 'vwap', 'auctionPrice', 'mark', 'shortable', 'etfNav'] as const) expect(basic[k], k).toBeUndefined();
+    const all = m.quote(stock('AAPL'), ['range', 'volatility', 'optionFlow', 'activity', 'vwap', 'auction', 'mark', 'shortSale', 'etfNav'])!;
+    expect(all.week52Low!).toBeLessThanOrEqual(all.week26Low!);
+    expect(all.week26Low!).toBeLessThanOrEqual(all.week13Low!);
+    expect(all.week13High!).toBeLessThanOrEqual(all.week26High!);
+    expect(all.week26High!).toBeLessThanOrEqual(all.week52High!);
+    expect(all).toMatchObject({ avgVolume: 52e6, mark: all.last, shortable: 3, borrowFee: 0.0025 });
+    for (const k of ['impliedVol', 'rtHistVol', 'callVolume', 'avgOptionVolume', 'tradeCount', 'volumeRate', 'volume10m', 'vwap', 'auctionPrice', 'auctionVolume', 'shortableShares', 'etfNav', 'etfNavHigh', 'etfNavLow'] as const) {
+      expect(all[k], k).toBeGreaterThan(0);
+    }
+    expect(all.volume3m!).toBeLessThan(all.volume10m!);
+    // Futures: open interest, IV, volume rate; nothing that is stocks only.
+    const es = m.quote({ symbol: 'ES', secType: 'FUT', exchange: 'CME', currency: 'USD', lastTradeDate: '20261218' }, ['futuresOi', 'volatility', 'activity', 'range'])!;
+    expect(es.futuresOpenInterest).toBeGreaterThan(0);
+    expect(es.impliedVol).toBeGreaterThan(0);
+    expect(es.volumeRate).toBeGreaterThan(0);
+    expect([es.rtHistVol, es.tradeCount, es.week52High]).toEqual([undefined, undefined, undefined]);
+    // Bonds carry their yields; the factor with its profile.
+    const bond = { symbol: 'US-T', secType: 'BOND' as const, exchange: 'SMART', currency: 'USD' };
+    expect(m.quote(bond)).toMatchObject({ bidYield: 4.212, askYield: 4.198, lastYield: 4.205 });
+    expect(m.quote(bond)!.bondFactor).toBeUndefined();
+    expect(m.quote(bond, ['bondFactor'])!.bondFactor).toBe(1);
+    // The underlying profile brings the real-time HV next to tick 23's.
+    const u = m.quote(stock('NVDA'), ['underlying'])!;
+    expect(u.rtHistVol).toBeGreaterThan(0);
+    expect(u.week13Low).toBeGreaterThan(0);
+  });
+
   it('returns the same quote until the next tick', () => {
     const m = new DemoMarket(() => OPEN);
     m.advance(['AAPL']);
@@ -263,10 +294,21 @@ describe('offline search and details', () => {
 
   it('answers contract details without a made-up conId', () => {
     const info = demoContractInfo(stock('AAPL'))!;
-    expect(info).toMatchObject({ longName: 'APPLE INC', industry: 'Technology', minTick: 0.01 });
+    expect(info).toMatchObject({ longName: 'APPLE INC', industry: 'Technology', minTick: 0.01, v: 2, isin: 'US0378331005', marketName: 'NMS' });
     expect(info.contract.conId).toBeUndefined();
-    expect(demoContractInfo(index('SPX', 'CBOE'))!.longName).toBe('S&P 500 Stock Index');
+    expect(demoContractInfo(index('SPX', 'CBOE'))!).toMatchObject({ longName: 'S&P 500 Stock Index', v: 2 });
     expect(demoContractInfo({ symbol: 'NOPE!', secType: 'STK', exchange: 'SMART', currency: 'USD' })).toBeNull();
+    // Version 2 fields of options and bonds.
+    expect(demoContractInfo(option('AAPL', '20261016', 230, 'C'))).toMatchObject({
+      v: 2,
+      contractMonth: '202610',
+      realExpirationDate: '20261016',
+      lastTradeTime: '16:00:00',
+      lastTradeZone: 'US/Eastern',
+      underSymbol: 'AAPL',
+      underSecType: 'STK',
+    });
+    expect(demoContractInfo({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD' })).toMatchObject({ v: 2, bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115' } });
   });
 
   it('hashes strings stably', () => {
