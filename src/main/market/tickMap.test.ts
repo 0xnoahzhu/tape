@@ -182,10 +182,18 @@ describe('applyTick generic and string', () => {
     applyTick(q, { kind: 'generic', field: TICK.OPTION_IMPLIED_VOL, value: 0.27 }, stock);
     expect(q).toMatchObject({ histVol: 0.21, impliedVol: 0.27 });
     applyTick(q, { kind: 'generic', field: TICK.HALTED, value: 1 }, stock);
-    expect(q.halted).toBe(true);
+    expect(q).toMatchObject({ halted: true, haltCode: 1 });
     applyTick(q, { kind: 'generic', field: TICK.HALTED, value: 0 }, stock);
-    expect(q.halted).toBe(false);
+    expect(q).toMatchObject({ halted: false, haltCode: 0 });
     expect(applyTick(q, { kind: 'generic', field: TICK.HALTED, value: -1 }, stock)).toBe(false);
+  });
+
+  it("keeps IB's halted code apart from the halted flag", () => {
+    const q = q0();
+    // A volatility halt (2) after a general halt (1): the flag stays, the code changes.
+    applyTick(q, { kind: 'generic', field: TICK.DELAYED_HALTED, value: 1 }, stock);
+    expect(applyTick(q, { kind: 'generic', field: TICK.DELAYED_HALTED, value: 2 }, stock)).toBe(true);
+    expect(q).toMatchObject({ halted: true, haltCode: 2 });
   });
 
   it('parses last timestamps (seconds) and RTVolume', () => {
@@ -237,6 +245,15 @@ describe('applyTick option computation', () => {
     expect(q).toMatchObject({ iv: 0.26, delta: 0.52, gamma: 0.031, vega: 0.21, theta: -0.08, undPrice: 227.4 });
     applyTick(q, { kind: 'option', field: TICK.DELAYED_MODEL_OPTION, iv: 1.7976931348623157e308, delta: undefined }, opt);
     expect(q.iv).toBe(0.26);
+  });
+
+  it("keeps the model price and the dividends' present value", () => {
+    const q = q0();
+    applyTick(q, { kind: 'option', field: TICK.MODEL_OPTION, iv: 0.26, delta: 0.52, optPrice: 3.18, pvDividend: 0.42, undPrice: 227.4 }, opt);
+    expect(q).toMatchObject({ optPrice: 3.18, pvDividend: 0.42 });
+    // -1 is IB's "not computed"; 0 is a real present value (no dividends before expiry).
+    applyTick(q, { kind: 'option', field: TICK.DELAYED_MODEL_OPTION, optPrice: -1, pvDividend: 0 }, opt);
+    expect(q).toMatchObject({ optPrice: 3.18, pvDividend: 0 });
   });
 
   it('ignores bid/ask/last computations', () => {

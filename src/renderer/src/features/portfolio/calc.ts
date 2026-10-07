@@ -167,7 +167,14 @@ export interface PositionRow {
   /** Percent of cost basis, sign-adjusted for shorts. */
   unrealizedPct?: number;
   dayPnl?: number;
-  /** Signed percent of net liquidation. */
+  /**
+   * Units of the account currency per unit of the position's currency (IB's ExchangeRate; 1 for the
+   * account currency); undefined while IB has not sent the rate.
+   */
+  fx?: number;
+  /** `value` in the account currency (value × fx). */
+  valueBase?: number;
+  /** Signed percent of net liquidation (from the value in the account currency). */
   weight?: number;
 }
 
@@ -195,7 +202,19 @@ export function remark(p: Position, value: number | undefined): number {
   return finite(value) && finite(p.pnlValue) ? value - p.pnlValue : 0;
 }
 
-export function positionRow(p: Position, livePx: number | undefined, netLiq: number | undefined, sector: string): PositionRow {
+/**
+ * The exchange rate of a position's currency (see PositionRow.fx): 1 for the account currency,
+ * IB's rate for another one, null while the account or the rate is unknown.
+ */
+export function fxRate(currency: string | undefined, account: Pick<AccountSummary, 'currency' | 'exchangeRates'> | null | undefined): number | null {
+  if (!account) return null;
+  if (!currency || currency === account.currency) return 1;
+  const rate = account.exchangeRates?.[currency];
+  return finite(rate) && rate > 0 ? rate : null;
+}
+
+/** `fx`: see fxRate (null = unknown, so the base-currency value and the weight are too). */
+export function positionRow(p: Position, livePx: number | undefined, netLiq: number | undefined, sector: string, fx: number | null = 1): PositionRow {
   const mult = p.multiplier || multiplierOf(p.contract);
   const live = pos(livePx);
   const last = live ? livePx : finite(p.marketPrice) ? p.marketPrice : undefined;
@@ -209,6 +228,7 @@ export function positionRow(p: Position, livePx: number | undefined, netLiq: num
     value = finite(p.marketValue) ? p.marketValue : finite(last) ? p.quantity * last * mult : undefined;
     unrealized = finite(p.unrealizedPnL) ? p.unrealizedPnL : finite(value) ? value - cost : undefined;
   }
+  const valueBase = finite(value) && fx != null ? value * fx : undefined;
   return {
     key: p.key,
     position: p,
@@ -218,7 +238,9 @@ export function positionRow(p: Position, livePx: number | undefined, netLiq: num
     unrealized,
     unrealizedPct: finite(unrealized) && cost !== 0 ? (unrealized / Math.abs(cost)) * 100 : undefined,
     dayPnl: finite(p.dailyPnL) ? p.dailyPnL + remark(p, value) : undefined,
-    weight: finite(value) && finite(netLiq) && netLiq !== 0 ? (value / netLiq) * 100 : undefined,
+    fx: fx ?? undefined,
+    valueBase,
+    weight: finite(valueBase) && finite(netLiq) && netLiq !== 0 ? (valueBase / netLiq) * 100 : undefined,
   };
 }
 

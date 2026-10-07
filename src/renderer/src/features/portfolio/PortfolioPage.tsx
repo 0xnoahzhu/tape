@@ -1,5 +1,5 @@
 // Portfolio page (design v6, "acct"): sticky account header with tabs, then the Dashboard
-// (customizable widget grid, dashboard/), Positions or Account.
+// (customizable widget grid, dashboard/), Positions (columns chosen in ColumnEditor.tsx) or Account.
 // Each tab fills the page height, so no bare page background shows under short content.
 
 import { useMemo, type ReactNode } from 'react';
@@ -8,10 +8,11 @@ import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
-import { accountTotals, todaysExecutions, type AccountTotals } from './calc';
+import { accountTotals, todaysExecutions, type AccountTotals, type PositionRow } from './calc';
 import { Dashboard, DashboardControls } from './dashboard/Dashboard';
 import { useNyDayStart } from './dashboard/data';
 import { AccountView } from './AccountView';
+import { PositionsControls } from './ColumnEditor';
 import { usePortfolioMessages } from './messages';
 import { PositionsTable } from './PositionsTable';
 import { usePortfolioUi, type PortfolioTab } from './uiState';
@@ -37,7 +38,7 @@ function money(v: number | undefined, currency: string | undefined): string {
   return `${f2(v)} ${currency}`;
 }
 
-function Header({ account, totals }: { account: AccountSummary | null; totals: AccountTotals }) {
+function Header({ account, totals, rows }: { account: AccountSummary | null; totals: AccountTotals; rows: readonly PositionRow[] }) {
   const m = usePortfolioMessages();
   const accountId = useAccountId();
   const tab = usePortfolioUi((s) => s.tab);
@@ -81,6 +82,7 @@ function Header({ account, totals }: { account: AccountSummary | null; totals: A
         />
         <div style={{ flex: 1 }} />
         {tab === 'dash' && <DashboardControls />}
+        {tab === 'pos' && <PositionsControls rows={rows} />}
       </div>
     </div>
   );
@@ -97,7 +99,7 @@ export function PortfolioPage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
-      <Header account={account} totals={totals} />
+      <Header account={account} totals={totals} rows={rows} />
       {tab === 'dash' && <Dashboard rows={rows} account={account} totals={totals} symbol={symbol} />}
       {tab === 'pos' && <PositionsTable rows={rows} />}
       {tab === 'account' && <AccountView account={account} totals={totals} />}

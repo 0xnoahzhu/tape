@@ -1,4 +1,4 @@
-// Live position rows: IB positions + quote subscriptions + sector classification.
+// Live position rows: IB positions + quote subscriptions + sector classification + exchange rates.
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useShallow } from 'zustand/shallow';
@@ -6,7 +6,7 @@ import { contractKey } from '@shared/contract';
 import type { ContractRef, Position } from '@shared/types';
 import { lastPrice, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useStore } from '../../state/store';
-import { livePrice, positionRow, quoteContract, sectorOf, sortRows, underlyingOf, type Classification, type PositionRow } from './calc';
+import { fxRate, livePrice, positionRow, quoteContract, sectorOf, sortRows, underlyingOf, type Classification, type PositionRow } from './calc';
 
 // Contract details of underlyings that IB sent without an industry, fetched once per session.
 // null = IB does not know the contract. Failures (not connected, timeouts) are not cached and
@@ -100,6 +100,10 @@ function useAccountPositions(): Position[] {
 export function usePositionRows(): PositionRow[] {
   const positions = useAccountPositions();
   const netLiq = useStore((s) => s.account?.netLiquidation);
+  // The account's currency and IB's exchange rates (the summary object changes with every P&L update,
+  // and so does its rates object, a new copy with every IPC message: compared by its rates).
+  const baseCurrency = useStore((s) => s.account?.currency);
+  const exchangeRates = useStore(useShallow((s) => s.account?.exchangeRates));
   const contracts = useMemo(() => positions.map((p) => quoteContract(p.contract)), [positions]);
   useQuoteSubscriptions('portfolio', contracts, 'basic');
   const keys = useMemo(() => positions.map((p) => contractKey(p.contract)), [positions]);
@@ -113,15 +117,14 @@ export function usePositionRows(): PositionRow[] {
   );
   const classes = useClassifications(positions);
 
-  return useMemo(
-    () =>
-      sortRows(
-        positions.map((p, i) => {
-          const und = underlyingOf(p.contract);
-          const sector = sectorOf(und.secType, ownClassification(p) ?? classes.get(contractKey(und)));
-          return positionRow(p, prices[i], netLiq, sector);
-        }),
-      ),
-    [positions, prices, netLiq, classes],
-  );
+  return useMemo(() => {
+    const account = baseCurrency ? { currency: baseCurrency, exchangeRates } : null;
+    return sortRows(
+      positions.map((p, i) => {
+        const und = underlyingOf(p.contract);
+        const sector = sectorOf(und.secType, ownClassification(p) ?? classes.get(contractKey(und)));
+        return positionRow(p, prices[i], netLiq, sector, fxRate(p.contract.currency, account));
+      }),
+    );
+  }, [positions, prices, netLiq, classes, baseCurrency, exchangeRates]);
 }

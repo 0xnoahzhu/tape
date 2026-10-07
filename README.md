@@ -9,9 +9,11 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 ## Feature tour
 
-**Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; a positions table with
-average cost, last price, market value and P&L; a sector allocation chart; an account view (balances,
-margin, today's P&L). The Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's
+**Portfolio** — net liquidation, day / unrealized P&L, buying power and cash; a positions table
+(average cost, price, market value and P&L by default) that sorts by any column, with a **column
+editor** for IB's own P&L figures, contract details, quote fields and option greeks (85 columns; those
+Tape calculates are marked ƒ and give their formula); a sector allocation chart; an account view
+(balances, margin, today's P&L). The Dashboard's widgets add margin cushion, portfolio Greeks, concentration, today's
 P&L by position, option expirations, today's trades and **earnings & dividends** for the holdings.
 Ex-dividend dates and amounts come with IB's quotes. Earnings dates come from Wall Street Horizon when
 the account has that IBKR subscription; otherwise Tape estimates them from IB's market scanner (US stocks:

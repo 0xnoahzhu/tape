@@ -1,8 +1,9 @@
 // Account service: account summary, portfolio and positions, P&L.
 //
 // On every handshake: reqAccountSummary (headline values), reqAccountUpdates (portfolio with
-// market prices and P&L), reqPositions (cross-check), reqPnL (account P&L) and one
-// reqPnLSingle per position (daily P&L). Values are kept when the connection drops.
+// market prices and P&L, exchange rates), reqPositions (cross-check), reqPnL (account P&L) and one
+// reqPnLSingle per position (daily, unrealized and realized P&L). Values are kept when the
+// connection drops.
 
 import { EventName, type Contract, type IBApi } from './tws';
 import { contractKey, multiplierOf } from '@shared/contract';
@@ -45,6 +46,16 @@ export function accountValueField(key: string, currency: string, accountCurrency
   if (!field) return undefined;
   if (ledger) return currency === 'BASE' ? field : undefined;
   return accountCurrency && currency && currency !== accountCurrency ? undefined : field;
+}
+
+/**
+ * The currency an updateAccountValue exchange rate is for, if it is one: "ExchangeRate" or, as
+ * paper accounts send it, "$LEDGER-ExchangeRate", one row per currency. The value is the account
+ * (base) currency per unit of that currency; the "BASE" row carries no currency of its own.
+ */
+export function exchangeRateOf(key: string, currency: string): string | undefined {
+  if (key !== 'ExchangeRate' && key !== `${LEDGER_PREFIX}ExchangeRate`) return undefined;
+  return currency && currency !== 'BASE' ? currency : undefined;
 }
 
 const EMIT_MS = 250;
@@ -137,6 +148,7 @@ export function createAccountService(ctx: MainContext): AccountService {
       contract,
       quantity: qty,
       avgPrice: cost != null ? cost / multiplier : (prev?.avgPrice ?? 0),
+      averageCost: cost ?? prev?.averageCost,
       multiplier,
       marketPrice: market ? market.marketPrice : prev?.marketPrice,
       marketValue: market ? market.marketValue : prev?.marketValue,
@@ -144,6 +156,8 @@ export function createAccountService(ctx: MainContext): AccountService {
       realizedPnL: market ? market.realizedPnL : prev?.realizedPnL,
       dailyPnL: prev?.dailyPnL,
       pnlValue: prev?.pnlValue,
+      pnlUnrealized: prev?.pnlUnrealized,
+      pnlRealized: prev?.pnlRealized,
       industry: info?.industry ?? prev?.industry,
       category: info?.category ?? prev?.category,
       stockType: info?.stockType ?? prev?.stockType,
@@ -238,8 +252,16 @@ export function createAccountService(ctx: MainContext): AccountService {
     });
 
     ib.on(EventName.updateAccountValue, (key: string, value: string, currency: string, account: string) => {
+      if (!isActive(account)) return;
+      const rateOf = exchangeRateOf(key, currency);
+      if (rateOf) {
+        const rate = num(value);
+        if (rate == null || rate <= 0 || summary?.exchangeRates?.[rateOf] === rate) return;
+        patchSummary({ exchangeRates: { ...summary?.exchangeRates, [rateOf]: rate } });
+        return;
+      }
       const field = accountValueField(key, currency, summary?.currency);
-      if (!field || !isActive(account)) return;
+      if (!field) return;
       patchSummary({ [field]: num(value) });
     });
 
@@ -280,8 +302,10 @@ export function createAccountService(ctx: MainContext): AccountService {
 
     // The P&L engine marks positions at its own price, which outside regular hours differs from the
     // portfolio update's marketPrice: its value is kept apart (pnlValue) so a row's price, value and
-    // unrealized P&L stay from one source and the daily P&L can be re-marked to it.
-    ib.on(EventName.pnlSingle, (reqId: number, _pos: number, dailyPnL: number, _unrealized?: number, _realized?: number, value?: number) => {
+    // unrealized P&L stay from one source and the daily P&L can be re-marked to it. Its unrealized
+    // and realized P&L are kept as IB sends them (the positions table's IB columns): IB's "no value"
+    // clears them rather than keeping an older figure.
+    ib.on(EventName.pnlSingle, (reqId: number, _pos: number, dailyPnL: number, unrealized?: number, realized?: number, value?: number) => {
       const conId = conIdByPnlReq.get(reqId);
       if (conId == null) return;
       const id = String(conId);
@@ -295,6 +319,8 @@ export function createAccountService(ctx: MainContext): AccountService {
           ...cur,
           dailyPnL: daily ?? cur.dailyPnL,
           pnlValue: pnlValue ?? cur.pnlValue,
+          pnlUnrealized: num(unrealized),
+          pnlRealized: num(realized),
           updatedAt: Date.now(),
         }),
       );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountValueField } from './account';
+import { accountValueField, exchangeRateOf } from './account';
 
 describe('accountValueField', () => {
   it('reads the plain keys in the account currency', () => {
@@ -15,5 +15,16 @@ describe('accountValueField', () => {
     // A currency's own ledger holds only that currency's positions.
     expect(accountValueField('$LEDGER-StockMarketValue', 'USD', 'USD')).toBeUndefined();
     expect(accountValueField('$LEDGER-Cushion', 'BASE', 'USD')).toBeUndefined();
+  });
+});
+
+describe('exchangeRateOf', () => {
+  it('reads the exchange rate rows of every currency but BASE', () => {
+    expect(exchangeRateOf('ExchangeRate', 'EUR')).toBe('EUR');
+    expect(exchangeRateOf('$LEDGER-ExchangeRate', 'EUR')).toBe('EUR');
+    expect(exchangeRateOf('$LEDGER-ExchangeRate', 'USD')).toBe('USD');
+    expect(exchangeRateOf('$LEDGER-ExchangeRate', 'BASE')).toBeUndefined();
+    expect(exchangeRateOf('ExchangeRate', '')).toBeUndefined();
+    expect(exchangeRateOf('StockMarketValue', 'EUR')).toBeUndefined();
   });
 });
