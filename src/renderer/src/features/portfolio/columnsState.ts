@@ -1,7 +1,8 @@
-// The Positions table's column choice and sort (pure): which columns show in which order and how
-// wide, the stored preferences and how they are read back, where a header dragged across the table
-// lands, the sort cycle, the comparator and the row order held while the pointer is over the rows.
-// Persisted by columnStore.ts.
+// The Positions table's column choice, grouping and sort (pure): which columns show in which order
+// and how wide, how the rows are grouped, the stored preferences and how they are read back, where a
+// header dragged across the table lands, the sort cycle, the comparator and the group and row order
+// held while the pointer is over the rows. Persisted by columnStore.ts; the groups themselves are
+// groups.ts.
 
 import type { Lang } from '@shared/types';
 import { COLUMNS, DEFAULT_COLUMNS, PINNED, isColumnId, type CellValue, type ColumnDef, type ColumnId } from './columns';
@@ -20,13 +21,23 @@ export interface SortState {
 export type ColumnWidths = Readonly<Partial<Record<ColumnId, number>>>;
 
 /**
- * What is stored: the shown columns (null = the default set), the sort (null = by size) and the
- * widths the user set (of hidden columns too, so showing one again brings its width back).
+ * How the table groups its rows: by underlying (a stock with its options), by sector (IB's industry,
+ * options with their stock's), or not at all.
+ */
+export type GroupBy = 'underlying' | 'sector' | 'none';
+export const GROUP_BYS: readonly GroupBy[] = ['underlying', 'sector', 'none'];
+export const DEFAULT_GROUP_BY: GroupBy = 'underlying';
+
+/**
+ * What is stored: the shown columns (null = the default set), the sort (null = by size), the
+ * widths the user set (of hidden columns too, so showing one again brings its width back) and the
+ * grouping.
  */
 export interface ColumnPrefs {
   columns: ColumnId[] | null;
   sort: SortState | null;
   widths: ColumnWidths;
+  groupBy: GroupBy;
 }
 
 /**
@@ -37,8 +48,8 @@ export const COLUMN_ALIASES: Readonly<Record<string, ColumnId>> = {};
 
 /**
  * A stored column list: renamed ids mapped, unknown and repeated ids dropped, Symbol first. Columns
- * added to the catalog later are not added to it (like the dashboard's layout). Anything that is
- * not an array is null (the default set).
+ * added to the catalog later are not added to it. Anything that is not an array is null (the
+ * default set).
  */
 export function sanitizeColumns(raw: unknown, aliases: Readonly<Record<string, ColumnId>> = COLUMN_ALIASES): ColumnId[] | null {
   if (!Array.isArray(raw)) return null;
@@ -129,9 +140,9 @@ export function tracksWidth(defs: readonly ColumnDef[], widths: ColumnWidths): n
 }
 
 /**
- * Stored preferences ({ columns, sort, widths }); null when there are none to read. A sort is kept
- * only on a shown column with a valid direction. What an older version stored (no widths) reads as
- * it did.
+ * Stored preferences ({ columns, sort, widths, groupBy }); null when there are none to read. A sort
+ * is kept only on a shown column with a valid direction. What an older version stored (no widths,
+ * no grouping) reads as it did, grouped by underlying.
  */
 export function sanitizePrefs(raw: unknown): ColumnPrefs | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -144,7 +155,8 @@ export function sanitizePrefs(raw: unknown): ColumnPrefs | null {
     const known = typeof id === 'string' ? (COLUMN_ALIASES[id] ?? id) : id;
     if (isColumnId(known) && shown.includes(known) && (dir === 'asc' || dir === 'desc')) sort = { id: known, dir };
   }
-  return { columns, sort, widths: sanitizeWidths(r.widths) };
+  const groupBy = GROUP_BYS.find((g) => g === r.groupBy) ?? DEFAULT_GROUP_BY;
+  return { columns, sort, widths: sanitizeWidths(r.widths), groupBy };
 }
 
 /** Adds a column at the end, or removes a shown one. Symbol stays. */
@@ -270,3 +282,26 @@ export function heldOrder(drawn: readonly string[], wanted: readonly string[]): 
 }
 
 export const sameOrder = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((id, i) => id === b[i]);
+
+/** The drawn order of a grouped table: the groups in order, each with its row ids in order. */
+export interface OrderGroup {
+  key: string;
+  ids: readonly string[];
+}
+
+/**
+ * heldOrder for groups: the drawn groups keep their places, and within each group its drawn rows
+ * keep theirs. Groups and rows that went away are dropped; new groups come last, and new rows last
+ * in their group (a row that moved to another group shows in its new one), in the wanted order.
+ */
+export function heldGroups(drawn: readonly OrderGroup[], wanted: readonly OrderGroup[]): OrderGroup[] {
+  const before = new Map(drawn.map((g) => [g.key, g.ids]));
+  const now = new Map(wanted.map((g) => [g.key, g.ids]));
+  return heldOrder(
+    drawn.map((g) => g.key),
+    wanted.map((g) => g.key),
+  ).map((key) => ({ key, ids: heldOrder(before.get(key) ?? [], now.get(key) ?? []) }));
+}
+
+export const sameGroups = (a: readonly OrderGroup[], b: readonly OrderGroup[]): boolean =>
+  a.length === b.length && a.every((g, i) => g.key === b[i].key && sameOrder(g.ids, b[i].ids));

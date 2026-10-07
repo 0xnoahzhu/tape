@@ -9,7 +9,7 @@ import { TopBar } from './layout/TopBar';
 import { ConfirmDialog, OrderConfirmDialog, ToastHost } from './layout/Dialogs';
 import { TradePage } from './pages/TradePage';
 import { PortfolioPage } from './features/portfolio/PortfolioPage';
-import { OrdersPage } from './features/orders/OrdersPage';
+import { showPortfolio } from './features/portfolio/uiState';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { NotificationsPanel } from './features/notifications/NotificationsPanel';
 import { PriceAlertDialog } from './features/alerts/PriceAlertDialog';
@@ -41,14 +41,16 @@ function runCommand(command: AppCommand, dark: boolean): void {
     case 'toggle-theme':
       void window.tape.updateSettings({ appearance: { theme: dark ? 'light' : 'dark' } });
       break;
+    // ⌘1 opens Positions, ⌘3 (and the menu's Orders) Portfolio › Orders; the top bar's Portfolio
+    // keeps the tab it last showed.
     case 'page-portfolio':
-      s.setPage('acct');
+      showPortfolio('pos');
       break;
     case 'page-trade':
       s.setPage('trade');
       break;
     case 'page-orders':
-      s.setPage('ord');
+      showPortfolio('ord');
       break;
     case 'focus-search':
       s.focusSearch();
@@ -127,7 +129,6 @@ export function App() {
         <ErrorBoundary name={page} key={page} style={{ flex: 1 }}>
           {page === 'trade' && <TradePage />}
           {page === 'acct' && <PortfolioPage />}
-          {page === 'ord' && <OrdersPage />}
           {page === 'set' && <SettingsPage />}
         </ErrorBoundary>
         {/* The order ticket and the strategy builder when popped out, over the content area. */}

@@ -98,7 +98,7 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     os.on('click', () => {
       release();
       markRead([item.id]);
-      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind) });
+      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone) });
       else ctx.showMainWindow();
     });
     os.on('close', release);

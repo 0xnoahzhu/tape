@@ -79,7 +79,7 @@ describe('orderStatusText', () => {
     expect(ticketPatchFromOrder(gat).goodAfterTime).toBe('09:35');
   });
 
-  it('reads good-after times in UTC and other zones as the Orders page does', () => {
+  it('reads good-after times in UTC and other zones as Portfolio › Orders does', () => {
     const en12 = createClock('12h', 'en');
     const zh12 = createClock('12h', 'zh');
     const zh: StatusLabels = { ...L, after: (t) => `定时 ${t}` };

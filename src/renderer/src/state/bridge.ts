@@ -2,6 +2,7 @@
 
 import type { TapeEvent } from '@shared/ipc';
 import type { ApiLogEntry, Quote } from '@shared/types';
+import { openNotificationTarget } from '../features/orders/navigation';
 import { applyLockState } from './lockActions';
 import { initialTicket, isCovered, useStore } from './store';
 
@@ -174,7 +175,7 @@ function apply(e: TapeEvent): void {
       break;
     // Nothing behind the lock screen changes while it is up (main does not send these then either).
     case 'openContract':
-      if (!isCovered(useStore.getState())) useStore.getState().openSymbol(e.contract, e.view);
+      if (!isCovered(useStore.getState())) openNotificationTarget(e.contract, e.view);
       break;
     case 'command':
       if (!isCovered(useStore.getState())) commandListeners.forEach((l) => l(e.command));

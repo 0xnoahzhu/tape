@@ -1,6 +1,8 @@
-// Portfolio page (design v6, "acct"): sticky two-tier account header with tabs, then the Dashboard
-// (customizable widget grid, dashboard/) or Positions (columns chosen in ColumnEditor.tsx).
-// Each tab fills the page height, so no bare page background shows under short content.
+// Portfolio page (design v6, "acct"): sticky two-tier account header with tabs, then Positions
+// (grouped, with the toolbar line: PositionsView.tsx), Orders (the working orders) or Trades
+// (today's executions); the last two are the orders feature's tables. ⌘1 opens Positions, ⌘3 and
+// the menu's Orders open Orders (uiState.ts → showPortfolio). Each tab fills the page height, so no
+// bare page background shows under short content.
 
 import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
@@ -8,6 +10,9 @@ import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
+import { newestExecutions, workingOrders } from '../orders/model';
+import { TradesTable } from '../orders/TradesTable';
+import { WorkingTable } from '../orders/WorkingTable';
 import {
   MARGIN_CALL_CUSHION,
   accountTotals,
@@ -17,13 +22,10 @@ import {
   todaysExecutions,
   weightLabel,
   type AccountTotals,
-  type PositionRow,
 } from './calc';
-import { Dashboard, DashboardControls } from './dashboard/Dashboard';
-import { useNyDayStart } from './dashboard/data';
-import { PositionsControls } from './ColumnEditor';
+import { useNyDayStart } from './data';
 import { usePortfolioMessages } from './messages';
-import { PositionsTable } from './PositionsTable';
+import { PositionsView } from './PositionsView';
 import { usePortfolioUi, type PortfolioTab } from './uiState';
 import { usePositionRows } from './usePositionRows';
 
@@ -103,7 +105,13 @@ function money(v: number | undefined, currency: string | undefined): string {
   return `${f2(v)} ${currency}`;
 }
 
-function Header({ account, totals, rows }: { account: AccountSummary | null; totals: AccountTotals; rows: readonly PositionRow[] }) {
+interface Counts {
+  positions: number;
+  orders: number;
+  trades: number;
+}
+
+function Header({ account, totals, counts }: { account: AccountSummary | null; totals: AccountTotals; counts: Counts }) {
   const m = usePortfolioMessages();
   const accountId = useAccountId();
   const tab = usePortfolioUi((s) => s.tab);
@@ -134,37 +142,49 @@ function Header({ account, totals, rows }: { account: AccountSummary | null; tot
         </Stat>
       </div>
       <AccountStrip account={a} totals={totals} />
-      <div style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 28, padding: '0 32px' }}>
+      <div data-pos="tabs" style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 28, padding: '0 32px' }}>
         <TabItems<PortfolioTab>
           tabs={[
-            { key: 'dash', label: m.tabDash },
-            { key: 'pos', label: m.tabPos },
+            { key: 'pos', label: m.tabPos, count: String(counts.positions) },
+            { key: 'ord', label: m.tabOrders, count: String(counts.orders) },
+            { key: 'fill', label: m.tabTrades, count: String(counts.trades) },
           ]}
           value={tab}
           onChange={setTab}
         />
-        <div style={{ flex: 1 }} />
-        {tab === 'dash' && <DashboardControls />}
-        {tab === 'pos' && <PositionsControls rows={rows} />}
       </div>
     </div>
   );
 }
 
+/** The card of the Orders and Trades tabs: the table scrolls inside it under its sticky header. */
+const TABLE_CARD = { background: 'var(--p)', margin: 'var(--gap) var(--pad) var(--pad)', flex: '1 1 0', minHeight: 240, display: 'flex', flexDirection: 'column' } as const;
+
 export function PortfolioPage() {
   const tab = usePortfolioUi((s) => s.tab);
   const account = useStore((s) => s.account);
   const rows = usePositionRows();
+  const orders = useStore((s) => s.orders);
   const executions = useStore((s) => s.executions);
   const dayStart = useNyDayStart();
   const totals = useMemo(() => accountTotals(account, rows, todaysExecutions(executions, dayStart)), [account, rows, executions, dayStart]);
-  const symbol = !account?.currency || account.currency === 'USD' ? '$' : '';
+  const working = useMemo(() => workingOrders(orders), [orders]);
+  const trades = useMemo(() => newestExecutions(executions), [executions]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
-      <Header account={account} totals={totals} rows={rows} />
-      {tab === 'dash' && <Dashboard rows={rows} account={account} symbol={symbol} />}
-      {tab === 'pos' && <PositionsTable rows={rows} />}
+      <Header account={account} totals={totals} counts={{ positions: rows.length, orders: working.length, trades: trades.length }} />
+      {tab === 'pos' && <PositionsView rows={rows} />}
+      {tab === 'ord' && (
+        <div data-pos="orders" style={TABLE_CARD}>
+          <WorkingTable orders={working} />
+        </div>
+      )}
+      {tab === 'fill' && (
+        <div data-pos="trades" style={TABLE_CARD}>
+          <TradesTable executions={trades} />
+        </div>
+      )}
     </div>
   );
 }

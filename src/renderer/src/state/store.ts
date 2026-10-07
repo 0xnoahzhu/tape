@@ -41,7 +41,8 @@ import type {
   WorkingOrder,
 } from '@shared/types';
 
-export type Page = 'acct' | 'trade' | 'ord' | 'set';
+/** Portfolio (with its Positions, Orders and Trades tabs: features/portfolio/uiState.ts), Trade, Settings. */
+export type Page = 'acct' | 'trade' | 'set';
 export type TradeView = 'chart' | 'opt' | 'depth';
 /** 'view' is General (language, theme, colors); 'sec' is Privacy & Security. */
 export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log';

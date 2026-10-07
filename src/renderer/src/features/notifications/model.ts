@@ -2,7 +2,8 @@
 
 import { contractLabel } from '@shared/contract';
 import { resolveTimeTokens, type Clock } from '@shared/timeFormat';
-import type { AppNotification, ContractRef, Lang, NotificationKind } from '@shared/types';
+import type { NotificationView } from '@shared/ipc';
+import type { AppNotification, ContractRef, Lang } from '@shared/types';
 import type { Page } from '../../state/store';
 import type { NotificationsMessages } from './messages';
 
@@ -28,11 +29,23 @@ export function filterNotifications(list: AppNotification[], filter: Notificatio
 }
 
 /**
- * Whether opening a notification's instrument switches to the Trade page (design nt.items open):
- * option notifications open the option chain and Settings gives way; any other page stays.
+ * Where opening a notification leads (orders/navigation.ts → openNotificationTarget): an option
+ * risk alert to the option chain, a fill to Portfolio › Trades, an order update to Portfolio ›
+ * Orders; any other notification about an instrument, a cancelled or rejected order's too
+ * (`orderDone`: Orders does not list it), leaves Settings for the chart, and on another page only
+ * selects the instrument (null: the page stays, design nt.items open).
  */
-export function opensTradePage(kind: NotificationKind, page: Page): boolean {
-  return kind === 'opt' || page === 'set';
+export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone'>, page: Page): NotificationView | null {
+  switch (n.kind) {
+    case 'opt':
+      return 'opt';
+    case 'fill':
+      return 'trades';
+    case 'order':
+      if (!n.orderDone) return 'orders';
+      break;
+  }
+  return page === 'set' ? 'chart' : null;
 }
 
 export function unreadCount(list: AppNotification[]): number {

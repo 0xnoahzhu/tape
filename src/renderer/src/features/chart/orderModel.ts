@@ -1,5 +1,5 @@
 // Working-order presentation for the symbol activity panel (design: stOf / ordMap); "Modify"
-// loads the order into the ticket as on the Orders page. Pure so it can be unit tested.
+// loads the order into the ticket as on Portfolio › Orders. Pure so it can be unit tested.
 
 import { DASH, f0, px } from '@shared/format';
 import { timingText } from '@shared/orderTiming';
@@ -39,7 +39,7 @@ function isEarly(o: WorkingOrder): boolean {
 export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock): OrderStatusText {
   if (o.status === 'PendingCancel') return { text: L.cancelling, accent: false };
   const early = isEarly(o);
-  // TIF with its GTD expiry and any session other than regular hours, as on the Orders page.
+  // TIF with its GTD expiry and any session other than regular hours, as on Portfolio › Orders.
   const tif = timingText(o, L.sessions, clock);
   if (o.conditions?.items.length && !o.conditions.cancel && early) {
     return { text: `${L.waiting} · ${conditionsShort(o.conditions, L.attr, clock)}`, accent: true };
@@ -48,7 +48,7 @@ export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock):
     const op = o.condition.operator === '>=' ? '≥' : '≤';
     return { text: `${L.waiting} · ${o.condition.symbol} ${op} ${px(o.condition.price)}`, accent: true };
   }
-  // Parsed as on the Orders page: IB's UTC form and other zones are read, not taken as ET.
+  // Parsed as on Portfolio › Orders: IB's UTC form and other zones are read, not taken as ET.
   const gat = o.goodAfterTime ? parseGoodAfter(o.goodAfterTime, clock) : null;
   if (gat && early) return { text: `${L.after(gat.label)} · ${tif}`, accent: true };
   let text = `${early ? L.pending : L.working} · ${tif}`;
@@ -65,5 +65,5 @@ export function orderPriceText(o: WorkingOrder): string {
   return p === DASH ? o.orderType : p;
 }
 
-// Modify loads the order the same way from here and from the Orders page.
+// Modify loads the order the same way from here and from Portfolio › Orders.
 export { canModifyInTicket, ticketPatchFromOrder } from '../orders/model';

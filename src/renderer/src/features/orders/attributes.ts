@@ -1,5 +1,5 @@
 // How an order's attributes read: fill attributes, trigger method, IB algo, conditions, adjustable
-// stop, OCA group, destination and note. Shared by the order review, the Orders page, the chart's
+// stop, OCA group, destination and note. Shared by the order review, Portfolio › Orders, the chart's
 // activity panel and the cancel dialog; pure (the labels come from attributeMessages.ts), so it
 // works on requests and working orders alike.
 

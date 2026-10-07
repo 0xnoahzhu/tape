@@ -25,6 +25,13 @@ describe('sanitizeNewNotification', () => {
     expect(sanitizeNewNotification(undefined)).toBeNull();
   });
 
+  it('keeps a finished order’s mark on order notices only', () => {
+    expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, orderDone: true })).toEqual({ kind: 'order', title: text, body: text, orderDone: true });
+    expect(sanitizeNewNotification({ kind: 'fill', title: text, body: text, orderDone: true })).toEqual({ kind: 'fill', title: text, body: text });
+    expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, orderDone: 1 })).toEqual({ kind: 'order', title: text, body: text });
+    expect(createNotification({ kind: 'order', title: text, body: text, orderDone: true }, 'id', 1).orderDone).toBe(true);
+  });
+
   it('drops an invalid contract but keeps the notification', () => {
     expect(sanitizeNewNotification({ kind: 'sys', title: text, body: text, contract: { symbol: 1 } })).toEqual({ kind: 'sys', title: text, body: text });
   });
@@ -86,8 +93,13 @@ describe('shouldShowSystem', () => {
     expect(shouldShowSystem(withRules({ system: { ...base.notifications.system, sys: false } }), 'sys', true)).toBe(true);
   });
 
-  it('opens the option chain for option alerts and the chart otherwise', () => {
+  it('opens the option chain for option alerts, Portfolio › Trades for fills, › Orders for order updates, else the chart', () => {
     expect(viewForKind('opt')).toBe('opt');
+    expect(viewForKind('fill')).toBe('trades');
+    expect(viewForKind('order')).toBe('orders');
+    // A cancelled or rejected order is not on Portfolio › Orders.
+    expect(viewForKind('order', true)).toBe('chart');
     expect(viewForKind('price')).toBe('chart');
+    expect(viewForKind('conn')).toBe('chart');
   });
 });

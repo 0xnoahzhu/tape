@@ -98,6 +98,9 @@ export function Segmented<K extends string | number>({
       {options.map((o) => (
         <div
           key={String(o.key)}
+          // Hooks for UI tests: which option, and whether it is selected.
+          data-key={String(o.key)}
+          data-active={value === o.key || undefined}
           title={o.title}
           onClick={o.disabled ? undefined : () => onChange(o.key)}
           style={{
@@ -171,6 +174,8 @@ export function TabItems<K extends string>({
       {tabs.map((t) => (
         <div
           key={t.key}
+          data-key={t.key}
+          data-active={value === t.key || undefined}
           onClick={() => onChange(t.key)}
           className="no-drag"
           style={{

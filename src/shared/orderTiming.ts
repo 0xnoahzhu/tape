@@ -201,6 +201,17 @@ export function zonedParts(t: number, timeZone: string): WallTime {
   return { ymd: `${p.y}${two(p.mo)}${two(p.d)}`, hhmm: `${two(p.h)}:${two(p.mi)}`, weekday: p.weekday };
 }
 
+/**
+ * Calendar days from today in New York until a YYYYMMDD date (an option's expiry, an earnings or
+ * ex-dividend date: exchange dates, on New York's calendar for US listings); 0 on the day, negative
+ * after it. Unlike contract.ts → daysToExpiry (the viewer's calendar) it does not depend on the
+ * viewer's time zone: in Asia a US Friday expiry is still 1 day away on Thursday afternoon in New York.
+ */
+export function nyDaysUntil(yyyymmdd: string, now: Date = new Date()): number {
+  const day = (ymd: string) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8)));
+  return Math.round((day(yyyymmdd) - day(zonedParts(now.getTime(), NEW_YORK).ymd)) / 86_400_000);
+}
+
 /** A wall clock time ("20261009", "16:00") in a time zone -> unix ms, DST-aware. Throws for unknown zones. */
 export function zonedToUtc(ymd: string, hhmm: string, timeZone: string): number {
   const wall = Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8)), Number(hhmm.slice(0, 2)), Number(hhmm.slice(3, 5)));

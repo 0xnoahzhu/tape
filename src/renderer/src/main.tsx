@@ -4,8 +4,9 @@ import './styles/global.css';
 import { App } from './App';
 import { startBridge } from './state/bridge';
 import { useDesk } from './features/options/deskStore';
-import { useDashboardLayout } from './features/portfolio/dashboard/layoutStore';
 import { usePanels } from './features/panels/panelStore';
+import { usePortfolioUi } from './features/portfolio/uiState';
+import { removeRetiredKeys } from './lib/retiredKeys';
 import { useOrderFeedback } from './state/orderFeedback';
 import { useStore } from './state/store';
 import { installLockKeyGuard } from './features/lock/actions';
@@ -17,8 +18,11 @@ import { focusLockInput } from './features/lock/LockScreen';
   panels: usePanels,
   feedback: useOrderFeedback,
   desk: useDesk,
-  dash: useDashboardLayout,
+  portfolio: usePortfolioUi,
 };
+
+// Per-device keys of features that are gone (the Portfolio dashboard's layout).
+removeRetiredKeys();
 
 // Apply the theme before first paint to avoid a flash.
 const root = document.documentElement;

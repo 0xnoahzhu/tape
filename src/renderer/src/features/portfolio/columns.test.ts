@@ -24,6 +24,8 @@ import { columnTip, usePortfolioMessages } from './messages';
 
 // Tuesday 2026-10-06, 11:00 local.
 const NOW = new Date(2026, 9, 6, 11, 0).getTime();
+/** The same morning in New York, where days to a date are counted (whatever the machine's zone). */
+const NY_MORNING = Date.UTC(2026, 9, 6, 15, 0);
 const clock = createClock('24h', 'en');
 const en = usePortfolioMessages.for('en');
 const words: CellWords = { ...en.words, kinds: en.kinds };
@@ -138,6 +140,37 @@ describe('column catalog', () => {
 
   it('marks the calculated default columns', () => {
     expect(DEFAULT_COLUMNS.filter((id) => COLUMNS[id].kind === 'calc')).toEqual(['avgPrice', 'price', 'value', 'weight', 'unrealized', 'dayPnl']);
+  });
+
+  it('adds up on a group row only the columns where a sum means something', () => {
+    expect(Object.fromEntries(COLUMN_IDS.filter((id) => COLUMNS[id].agg).map((id) => [id, COLUMNS[id].agg]))).toEqual({
+      // A share of net liquidation, or an amount in the account currency.
+      weight: 'sum',
+      valueBase: 'sum',
+      pctGross: 'sum',
+      // An amount in the contract's currency.
+      value: 'money',
+      costBasis: 'money',
+      unrealized: 'money',
+      dayPnl: 'money',
+      marketValueIb: 'money',
+      unrealizedIb: 'money',
+      realizedIb: 'money',
+      dailyPnlIb: 'money',
+      unrealizedPnlIb: 'money',
+      realizedPnlIb: 'money',
+      valuePnlIb: 'money',
+      totalPnl: 'money',
+      annualDividends: 'money',
+      deltaDollars: 'money',
+      positionTheta: 'money',
+      positionVega: 'money',
+      // Share equivalents of one underlying.
+      positionDelta: 'units',
+      positionGamma: 'units',
+    });
+    // Every summed column is a number.
+    for (const id of COLUMN_IDS) if (COLUMNS[id].agg) expect(COLUMNS[id].sort, id).toBe('num');
   });
 });
 
@@ -263,8 +296,10 @@ describe('column values', () => {
     expect(value('price', c)).toBe(3.2);
     expect(value('averageCost', c)).toBe(310);
     expect(value('costBasis', c)).toBe(3_100);
-    expect(value('daysToExpiry', c)).toBe(10);
-    expect(text('daysToExpiry', c)).toBe('10d');
+    expect(value('daysToExpiry', { ...c, now: NY_MORNING })).toBe(10);
+    expect(text('daysToExpiry', { ...c, now: NY_MORNING })).toBe('10d');
+    // Thursday 10/15 13:00 in New York (Friday 01:00 in Shanghai): the Friday expiry is a day away.
+    expect(value('daysToExpiry', { ...c, now: Date.UTC(2026, 9, 15, 17, 0) })).toBe(1);
     expect(text('expiry', c)).toBe('2026-10-16');
     expect(text('right', c)).toBe('Call');
     expect(value('underlying', c)).toBe('AAPL');
@@ -501,7 +536,7 @@ describe('the columns of extra market data, earnings and contract details', () =
     expect(text('divYield', c)).toBe('0.484%');
     expect(value('annualDividends', c)).toBeCloseTo(110);
     expect(text('annualDividends', c)).toBe('+110');
-    expect(value('daysToDividend', c)).toBe(34);
+    expect(value('daysToDividend', { ...c, now: NY_MORNING })).toBe(34);
     // A short position pays the dividends.
     const short = ctx({ ...aapl, quantity: -100 }, { livePx: 227.48, quote });
     expect(text('annualDividends', short)).toBe('−110');

@@ -1,6 +1,6 @@
 // Pure helpers for the notification list (no Electron), used by notifications.ts.
 
-import type { NewNotification } from '@shared/ipc';
+import type { NewNotification, NotificationView } from '@shared/ipc';
 import { NOTIFICATION_KINDS } from '@shared/defaults';
 import type { AppNotification, NotificationKind, Settings } from '@shared/types';
 import { capNotifications, isObject, sanitizeContract, sanitizeLocalizedText } from './storeSchema';
@@ -14,12 +14,14 @@ export function sanitizeNewNotification(raw: unknown): NewNotification | null {
   const n: NewNotification = { kind: raw.kind as NotificationKind, title, body };
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
+  if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
   return n;
 }
 
 export function createNotification(n: NewNotification, id: string, t: number): AppNotification {
   const item: AppNotification = { id, t, kind: n.kind, title: n.title, body: n.body, read: false };
   if (n.contract) item.contract = n.contract;
+  if (n.orderDone) item.orderDone = true;
   return item;
 }
 
@@ -49,7 +51,20 @@ export function shouldShowSystem(settings: Settings, kind: NotificationKind, for
   return !dnd && (force || system[kind]);
 }
 
-/** The view opened when a notification about an instrument is clicked. */
-export function viewForKind(kind: NotificationKind): 'opt' | 'chart' {
-  return kind === 'opt' ? 'opt' : 'chart';
+/**
+ * Where a click on a notification about an instrument leads: an option risk alert to the option
+ * chain, a fill to Portfolio › Trades, an order update to Portfolio › Orders (a cancelled or
+ * rejected order, `orderDone`, is not listed there: the chart), anything else to the chart.
+ */
+export function viewForKind(kind: NotificationKind, orderDone = false): NotificationView {
+  switch (kind) {
+    case 'opt':
+      return 'opt';
+    case 'fill':
+      return 'trades';
+    case 'order':
+      return orderDone ? 'chart' : 'orders';
+    default:
+      return 'chart';
+  }
 }

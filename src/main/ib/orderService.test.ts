@@ -169,6 +169,8 @@ describe('OrderService', () => {
     t.error(50, 321, "Error validating request.-'bC' : cause - The API interface is currently in Read-Only mode.");
     await expect(p).rejects.toThrow('The API interface is currently in Read-Only mode. (321)');
     expect(t.notices.map((n) => [n.kind, n.title.en, n.body.en])).toEqual([['order', 'Buy 100 AAPL rejected', 'The API interface is currently in Read-Only mode. (321)']]);
+    // Not on Portfolio › Orders: a click opens the instrument.
+    expect(t.notices[0].orderDone).toBe(true);
   });
 
   it('fails when IB sets the order Inactive, with the reason that follows', async () => {
@@ -184,6 +186,7 @@ describe('OrderService', () => {
     await expect(p).rejects.toThrow(`${reason} (201)`);
     await vi.advanceTimersByTimeAsync(3_000);
     expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([['Buy 100 AAPL rejected', `${reason} (201)`]]);
+    expect(t.notices[0].orderDone).toBe(true);
   });
 
   it('fails an Inactive order without a reason when the wait runs out', async () => {
@@ -286,6 +289,7 @@ describe('OrderService', () => {
     t.emit('orderStatus', 40, 'Cancelled', 0, 100, 0, 9040, 0, 0, CLIENT_ID, '');
     await expect(c).resolves.toBeUndefined();
     expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL submitted', 'Buy 100 AAPL cancelled']);
+    expect(t.notices.map((n) => n.orderDone)).toEqual([undefined, true]);
   });
 
   it('keeps a working order in its trading session', async () => {

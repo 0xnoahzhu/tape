@@ -327,6 +327,7 @@ function sanitizeNotification(raw: unknown): AppNotification | null {
   const n: AppNotification = { id: raw.id, t: raw.t, kind: raw.kind as NotificationKind, title, body, read: raw.read === true };
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
+  if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
   return n;
 }
 

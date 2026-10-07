@@ -328,6 +328,11 @@ describe('sanitizeNotifications', () => {
   it('drops entries with unknown kinds or missing text', () => {
     expect(sanitizeNotifications([{ ...n(1), kind: 'spam' }, { ...n(2), title: 'x' }, n(3)])).toEqual([n(3)]);
   });
+
+  it('keeps a finished order’s mark on order notices only', () => {
+    const done = { ...n(1), kind: 'order' as const, orderDone: true as const };
+    expect(sanitizeNotifications([done, { ...n(2), orderDone: true }, { ...n(3), kind: 'order', orderDone: 'yes' }])).toEqual([{ ...n(3), kind: 'order' }, n(2), done]);
+  });
 });
 
 describe('sanitizeWindowBounds', () => {

@@ -6,7 +6,6 @@ export const useCommon = createMessages({
   en: {
     portfolio: 'Portfolio',
     trade: 'Trade',
-    orders: 'Orders',
     settings: 'Settings',
     settingsTitle: (keys: string) => `Settings (${keys})`,
     notifications: 'Notifications',
@@ -68,7 +67,6 @@ export const useCommon = createMessages({
   zh: {
     portfolio: '组合',
     trade: '交易',
-    orders: '订单',
     settings: '设置',
     settingsTitle: (keys: string) => `设置 (${keys})`,
     notifications: '通知',

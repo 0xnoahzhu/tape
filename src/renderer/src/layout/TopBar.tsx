@@ -55,7 +55,6 @@ export function TopBar() {
           tabs={[
             { key: 'acct', label: m.portfolio },
             { key: 'trade', label: m.trade },
-            { key: 'ord', label: m.orders },
           ]}
           value={page}
           onChange={(k) => setPage(k)}

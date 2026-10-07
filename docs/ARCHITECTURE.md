@@ -409,7 +409,7 @@ show as 0). IB sends it only on live
 lines; a delayed line (market data type 3 / 4) never gets it. The `underlying` profile of stocks
 includes 456 too, so the stock tick lists nest (basic ⊂ dividends ⊂ underlying): a line already
 open for a stock is requested again once with the wider tick list and then kept when a page with a
-narrower profile takes over (options view ↔ dashboard). Its historical volatility is the real-time
+narrower profile takes over (options view ↔ Positions tab). Its historical volatility is the real-time
 one, generic tick 411 (tick 58, `Quote.rtHistVol`): IB refuses 104 (tick 23) in a generic tick list,
 so `underlying` is `100,101,106,165,318,411,456` for stocks and `100,101,106,165,411` for indices,
 and the options desk's HV reads `histVol ?? rtHistVol`.
@@ -682,16 +682,16 @@ closed; late rows and IB's 162 acknowledgement find no listener, and request ids
 Typical cost for 40 holdings is about 400 scans (960 at worst): about 75 s at about 0.55 s per scan
 three at a time, about 5.5 requests and 5.5 cancels per second (of the 45 sent at most), once per
 New York day per connection plus new holdings. ETFs (`ContractInfo.stockType`) and non-USD stocks
-cost no scans. A stock without any price waits up to 10 s for a quote (the widget's `dashboard-div`
-line), else, like a timeout or another IB error, it is tried again after 5 minutes. Results, none
+cost no scans. A stock without any price waits up to 10 s for a quote (the Positions tab's
+`positions-div` line), else, like a timeout or another IB error, it is tried again after 5 minutes. Results, none
 and unknown too, are kept per stock for the New York day and dropped when the connection closes;
 a none or unknown reached with a narrowed band (the stock's price may have moved away from Tape's)
 is asked once more after 5 minutes before it holds for the day. 162 (other than pacing or a limit)
 or 321 means IB refuses the scanner itself: no more scans on this connection that day.
 
 `getEarnings` never waits for the scanner: it answers with what is known and `pending: true` while
-searches run (the widget asks again every 3 s), and `retryInMs` while a stock waits to be tried
-again (the widget asks again then). The answer has a status: `ok` (with `source: 'wsh'`, or
+searches run (the Positions tab asks again every 3 s), and `retryInMs` while a stock waits to be
+tried again (the Positions tab asks again then). The answer has a status: `ok` (with `source: 'wsh'`, or
 `'scanner'` when some stocks went to the scanner; `partial` when some of those are not US dollar
 stocks, which the scanner cannot look up: the note then says US stocks only), `unsubscribed` (IB
 refused WSH and the scanner, or only stocks the scanner does not cover are left) or `unavailable`
@@ -825,10 +825,29 @@ delete open files):
 * `src/renderer/src/features/<feature>/` — one folder per feature. Each feature declares its own
   strings with `createMessages({ en, zh })` (see `src/renderer/src/i18n/index.ts`).
 * `src/renderer/src/ui/primitives.tsx` — controls that reproduce the design (Toggle, Segmented,
-  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, Popover, MenuItem).
+  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, Popover, MenuItem). Segmented and TabItems
+  items carry `data-key` (and `data-active` on the selected one) for UI tests.
 * Design tokens are CSS variables in `styles/tokens.css`. The root element carries
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
+* `src/renderer/src/lib/retiredKeys.ts` — per-device `localStorage` keys of features that are gone,
+  removed at startup (`main.tsx`): `tape.dash.v1`, the Portfolio dashboard's layout.
+
+**Navigation.** `Page` is `acct | trade | set`: the top bar shows Portfolio and Trade (Settings is
+the sliders icon). The Portfolio page has the tabs Positions, Orders and Trades
+(`features/portfolio/uiState.ts`: `pos | ord | fill`, kept across page switches); `showPortfolio(tab?)`
+opens the page on a tab, or on the last one. ⌘1 / Ctrl+1 and the menu's Portfolio open Positions,
+⌘3 / Ctrl+3 and the menu's Orders (the `page-orders` command, `menuTemplate.ts`) Portfolio › Orders,
+and the top bar's Portfolio keeps the last tab; the chart's activity panel's "All orders ›" opens
+Portfolio › Orders. A notification's click: in the bell, `notifications/model.ts → notificationTarget`
+(a fill → `trades`, an order update → `orders`, an option risk alert → `opt`, anything else → `chart`
+from Settings, else null: only the instrument is selected); from the system notification center, main's
+`notificationModel.ts → viewForKind` (the same, `chart` otherwise) in the `openContract` event's `view`.
+A cancelled or rejected order's notice carries `orderDone` (`main/ib/orders.ts`; kept on order
+notices only, through the store too): Portfolio › Orders lists working orders only, so such a notice
+goes where any other notification does.
+Both end in `orders/navigation.ts → openNotificationTarget`: `trades` / `orders` select the instrument
+and open Portfolio › Trades / Orders, `opt` opens the option chain of the underlying, `chart` the chart.
 
 ### Order ticket (`features/ticket`)
 
@@ -861,7 +880,7 @@ values still to be typed (a group name, an algo parameter). The ticket's current
 problem is shown in red under the TIF row. The contract's `orderTypes` and `validExchanges`
 (`useContractInfo`) feed the rules.
 
-"Modify" (`orders/model.ts → ticketPatchFromOrder`, used by the Orders page and the chart's
+"Modify" (`orders/model.ts → ticketPatchFromOrder`, used by Portfolio › Orders and the chart's
 activity panel) loads every attribute of the working order into the ticket and opens the sections
 it uses; a modify sends switched-off attributes explicitly (false / 0 / ''), since IB replaces the
 whole order. What IB does not change on a working order is locked with the reason: side, order
@@ -963,7 +982,7 @@ own remembered position (first: the bottom-right corner of the content area).
 
 ### Portfolio header (`features/portfolio/PortfolioPage.tsx`)
 
-A sticky header over both tabs (Dashboard, Positions) in two tiers. Tier 1 (36 / 22px): net
+A sticky header over the three tabs (Positions, Orders, Trades) in two tiers. Tier 1 (36 / 22px): net
 liquidation, day P&L, unrealized P&L, realized today, buying power and excess liquidity. Under excess
 liquidity hangs the margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
 `MARGIN_CALL_CUSHION`. It is positioned absolutely under the stat, so tier 1 keeps
@@ -984,16 +1003,17 @@ one 13px line of balances and margin that wraps item by item. Totals are `calc.t
 
 ### Portfolio positions table (`features/portfolio`)
 
-The Positions tab shows the columns the user picks in the column editor (`ColumnEditor.tsx`, the
-"Columns" button in the tab row), by default the design's eight: Symbol, Qty, Avg, Price, Value,
+The Positions tab (`PositionsView.tsx`: a toolbar line, `PositionsToolbar.tsx`, over the table,
+`PositionsTable.tsx`) shows the columns the user picks in the column editor (`ColumnEditor.tsx`, the
+"Columns" button on the toolbar), grouped (see Positions grouping below), by default the design's eight: Symbol, Qty, Avg, Price, Value,
 % NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 145 columns in nine
 groups: Position, IB P&L, Contract, Quote, Statistics, Short selling, Dividends & earnings, Options,
 ETF / futures / bonds), with each column's kind, the instrument types it applies to (and, for the ETF
 columns, `when`: a stock IB types as ETF / ETN / ETC / ETP), its minimum width, format, sort type,
 accessor, the add-on quote profile it needs and whether it is verified. `cells.ts` formats the cells,
 `columnsState.ts` holds the pure edits (the order, a dragged header's slot, the widths and the grid
-tracks), the reading of stored preferences, the sort cycle and comparator and the held row order, and
-`columnStore.ts` persists them. `usePositionColumnData.ts`
+tracks), the reading of stored preferences, the sort cycle and comparator and the held group and row
+order, and `columnStore.ts` persists them. `usePositionColumnData.ts`
 reads what the shown columns need beyond the rows (the positions' quotes, their contract details, the
 gross value, the holdings' earnings), each only while a shown column needs it, and asks for the shown
 columns' extra generic ticks.
@@ -1017,7 +1037,7 @@ P&L (`positionRow`).
 | Quote | Last, Last size, Last time, Bid, Ask, sizes, Mid, Spread and %, Prev close, Chg and %, Open, High, Low, Volume, Mark, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner, basic profile: stocks 318, options 100, 101, 106 and 221). Mark: options always, stocks, futures, forex and crypto with the `mark` add-on. Chg compares the quote's own price, never the previous close itself; Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
 | Statistics | 52w / 26w / 13w high and low, From 52w high / low, Avg volume, Rel. volume, IV 30d, HV 30d, Call / put volume and OI, Avg opt. volume, Trades, Trades/min, Volume/min, Vol 3m / 5m / 10m, VWAP, Auction price, volume, imbalance and regulatory imbalance | The add-ons `range`, `volatility`, `optionFlow`, `activity`, `vwap`, `auction` (stocks; IV, OI and volume/min also futures). From 52w = (Price ÷ high or low − 1) × 100, 0 when they differ only by IB's float32 rounding of ticks 15–20; Rel. volume = volume (tick 8) ÷ average volume (tick 21) |
 | Short selling | Shortable, Shortable shares, Borrow fee | `shortSale` (stocks): tick 46 as a word (above 2.5 easy, at least 1000 shares; above 1.5 on locate; else no), sorted by IB's value; tick 89; tick 111 as sent |
-| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Div. yield, Div. income 12m, Days to div., Earnings, Earnings est. | The `dividends` profile (tick 59, live lines only); yield = next 12m ÷ Price × 100, income = next 12m × quantity (a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). The earnings columns read `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the dashboard and cached for the day): Earnings is Wall Street Horizon's date with BMO / AMC / during, Earnings est. Tape's estimate from IB's market scanner where WSH is not available; both sort by date, then before the open, during, after the close, unknown |
+| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Div. yield, Div. income 12m, Days to div., Earnings, Earnings est. | The `dividends` profile (tick 59, live lines only); yield = next 12m ÷ Price × 100, income = next 12m × quantity (a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). The earnings columns read `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the event chips: one per Positions tab, cached for the day): Earnings is Wall Street Horizon's date with BMO / AMC / during, Earnings est. Tape's estimate from IB's market scanner where WSH is not available; both sort by date, then before the open, during, after the close, unknown |
 | Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI, ITM %, Intrinsic, Extrinsic, Break-even, position delta, gamma, theta, vega, Delta $ | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28; the position figures are greek × quantity × multiplier, at IB's model underlying price |
 | ETF / futures / bonds | NAV, NAV high / low, Prem./disc., Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Bond type, Features, Description | `etfNav` (ETFs; premium = (Price ÷ NAV − 1) × 100), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
 
@@ -1070,12 +1090,19 @@ currency is converted with IB's rate (units of the account currency per unit of 
 shows "—" until the rate has come (`calc.ts → fxRate`).
 
 **Sorting.** A header click sorts ascending, a second one descending, a third one goes back to the
-default order (largest absolute value first). Blanks sort last in both directions; text compares by
-the language's collation, numbers in it as numbers; ties keep the conId order. Symbol sorts by
-underlying, then the stock before its options, futures and futures options, then expiry, strike and
-right (`contractOrderKey`). As values change the order follows at most once a second after the previous re-sort (`RESORT_MS`), and
-not while the pointer is over the rows: their values update in place, new rows come last and closed
-ones go (`heldOrder`); the pointer leaving and a header click re-sort at once.
+default order (largest groups first, by Σ |value in the account currency|, and within a group the
+largest absolute value first). Blanks sort last in both directions; text compares by the language's
+collation, numbers in it as numbers; ties keep the conId order. Symbol sorts by underlying, then the
+stock before its options, futures and futures options, then expiry, strike and right
+(`contractOrderKey`). A sort orders the rows within each group, and the groups
+(`groups.ts → orderGroups`): on Symbol by their label (a sector by its name in the user's language), on
+a column that adds up (`agg`) by the group's sum (an empty or "—" sum last), on any other column by
+the group's first row once sorted, its best member (DTE ascending puts the group with the soonest
+expiry first); ties by group key. As values change the order follows at most once a second after the
+previous re-sort (`RESORT_MS`), and not while the pointer is over the rows: their values update in
+place, the drawn groups and the rows within each keep their places, new ones come last and closed ones
+go (`heldGroups`, per group; a row that moved to another group shows in its new one); the pointer
+leaving, a header click and a new grouping re-sort at once.
 
 **Layout.** The card is its own scroll container (the page's account header has a variable height,
 and a sideways-scrolling wrapper would keep the table header from sticking): the header row sticks at
@@ -1112,42 +1139,81 @@ pointer is down the table stays at least as wide as at the press, so a card scro
 does not scroll back under the pointer; it settles on release. A column drawn wider than the maximum
 (its share of a very wide card) is sized only once the pointer brings it within the maximum.
 
-**Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort, widths }` per device, in the
-Electron profile, so it outlasts a restart (read and written in try/catch; `sanitizePrefs`: renamed ids
-through `COLUMN_ALIASES`, unknown and repeated ids dropped, Symbol first, a sort only on a shown
-column; `sanitizeWidths`: unknown ids and non-numbers dropped, each width clamped). What 0.8.x stored,
-without `widths`, reads as before. The default columns are not written out (only a sort and widths), so
-they follow later defaults until the user changes them; from then on, columns added to the catalog
-later are not added to their list (as with the dashboard's layout). A hidden column keeps its width, so
-showing it again brings the width back. Reset to default removes the key (columns, sort and widths).
-The editor's open state is not stored; leaving the page and locking close it (`state/lockActions.ts`).
+**Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort, widths, groupBy }` per
+device, in the Electron profile, so it outlasts a restart (read and written in try/catch;
+`sanitizePrefs`: renamed ids through `COLUMN_ALIASES`, unknown and repeated ids dropped, Symbol first,
+a sort only on a shown column, a grouping other than `underlying`, `sector` or `none` read as
+`underlying`; `sanitizeWidths`: unknown ids and non-numbers dropped, each width clamped). What 0.8.x
+and 0.9 stored, without `widths` or `groupBy`, reads as before, grouped by underlying. The default
+columns are not written out (only a sort, widths and a grouping other than by underlying), so they
+follow later defaults until the user changes them; from then on, columns added to the catalog later
+are not added to their list. A hidden column keeps its width, so showing it again brings the width
+back. Reset to default removes the key (columns, sort, widths and grouping) and expands every group.
+Which groups are collapsed holds for the session only (`collapsed`, by group key: the keys of closed
+positions' groups would pile up in storage); so does the editor's open state, and leaving the page
+and locking close the editor (`state/lockActions.ts`).
 
-### Portfolio dashboard (`features/portfolio/dashboard`)
+### Positions grouping, option lines, greeks and events (`features/portfolio`)
 
-The Dashboard tab is a 3-column grid of widgets the user arranges in edit mode.
-`layout.ts` is the catalog (seven widgets with their default spans; the default layout shows all of
-them) and the pure edits (move into the drop target's place: before it when dragged backwards,
-after it when dragged forwards, or to the end on the "Add widget" tile; S / M / L span, remove, add
-at the default span); `layoutStore.ts` keeps the layout per device in `localStorage` `tape.dash.v1` (an array of
-`{ id, span }`, read and written in try/catch; unknown ids dropped, among them those no longer in the
-catalog (the removed `eq` net liquidation and `bench` benchmark widgets, and `margin`, which moved to
-the Portfolio header), a missing or invalid value is the default, Reset removes the key). Edit mode, the catalog and a drag are not persisted, and
-locking ends them (`state/lockActions.ts`).
+**Groups** (`groups.ts`, pure). The toolbar's Group by (the `Segmented` switch) groups the rows by
+underlying (the default; key `u:` + `contractKey(underlyingOf(contract))`: an option under its stock or
+index, a future and a futures option their own group, an option on a non-USD stock under that stock in
+the option's currency, as its quotes, sector and events are), by sector (`s:` + the row's sector: options follow their
+stock's) or not at all. A group of two or more rows draws a group row (44px): a caret, its name, its
+count, its underlying's event chip and, per column, `aggregate`: the sum of the rows the column
+applies to, by the column's `agg` kind. `'sum'` always adds up (% NLV, Value (base), % Gross: a share
+of net liquidation or the account currency); `'money'` in the rows' `contract.currency` when they share
+one, else in the account currency, each × its `PositionRow.fx` (`inAccountCurrency`: the cell is then
+followed by the account currency's code, dimmed, with a tooltip; "—" while a rate is unknown) (Value,
+Cost basis, Unrl. P&L, Day P&L, the IB P&L amounts, Total P&L, Div. income 12m, Delta $, position theta
+and vega), so a sector of USD and HKD stocks still sums and sorts by its size; `'units'` only within one
+underlying (position delta and gamma, share equivalents). Absent (Qty,
+which mixes shares with contracts, Unrl. %, prices, quote and statistics fields, days, text) the cell is
+empty, and a sub line (Unrl. P&L's percent) is never summed. null is an empty cell (no `agg`, no row
+the column applies to, mixed underlyings); undefined is "—" (a contributing row's value
+is unknown: never a partial sum, `sumRows`' rule). A group of one row draws only that row, which
+stands for its group (the chip and the accent are on it), so a stock-only portfolio does not show
+every row twice; without grouping every row stands for itself. % NLV is in the accent with the
+tooltip "Over 20% of net liq" from `CONCENTRATION_FLAG` (20 %, long or short, `isConcentrated`) on a
+group row and on a row that stands for its group; rows inside a group stay muted. A click on a group
+row (or ⏎ / space on its caret button) collapses it for the session (`columnStore.ts → toggleGroup`).
+The toolbar's "Top 3 = 41% of net liq" (`topShare`) adds up the three largest groups' |Σ signed % NLV|
+(net, as the group row shows: a short call against the stock lowers it; the old Concentration widget
+added gross values), each row its own group without grouping; it is hidden while a row's share is
+unknown (net liquidation or its exchange rate missing).
 
-Every figure is the account's own (`model.ts`, pure; `data.ts`, the hooks):
+**Option lines and greeks** (`exposure.ts`, pure). An option or futures option row's second line is
+`optionLine`: the right, the days to expiry (New York's calendar, `shared/orderTiming.ts →
+nyDaysUntil`, as the DTE and Days to div. columns and the event window count: the same in every time
+zone; never negative; in the accent at `SOON_DAYS`, 7, or fewer) and the moneyness, |S − K| / S in percent, in or out of the money, with S from
+`underlyingPrice`: the option's model underlying price (tick 13), else the underlying's quote, else a
+stock row of it (a futures option only the model price: its own quote is the premium). The toolbar's
+portfolio greeks, shown while options are held (`portfolioGreeks`): IB's per-share model greeks of each
+option × quantity × multiplier, stocks count their shares in delta; "Greeks: waiting for IB on N
+options" (dimmed) while an option still waits for its greeks, never a partial sum; dollar delta at the
+same underlying price, "—" without one.
 
-| Widget | Source |
-| --- | --- |
-| Portfolio greeks | IB's per-share model greeks (tick 13) of each option × quantity × multiplier, stocks count their shares; totals are "—" while an option still waits for its greeks; dollar delta at the option's model underlying price, else the underlying's quote |
-| Concentration | Σ \|value\| per underlying (stock and options) / net liquidation, flagged from 20 % |
-| P&L contributions | The rows' re-marked day P&L, largest first |
-| Option expirations | Days to expiry (local calendar) and moneyness from the underlying price (futures options: only IB's model underlying price, never their own premium) |
-| Today's trades | `executions` since New York midnight (`shared/session.ts → nyDayStart`, re-checked every minute: main keeps the session's fills, so after midnight the list still holds yesterday's) |
-| Earnings & dividends | `getEarnings` (Wall Street Horizon with IB's subscription, else estimates from IB's market scanner: "Est.", an exact time in the user's clock format ("8:30 AM ET", 24-hour "08:30 ET") when known, before the open / after the close otherwise, a tooltip saying it is not a confirmed date) and `Quote.dividends` (tick 456, live lines only); the note says where earnings dates come from, that the scanner is still looking them up, or why they are missing (IB refused both, or unavailable while connected). The catalog no longer marks the widget as needing a subscription |
+**Events** (`events.ts`, pure). `nextEvents` keeps per held underlying the soonest of its earnings
+(`getEarnings`: Wall Street Horizon, else the scanner's estimate) and its ex-dividend date
+(`Quote.dividends`, tick 456, live lines only) from today (New York's) through `EVENT_WINDOW_DAYS`
+(14) ahead, earnings first on the same day; other instruments and past dates are ignored, and without WSH or the
+scanner only dividends remain. The chip reads "Earnings 10/23 AMC · Est." (an exact time wins: "8:30
+AM ET" in the user's clock format; the tooltip says an estimate is not a confirmed date) or "Ex-div
+10/15 $0.24" (`eventLabel`; another currency "0.24 EUR"), a hairline ring (a fill would vanish into the
+hovered row's --p2) that takes only the room the symbol leaves: short of room it is cut with an
+ellipsis (in full in its tooltip), never the symbol. `groups.ts → chipTargets` places it: on the
+group row when grouped by underlying with two or more rows, else on the underlying's stock row, else
+(no stock held) on each of its option rows. Under the rows a quiet line says what the chips cannot,
+only while a stock is held: the scanner is still looking dates up, IB refused WSH and the scanner, or
+the dates are unavailable while connected (`earningsState`).
 
-The hooks subscribe only while their widget is on the layout, under their own quote owners:
-`dashboard-und` (option underlyings, basic) and `dashboard-div` (the holdings' stocks, `dividends`).
-Option greeks need no line of their own (the `portfolio` owner subscribes every position).
+**Data** (`data.ts`). The Positions tab subscribes while it is shown, under its own background quote
+owners: `positions-und` (option underlyings, basic; nothing while no option is held) and
+`positions-div` (the holdings' stocks, `dividends`); option greeks need no line of their own (the
+`portfolio` owner subscribes every position). `useEarnings` asks `getEarnings` once for the tab (the
+chips and the earnings columns), again every hour, every 3 s while the scanner is still searching and
+when a stock is due to be searched again. The Dashboard tab and its widgets are gone; its per-device
+layout key, `tape.dash.v1`, is removed at startup (`lib/retiredKeys.ts`).
 
 ### Watchlists
 
@@ -1223,7 +1289,7 @@ formatter, pure and used by both processes:
   last-trade time (`sessionQuote.ts → etTime`), the symbol activity panel's order times
   (`timeColumn(clock)`) and its status texts (`orderModel.ts → orderStatusText(o, labels, clock)`:
   "After 9:35 AM ET", "GTD 10/09 4:00 PM ET") use the clock as well. The good-after time is read by
-  the Orders page's `parseGoodAfter`, so IB's UTC form ("20261005-13:35:00") and other zones
+  Portfolio › Orders' `parseGoodAfter`, so IB's UTC form ("20261005-13:35:00") and other zones
   ("… Asia/Shanghai") show the same time as there, and "Modify" loads the ticket with its 24-hour
   US/Eastern time.
 

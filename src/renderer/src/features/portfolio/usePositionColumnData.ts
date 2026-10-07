@@ -1,8 +1,9 @@
 // What the Positions table's shown columns read beyond the position rows: the positions' own
 // quotes (subscribed by the 'portfolio' owner, usePositionRows), their contract details (fetched by
 // the main process for every position, so getContractInfo answers from its cache), the gross value
-// of all rows and the holdings' earnings. Each is read only while a shown column needs it, so the
-// rows are not redrawn for changes no shown column reads.
+// of all rows and the holdings' earnings (the Positions tab's one useEarnings, shared with the event
+// chips: PositionsView.tsx). Each is read only while a shown column needs it, so the rows are not
+// redrawn for changes no shown column reads.
 //
 // Columns with a `profile` need more generic ticks on the positions' lines: the 'positions-table'
 // owner asks for them, on the portfolio's own contracts (no new line), only while such a column is
@@ -15,11 +16,10 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CONTRACT_DETAILS_VERSION, contractKey } from '@shared/contract';
-import type { ContractInfo, EarningsEvent, Quote, QuoteSubscription } from '@shared/types';
+import type { ContractInfo, CorporateEarnings, EarningsEvent, Quote, QuoteSubscription } from '@shared/types';
 import { useMarketDataAvailable, useQuoteSubscriptionList, useQuotesByKey } from '../../hooks/useQuotes';
 import type { PositionRow } from './calc';
 import { addOnSubscriptions, rowId, type ColumnDef } from './columns';
-import { useEarnings, useHoldingUnderlyings } from './dashboard/data';
 
 /** The quote owner of the shown columns' extra generic ticks. */
 export const POSITIONS_TABLE_OWNER = 'positions-table';
@@ -185,7 +185,8 @@ export interface PositionColumnData {
   earnings: ReadonlyMap<string, EarningsEvent>;
 }
 
-export function usePositionColumnData(rows: readonly PositionRow[], columns: readonly ColumnDef[]): PositionColumnData {
+/** `corporate`: the holdings' earnings (data.ts → useEarnings), read only while an earnings column is shown. */
+export function usePositionColumnData(rows: readonly PositionRow[], columns: readonly ColumnDef[], corporate: CorporateEarnings | undefined): PositionColumnData {
   const needQuotes = columns.some((c) => c.needs === 'quote');
   const needDetails = columns.some((c) => c.needs === 'details');
   const needGross = columns.some((c) => c.needs === 'gross');
@@ -203,8 +204,6 @@ export function usePositionColumnData(rows: readonly PositionRow[], columns: rea
   const subs: readonly QuoteSubscription[] = useMemo(() => addOnSubscriptions(rows, shown), [rows, shown]);
   useQuoteSubscriptionList(POSITIONS_TABLE_OWNER, subs);
 
-  const underlyings = useHoldingUnderlyings(rows);
-  const corporate = useEarnings(underlyings, needEarnings);
   const earnings = useMemo(() => {
     if (!needEarnings || corporate?.status !== 'ok') return NO_EARNINGS;
     // The soonest upcoming event per stock (IB lists them soonest first).

@@ -1,5 +1,5 @@
-// Pure helpers for the Orders page: which orders are listed and in what order, and how
-// IB's order fields read in the type / price / status columns.
+// Pure helpers for the orders and trades tables (Portfolio › Orders / Trades): which orders are
+// listed and in what order, and how IB's order fields read in the type / price / status columns.
 
 import { multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, px } from '@shared/format';

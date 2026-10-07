@@ -557,12 +557,12 @@ describe('shortcuts', () => {
     shortcutKeys(platform).map((k) => k.combos.map((c) => comboLabel(c, platform === 'darwin')).join(` ${k.sep} `));
 
   it('uses ⌘ glyphs on macOS', () => {
-    expect(labels('darwin')).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 – ⌘3', '⌘,', '⌘⇧L', '⌘L']);
+    expect(labels('darwin')).toEqual(['⌘K', 'B', 'S', '↑ / ↓', '⏎', '⌘⌫', '⌘1 / ⌘2', '⌘3', '⌘,', '⌘⇧L', '⌘L']);
     expect(shortcutKeys('darwin').find((k) => k.id === 'theme')?.combos).toEqual([['⌘', '⇧', 'L']]);
   });
 
   it('spells out Ctrl, Shift, Enter and Backspace elsewhere', () => {
-    expect(labels('win32')).toEqual(['Ctrl+K', 'B', 'S', '↑ / ↓', 'Enter', 'Ctrl+Backspace', 'Ctrl+1 – Ctrl+3', 'Ctrl+,', 'Ctrl+Shift+L', 'Ctrl+L']);
+    expect(labels('win32')).toEqual(['Ctrl+K', 'B', 'S', '↑ / ↓', 'Enter', 'Ctrl+Backspace', 'Ctrl+1 / Ctrl+2', 'Ctrl+3', 'Ctrl+,', 'Ctrl+Shift+L', 'Ctrl+L']);
     expect(labels('linux')).toEqual(labels('win32'));
   });
 });

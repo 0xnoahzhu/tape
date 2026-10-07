@@ -1,5 +1,5 @@
-// Pure portfolio computations: sector allocation, position rows, account totals and the margin
-// cushion. No React and no store access, so everything is unit tested.
+// Pure portfolio computations: sectors, position rows, account totals and the margin cushion. No
+// React and no store access, so everything is unit tested.
 
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
@@ -7,22 +7,11 @@ import type { AccountSummary, ContractRef, Execution, Position, Quote, SecType }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
-/** Short money for the donut center: "$1.28M", "$52.4K". */
-export function moneyShort(v: number | undefined, symbol = '$'): string {
-  if (!finite(v)) return DASH;
-  const a = Math.abs(v);
-  const sign = v < 0 ? '−' : '';
-  if (a >= 1e6) return `${sign}${symbol}${(a / 1e6).toFixed(2)}M`;
-  if (a >= 1e4) return `${sign}${symbol}${(a / 1e3).toFixed(1)}K`;
-  return `${sign}${symbol}${f0(a)}`;
-}
-
 // ---------------------------------------------------------------------------
-// Sectors and allocation
+// Sectors
 
 export const ETF_SECTOR = '@etf';
 export const OTHER_SECTOR = '@other';
-export const CASH_KEY = '@cash';
 
 export interface Classification {
   industry?: string;
@@ -51,11 +40,14 @@ const INDEX_EXCHANGES: Record<string, string> = {
   RUT: 'RUSSELL',
 };
 
-/** The instrument a position belongs to: the underlying for options, the stock itself otherwise. */
+/**
+ * The instrument a position belongs to: the underlying for options (a stock in the option's
+ * currency, so an option on 0700 in HKD goes with the HKD stock), the stock itself otherwise.
+ */
 export function underlyingOf(c: ContractRef): ContractRef {
   if (c.secType === 'OPT') {
     const ex = INDEX_EXCHANGES[c.symbol];
-    return ex ? index(c.symbol, ex) : stock(c.symbol);
+    return ex ? index(c.symbol, ex) : { ...stock(c.symbol), currency: c.currency || 'USD' };
   }
   if (c.secType === 'STK') return { ...stock(c.symbol, c.primaryExchange), currency: c.currency || 'USD' };
   return c;
@@ -95,61 +87,6 @@ export function sectorOf(underlyingSecType: SecType, info: Classification | unde
   if (underlyingSecType === 'STK' && !industry && !category) return ETF_SECTOR;
   if (/^funds?$/i.test(industry) || /\b(etf|etn|funds?)\b/i.test(category) || /\b(ETF|ETN)\b/.test(info.longName ?? '')) return ETF_SECTOR;
   return industry || OTHER_SECTOR;
-}
-
-export interface AllocSlice {
-  /** Sector key or CASH_KEY. */
-  key: string;
-  /** Signed market value. */
-  value: number;
-  /** Signed share of net liquidation in percent; undefined without net liquidation. */
-  pctOfNetLiq?: number;
-  /** Arc length in percent of the circle (positive slices only; 0 for a short sector or a margin loan). */
-  len: number;
-  /** stroke-dashoffset (negative cumulative length). */
-  offset: number;
-  opacity: number;
-}
-
-/**
- * Donut slices: sectors by absolute market value (shades of the accent with decreasing opacity),
- * then cash. Sectors beyond `maxSectors` are merged into Other. The arcs divide the circle among
- * the positive slices; negative ones (net-short sectors, borrowed cash) get no arc.
- */
-export function allocation(
-  items: ReadonlyArray<{ sector: string; value: number | undefined }>,
-  cash: number | undefined,
-  netLiq: number | undefined,
-  maxSectors = 6,
-): AllocSlice[] {
-  const agg = new Map<string, number>();
-  for (const it of items) if (finite(it.value)) agg.set(it.sector, (agg.get(it.sector) ?? 0) + it.value);
-  let sectors = [...agg].filter(([, v]) => v !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-  if (sectors.length > maxSectors) {
-    const top = sectors.filter(([k]) => k !== OTHER_SECTOR).slice(0, maxSectors - 1);
-    const kept = new Set(top.map(([k]) => k));
-    const rest = sectors.filter(([k]) => !kept.has(k)).reduce((a, [, v]) => a + v, 0);
-    sectors = [...top, [OTHER_SECTOR, rest]];
-  }
-  // Design: 1, .75, .5 … ; with many sectors the step shrinks so the last one stays visible (>= .3).
-  const step = sectors.length > 1 ? Math.min(0.25, 0.7 / (sectors.length - 1)) : 0;
-  const src = sectors.map(([key, value], i) => ({ key, value, opacity: +(1 - i * step).toFixed(3) }));
-  if (finite(cash) && cash !== 0) src.push({ key: CASH_KEY, value: cash, opacity: 0.55 });
-  // The ring shows what is held: a net-short sector or a margin loan (negative cash) has no arc
-  // (it would read as a holding); the legend still lists it with its signed share.
-  const posSum = src.reduce((a, s) => a + Math.max(0, s.value), 0);
-  let cum = 0;
-  return src.map((s) => {
-    const len = posSum && s.value > 0 ? (s.value / posSum) * 100 : 0;
-    const slice: AllocSlice = {
-      ...s,
-      len,
-      offset: cum ? -cum : 0,
-      pctOfNetLiq: finite(netLiq) && netLiq !== 0 ? (s.value / netLiq) * 100 : undefined,
-    };
-    cum += len;
-    return slice;
-  });
 }
 
 /** "12.9%", "−1.0%"; "—" when unknown. */

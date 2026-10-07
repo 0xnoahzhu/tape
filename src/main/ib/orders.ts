@@ -202,9 +202,10 @@ export function createOrderService(ctx: MainContext): OrderService {
     dirtyOrders = dirtyExecutions = false;
   }
 
-  function notify(n: NoticeText, contract: ContractRef, kind: 'fill' | 'order'): void {
+  /** `orderDone`: the order is cancelled or rejected (no longer on Portfolio › Orders, where a click on an order notice leads). */
+  function notify(n: NoticeText, contract: ContractRef, kind: 'fill' | 'order', orderDone = false): void {
     try {
-      ctx.notifier.notify({ kind, title: n.title, body: n.body, contract });
+      ctx.notifier.notify({ kind, title: n.title, body: n.body, contract, ...(orderDone && { orderDone: true as const }) });
     } catch (err) {
       console.error('[orders] notification failed:', err);
     }
@@ -356,7 +357,7 @@ export function createOrderService(ctx: MainContext): OrderService {
       announceRejection(key);
       return;
     }
-    notify(orderNotice(next, kind), next.contract, 'order');
+    notify(orderNotice(next, kind), next.contract, 'order', kind === 'cancelled');
   }
 
   /** The rejection notice of an order, with IB's reason when it has arrived. */
@@ -364,7 +365,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     clearTimeout(pendingRejections.get(key));
     pendingRejections.delete(key);
     const o = orders.get(key);
-    if (o) notify(orderNotice(o, 'rejected', orderErrors.get(key) ?? o.message), o.contract, 'order');
+    if (o) notify(orderNotice(o, 'rejected', orderErrors.get(key) ?? o.message), o.contract, 'order', true);
   }
 
   // ---------------------------------------------------------------------------
@@ -623,7 +624,7 @@ export function createOrderService(ctx: MainContext): OrderService {
       goodTillDate: req.goodTillDate,
       filled: 0,
     };
-    notify(orderNotice(o, 'rejected', reason), req.contract, 'order');
+    notify(orderNotice(o, 'rejected', reason), req.contract, 'order', true);
   }
 
   async function place(input: OrderRequest): Promise<PlaceOrderResult> {

@@ -316,7 +316,7 @@ describe('orders sent from a floating panel', () => {
     placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
     await sendOrder(pending);
     expect(useStore.getState().toast).toBeNull();
-    useStore.setState({ page: 'ord' });
+    useStore.setState({ page: 'acct' });
     useStore.setState({ orders: [working('Inactive', 'No trading permissions (201)')] });
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'Order failed: No trading permissions (201)' });
     expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ phase: 'failed' });

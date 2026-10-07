@@ -102,7 +102,7 @@ export const useChartMessages = createMessages({
     position: 'Position',
     openOrders: 'Open orders',
     allOrders: 'All orders ›',
-    /** Column headers of the activity panel: [label, full name on hover], as on the Positions and Orders pages. */
+    /** Column headers of the activity panel: [label, full name on hover], as in Portfolio's Positions and Orders. */
     posHeaders: [
       ['Contract', 'Contract'],
       ['Qty', 'Quantity'],

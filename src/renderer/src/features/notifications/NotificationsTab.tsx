@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AppNotification } from '@shared/types';
 import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
-import { knownName, openInstrument } from '../orders/navigation';
+import { knownName, openNotificationTarget } from '../orders/navigation';
 import { useNotificationsMessages } from './messages';
-import { filterNotifications, NOTIFICATION_FILTERS, notificationText, opensTradePage, relativeTime, stampText, type NotificationFilter } from './model';
+import { filterNotifications, NOTIFICATION_FILTERS, notificationTarget, notificationText, relativeTime, stampText, type NotificationFilter } from './model';
 
 // The panel unmounts when closed; keep the filter for the session like the design does.
 let lastFilter: NotificationFilter = 'all';
@@ -21,13 +21,17 @@ function useNow(ms: number): number {
   return now;
 }
 
-/** Marks the notification read, closes the panel and selects its instrument, if any. */
+/**
+ * Marks the notification read, closes the panel and opens where it leads (model.ts →
+ * notificationTarget), else selects its instrument, if any.
+ */
 function openNotification(n: AppNotification): void {
   if (!n.read) window.tape.markNotificationsRead([n.id]).catch(() => undefined);
   const s = useStore.getState();
   s.setBell(false);
   if (!n.contract) return;
-  if (opensTradePage(n.kind, s.page)) openInstrument(n.contract, n.kind === 'opt' ? 'opt' : undefined);
+  const target = notificationTarget(n, s.page);
+  if (target) openNotificationTarget(n.contract, target);
   else s.selectSymbol(n.contract, knownName(n.contract));
 }
 

@@ -4,9 +4,13 @@ import type { MarketDataType, OptionRight } from '@shared/types';
 import { createMessages } from '../../i18n';
 import type { CellWords } from './cells';
 import { COLUMNS, type ColumnGroup, type ColumnId, type ColumnNote } from './columns';
+import type { GroupBy } from './columnsState';
 
 /** IB's codes as words in the positions table's cells (the instrument types come from `kinds`). */
 type Words = Omit<CellWords, 'kinds'>;
+
+/** The portfolio greeks on the Positions toolbar. */
+export type GreekId = 'delta' | 'dollarDelta' | 'gamma' | 'theta' | 'vega';
 
 export const usePortfolioMessages = createMessages({
   en: {
@@ -34,22 +38,68 @@ export const usePortfolioMessages = createMessages({
     stocksHint: (ib: string) => `Stocks at the positions' prices. IB: ${ib}`,
     optionsHint: (ib: string) => `Options at the positions' prices, shorts negative. IB: ${ib}`,
     leverageHint: 'Gross position value / net liquidation',
-    marginLoanHint: 'Negative cash: borrowed from IBKR',
-    tabDash: 'Dashboard',
-    tabPos: 'Positions',
-
-    // Allocation
-    allocation: 'Sector allocation',
-    netLiqShort: 'Net liq',
-    noAllocation: 'No account data',
-    noPositionsHint: 'No positions yet. Holdings will show here by sector.',
-    /** Negative cash in the header and the allocation legend. */
+    /** Negative cash in the header. */
     marginLoan: 'Margin loan',
-    /** Display names of IB industries and the special buckets (@etf, @other, @cash). */
+    marginLoanHint: 'Negative cash: borrowed from IBKR',
+
+    // Tabs
+    tabPos: 'Positions',
+    tabOrders: 'Orders',
+    tabTrades: 'Trades',
+
+    // Positions toolbar: grouping, the top groups' share of net liq and the portfolio greeks
+    groupBy: 'Group by',
+    groupByOptions: { underlying: 'Underlying', sector: 'Sector', none: 'None' } as Record<GroupBy, string>,
+    /** "Top 3 = 41.2% of net liq". */
+    top: (n: number, pct: string) => `Top ${n} = ${pct} of net liq`,
+    topHint: {
+      underlying: 'The largest underlyings (stock and options together), as a share of net liquidation',
+      sector: 'The largest sectors, as a share of net liquidation',
+      none: 'The largest positions, as a share of net liquidation',
+    } as Record<GroupBy, string>,
+    concentrated: 'Over 20% of net liq',
+    /** A group's amount over rows in more than one currency. */
+    inAccountCurrency: (ccy?: string) => `In ${ccy ?? 'the account currency'}: the rows are in more than one currency, so each is converted at IB's exchange rate`,
+    expand: 'Expand',
+    collapse: 'Collapse',
+    /** [label, unit] of each portfolio greek. */
+    greeks: {
+      delta: ['Δ', 'sh'],
+      dollarDelta: ['$Δ', ''],
+      gamma: ['Γ', ''],
+      theta: ['Θ', '/day'],
+      vega: ['Vega', '/pt'],
+    } as Record<GreekId, [string, string]>,
+    greeksHints: {
+      delta: 'Share-equivalent delta: stocks count their shares, options IB’s model delta × quantity × multiplier',
+      dollarDelta: 'Delta × underlying price',
+      gamma: 'Delta change per $1 move',
+      theta: 'Time decay per day ($)',
+      vega: 'P&L per 1 point of implied volatility ($)',
+    } as Record<GreekId, string>,
+    greeksPending: (n: number) => `Greeks: waiting for IB on ${n === 1 ? '1 option' : `${n} options`}`,
+    greeksPendingHint: 'Totals appear once IB has sent the model greeks of every option',
+    // An option row's second line: "Call · 12 DTE · 3.2% ITM"
+    dte: (n: number) => `${n} DTE`,
+    itm: (p: string) => `${p} ITM`,
+    otm: (p: string) => `${p} OTM`,
+    // Event chips: "Earnings 10/23 AMC · Est.", "Ex-div 10/15 $0.24"
+    earnings: 'Earnings',
+    exDiv: 'Ex-div',
+    estimated: 'Est.',
+    /** An exact release time, New York, in the user's clock format ("8:30 AM"). */
+    atEt: (t: string) => `${t} ET`,
+    estimatedHint: 'Estimated from IB’s market scanner: not a confirmed date',
+    earningsOn: (d: string) => `Earnings on ${d}`,
+    exDivOn: (d: string, amount?: string) => `Ex-dividend on ${d}${amount ? `, ${amount} per share` : ''}`,
+    eventsNoteSearching: 'Looking up earnings dates…',
+    eventsNoteUnsubscribed: 'Earnings dates need the Wall Street Horizon subscription (not subscribed)',
+    eventsNoteUnavailable: 'Earnings dates unavailable',
+
+    /** Display names of IB industries and the special buckets (@etf, @other). */
     sectorNames: {
       '@etf': 'ETF / Index',
       '@other': 'Other',
-      '@cash': 'Cash',
       Communications: 'Communication',
       'Consumer, Cyclical': 'Consumer Cyclical',
       'Consumer, Non-cyclical': 'Consumer Non-cyclical',
@@ -330,7 +380,7 @@ export const usePortfolioMessages = createMessages({
       valueBase: 'Value × FX rate',
       pctGross: '|Value (base)| ÷ Σ |Value (base)| of all positions × 100',
       totalPnl: 'IB’s real-time unrealized P&L + real-time realized P&L (reqPnLSingle)',
-      daysToExpiry: 'Expiry − today, in calendar days',
+      daysToExpiry: 'Expiry − today in New York, in calendar days',
       mid: '(Bid + Ask) ÷ 2',
       spread: 'Ask − Bid',
       spreadPct: '(Ask − Bid) ÷ Mid × 100',
@@ -350,7 +400,7 @@ export const usePortfolioMessages = createMessages({
       relVolume: 'Volume (tick 8) ÷ average volume (tick 21, generic tick 165)',
       divYield: 'Dividends over the next 12 months (tick 59) ÷ Price × 100',
       annualDividends: 'Dividends over the next 12 months (tick 59) × quantity (negative for shorts)',
-      daysToDividend: 'Next dividend date (tick 59) − today, in calendar days',
+      daysToDividend: 'Next dividend date (tick 59) − today in New York, in calendar days',
       nextEarningsEst: 'estimated from IB’s market scanner (the windows in which its next-earnings filter finds the stock) where Wall Street Horizon is not available; options show their underlying’s',
       navPremium: '(Price ÷ NAV − 1) × 100',
     } as Partial<Record<ColumnId, string>>,
@@ -476,19 +526,58 @@ export const usePortfolioMessages = createMessages({
     stocksHint: (ib: string) => `按持仓价格计算的股票市值。IB：${ib}`,
     optionsHint: (ib: string) => `按持仓价格计算的期权市值（空头为负）。IB：${ib}`,
     leverageHint: '持仓总值 / 净清算值',
-    marginLoanHint: '现金为负：向 IBKR 借入的金额',
-    tabDash: '概览',
-    tabPos: '持仓',
-
-    allocation: '板块分布',
-    netLiqShort: '净清算值',
-    noAllocation: '暂无账户数据',
-    noPositionsHint: '暂无持仓，买入后这里会按行业显示分布。',
     marginLoan: '融资负债',
+    marginLoanHint: '现金为负：向 IBKR 借入的金额',
+
+    tabPos: '持仓',
+    tabOrders: '订单',
+    tabTrades: '成交',
+
+    groupBy: '分组',
+    groupByOptions: { underlying: '标的', sector: '行业', none: '不分组' } as Record<GroupBy, string>,
+    top: (n: number, pct: string) => `前 ${n} 大占净值 ${pct}`,
+    topHint: {
+      underlying: '按标的合并股票和期权，最大几项占净清算值的比例',
+      sector: '最大几个行业占净清算值的比例',
+      none: '最大几笔持仓占净清算值的比例',
+    } as Record<GroupBy, string>,
+    concentrated: '超过净值 20%',
+    inAccountCurrency: (ccy?: string) => `以${ccy ? ` ${ccy} ` : '账户币种'}计：各行币种不同，均按 IB 汇率折算`,
+    expand: '展开',
+    collapse: '收起',
+    greeks: {
+      delta: ['Δ', '股'],
+      dollarDelta: ['$Δ', ''],
+      gamma: ['Γ', ''],
+      theta: ['Θ', '/天'],
+      vega: ['Vega', '/点'],
+    } as Record<GreekId, [string, string]>,
+    greeksHints: {
+      delta: '含正股，按股数等效',
+      dollarDelta: '美元等效（Delta × 标的价格）',
+      gamma: '标的每涨 $1 Delta 的变化',
+      theta: '每天时间价值变化 ($)',
+      vega: 'IV 每变动 1 个点的盈亏 ($)',
+    } as Record<GreekId, string>,
+    greeksPending: (n: number) => `Greeks：等待 IB 返回 ${n} 个期权的数据`,
+    greeksPendingHint: '所有期权的模型 Greeks 到齐后显示合计',
+    dte: (n: number) => `剩 ${n} 天`,
+    itm: (p: string) => `价内 ${p}`,
+    otm: (p: string) => `价外 ${p}`,
+    earnings: '财报',
+    exDiv: '除息',
+    estimated: '预估',
+    atEt: (t: string) => `美东 ${t}`,
+    estimatedHint: '由 IB 市场扫描器推算，并非确认日期',
+    earningsOn: (d: string) => `财报日 ${d}`,
+    exDivOn: (d: string, amount?: string) => `除息日 ${d}${amount ? `，每股 ${amount}` : ''}`,
+    eventsNoteSearching: '正在查询财报日期…',
+    eventsNoteUnsubscribed: '财报日期需要订阅 Wall Street Horizon（未订阅）',
+    eventsNoteUnavailable: '暂时无法获取财报日期',
+
     sectorNames: {
       '@etf': 'ETF / 指数',
       '@other': '其他',
-      '@cash': '现金',
       Technology: '科技',
       Communications: '通信服务',
       'Consumer, Cyclical': '非必需消费',
@@ -774,7 +863,7 @@ export const usePortfolioMessages = createMessages({
       valueBase: '市值 × 汇率',
       pctGross: '|市值 (基础币种)| ÷ 全部持仓的 Σ |市值 (基础币种)| × 100',
       totalPnl: 'IB 实时未实现盈亏 + 实时已实现盈亏（reqPnLSingle）',
-      daysToExpiry: '到期日 − 今天，按自然日',
+      daysToExpiry: '到期日 − 纽约的今天，按自然日',
       mid: '(买价 + 卖价) ÷ 2',
       spread: '卖价 − 买价',
       spreadPct: '(卖价 − 买价) ÷ 中间价 × 100',
@@ -794,7 +883,7 @@ export const usePortfolioMessages = createMessages({
       relVolume: '成交量（tick 8）÷ 平均成交量（tick 21，generic tick 165）',
       divYield: '未来 12 个月股息（tick 59）÷ 现价 × 100',
       annualDividends: '未来 12 个月股息（tick 59）× 数量（空头为负）',
-      daysToDividend: '下次派息日（tick 59）− 今天，按自然日',
+      daysToDividend: '下次派息日（tick 59）− 纽约的今天，按自然日',
       nextEarningsEst: '在没有 Wall Street Horizon 时，根据 IB 市场扫描器估算（其下次财报筛选找到该股的时间窗口）；期权显示其标的的',
       navPremium: '(现价 ÷ 净值 − 1) × 100',
     } as Partial<Record<ColumnId, string>>,
