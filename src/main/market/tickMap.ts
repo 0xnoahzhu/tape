@@ -98,6 +98,8 @@ export type TickEvent =
       field: number;
       iv?: number;
       delta?: number;
+      optPrice?: number;
+      pvDividend?: number;
       gamma?: number;
       vega?: number;
       theta?: number;
@@ -195,9 +197,13 @@ function applyGeneric(q: Quote, field: number, value: number | undefined): boole
     case TICK.OPTION_IMPLIED_VOL:
       return set(q, 'impliedVol', finite(value) && value > 0 ? value : undefined);
     case TICK.HALTED:
-    case TICK.DELAYED_HALTED:
+    case TICK.DELAYED_HALTED: {
       // -1 = not available, 0 = trading, 1 = general halt, 2 = volatility halt.
-      return finite(value) && value >= 0 ? set(q, 'halted', value > 0) : false;
+      if (!finite(value) || value < 0) return false;
+      const code = value === 1 || value === 2 ? value : 0;
+      const changed = set(q, 'halted', value > 0);
+      return set(q, 'haltCode', code) || changed;
+    }
     default:
       return false;
   }
@@ -273,6 +279,8 @@ function applyOption(q: Quote, t: Extract<TickEvent, { kind: 'option' }>): boole
   if (finite(t.vega) && t.vega !== -2) changed = set(q, 'vega', t.vega) || changed;
   if (finite(t.theta) && t.theta !== -2) changed = set(q, 'theta', t.theta) || changed;
   if (finite(t.undPrice) && t.undPrice > 0) changed = set(q, 'undPrice', t.undPrice) || changed;
+  if (finite(t.optPrice) && t.optPrice >= 0) changed = set(q, 'optPrice', t.optPrice) || changed;
+  if (finite(t.pvDividend) && t.pvDividend >= 0) changed = set(q, 'pvDividend', t.pvDividend) || changed;
   return changed;
 }
 

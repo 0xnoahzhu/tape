@@ -467,6 +467,7 @@ export class DemoMarket {
       vega: round(model.vega, 4),
       theta: round(model.theta, 4),
       undPrice: S,
+      optPrice: round(model.price, 4),
       lastTime: this.clock(),
       marketDataType: 1,
     };

@@ -191,6 +191,8 @@ export interface Quote {
   week52Low?: number;
   avgVolume?: number;
   halted?: boolean;
+  /** IB's halted code (tick 49 / 90): 0 trading, 1 halted, 2 volatility halt. */
+  haltCode?: 0 | 1 | 2;
   // Option model computation (tick 13) for option contracts.
   iv?: number;
   delta?: number;
@@ -198,6 +200,10 @@ export interface Quote {
   theta?: number;
   vega?: number;
   undPrice?: number;
+  /** IB's model price of the option (tick 13 optPrice). */
+  optPrice?: number;
+  /** Present value of the underlying's dividends until expiry (tick 13 pvDividend). */
+  pvDividend?: number;
   /** Open interest of an option contract (ticks 27/28). */
   openInterest?: number;
   // Underlying statistics (profile 'underlying').
@@ -403,6 +409,11 @@ export interface AccountSummary {
   dailyPnL?: number;
   unrealizedPnL?: number;
   realizedPnL?: number;
+  /**
+   * IB's exchange rates by currency (account updates' ExchangeRate, `$LEDGER-ExchangeRate` on paper
+   * accounts): units of the account currency per unit of that currency.
+   */
+  exchangeRates?: Record<string, number>;
   updatedAt: number;
 }
 
@@ -414,6 +425,8 @@ export interface Position {
   quantity: number;
   /** Average price per unit (IB avgCost divided by the multiplier). */
   avgPrice: number;
+  /** IB's average cost as sent (per contract: the multiplier is included). */
+  averageCost?: number;
   multiplier: number;
   marketPrice?: number;
   marketValue?: number;
@@ -426,6 +439,9 @@ export interface Position {
   dailyPnL?: number;
   /** reqPnLSingle's market value: the mark `dailyPnL` was computed at. */
   pnlValue?: number;
+  /** reqPnLSingle's unrealized and realized P&L, as IB sends them (real time). */
+  pnlUnrealized?: number;
+  pnlRealized?: number;
   /** Industry from contract details; used for the sector allocation chart. */
   industry?: string;
   category?: string;

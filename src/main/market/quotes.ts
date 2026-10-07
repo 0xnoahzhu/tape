@@ -967,8 +967,8 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     ib.on(EventName.tickString, (reqId: number, field: number, value: string) => onTick(reqId, { kind: 'string', field, value }));
     ib.on(
       EventName.tickOptionComputation,
-      (reqId: number, field: number, _attrib: unknown, iv?: number, delta?: number, _optPrice?: number, _pvDividend?: number, gamma?: number, vega?: number, theta?: number, undPrice?: number) =>
-        onTick(reqId, { kind: 'option', field, iv, delta, gamma, vega, theta, undPrice }),
+      (reqId: number, field: number, _attrib: unknown, iv?: number, delta?: number, optPrice?: number, pvDividend?: number, gamma?: number, vega?: number, theta?: number, undPrice?: number) =>
+        onTick(reqId, { kind: 'option', field, iv, delta, optPrice, pvDividend, gamma, vega, theta, undPrice }),
     );
     ib.on(EventName.marketDataType, (reqId: number, type: number) => {
       if (type < 1 || type > 4) return;

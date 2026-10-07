@@ -7,6 +7,7 @@ import {
   OTHER_SECTOR,
   accountTotals,
   allocation,
+  fxRate,
   grossValue,
   leverage,
   leverageLabel,
@@ -197,6 +198,31 @@ describe('positionRow', () => {
     expect(r.unrealizedPct).toBeCloseTo(10);
     expect(r.weight).toBeUndefined();
     expect(r.dayPnl).toBeUndefined();
+  });
+
+  it('converts a foreign-currency position with IB’s exchange rate', () => {
+    const sap = position({ key: 'STK:SAP:EUR', contract: { ...stock('SAP', 'IBIS'), currency: 'EUR' }, quantity: 50, avgPrice: 200 });
+    const r = positionRow(sap, 220, 1_000_000, 'Technology', 1.08);
+    expect(r.value).toBe(11_000);
+    expect(r.fx).toBe(1.08);
+    expect(r.valueBase).toBeCloseTo(11_880);
+    expect(r.weight).toBeCloseTo(1.188);
+    // Without the rate: no base-currency value and no weight, never the unconverted one.
+    const unknown = positionRow(sap, 220, 1_000_000, 'Technology', null);
+    expect(unknown.value).toBe(11_000);
+    expect(unknown).toMatchObject({ fx: undefined, valueBase: undefined, weight: undefined });
+    // A position in the account currency needs no rate.
+    expect(positionRow(position(), 210, 1_000_000, 'x')).toMatchObject({ fx: 1, valueBase: 21_000 });
+  });
+
+  it('finds the exchange rate of a position’s currency', () => {
+    const account = { currency: 'USD', exchangeRates: { EUR: 1.0812, USD: 1 } };
+    expect(fxRate('USD', account)).toBe(1);
+    expect(fxRate(undefined, account)).toBe(1);
+    expect(fxRate('EUR', account)).toBe(1.0812);
+    expect(fxRate('GBP', account)).toBeNull();
+    expect(fxRate('EUR', { currency: 'EUR' })).toBe(1);
+    expect(fxRate('USD', null)).toBeNull();
   });
 
   it('applies the option multiplier and short sign', () => {

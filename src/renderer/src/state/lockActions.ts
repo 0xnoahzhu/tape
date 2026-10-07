@@ -1,10 +1,12 @@
 // Applies main's lock state to the store. Locking closes whatever was open on top of the app
 // (dialogs, the bell, popovers, the search dropdown, the dashboard's widget catalog and edit
-// mode) and drops a pending order review, which is never sent: after unlocking, the user starts
-// again from a clean screen. Floating panels collapse to their bars (and stay so after the unlock).
+// mode, the positions table's column editor) and drops a pending order review, which is never
+// sent: after unlocking, the user starts again from a clean screen. Floating panels collapse to
+// their bars (and stay so after the unlock).
 
 import type { LockState } from '@shared/types';
 import { usePanels } from '../features/panels/panelStore';
+import { usePositionColumns } from '../features/portfolio/columnStore';
 import { useDashboardLayout } from '../features/portfolio/dashboard/layoutStore';
 import { useStore } from './store';
 
@@ -22,6 +24,7 @@ export function applyLockState(state: LockState): void {
 export function closeTransientUi(): void {
   useStore.setState({ bellOpen: false, pendingOrder: null, confirm: null, alertForm: null, pinDialog: null });
   useDashboardLayout.getState().closeTransient();
+  usePositionColumns.getState().closeTransient();
   if (typeof document === 'undefined') return;
   // The search dropdown closes on blur; popovers and context menus close on a click outside them.
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();

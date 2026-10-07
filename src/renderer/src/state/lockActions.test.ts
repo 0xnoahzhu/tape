@@ -3,6 +3,7 @@ import { stock } from '@shared/contract';
 import type { LockState } from '@shared/types';
 import { requestLock } from '../features/lock/actions';
 import { usePanels } from '../features/panels/panelStore';
+import { usePositionColumns } from '../features/portfolio/columnStore';
 import { useDashboardLayout } from '../features/portfolio/dashboard/layoutStore';
 import { applyLockState } from './lockActions';
 import { isCovered, useStore } from './store';
@@ -38,6 +39,12 @@ describe('lock state in the renderer', () => {
     useDashboardLayout.setState({ edit: true, pickerOpen: true, drag: 'alloc', over: 'margin' });
     applyLockState(state({ locked: true }));
     expect(useDashboardLayout.getState()).toMatchObject({ edit: false, pickerOpen: false, drag: null, over: null });
+  });
+
+  it('closes the positions column editor when locking', () => {
+    usePositionColumns.setState({ editorOpen: true });
+    applyLockState(state({ locked: true }));
+    expect(usePositionColumns.getState().editorOpen).toBe(false);
   });
 
   it('collapses floating panels to their bars, and they stay so after the unlock', () => {

@@ -44,7 +44,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary, positions/portfolio, P&L |
+| `ib/account.ts` | Account summary, positions/portfolio (IB's average cost kept as sent), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates from the account updates |
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
@@ -889,6 +889,71 @@ S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the str
 chain quote (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
 from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
 own remembered position (first: the bottom-right corner of the content area).
+
+### Portfolio positions table (`features/portfolio`)
+
+The Positions tab shows the columns the user picks in the column editor (`ColumnEditor.tsx`, the
+"Columns" button in the tab row), by default the design's eight: Symbol, Qty, Avg, Price, Value,
+% NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 85 columns in five
+groups: Position, IB P&L, Contract, Quote, Options), with each column's kind, the instrument types it
+applies to, its minimum width, format, sort type and accessor. `cells.ts` formats the cells,
+`columnsState.ts` holds the pure edits, the reading of stored preferences, the sort cycle and
+comparator and the held row order, and `columnStore.ts` persists them. `usePositionColumnData.ts`
+reads what the shown columns need beyond the rows (the positions' quotes, their contract details, the
+gross value), each only while a shown column needs it.
+
+**IB or calculated.** Every column shows IB's own value (`kind: 'ib'`) or a calculation by Tape
+(`'calc'`). A calculated column has a dim ƒ after its header, a "Calc." chip in the editor and a
+tooltip that starts "Calculated by Tape:" and gives the formula (`messages.ts → formulas`); an IB
+column's tooltip names its source ("IB · tick 4 Last (delayed 68)", `sources`). A test keeps both
+tables complete in English and Chinese. A cell is empty when the column does not apply to the
+instrument (Strike on a stock) and "—" when it applies but IB has not sent the value; no value is
+carried over from an older one. The default Price, Value, Unrl. P&L and Day P&L are calculations (the
+one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L group next to them.
+
+| Group | Columns | Source |
+| --- | --- | --- |
+| Position | Name, Type, Qty, Avg, Avg cost (IB), Cost basis, Price, Value, % NLV, Unrl. P&L and %, Day P&L, Currency, FX rate, Value (base), % Gross, Account | `position` / `updatePortfolio` (`Position.averageCost` is IB's as sent, per contract); contract details; the account updates' `ExchangeRate` (paper accounts: `$LEDGER-ExchangeRate`) per currency, `account.ts → exchangeRateOf`, kept as `AccountSummary.exchangeRates` |
+| IB P&L | Price, Value, Unrl. P&L, Realized (IB); Day P&L, Unrl. P&L, Realized, Value (IB live); Total P&L | `updatePortfolio` as sent (pushed when the position changes, so it can lag); `reqPnLSingle` (`Position.dailyPnL`, `pnlValue`; `pnlUnrealized` and `pnlRealized` as sent, so IB's "no value" clears them and the cell shows "—"); Total = the two `reqPnLSingle` figures |
+| Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, DTE, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options), and Name and Min tick do not apply to bonds (their details reach Tape without them, so `ContractInfo` would hold its defaults) |
+| Quote | Last, Last size, Last time, Bid, Ask, sizes, Mid, Spread and %, Prev close, Chg and %, Open, High, Low, Volume, Mark (options), Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner, basic profile: stocks 318, options 100, 101, 106 and 221). Chg compares the quote's own price, never the previous close itself; Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt) |
+| Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI, ITM %, Intrinsic, Extrinsic, Break-even, position delta, gamma, theta, vega, Delta $ | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28; the position figures are greek × quantity × multiplier, at IB's model underlying price |
+
+No column requests market data of its own: the catalog holds only what Tape already receives.
+Columns that need more generic ticks (52-week range, the holdings' dividends, shortability, auction,
+ETF NAV), another request type (earnings dates) or contract details Tape does not keep yet (ISIN,
+contract month, the underlying's conId) are not in it.
+
+Forex rows write their prices to IB's precision (5 decimals, 3 for pairs priced at 10 or more;
+`cells.ts → priceDigits`); others use the shared price format. Spread % keeps 3 decimals below 1 %.
+
+% NLV divides the value in the account currency by the net liquidation: a position in another
+currency is converted with IB's rate (units of the account currency per unit of the position's) and
+shows "—" until the rate has come (`calc.ts → fxRate`).
+
+**Sorting.** A header click sorts ascending, a second one descending, a third one goes back to the
+default order (largest absolute value first). Blanks sort last in both directions; text compares by
+the language's collation, numbers in it as numbers; ties keep the conId order. Symbol sorts by
+underlying, then the stock before its options, futures and futures options, then expiry, strike and
+right (`contractOrderKey`). As values change the order follows at most once a second after the previous re-sort (`RESORT_MS`), and
+not while the pointer is over the rows: their values update in place, new rows come last and closed
+ones go (`heldOrder`); the pointer leaving and a header click re-sort at once.
+
+**Layout.** The card is its own scroll container (the page's account header has a variable height,
+and a sideways-scrolling wrapper would keep the table header from sticking): the header row sticks at
+its top and the Symbol cell at its left (reaching over the row's left padding, with a rule on its right
+while the table is scrolled; `global.css`'s `.pos-row:hover > .pos-sticky` gives it the row's hover
+background). Symbol's track is `minmax(width, 2fr)`, the others' `minmax(width, 1fr)`; narrower than
+the sum of the minimums, the table scrolls sideways instead of cutting values. Rows are keyed by conId
+(contract keys collide for SPX / SPXW) and memoized: a row redraws only when one of its values, its
+quote or its details change.
+
+**Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort }` per device (read and
+written in try/catch; `sanitizePrefs`: renamed ids through `COLUMN_ALIASES`, unknown and repeated ids
+dropped, Symbol first, a sort only on a shown column). The default columns are not written out (only a
+sort), so they follow later defaults until the user changes them; from then on, columns added to the
+catalog later are not added to their list (as with the dashboard's layout). Reset removes the key. The
+editor's open state is not stored; leaving the page and locking close it (`state/lockActions.ts`).
 
 ### Portfolio dashboard (`features/portfolio/dashboard`)
 

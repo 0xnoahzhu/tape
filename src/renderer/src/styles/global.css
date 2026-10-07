@@ -168,3 +168,9 @@ input::placeholder {
     background: transparent;
   }
 }
+
+/* The Positions table's sticky Symbol cell has its own background (rows scroll under it); it takes
+   the row's hover background too. */
+.pos-row:hover > .pos-sticky {
+  background: var(--p2) !important;
+}
