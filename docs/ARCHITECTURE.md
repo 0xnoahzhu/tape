@@ -1030,9 +1030,10 @@ A sticky header over the three tabs (Positions, Orders, Trades) in two tiers. Ti
 liquidation, day P&L, unrealized P&L, realized today, buying power and excess liquidity. Under excess
 liquidity hangs the margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
 `MARGIN_CALL_CUSHION`. It is positioned absolutely under the stat, so tier 1 keeps
-`alignItems: flex-end` and the values their common bottom line; the row's bottom padding holds it,
+`alignItems: last baseline` and the 36 and 22px values one baseline; the row's bottom padding holds it,
 and excess liquidity stays the last stat so that a wrapped row carries it on its last line. Tier 2 is
-one 13px line of balances and margin that wraps item by item. Totals are `calc.ts → accountTotals`
+one 13px line of balances and margin that wraps item by item, each label and value on one baseline
+(the sans label and the mono value sit 2px apart otherwise). Totals are `calc.ts → accountTotals`
 (re-marked to the rows' prices).
 
 | Figure | Source |

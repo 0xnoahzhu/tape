@@ -190,9 +190,11 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
 
 function StrikeCell({ row }: { row: ChainRow }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontWeight: 600, color: row.atm ? 'var(--ac)' : 'var(--tx)' }}>
-      <div>{f2(row.strike)}</div>
-      {row.em && <div style={{ font: '600 9px/1 var(--mono)', color: 'var(--ac)' }}>{row.em}</div>}
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, color: row.atm ? 'var(--ac)' : 'var(--tx)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <div>{f2(row.strike)}</div>
+        {row.em && <div style={{ font: '600 9px/1 var(--mono)', color: 'var(--ac)' }}>{row.em}</div>}
+      </div>
     </div>
   );
 }

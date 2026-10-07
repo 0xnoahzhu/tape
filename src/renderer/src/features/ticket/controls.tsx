@@ -78,9 +78,11 @@ export function Section({
         aria-expanded={open}
         style={{ height: 36, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', cursor: 'pointer', fontSize: 13 }}
       >
-        <div style={{ flexShrink: 0, color: open ? 'var(--tx)' : 'var(--mu)' }}>{title}</div>
-        <div className="ellipsis" style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 11, color: 'var(--ac)' }} title={summary}>
-          {summary}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <div style={{ flexShrink: 0, color: open ? 'var(--tx)' : 'var(--mu)' }}>{title}</div>
+          <div className="ellipsis" style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 11, color: 'var(--ac)' }} title={summary}>
+            {summary}
+          </div>
         </div>
         <div style={{ flexShrink: 0, fontSize: 12, lineHeight: 1, color: 'var(--dm)', width: 12, textAlign: 'right' }}>{open ? '▴' : '▾'}</div>
       </div>

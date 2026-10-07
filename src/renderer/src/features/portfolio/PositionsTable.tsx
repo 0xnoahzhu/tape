@@ -919,10 +919,13 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, values, base
                 <span aria-hidden style={{ width: 10, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>
                   {collapsed ? '▶' : '▼'}
                 </span>
-                <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
-                  {label}
+                {/* Name and count on one baseline (14px sans, 11px mono); the caret and the chip stay centred. */}
+                <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                  <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
+                    {label}
+                  </span>
+                  <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
                 </span>
-                <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
                 {chip && <EventChip e={chip} words={words} clock={clock} now={now} />}
               </button>
             </div>

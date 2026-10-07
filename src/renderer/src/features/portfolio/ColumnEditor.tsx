@@ -181,17 +181,25 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                       className={id === PINNED ? undefined : 'hover-p2'}
                       style={{ ...rowBase, cursor: id === PINNED ? 'default' : 'pointer', color: 'var(--tx)' }}
                     >
-                      <div style={{ width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
-                      <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
-                        {m.columns[id][0]}
-                      </div>
-                      <CalcChip id={id} m={m} />
-                      {note && (
-                        // Shrinks before the column's name does (the full note is in the row's tooltip).
-                        <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
-                          {note}
+                      {/* Name (13px) and note (11px) on one baseline; the check and the chip stay centred. The
+                          wrapper fills the row, so the note's 58% is of the same width. */}
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <div style={{ alignSelf: 'center', width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
+                        <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
+                          {m.columns[id][0]}
                         </div>
-                      )}
+                        {def.kind === 'calc' && (
+                          <span style={{ alignSelf: 'center', display: 'flex', flexShrink: 0 }}>
+                            <CalcChip id={id} m={m} />
+                          </span>
+                        )}
+                        {note && (
+                          // Shrinks before the column's name does (the full note is in the row's tooltip).
+                          <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
+                            {note}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -285,13 +293,15 @@ function ShownList({ ids, all }: { ids: readonly ColumnId[]; all: readonly Colum
             style={{ ...rowBase, position: 'relative', opacity: drag === id ? 0.45 : 1, cursor: pinned ? 'default' : 'grab', color: 'var(--tx)' }}
           >
             <div style={{ width: 14, flexShrink: 0, color: 'var(--dm)' }}>{!pinned && <GripIcon size={14} />}</div>
-            <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
-              {m.columns[id][0]}
+            {/* The name and Symbol's "Always shown" (11px) on one baseline; the Calc chip and the buttons stay centred outside. */}
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
+                {m.columns[id][0]}
+              </div>
+              {pinned && <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{m.alwaysShown}</div>}
             </div>
             <CalcChip id={id} m={m} />
-            {pinned ? (
-              <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{m.alwaysShown}</div>
-            ) : (
+            {!pinned && (
               <div style={{ display: 'flex', flexShrink: 0 }}>
                 <GlyphButton title={m.moveUp} fontSize={12} disabled={i <= 1} onClick={() => moveBy(id, -1)}>
                   ↑

@@ -263,10 +263,12 @@ function GroupSection({
             }}
           >
             <Arrow open={open} />
-            <div className="ellipsis" title={name} style={{ minWidth: 0, fontWeight: 600 }}>
-              {name}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: LEAD.gap, minWidth: 0 }}>
+              <div className="ellipsis" title={name} style={{ minWidth: 0, fontWeight: 600 }}>
+                {name}
+              </div>
+              <div style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</div>
             </div>
-            <div style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', flexShrink: 0, opacity: tools ? 1 : 0 }}>
               <GlyphButton title={m.renameGroup} fontSize={12} onClick={onRename}>

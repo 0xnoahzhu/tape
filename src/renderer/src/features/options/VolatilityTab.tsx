@@ -187,7 +187,7 @@ function IvHistory({ hist, current, stats }: { hist: number[] | null; current: n
   const val = (v: string) => <span style={{ fontFamily: 'var(--num)', color: 'var(--tx)' }}>{v}</span>;
   return (
     <Card span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 24 }}>
         <div style={{ fontWeight: 600 }}>{m.hist}</div>
         <div style={{ flex: 1 }} />
         <div style={{ display: 'flex', gap: 24, fontSize: 12, color: 'var(--mu)' }}>

@@ -190,8 +190,11 @@ export function TabItems<K extends string>({
             ...itemStyle,
           }}
         >
-          <div>{t.label}</div>
-          {t.count != null && t.count !== '' && <div style={{ font: '11px/1 var(--num)', color: 'var(--dm)' }}>{t.count}</div>}
+          {/* The tab centers this pair; inside it the label and the count share a baseline. */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <div>{t.label}</div>
+            {t.count != null && t.count !== '' && <div style={{ font: '11px/1 var(--num)', color: 'var(--dm)' }}>{t.count}</div>}
+          </div>
         </div>
       ))}
     </>

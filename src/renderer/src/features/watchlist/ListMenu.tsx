@@ -127,10 +127,12 @@ export function ListMenu({
           return (
             <div key={l.id} onClick={() => onPick(l.id)} className="hover-p2" style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer' }}>
               {r.check}
-              <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: r.weight }}>
-                {nameOf(l.name, lang)}
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: r.weight }}>
+                  {nameOf(l.name, lang)}
+                </div>
+                {r.count}
               </div>
-              {r.count}
             </div>
           );
         })}
@@ -174,10 +176,12 @@ export function ListMenu({
               style={{ height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 0 12px', cursor: 'pointer' }}
             >
               {r.check}
-              <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: r.weight }}>
-                {nameOf(l.name, lang)}
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: r.weight }}>
+                  {nameOf(l.name, lang)}
+                </div>
+                {r.count}
               </div>
-              {r.count}
               <GlyphButton title={m.rename} fontSize={12} onClick={() => startRename(l)}>
                 ✎
               </GlyphButton>

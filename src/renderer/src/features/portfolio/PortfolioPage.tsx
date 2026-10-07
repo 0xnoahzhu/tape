@@ -30,9 +30,9 @@ import { usePortfolioUi, type PortfolioTab } from './uiState';
 import { usePositionRows } from './usePositionRows';
 
 /**
- * A tier-1 figure. `foot` hangs under it out of the flow (the margin cushion), so the row keeps
- * `alignItems: flex-end` and the values their common bottom line; the row's bottom padding makes
- * room for it.
+ * A tier-1 figure. `foot` hangs under it out of the flow (the margin cushion), so the value stays
+ * the last baseline and the row's `alignItems: last baseline` lines the 36 and 22px values up; the
+ * row's bottom padding makes room for it.
  */
 function Stat({ label, children, color, big, title, foot }: { label: string; children: ReactNode; color?: string; big?: boolean; title?: string; foot?: ReactNode }) {
   return (
@@ -88,7 +88,7 @@ function AccountStrip({ account, totals }: { account: AccountSummary | null; tot
   return (
     <div style={{ padding: '0 32px 16px', display: 'flex', flexWrap: 'wrap', gap: '6px 24px', fontSize: 13 }}>
       {items.map((i) => (
-        <div key={i.label} title={i.title} style={{ display: 'flex', gap: 6, whiteSpace: 'nowrap' }}>
+        <div key={i.label} title={i.title} style={{ display: 'flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
           <span style={{ color: 'var(--mu)' }}>{i.label}</span>
           <span className="selectable" style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', color: 'var(--tx)' }}>
             {i.value}
@@ -122,7 +122,7 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--p)', boxShadow: '0 1px 0 var(--ln)', flexShrink: 0 }}>
       {/* Tier 1. The bottom padding holds the cushion under Excess Liquidity. */}
-      <div style={{ padding: '24px 32px 32px', display: 'flex', alignItems: 'flex-end', gap: '24px 44px', flexWrap: 'wrap' }}>
+      <div style={{ padding: '24px 32px 32px', display: 'flex', alignItems: 'last baseline', gap: '24px 44px', flexWrap: 'wrap' }}>
         <Stat label={accountId === DASH ? m.netLiq : `${m.netLiq} · ${accountId}`} big>
           {money(a?.netLiquidation, a?.currency)}
         </Stat>

@@ -109,7 +109,7 @@ function PriceRow({
 }) {
   const [focus, setFocus] = useState(false);
   return (
-    <FieldBox focused={focus} style={{ justifyContent: 'space-between', gap: 12, padding: '0 12px', flexShrink: 0, ...style }}>
+    <FieldBox focused={focus} style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '0 12px', flexShrink: 0, ...style }}>
       <div style={{ ...label12, flexShrink: 0 }}>{label}</div>
       <NumberField display={display} edit={edit} placeholder={placeholder ?? '—'} onInput={onInput} onCommit={onCommit} onFocusChange={setFocus} style={{ textAlign: 'right', ...priceFont }} />
     </FieldBox>
@@ -330,7 +330,7 @@ export function OrderTypeRow({ T, S }: { T: TicketCtl; S: TicketScale }) {
                   hint={m.typeHints[k]}
                   onPick={() => setType(k)}
                   label={
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                       <span>{m.orderTypes[k]}</span>
                       <span style={{ font: '11px/1.4 var(--mono)', color: 'var(--dm)' }}>{k}</span>
                     </div>
@@ -346,7 +346,7 @@ export function OrderTypeRow({ T, S }: { T: TicketCtl; S: TicketScale }) {
                     hint={m.openHint}
                     onPick={() => setType(k, { tif: 'OPG' })}
                     label={
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                         <span>{k === 'MKT' ? m.moo : m.loo}</span>
                         <span style={{ font: '11px/1.4 var(--mono)', color: 'var(--dm)' }}>{k} · OPG</span>
                       </div>
@@ -654,7 +654,7 @@ export function Totals({ T, S }: { T: TicketCtl; S: TicketScale }) {
   const { c, est, symbol } = T;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: S.totals, color: 'var(--mu)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <div>{c.estAmount}</div>
         <div className="num selectable" style={{ color: 'var(--tx)' }}>
           {money(est, symbol.currency)}

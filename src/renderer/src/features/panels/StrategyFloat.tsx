@@ -207,7 +207,7 @@ function OrderBlock({ ctl, pad }: { ctl: StrategyCtl; pad: number }) {
       <OrderStrip id="strategy" />
       {view && ctl.legs.length > 0 && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--mu)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 13, color: 'var(--mu)' }}>
             <div>{pm.estCost}</div>
             <div className="num selectable" style={{ color: 'var(--tx)' }}>
               {view.orderCost != null ? usd(Math.abs(view.orderCost)) : '—'}
