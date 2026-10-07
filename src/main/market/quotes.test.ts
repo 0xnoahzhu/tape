@@ -1085,7 +1085,7 @@ describe('the renderer copy', () => {
     image(fake, 'NVDA', 236.59, 233.95);
     vi.advanceTimersByTime(100);
     expect(quoteEvents(events).at(-1)).toMatchObject({ quotes: { 'STK:NVDA': { close: 233.95, marketDataType: 1 } }, full: ['STK:NVDA'] });
-    // The Orders page: the watchlist releases NVDA and the renderer drops it; the alert keeps the line.
+    // Portfolio › Orders: the watchlist releases NVDA and the renderer drops it; the alert keeps the line.
     svc.setRendererSubscriptions('watchlist', []);
     reconciled();
     const seen: Array<number | undefined> = [];

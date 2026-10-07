@@ -69,8 +69,14 @@ export type TapeEvent =
   | { type: 'lock'; state: LockState }
   /** Application menu commands, so menu accelerators and in-app shortcuts share one code path. */
   | { type: 'command'; command: AppCommand }
-  /** A notification (system or in-app) was clicked: open this instrument. */
-  | { type: 'openContract'; contract: ContractRef; view?: 'chart' | 'opt' };
+  /**
+   * A system notification was clicked: open this instrument on the Trade page ('chart', 'opt' the
+   * option chain), or select it and open Portfolio › Orders ('orders') or › Trades ('trades').
+   */
+  | { type: 'openContract'; contract: ContractRef; view?: NotificationView };
+
+/** Where a notification's click leads (see the openContract event). */
+export type NotificationView = 'chart' | 'opt' | 'orders' | 'trades';
 
 export type AppCommand =
   | 'open-settings'
@@ -88,6 +94,8 @@ export interface NewNotification {
   title: LocalizedText;
   body: LocalizedText;
   contract?: ContractRef;
+  /** See AppNotification.orderDone. */
+  orderDone?: true;
 }
 
 export interface TapeApi {
@@ -237,7 +245,7 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   getContractInfo: 'allow',
   setDepthSubscription: 'allow',
   getOptionChainParams: 'allow',
-  // The dashboard's events widget keeps its data feed while locked, like quotes and history.
+  // The Positions tab's event chips keep their data feed while locked, like quotes and history.
   getEarnings: 'allow',
   // A user action from Settings that sends requests to IB (the views behind the lock never call it).
   checkMarketData: 'deny',

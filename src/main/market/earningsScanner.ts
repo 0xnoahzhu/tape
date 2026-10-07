@@ -356,7 +356,7 @@ export function createEarningsScanner(ctx: MainContext): EarningsScanner {
     return values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
   }
 
-  /** Waits up to PRICE_WAIT_MS for a quote with a price (the widget's 'dashboard-div' line). */
+  /** Waits up to PRICE_WAIT_MS for a quote with a price (the Positions tab's 'positions-div' line). */
   function waitForPrice(key: string): Promise<number[]> {
     return new Promise((resolve) => {
       const done = () => {

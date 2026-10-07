@@ -11,9 +11,11 @@
 // `profile` needs more generic ticks on that line: they are asked for only while the column is
 // shown, and only for the positions it applies to (addOnSubscriptions, the 'positions-table' quote
 // owner). The earnings columns read the holdings' earnings dates (getEarnings). A column whose unit
-// or source a live check has not confirmed yet is `unverified`, which its tooltip says.
+// or source a live check has not confirmed yet is `unverified`, which its tooltip says. A column
+// whose rows add up (`agg`) shows their sum on a group row (groups.ts).
 
-import { contractKey, contractLabel, daysToExpiry } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
+import { nyDaysUntil } from '@shared/orderTiming';
 import { addOnApplies, type AddOnProfile } from '@shared/quoteProfiles';
 import { wallClockAt } from '@shared/timeFormat';
 import type { ContractInfo, ContractRef, EarningsEvent, Quote, QuoteDividends, QuoteSubscription, SecType } from '@shared/types';
@@ -288,6 +290,15 @@ export interface ColumnDef {
   sortValue?(c: CellCtx): CellValue;
   /** A second, smaller line (Unrealized P&L: its percent). */
   sub?: { value(c: CellCtx): number | undefined; fmt: Fmt };
+  /**
+   * What a group row shows in the column (groups.ts → aggregate): 'sum' adds the rows up (a share of
+   * net liquidation, or an amount in the account currency); 'money' adds them up in their currency
+   * when they share one, else in the account currency, each × its FX rate (an amount in the
+   * contract's currency); 'units' only when they share one underlying (share equivalents). Absent: the group's cell is empty (prices, quantities that mix
+   * shares with contracts, percentages of the row's own cost, quote fields, dates, text). A sub line
+   * is never summed.
+   */
+  agg?: 'sum' | 'money' | 'units';
   /** The cell's tooltip (a status message, the zone of trading hours). */
   title?(c: CellCtx, w: CellWords): string | undefined;
 }
@@ -513,14 +524,15 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
     width: 96,
     sort: 'num',
     fmt: 'num0',
+    agg: 'money',
     value: (c) => {
       const p = c.row.position;
       return p.quantity * (p.averageCost ?? p.avgPrice * (p.multiplier || 1));
     },
   },
   price: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'px', value: (c) => c.row.last },
-  value: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'num0', value: (c) => c.row.value },
-  weight: { kind: 'calc', align: 'right', width: 72, sort: 'num', fmt: 'pctU', color: 'muted', value: (c) => c.row.weight },
+  value: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.value },
+  weight: { kind: 'calc', align: 'right', width: 72, sort: 'num', fmt: 'pctU', color: 'muted', agg: 'sum', value: (c) => c.row.weight },
   unrealized: {
     kind: 'calc',
     align: 'right',
@@ -528,14 +540,15 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
     sort: 'num',
     fmt: 'pnl',
     color: 'sign',
+    agg: 'money',
     value: (c) => c.row.unrealized,
     sub: { value: (c) => c.row.unrealizedPct, fmt: 'pctS' },
   },
   unrealizedPct: { kind: 'calc', align: 'right', width: 80, sort: 'num', fmt: 'pctS', color: 'sign', value: (c) => c.row.unrealizedPct },
-  dayPnl: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.dayPnl },
+  dayPnl: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.dayPnl },
   currency: { kind: 'ib', align: 'left', width: 64, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.currency) },
   fxRate: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'num4', value: (c) => c.row.fx },
-  valueBase: { kind: 'calc', align: 'right', width: 112, sort: 'num', fmt: 'num0', value: (c) => c.row.valueBase },
+  valueBase: { kind: 'calc', align: 'right', width: 112, sort: 'num', fmt: 'num0', agg: 'sum', value: (c) => c.row.valueBase },
   pctGross: {
     kind: 'calc',
     align: 'right',
@@ -544,6 +557,7 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
     fmt: 'pctU',
     color: 'muted',
     needs: 'gross',
+    agg: 'sum',
     value: (c) => (finite(c.row.valueBase) && pos(c.grossBase) ? (Math.abs(c.row.valueBase) / c.grossBase) * 100 : undefined),
   },
   account: { kind: 'ib', align: 'left', width: 96, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.account) },
@@ -551,13 +565,13 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
 
 const IB_PNL: Partial<Record<ColumnId, Def>> = {
   marketPriceIb: { kind: 'ib', align: 'right', width: 88, sort: 'num', fmt: 'px', value: (c) => c.row.position.marketPrice },
-  marketValueIb: { kind: 'ib', align: 'right', width: 96, sort: 'num', fmt: 'num0', value: (c) => c.row.position.marketValue },
-  unrealizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.position.unrealizedPnL },
-  realizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.position.realizedPnL },
-  dailyPnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.position.dailyPnL },
-  unrealizedPnlIb: { kind: 'ib', align: 'right', width: 124, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.position.pnlUnrealized },
-  realizedPnlIb: { kind: 'ib', align: 'right', width: 108, sort: 'num', fmt: 'pnl', color: 'sign', value: (c) => c.row.position.pnlRealized },
-  valuePnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'num0', value: (c) => c.row.position.pnlValue },
+  marketValueIb: { kind: 'ib', align: 'right', width: 96, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.position.marketValue },
+  unrealizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.unrealizedPnL },
+  realizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.realizedPnL },
+  dailyPnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.dailyPnL },
+  unrealizedPnlIb: { kind: 'ib', align: 'right', width: 124, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.pnlUnrealized },
+  realizedPnlIb: { kind: 'ib', align: 'right', width: 108, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.pnlRealized },
+  valuePnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.position.pnlValue },
   totalPnl: {
     kind: 'calc',
     align: 'right',
@@ -565,6 +579,7 @@ const IB_PNL: Partial<Record<ColumnId, Def>> = {
     sort: 'num',
     fmt: 'pnl',
     color: 'sign',
+    agg: 'money',
     value: (c) => {
       const { pnlUnrealized: u, pnlRealized: r } = c.row.position;
       return finite(u) && finite(r) ? u + r : undefined;
@@ -631,7 +646,7 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     note: 'derivatives',
     value: (c) => {
       const d = c.row.position.contract.lastTradeDate;
-      return d && /^\d{8}$/.test(d) ? daysToExpiry(d, new Date(c.now)) : undefined;
+      return d && /^\d{8}$/.test(d) ? nyDaysUntil(d, new Date(c.now)) : undefined;
     },
   },
   strike: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'px', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.strike },
@@ -1017,8 +1032,9 @@ const INCOME: Partial<Record<ColumnId, Def>> = {
       124,
     ),
     color: 'sign',
+    agg: 'money',
   },
-  daysToDividend: calcQ('dividends', 'days', (q, c) => (/^\d{8}$/.test(q.dividends?.nextDate ?? '') ? daysToExpiry(q.dividends!.nextDate!, new Date(c.now)) : undefined), STOCKS, 'stocks', 92),
+  daysToDividend: calcQ('dividends', 'days', (q, c) => (/^\d{8}$/.test(q.dividends?.nextDate ?? '') ? nyDaysUntil(q.dividends!.nextDate!, new Date(c.now)) : undefined), STOCKS, 'stocks', 92),
   nextEarnings: {
     kind: 'ib',
     align: 'left',
@@ -1103,7 +1119,7 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
       return k.right === 'P' ? k.strike - avgPrice : k.strike + avgPrice;
     },
   },
-  positionDelta: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'num0', needs: 'quote', types: DELTA, value: positionDelta },
+  positionDelta: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'num0', needs: 'quote', types: DELTA, agg: 'units', value: positionDelta },
   deltaDollars: {
     kind: 'calc',
     align: 'right',
@@ -1112,13 +1128,25 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
     fmt: 'num0',
     needs: 'quote',
     types: DELTA,
+    agg: 'money',
     value: (c) => {
       const d = positionDelta(c);
       const S = isOptionType(c.row.position.contract.secType) ? undPx(c) : c.row.last;
       return finite(d) && finite(S) ? d * S : undefined;
     },
   },
-  positionGamma: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'num2', needs: 'quote', types: OPTIONS, note: 'options', value: (c) => scaled(c, c.q?.gamma) },
+  positionGamma: {
+    kind: 'calc',
+    align: 'right',
+    width: 96,
+    sort: 'num',
+    fmt: 'num2',
+    needs: 'quote',
+    types: OPTIONS,
+    note: 'options',
+    agg: 'units',
+    value: (c) => scaled(c, c.q?.gamma),
+  },
   positionTheta: {
     kind: 'calc',
     align: 'right',
@@ -1129,6 +1157,7 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
     needs: 'quote',
     types: OPTIONS,
     note: 'options',
+    agg: 'money',
     value: (c) => scaled(c, c.q?.theta),
   },
   positionVega: {
@@ -1141,6 +1170,7 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
     needs: 'quote',
     types: OPTIONS,
     note: 'options',
+    agg: 'money',
     value: (c) => scaled(c, c.q?.vega),
   },
 };

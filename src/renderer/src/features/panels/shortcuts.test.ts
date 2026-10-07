@@ -21,7 +21,7 @@ describe('B / S on the floating ticket’s bar', () => {
     expect(barShortcutSide(key('b', { editable: true }), s, true)).toBeNull();
     expect(barShortcutSide(key('b', { metaKey: true }), s, true)).toBeNull();
     expect(barShortcutSide(key('b', { defaultPrevented: true }), s, true)).toBeNull();
-    expect(barShortcutSide(key('b'), { ...s, page: 'ord' }, true)).toBeNull();
+    expect(barShortcutSide(key('b'), { ...s, page: 'acct' }, true)).toBeNull();
     expect(barShortcutSide(key('b'), { ...s, view: 'opt' }, true)).toBeNull();
     expect(barShortcutSide(key('b'), { ...s, confirm: { title: '', rows: [], label: '', run: () => undefined } }, true)).toBeNull();
     expect(barShortcutSide(key('b'), { ...s, symbol: index('SPX', 'CBOE') }, true)).toBeNull();
@@ -65,7 +65,7 @@ describe('Esc in a floating panel', () => {
     // Collapsed or docked already, off its page, or a dialog / the bell open.
     expect(escapePanel(key('Escape'), true, s, { ...floating, ticket: { ...floating.ticket, collapsed: true } }, 'ticket')).toBeNull();
     expect(escapePanel(key('Escape'), true, s, { ...floating, ticket: { ...floating.ticket, floating: false } }, 'ticket')).toBeNull();
-    expect(escapePanel(key('Escape'), true, { ...s, page: 'ord' }, floating, 'ticket')).toBeNull();
+    expect(escapePanel(key('Escape'), true, { ...s, page: 'acct' }, floating, 'ticket')).toBeNull();
     expect(escapePanel(key('Escape'), true, { ...s, bellOpen: true }, floating, 'ticket')).toBeNull();
     expect(escapePanel(key('x'), true, s, floating, 'ticket')).toBeNull();
   });

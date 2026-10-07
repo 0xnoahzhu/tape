@@ -23,7 +23,7 @@ describe('where the panels show', () => {
     expect(panelShown('ticket', { ...s, view: 'opt' })).toBe(false);
     expect(panelShown('strategy', { ...s, view: 'opt' })).toBe(true);
     expect(panelShown('strategy', s)).toBe(false);
-    expect(panelShown('ticket', { ...s, page: 'ord' })).toBe(false);
+    expect(panelShown('ticket', { ...s, page: 'acct' })).toBe(false);
   });
 });
 

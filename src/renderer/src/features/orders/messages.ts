@@ -1,12 +1,10 @@
-// Orders page strings (design TPL k62–k72, ordTabs, ordStL, the trades header trH and the status texts of stOf()).
+// Strings of the orders and trades tables (Portfolio › Orders / Trades; design TPL k62–k72, ordStL, the trades header trH and the status texts of stOf()).
 import { createMessages } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useAttrM } from './attributeMessages';
 
 export const useOrdersMessages = createMessages({
   en: {
-    orders: 'Open orders',
-    trades: 'Trades',
     time: 'Time',
     contract: 'Contract',
     side: 'Side',
@@ -81,8 +79,6 @@ export const useOrdersMessages = createMessages({
     modifyHint: (id: number) => `Modify #${id}: edit in the order ticket and resubmit`,
   },
   zh: {
-    orders: '挂单',
-    trades: '成交',
     time: '时间',
     contract: '合约',
     side: '方向',

@@ -223,7 +223,7 @@ describe('Notifier', () => {
       expect(t.list()).toHaveLength(2);
     });
 
-    it('Windows: a toast with the same text, the icon and the sound event; clicks still open the instrument', () => {
+    it('Windows: a toast with the same text, the icon and the sound event; clicks still open the fill', () => {
       const t = setup(undefined, 'win32');
       const n = t.notifier.notify({ kind: 'fill', title: text('Filled <AAPL>'), body: text('100 @ 226.95'), contract: aapl });
       const options = os.shown[0].options;
@@ -234,7 +234,7 @@ describe('Notifier', () => {
           '<audio src="ms-winsoundevent:Notification.Reminder"/></toast>',
       );
       os.shown[0].emitter.emit('click');
-      expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'chart' });
+      expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'trades' });
       t.setSettings(notifs(defaultSettings('en', 'win32'), { sound: false }));
       t.notifier.notify({ kind: 'order', title: text('a'), body: text('b') });
       expect(os.shown[1].options.toastXml).toContain('<audio silent="true"/>');

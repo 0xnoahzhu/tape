@@ -6,6 +6,7 @@ import {
   compareValues,
   dropSlot,
   gridTemplate,
+  heldGroups,
   heldOrder,
   liveWidths,
   moveColumn,
@@ -17,6 +18,7 @@ import {
   sanitizeColumns,
   sanitizePrefs,
   sanitizeWidths,
+  sameGroups,
   sameOrder,
   setColumnWidth,
   sizeColumn,
@@ -44,8 +46,8 @@ describe('stored column choice', () => {
     expect(sanitizePrefs(null)).toBeNull();
     expect(sanitizePrefs('x')).toBeNull();
     expect(sanitizePrefs([])).toBeNull();
-    expect(sanitizePrefs({})).toEqual({ columns: null, sort: null, widths: {} });
-    expect(sanitizePrefs({ sort: { id: 'value', dir: 'desc' } })).toEqual({ columns: null, sort: { id: 'value', dir: 'desc' }, widths: {} });
+    expect(sanitizePrefs({})).toEqual({ columns: null, sort: null, widths: {}, groupBy: 'underlying' });
+    expect(sanitizePrefs({ sort: { id: 'value', dir: 'desc' } })).toEqual({ columns: null, sort: { id: 'value', dir: 'desc' }, widths: {}, groupBy: 'underlying' });
     // Not shown with the default columns, a wrong direction, an unknown column.
     expect(sanitizePrefs({ sort: { id: 'bid', dir: 'asc' } })?.sort).toBeNull();
     expect(sanitizePrefs({ sort: { id: 'value', dir: 'up' } })?.sort).toBeNull();
@@ -54,8 +56,18 @@ describe('stored column choice', () => {
       columns: ['symbol', 'bid', 'ask'],
       sort: { id: 'bid', dir: 'asc' },
       widths: {},
+      groupBy: 'underlying',
     });
-    expect(sanitizePrefs({ columns: 'bid', sort: null })).toEqual({ columns: null, sort: null, widths: {} });
+    expect(sanitizePrefs({ columns: 'bid', sort: null })).toEqual({ columns: null, sort: null, widths: {}, groupBy: 'underlying' });
+  });
+
+  it('reads the stored grouping; anything else, or none, is by underlying', () => {
+    expect(sanitizePrefs({ groupBy: 'sector' })?.groupBy).toBe('sector');
+    expect(sanitizePrefs({ groupBy: 'none' })?.groupBy).toBe('none');
+    expect(sanitizePrefs({ groupBy: 'underlying' })?.groupBy).toBe('underlying');
+    expect(sanitizePrefs({ groupBy: 'industry' })?.groupBy).toBe('underlying');
+    expect(sanitizePrefs({ groupBy: 2 })?.groupBy).toBe('underlying');
+    expect(sanitizePrefs({ sort: null })?.groupBy).toBe('underlying');
   });
 
   it('reads what a version without widths stored as before', () => {
@@ -64,8 +76,9 @@ describe('stored column choice', () => {
       columns: ['symbol', 'quantity', 'bid'],
       sort: { id: 'bid', dir: 'desc' },
       widths: {},
+      groupBy: 'underlying',
     });
-    expect(sanitizePrefs({ sort: { id: 'dayPnl', dir: 'asc' } })).toEqual({ columns: null, sort: { id: 'dayPnl', dir: 'asc' }, widths: {} });
+    expect(sanitizePrefs({ sort: { id: 'dayPnl', dir: 'asc' } })).toEqual({ columns: null, sort: { id: 'dayPnl', dir: 'asc' }, widths: {}, groupBy: 'underlying' });
   });
 
   it('reads stored widths: unknown ids and non-numbers dropped, each clamped, hidden columns kept', () => {
@@ -81,7 +94,7 @@ describe('stored column choice', () => {
     expect(sanitizeWidths({ lastPx: 150 }, { lastPx: 'last' })).toEqual({ last: 150 });
     // A width of a column that is not shown stays, for when it is shown again.
     expect(sanitizePrefs({ columns: ['quantity'], widths: { quantity: 100, delta: 90 } })?.widths).toEqual({ quantity: 100, delta: 90 });
-    expect(sanitizePrefs({ widths: { quantity: 100, nope: 90 } })).toEqual({ columns: null, sort: null, widths: { quantity: 100 } });
+    expect(sanitizePrefs({ widths: { quantity: 100, nope: 90 } })).toEqual({ columns: null, sort: null, widths: { quantity: 100 }, groupBy: 'underlying' });
   });
 });
 
@@ -262,5 +275,24 @@ describe('held row order', () => {
     expect(sameOrder(['a', 'b'], ['a', 'b'])).toBe(true);
     expect(sameOrder(['a', 'b'], ['b', 'a'])).toBe(false);
     expect(sameOrder(['a'], ['a', 'b'])).toBe(false);
+  });
+
+  it('keeps the drawn groups in place, and the drawn rows in place within each', () => {
+    const g = (key: string, ...ids: string[]) => ({ key, ids });
+    // The wanted order swapped both the groups and the rows within B: nothing moves.
+    expect(heldGroups([g('A', 'a1'), g('B', 'b1', 'b2')], [g('B', 'b2', 'b1'), g('A', 'a1')])).toEqual([g('A', 'a1'), g('B', 'b1', 'b2')]);
+    // A closed row and group go, a new row comes last in its group, a new group last.
+    expect(heldGroups([g('A', 'a1', 'a2'), g('B', 'b1'), g('C', 'c1')], [g('C', 'c1'), g('D', 'd1'), g('A', 'a3', 'a2')])).toEqual([
+      g('A', 'a2', 'a3'),
+      g('C', 'c1'),
+      g('D', 'd1'),
+    ]);
+    // A row that moved to another group shows in its new one.
+    expect(heldGroups([g('A', 'x', 'a1'), g('B', 'b1')], [g('A', 'a1'), g('B', 'x', 'b1')])).toEqual([g('A', 'a1'), g('B', 'b1', 'x')]);
+    expect(heldGroups([], [g('A', 'a1')])).toEqual([g('A', 'a1')]);
+    expect(sameGroups([g('A', 'a1', 'a2')], [g('A', 'a1', 'a2')])).toBe(true);
+    expect(sameGroups([g('A', 'a1', 'a2')], [g('A', 'a2', 'a1')])).toBe(false);
+    expect(sameGroups([g('A', 'a1')], [g('B', 'a1')])).toBe(false);
+    expect(sameGroups([g('A', 'a1')], [g('A', 'a1'), g('B')])).toBe(false);
   });
 });

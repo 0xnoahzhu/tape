@@ -1,16 +1,29 @@
 // Positions tab: the columns chosen in the column editor (ColumnEditor.tsx; by default the
-// design's 8), sortable by a header click. Rows open the underlying on the Trade page.
+// design's 8), grouped as the toolbar's Group by says (PositionsToolbar.tsx) and sortable by a
+// header click. Rows open the underlying on the Trade page.
+//
+// Grouped by underlying (the default) or by sector, a group of two or more rows gets a group row
+// over them: a caret that collapses it (for the session), its name and count, its underlying's next
+// corporate event (a chip) and, in each column where a sum means something, the sum of its rows
+// (groups.ts → aggregate; % NLV in the accent from 20 %; an amount over rows in more than one currency
+// in the account currency, its code after it); its rows are indented under it. A group of
+// one row draws only that row, which stands for its group (it carries the chip and the accent), as
+// every row does without grouping. An option row's second line reads "Call · 12 DTE · 3.2% ITM" (the
+// DTE in the accent within a week); other rows' read their type and sector. Under the rows a quiet
+// line says why earnings dates are missing or still coming, while they are.
 //
 // The card is its own scroll container, so its header row stays on top and the Symbol column on
 // the left when many columns scroll sideways; while they overflow, its scrollbars are always shown
 // (global.css → .pos-scroll), the horizontal one at the card's bottom edge. A header dragged sideways
 // moves its column (Symbol stays first), and the strip on a header's right edge sizes the column (a
 // double-click gives it its default width back); the editor shares the order, and both are
-// remembered (columnStore.ts). Sorting on a value that moves (a price, a P&L) re-sorts at most once
-// a second, and not while the pointer is over the rows: a row never moves away under a click. The
-// rows' values still update in place.
+// remembered (columnStore.ts). A sort orders the groups (by their sum, their label on Symbol, else
+// by their best row) and the rows within each group (groups.ts → orderGroups). Sorting on a value
+// that moves (a price, a P&L) re-sorts at most once a second, and not while the pointer is over the
+// rows: a row or group never moves away under a click. The values still update in place.
 
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -22,34 +35,39 @@ import {
   type CSSProperties,
   type DragEvent,
   type PointerEvent,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
+import { f2 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { ContractRef } from '@shared/types';
+import type { ContractRef, CorporateEarnings, Quote } from '@shared/types';
 import { useCommon } from '../../i18n/common';
 import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
 import { positionTarget, underlyingOf, type PositionRow } from './calc';
-import { cellColor, cellText, type CellWords } from './cells';
+import { cellColor, cellText, formatValue, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
   MAX_COLUMN_WIDTH,
   clampWidth,
   dropSlot,
   gridTemplate,
-  heldOrder,
+  heldGroups,
   liveWidths,
-  sameOrder,
+  sameGroups,
   slotTarget,
-  sortBy,
   tracksWidth,
   type ColumnWidths,
+  type OrderGroup,
   type SortState,
 } from './columnsState';
 import { usePositionColumns, useShownColumns } from './columnStore';
+import { dividendAmount, eventLabel, eventSig, type CorporateEvent } from './events';
+import { optionLine, sameOptionLine, type OptionLine } from './exposure';
+import { aggregate, chipTargets, groupRows, inAccountCurrency, isConcentrated, orderGroups, type RowGroup } from './groups';
 import { columnTip, sectorLabel, usePortfolioMessages } from './messages';
 import { usePositionColumnData } from './usePositionColumnData';
 
@@ -58,6 +76,8 @@ const RESORT_MS = 1000;
 const GAP = 12;
 /** The rows' side padding; the sticky Symbol cell reaches over the left one. */
 const PAD = 32;
+/** How far a group's rows are indented under its group row (px, in the Symbol cell). */
+const INDENT = 16;
 /** Width of the strip that sizes a column, centred in the gap right of its header. */
 const GRIP = 10;
 /** A press on that strip that moves less than this (px) is a click, not a resize. */
@@ -81,31 +101,21 @@ interface DropMark {
   x: number;
 }
 
-/** Unix ms of the current minute, so days to expiry and today's hours follow the clock. */
-function useMinute(): number {
-  const [t, setT] = useState(() => Date.now() - (Date.now() % 60_000));
-  useEffect(() => {
-    const id = setInterval(() => setT(Date.now() - (Date.now() % 60_000)), 15_000);
-    return () => clearInterval(id);
-  }, []);
-  return t;
-}
-
 /**
- * The order rows are drawn in. A new sort or the pointer leaving the rows takes the wanted order
- * at once; while the pointer is over the rows (`hold`), and within RESORT_MS of the last re-sort,
- * the drawn rows keep their places (new rows come last, closed ones go), and a held-back re-sort
- * runs when that second is over.
+ * The order groups and rows are drawn in. A new sort or grouping, or the pointer leaving the rows,
+ * takes the wanted order at once; while the pointer is over the rows (`hold`), and within RESORT_MS
+ * of the last re-sort, the drawn groups and rows keep their places (new ones come last, closed ones
+ * go: columnsState.ts → heldGroups), and a held-back re-sort runs when that second is over.
  */
-function useDrawnOrder(wanted: readonly string[], sortSig: string, hold: boolean): readonly string[] {
-  const drawn = useRef<readonly string[]>(wanted);
+function useDrawnGroups(wanted: readonly OrderGroup[], sortSig: string, hold: boolean): readonly OrderGroup[] {
+  const drawn = useRef<readonly OrderGroup[]>(wanted);
   const sortedAt = useRef(0);
   const prev = useRef({ sortSig, hold });
   const [woken, wake] = useReducer((n: number) => n + 1, 0);
 
   const resort = prev.current.sortSig !== sortSig || (prev.current.hold && !hold);
-  let next: readonly string[] = resort || (!hold && Date.now() - sortedAt.current >= RESORT_MS) ? wanted : heldOrder(drawn.current, wanted);
-  if (sameOrder(next, drawn.current)) next = drawn.current;
+  let next: readonly OrderGroup[] = resort || (!hold && Date.now() - sortedAt.current >= RESORT_MS) ? wanted : heldGroups(drawn.current, wanted);
+  if (sameGroups(next, drawn.current)) next = drawn.current;
 
   useLayoutEffect(() => {
     // Only a re-sort starts the second; a row added or closed meanwhile keeps its deadline.
@@ -116,7 +126,7 @@ function useDrawnOrder(wanted: readonly string[], sortSig: string, hold: boolean
 
   // A held-back re-sort runs when the second is over; a wake-up that came a little early sets
   // another timer (`woken`), so a pending re-sort is never left waiting for the next render.
-  const pending = !hold && !sameOrder(next, wanted);
+  const pending = !hold && !sameGroups(next, wanted);
   useEffect(() => {
     if (!pending) return;
     const timer = setTimeout(wake, Math.max(0, sortedAt.current + RESORT_MS - Date.now()));
@@ -140,11 +150,6 @@ function useOuterWidth(ref: RefObject<HTMLElement | null>): number {
   return w;
 }
 
-/** Ties keep IB's contract order (conId), so equal values never swap places. */
-function byConId(a: CellCtx, b: CellCtx): number {
-  return (a.row.position.contract.conId ?? 0) - (b.row.position.contract.conId ?? 0) || a.row.key.localeCompare(b.row.key);
-}
-
 /** The sticky Symbol cell: over the row's left padding, with a rule on its right while the table is scrolled sideways. */
 function stickyCell(scrolled: boolean, zIndex: number): CSSProperties {
   return {
@@ -159,20 +164,37 @@ function stickyCell(scrolled: boolean, zIndex: number): CSSProperties {
   };
 }
 
-export function PositionsTable({ rows }: { rows: PositionRow[] }) {
+interface PositionsTableProps {
+  rows: PositionRow[];
+  /** The option positions' and their underlyings' quotes (data.ts → useUnderlyingQuotes), for the option lines. */
+  optionQuotes: Readonly<Record<string, Quote>>;
+  /** The holdings' next corporate event by underlying key (events.ts → nextEvents). */
+  events: ReadonlyMap<string, CorporateEvent>;
+  /** The holdings' earnings (data.ts → useEarnings), for the earnings columns. */
+  earnings: CorporateEarnings | undefined;
+  /** Why earnings dates are missing or still coming (the line under the rows); undefined when nothing is. */
+  note?: string;
+  /** Unix ms of the current minute (data.ts → useMinute). */
+  now: number;
+}
+
+export function PositionsTable({ rows, optionQuotes, events, earnings: corporate, note, now }: PositionsTableProps) {
   const m = usePortfolioMessages();
   const common = useCommon();
   const lang = useLang();
   const clock = useClock();
   const connected = useStore((s) => s.connection.status === 'connected');
+  const baseCurrency = useStore((s) => s.account?.currency);
   const openSymbol = useStore((s) => s.openSymbol);
   const shown = useShownColumns();
   const sort = usePositionColumns((s) => s.sort);
   const widths = usePositionColumns((s) => s.widths);
+  const groupBy = usePositionColumns((s) => s.groupBy);
+  const collapsed = usePositionColumns((s) => s.collapsed);
+  const toggleGroup = usePositionColumns((s) => s.toggleGroup);
   const moveToSlot = usePositionColumns((s) => s.moveToSlot);
   const defs = useMemo(() => shown.map((id) => COLUMNS[id]), [shown]);
-  const { quotes, infos, grossBase, earnings } = usePositionColumnData(rows, defs);
-  const now = useMinute();
+  const { quotes, infos, grossBase, earnings } = usePositionColumnData(rows, defs, corporate);
   const [hold, setHold] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [live, setLive] = useState<LiveWidth | null>(null);
@@ -195,15 +217,34 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
     return out;
   }, [rows, quotes, infos, grossBase, earnings, now]);
 
-  // The default order is the rows' own (largest absolute value first, calc.ts → sortRows).
-  const sortDef = sort ? COLUMNS[sort.id] : null;
-  const wanted = useMemo(() => {
-    const list = [...ctxs.values()];
-    if (!sort || !sortDef) return list.map((c) => rowId(c.row));
-    const valueOf = (c: CellCtx) => (applies(sortDef, c.row) ? (sortDef.sortValue ?? sortDef.value)(c) : undefined);
-    return sortBy(list, valueOf, sortDef.sort, sort.dir, lang, byConId).map((c) => rowId(c.row));
-  }, [ctxs, sort, sortDef, lang]);
-  const order = useDrawnOrder(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}`, hold);
+  // The rows come largest absolute value first (calc.ts → sortRows): the order within a group
+  // without a sort.
+  const groups = useMemo(() => groupRows([...ctxs.values()], groupBy), [ctxs, groupBy]);
+  const byKey = useMemo(() => new Map(groups.map((g) => [g.key, g])), [groups]);
+  const labelOf = useCallback((g: RowGroup) => (g.kind === 'sector' ? sectorLabel(m, g.label) : g.label), [m]);
+  const wanted = useMemo(() => orderGroups(groups, sort, lang, labelOf), [groups, sort, lang, labelOf]);
+  const order = useDrawnGroups(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}:${groupBy}`, hold);
+  // What the group rows show in each column, and which sums are in the account currency (an amount
+  // over rows in more than one currency); only groups of two or more rows draw one.
+  const sums = useMemo(() => {
+    const out = new Map<string, { values: Array<number | null | undefined>; base: boolean[] }>();
+    if (groupBy !== 'none') {
+      for (const g of groups) {
+        if (g.ctxs.length > 1) out.set(g.key, { values: defs.map((d) => aggregate(d, g.ctxs)), base: defs.map((d) => inAccountCurrency(d, g.ctxs)) });
+      }
+    }
+    return out;
+  }, [groups, groupBy, defs]);
+  const chips = useMemo(() => chipTargets(groups, groupBy, events), [groups, groupBy, events]);
+  const lines = useMemo(() => {
+    const out = new Map<string, OptionLine>();
+    const at = new Date(now);
+    for (const r of rows) {
+      const line = optionLine(r, optionQuotes, rows, at);
+      if (line) out.set(rowId(r), line);
+    }
+    return out;
+  }, [rows, optionQuotes, now]);
 
   // The tracks go to the rows through the table's --pos-cols, so sizing a column redraws no row.
   const sized = useMemo(() => (live ? liveWidths(widths, live.id, live.w, live.left) : widths), [widths, live]);
@@ -256,6 +297,56 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
     if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
   };
 
+  const body: ReactNode[] = [];
+  for (const og of order) {
+    const g = byKey.get(og.key);
+    const sum = sums.get(og.key);
+    if (!g) continue;
+    const closed = !!sum && !!collapsed[g.key];
+    if (sum) {
+      body.push(
+        <GroupRowView
+          key={`g:${g.key}`}
+          id={g.key}
+          label={labelOf(g)}
+          count={g.ctxs.length}
+          values={sum.values}
+          base={sum.base}
+          currency={baseCurrency}
+          collapsed={closed}
+          chip={chips.groups.get(g.key)}
+          defs={defs}
+          scrolled={scrolled}
+          words={words}
+          clock={clock}
+          now={now}
+          onToggle={toggleGroup}
+        />,
+      );
+    }
+    if (closed) continue;
+    for (const id of og.ids) {
+      const c = ctxs.get(id);
+      if (!c) continue;
+      body.push(
+        <RowView
+          key={id}
+          c={c}
+          defs={defs}
+          scrolled={scrolled}
+          words={words}
+          clock={clock}
+          nested={!!sum}
+          // A row inside a group leaves the accent to its group row; a row on its own stands for its group.
+          flag={!sum && isConcentrated(c.row.weight)}
+          chip={chips.rows.get(id)}
+          line={lines.get(id)}
+          onOpen={open}
+        />,
+      );
+    }
+  }
+
   return (
     <div
       ref={boxRef}
@@ -267,16 +358,13 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       // Its own stacking context: the sticky header and column stay under the page's popovers.
-      style={{ background: 'var(--p)', margin: 'var(--gap) var(--pad) var(--pad)', flex: '1 1 0', minHeight: 240, overflow: 'auto', isolation: 'isolate' }}
+      style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, overflow: 'auto', isolation: 'isolate' }}
     >
       <div ref={tableRef} role="table" aria-label={m.tabPos} style={{ minWidth, position: 'relative', '--pos-cols': template } as CSSProperties}>
         <div style={{ height: 8 }} />
         <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging} onDrag={onDrag} onLive={setLive} />
         <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
-          {order.map((id) => {
-            const c = ctxs.get(id);
-            return c && <RowView key={id} c={c} defs={defs} scrolled={scrolled} words={words} clock={clock} onOpen={open} />;
-          })}
+          {body}
         </div>
         {drop && (
           <div
@@ -288,6 +376,12 @@ export function PositionsTable({ rows }: { rows: PositionRow[] }) {
         )}
       </div>
       {!rows.length && <Empty style={{ padding: '18px 32px 22px' }}>{connected ? m.noPositions : common.notConnected}</Empty>}
+      {note && (
+        // Stays in view while the table is scrolled sideways.
+        <div data-pos="events-note" style={{ position: 'sticky', left: 0, padding: '10px 32px 14px', fontSize: 11, color: 'var(--dm)' }}>
+          {note}
+        </div>
+      )}
     </div>
   );
 }
@@ -485,12 +579,161 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
   );
 }
 
+interface GroupRowProps {
+  /** The group's key (groups.ts → groupKey). */
+  id: string;
+  label: string;
+  count: number;
+  /** Per shown column: the sum (groups.ts → aggregate), undefined when unknown, null for an empty cell. */
+  values: ReadonlyArray<number | null | undefined>;
+  /** Per shown column: the sum is in the account currency (groups.ts → inAccountCurrency). */
+  base: ReadonlyArray<boolean>;
+  /** The account currency's code, once known. */
+  currency?: string;
+  collapsed: boolean;
+  chip?: CorporateEvent;
+  defs: readonly ColumnDef[];
+  scrolled: boolean;
+  words: CellWords;
+  clock: Clock;
+  now: number;
+  onToggle: (key: string) => void;
+}
+
+/** The group rows are rebuilt with every price; one whose text did not change is not redrawn. */
+const sameGroupProps = (a: GroupRowProps, b: GroupRowProps): boolean =>
+  a.id === b.id &&
+  a.label === b.label &&
+  a.count === b.count &&
+  a.collapsed === b.collapsed &&
+  eventSig(a.chip) === eventSig(b.chip) &&
+  a.defs === b.defs &&
+  a.scrolled === b.scrolled &&
+  a.words === b.words &&
+  a.clock === b.clock &&
+  a.now === b.now &&
+  a.onToggle === b.onToggle &&
+  a.currency === b.currency &&
+  a.values.length === b.values.length &&
+  a.values.every((v, i) => Object.is(v, b.values[i]) && a.base[i] === b.base[i]);
+
+/** A group's row: a click collapses or expands it (it opens no chart). */
+const GroupRowView = memo(function GroupRowView({ id, label, count, values, base, currency, collapsed, chip, defs, scrolled, words, clock, now, onToggle }: GroupRowProps) {
+  const m = usePortfolioMessages();
+  return (
+    <div
+      role="row"
+      aria-expanded={!collapsed}
+      data-pos-group={id}
+      data-collapsed={collapsed || undefined}
+      onClick={() => onToggle(id)}
+      className="hover-p2 pos-row"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'var(--pos-cols)',
+        gap: GAP,
+        padding: `0 ${PAD}px`,
+        height: 44,
+        alignItems: 'center',
+        boxShadow: 'inset 0 -1px 0 var(--ln2)',
+        cursor: 'pointer',
+        fontFamily: 'var(--num)',
+        fontSize: 13,
+      }}
+    >
+      {defs.map((d, i) => {
+        if (i === 0) {
+          return (
+            <div key={d.id} role="cell" className="pos-sticky" style={{ ...stickyCell(scrolled, 1), display: 'flex', alignItems: 'center', minWidth: 0, fontFamily: 'var(--sans)' }}>
+              {/* The keyboard's way to the same toggle: its click reaches the row. */}
+              <button
+                type="button"
+                aria-expanded={!collapsed}
+                aria-label={`${collapsed ? m.expand : m.collapse} ${label}`}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  font: 'inherit',
+                  color: 'var(--tx)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span aria-hidden style={{ width: 10, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>
+                  {collapsed ? '▶' : '▼'}
+                </span>
+                <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
+                  {label}
+                </span>
+                <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
+                {chip && <EventChip e={chip} words={words} clock={clock} now={now} />}
+              </button>
+            </div>
+          );
+        }
+        const v = values[i];
+        if (v === null) return <div key={d.id} role="cell" />;
+        const accent = d.id === 'weight' && isConcentrated(v);
+        // An amount over rows in more than one currency is in the account currency: its code follows.
+        const inBase = base[i];
+        const title = accent ? m.concentrated : inBase ? m.inAccountCurrency(currency) : undefined;
+        return (
+          <div key={d.id} role="cell" title={title} style={{ textAlign: 'right', whiteSpace: 'nowrap', color: accent ? 'var(--ac)' : cellColor(d, v) }}>
+            {formatValue(d.fmt, v, words, clock, now)}
+            {inBase && currency && v !== undefined && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--dm)' }}>{currency}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}, sameGroupProps);
+
+/**
+ * An underlying's next corporate event: "Earnings 10/23 AMC · Est.", "Ex-div 10/15 $0.24". It takes
+ * only the room the symbol beside it leaves (no flex basis, growing up to its own width), so short
+ * of room it is cut with an ellipsis (in full in its tooltip) and the symbol stays readable. A
+ * hairline ring, not a fill: a fill in --p2 would vanish into a hovered row.
+ */
+function EventChip({ e, words, clock, now }: { e: CorporateEvent; words: CellWords; clock: Clock; now: number }) {
+  const m = usePortfolioMessages();
+  const text = eventLabel(e, { earnings: m.earnings, exDiv: m.exDiv, estimated: m.estimated, times: words.earningsTimes, atEt: m.atEt }, clock.wall);
+  const date = formatValue('date', e.date, words, clock, now);
+  const detail =
+    e.kind === 'earnings'
+      ? [m.earningsOn(date), e.estimated ? m.estimatedHint : undefined].filter(Boolean).join('\n')
+      : m.exDivOn(date, e.amount != null ? dividendAmount(e.amount, e.underlying.currency) : undefined);
+  return (
+    <span
+      data-pos-chip={e.kind}
+      data-estimated={e.estimated || undefined}
+      title={`${text}\n${detail}`}
+      className="ellipsis"
+      style={{ flex: '1 1 0', maxWidth: 'max-content', padding: '2px 6px', font: '11px/1.3 var(--sans)', boxShadow: 'inset 0 0 0 1px var(--ln)', color: 'var(--mu)' }}
+    >
+      {text}
+    </span>
+  );
+}
+
 interface RowProps {
   c: CellCtx;
   defs: readonly ColumnDef[];
   scrolled: boolean;
   words: CellWords;
   clock: Clock;
+  /** Under a group row: indented. */
+  nested: boolean;
+  /** % NLV in the accent (a row that stands for its group, at CONCENTRATION_FLAG or more). */
+  flag: boolean;
+  chip?: CorporateEvent;
+  /** The second line of an option row. */
+  line?: OptionLine;
   onOpen: (c: ContractRef) => void;
 }
 
@@ -514,6 +757,10 @@ function sameRow(a: PositionRow, b: PositionRow): boolean {
 const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.defs === b.defs &&
   a.scrolled === b.scrolled &&
+  a.nested === b.nested &&
+  a.flag === b.flag &&
+  eventSig(a.chip) === eventSig(b.chip) &&
+  sameOptionLine(a.line, b.line) &&
   a.words === b.words &&
   a.clock === b.clock &&
   a.c.q === b.c.q &&
@@ -523,11 +770,14 @@ const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.c.now === b.c.now &&
   sameRow(a.c.row, b.c.row);
 
-const RowView = memo(function RowView({ c, defs, scrolled, words, clock, onOpen }: RowProps) {
+const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, flag, chip, line, onOpen }: RowProps) {
+  const m = usePortfolioMessages();
   const p = c.row.position;
   return (
     <div
       role="row"
+      data-pos-row={rowId(c.row)}
+      data-nested={nested || undefined}
       onClick={() => onOpen(p.contract)}
       className="hover-p2 pos-row"
       style={{
@@ -543,32 +793,90 @@ const RowView = memo(function RowView({ c, defs, scrolled, words, clock, onOpen 
         fontSize: 13,
       }}
     >
-      {defs.map((d, i) => (i === 0 ? <SymbolCell key={d.id} c={c} scrolled={scrolled} /> : <Cell key={d.id} def={d} c={c} words={words} clock={clock} />))}
+      {defs.map((d, i) =>
+        i === 0 ? (
+          <SymbolCell key={d.id} c={c} scrolled={scrolled} nested={nested} chip={chip} line={line} words={words} clock={clock} />
+        ) : (
+          <Cell key={d.id} def={d} c={c} words={words} clock={clock} accent={flag && d.id === 'weight' ? m.concentrated : undefined} />
+        ),
+      )}
     </div>
   );
 }, sameRowProps);
 
-/** Symbol and, below it, the instrument type and sector (as since the first design). */
-function SymbolCell({ c, scrolled }: { c: CellCtx; scrolled: boolean }) {
+/**
+ * Symbol (with its next-event chip) and, below it, the instrument type and sector (as since the
+ * first design); an option's right, days to expiry and moneyness instead (exposure.ts → optionLine).
+ */
+function SymbolCell({
+  c,
+  scrolled,
+  nested,
+  chip,
+  line,
+  words,
+  clock,
+}: {
+  c: CellCtx;
+  scrolled: boolean;
+  nested: boolean;
+  chip?: CorporateEvent;
+  line?: OptionLine;
+  words: CellWords;
+  clock: Clock;
+}) {
   const m = usePortfolioMessages();
   const k = c.row.position.contract;
+  const kind = m.kinds[k.secType] ?? k.secType;
+  let sub: ReactNode = `${kind} · ${sectorLabel(m, c.row.sector)}`;
+  if (line) {
+    const pct = line.moneyness && `${f2(line.moneyness.pct, 1)}%`;
+    const parts: ReactNode[] = [
+      (line.right && words.rights[line.right]) ?? kind,
+      line.dte !== undefined && <span style={line.soon ? { color: 'var(--ac)' } : undefined}>{m.dte(line.dte)}</span>,
+      line.moneyness && pct && (line.moneyness.itm ? m.itm(pct) : m.otm(pct)),
+    ].filter(Boolean);
+    sub = parts.map((part, i) => (
+      <Fragment key={i}>
+        {i > 0 && ' · '}
+        {part}
+      </Fragment>
+    ));
+  }
   return (
-    <div role="cell" className="pos-sticky" style={{ ...stickyCell(scrolled, 1), display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, fontFamily: 'var(--sans)', minWidth: 0 }}>
-      <div className="ellipsis" style={{ fontSize: 14 }}>
-        {contractLabel(k)}
+    <div
+      role="cell"
+      className="pos-sticky"
+      style={{
+        ...stickyCell(scrolled, 1),
+        ...(nested && { paddingLeft: PAD + INDENT }),
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: 4,
+        fontFamily: 'var(--sans)',
+        minWidth: 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <div className="ellipsis" style={{ minWidth: 0, fontSize: 14 }}>
+          {contractLabel(k)}
+        </div>
+        {chip && <EventChip e={chip} words={words} clock={clock} now={c.now} />}
       </div>
-      <div className="ellipsis" style={{ fontSize: 11, color: 'var(--dm)' }}>
-        {m.kinds[k.secType] ?? k.secType} · {sectorLabel(m, c.row.sector)}
+      <div className="ellipsis" data-pos-line={line ? 'option' : undefined} style={{ fontSize: 11, color: 'var(--dm)' }}>
+        {sub}
       </div>
     </div>
   );
 }
 
-function Cell({ def, c, words, clock }: { def: ColumnDef; c: CellCtx; words: CellWords; clock: Clock }) {
+/** `accent`: % NLV highlighted (a lone row at CONCENTRATION_FLAG or more), with this tooltip. */
+function Cell({ def, c, words, clock, accent }: { def: ColumnDef; c: CellCtx; words: CellWords; clock: Clock; accent?: string }) {
   if (!applies(def, c.row)) return <div role="cell" />;
   const text = cellText(def, c, words, clock);
-  const color = cellColor(def, def.value(c));
-  const title = def.title?.(c, words);
+  const color = accent ? 'var(--ac)' : cellColor(def, def.value(c));
+  const title = accent ?? def.title?.(c, words);
   if (def.sub) {
     return (
       <div role="cell" title={title} style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', color, whiteSpace: 'nowrap' }}>

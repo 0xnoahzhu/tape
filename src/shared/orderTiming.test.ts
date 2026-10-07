@@ -3,6 +3,7 @@ import { option, stock } from './contract';
 import {
   ibEasternTime,
   isTimingProblem,
+  nyDaysUntil,
   overnightEligible,
   parseIbDateTime,
   sessionOf,
@@ -147,6 +148,17 @@ describe('time zones', () => {
     expect(zonedParts(zonedToUtc('20261101', '01:30', 'America/New_York'), 'America/New_York')).toMatchObject({ ymd: '20261101', hhmm: '01:30' });
     expect(zonedToUtc('20261009', '16:00', 'Europe/Berlin')).toBe(Date.UTC(2026, 9, 9, 14));
     expect(zonedParts(Date.UTC(2026, 9, 6, 2), 'America/New_York')).toEqual({ ymd: '20261005', hhmm: '22:00', weekday: 1 });
+  });
+
+  it('counts days to a date on New York’s calendar, whatever the viewer’s time zone', () => {
+    // Thursday 2026-10-08 13:00 ET (Friday 01:00 in Shanghai): a Friday expiry is 1 day away.
+    expect(nyDaysUntil('20261009', new Date(Date.UTC(2026, 9, 8, 17)))).toBe(1);
+    // Friday 00:30 ET: the day itself.
+    expect(nyDaysUntil('20261009', new Date(Date.UTC(2026, 9, 9, 4, 30)))).toBe(0);
+    expect(nyDaysUntil('20261008', new Date(Date.UTC(2026, 9, 9, 4, 30)))).toBe(-1);
+    // Across the end of daylight saving time (2026-11-01) and a year end.
+    expect(nyDaysUntil('20261106', new Date(Date.UTC(2026, 9, 30, 15)))).toBe(7);
+    expect(nyDaysUntil('20270115', new Date(Date.UTC(2026, 11, 31, 15)))).toBe(15);
   });
 
   it('reads IB date-times', () => {

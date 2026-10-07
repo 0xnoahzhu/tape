@@ -1,11 +1,12 @@
-// The Positions tab's column editor: a "Columns" button in the tab row opens a popover with a
+// The Positions tab's column editor: a "Columns" button on the toolbar line opens a popover with a
 // search box, the shown columns in order (drag, ↑ / ↓ or Alt+↑ / Alt+↓ to reorder, × to hide;
 // Symbol stays first) and every column by group with a check to show or hide it. Calculated
 // columns carry a "Calc." chip; a column's note names the instruments it applies to ("No holdings of
 // this type" when none is held), whether it asks IB for extra market data while shown and whether
 // its values are not verified yet. It is not modal: the table updates behind it, and a header dragged
-// in the table moves the same list. "Reset to default" also gives every column its default width. A
-// press outside, Escape, leaving the page and locking Tape close it (state/lockActions.ts).
+// in the table moves the same list. "Reset to default" also gives every column its default width and
+// groups by underlying again, every group expanded. A press outside, Escape, leaving the page and
+// locking Tape close it (state/lockActions.ts).
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react';
 import { useStore } from '../../state/store';
@@ -20,7 +21,7 @@ const EDITOR_W = 380;
 /** Keeps the popover this far inside the window's bottom edge (px). */
 const MENU_MARGIN = 16;
 
-/** Text button of the tab row (as the dashboard's controls: h30, 12px). */
+/** Text button of the Positions toolbar (h30, 12px). */
 const buttonBase: CSSProperties = {
   height: 30,
   padding: '0 12px',
@@ -65,7 +66,7 @@ function CalcChip({ id, m }: { id: ColumnId; m: PortfolioMessages }) {
   );
 }
 
-/** Tab-row control of the Positions tab: the Columns button and its popover. */
+/** The Positions toolbar's Columns button and its popover. */
 export function PositionsControls({ rows }: { rows: readonly PositionRow[] }) {
   const m = usePortfolioMessages();
   const open = usePositionColumns((s) => s.editorOpen);

@@ -104,11 +104,6 @@ a:hover {
 .hover-r:hover {
   color: var(--r) !important;
 }
-/* The dashboard's "Add widget" tile. */
-.dash-add:hover {
-  color: var(--tx) !important;
-  background: var(--p);
-}
 
 /* Thin, theme-aware scrollbars on Windows / Linux. macOS keeps its native overlay scrollbars,
    which take no layout space (styling them would turn them into classic, space-taking ones). */

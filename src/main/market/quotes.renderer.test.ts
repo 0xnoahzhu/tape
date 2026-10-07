@@ -144,7 +144,7 @@ describe('renderer quotes', () => {
     image(SYMBOLS);
     await vi.advanceTimersByTimeAsync(150);
     for (const s of SYMBOLS) expect(r.change(s), s).toBeCloseTo(1.0101, 3);
-    // The Orders page (Cmd+3), for longer than lines linger: the renderer drops the quotes.
+    // Portfolio › Orders (Cmd+3), for longer than lines linger: the renderer drops the quotes.
     await r.watch([]);
     await vi.advanceTimersByTimeAsync(400);
     expect(r.quote('NVDA')).toBeUndefined();

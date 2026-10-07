@@ -141,9 +141,9 @@ describe('remembered columns and sort', () => {
     expect(store.getState()).toMatchObject({ columns: null, sort: null, widths: {} });
   });
 
-  it('reads what a version without widths stored', async () => {
+  it('reads what a version without widths or a grouping stored', async () => {
     vi.stubGlobal('localStorage', memoryStorage({ [KEY]: JSON.stringify({ columns: ['symbol', 'value', 'bid'], sort: { id: 'bid', dir: 'desc' } }) }));
-    expect((await freshStore()).getState()).toMatchObject({ columns: ['symbol', 'value', 'bid'], sort: { id: 'bid', dir: 'desc' }, widths: {} });
+    expect((await freshStore()).getState()).toMatchObject({ columns: ['symbol', 'value', 'bid'], sort: { id: 'bid', dir: 'desc' }, widths: {}, groupBy: 'underlying' });
     vi.stubGlobal('localStorage', memoryStorage({ [KEY]: JSON.stringify({ widths: { nope: 90, value: 'wide', bid: 120 } }) }));
     expect((await freshStore()).getState()).toMatchObject({ columns: null, sort: null, widths: { bid: 120 } });
   });
@@ -160,6 +160,49 @@ describe('remembered columns and sort', () => {
     store.getState().moveToSlot('dayPnl', 2);
     store.getState().moveToSlot('symbol', 4);
     expect(store.getState().columns).toBe(before);
+  });
+
+  it('remembers the grouping, writing it out only when it is not by underlying', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    let store = await freshStore();
+    expect(store.getState().groupBy).toBe('underlying');
+    store.getState().setGroupBy('sector');
+    expect(JSON.parse(storage.data.get(KEY)!)).toEqual({ sort: null, groupBy: 'sector' });
+    store = await freshStore();
+    expect(store.getState().groupBy).toBe('sector');
+    // Other changes keep it.
+    store.getState().cycleSort('value');
+    store.getState().toggle('bid');
+    store.getState().setWidth('bid', 120);
+    expect(JSON.parse(storage.data.get(KEY)!).groupBy).toBe('sector');
+    store.getState().setGroupBy('none');
+    store = await freshStore();
+    expect(store.getState().groupBy).toBe('none');
+    // Back to by underlying with nothing else changed: nothing to store.
+    store.getState().reset();
+    store.getState().setGroupBy('sector');
+    store.getState().setGroupBy('underlying');
+    expect(storage.data.has(KEY)).toBe(false);
+  });
+
+  it('collapses groups for the session only; reset expands them and groups by underlying again', async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    const store = await freshStore();
+    store.getState().toggleGroup('u:STK:AAPL');
+    store.getState().toggleGroup('s:Technology');
+    expect(store.getState().collapsed).toEqual({ 'u:STK:AAPL': true, 's:Technology': true });
+    expect(storage.data.has(KEY)).toBe(false);
+    store.getState().toggleGroup('u:STK:AAPL');
+    expect(store.getState().collapsed).toEqual({ 's:Technology': true });
+    // Switching the grouping keeps them (each grouping has its own keys).
+    store.getState().setGroupBy('sector');
+    expect(store.getState().collapsed).toEqual({ 's:Technology': true });
+    store.getState().reset();
+    expect(store.getState()).toMatchObject({ groupBy: 'underlying', collapsed: {} });
+    expect(storage.data.has(KEY)).toBe(false);
+    expect((await freshStore()).getState().collapsed).toEqual({});
   });
 
   it('does not store the editor, and closeTransient closes it', async () => {

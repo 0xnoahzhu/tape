@@ -1,13 +1,16 @@
-// The Positions table's columns, sort and column widths, per device: localStorage
-// 'tape.positions.v1' holds { columns, sort, widths } (read and written in try/catch; what an older
-// version stored, without widths, reads as before). A missing or unreadable value is the default
-// set without a sort or widths; Reset removes the key. A list the user changed keeps its columns:
-// columns added to the catalog later are not added to it. A hidden column keeps its width. The
-// column editor's open state is not stored, and locking closes the editor (state/lockActions.ts).
+// The Positions table's columns, sort, column widths and grouping, per device: localStorage
+// 'tape.positions.v1' holds { columns, sort, widths, groupBy } (read and written in try/catch; what
+// an older version stored, without widths or a grouping, reads as before, grouped by underlying). A
+// missing or unreadable value is the default set without a sort or widths, grouped by underlying;
+// Reset removes the key. A list the user changed keeps its columns: columns added to the catalog
+// later are not added to it. A hidden column keeps its width. Which groups are collapsed holds for
+// the session only (the keys of closed positions' groups would pile up), as does the column
+// editor's open state; locking closes the editor (state/lockActions.ts).
 
 import { create } from 'zustand';
 import { DEFAULT_COLUMNS, type ColumnId } from './columns';
 import {
+  DEFAULT_GROUP_BY,
   moveColumn,
   moveColumnBy,
   moveColumnToSlot,
@@ -19,12 +22,13 @@ import {
   toggleColumn,
   type ColumnPrefs,
   type ColumnWidths,
+  type GroupBy,
   type SortState,
 } from './columnsState';
 
 export const POSITIONS_STORAGE_KEY = 'tape.positions.v1';
 
-const NONE: ColumnPrefs = { columns: null, sort: null, widths: {} };
+const NONE: ColumnPrefs = { columns: null, sort: null, widths: {}, groupBy: DEFAULT_GROUP_BY };
 
 /** The stored preferences, or the defaults. */
 export function loadPrefs(): ColumnPrefs {
@@ -38,11 +42,16 @@ export function loadPrefs(): ColumnPrefs {
 
 function savePrefs(p: ColumnPrefs): void {
   const sized = Object.keys(p.widths).length > 0;
+  const grouped = p.groupBy !== DEFAULT_GROUP_BY;
   try {
-    if (!p.columns && !p.sort && !sized) localStorage.removeItem(POSITIONS_STORAGE_KEY);
+    if (!p.columns && !p.sort && !sized && !grouped) localStorage.removeItem(POSITIONS_STORAGE_KEY);
     // The default set is not written out, so it follows later defaults until the user changes it;
-    // nor are widths when no column has one.
-    else localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify({ ...(p.columns && { columns: p.columns }), sort: p.sort, ...(sized && { widths: p.widths }) }));
+    // nor are widths when no column has one, nor the default grouping.
+    else
+      localStorage.setItem(
+        POSITIONS_STORAGE_KEY,
+        JSON.stringify({ ...(p.columns && { columns: p.columns }), sort: p.sort, ...(sized && { widths: p.widths }), ...(grouped && { groupBy: p.groupBy }) }),
+      );
   } catch {
     // Storage unavailable: the choice holds for this session only.
   }
@@ -54,6 +63,9 @@ interface PositionColumnsStore {
   sort: SortState | null;
   /** Widths the user dragged columns to (px); a column without one shares the spare width. */
   widths: ColumnWidths;
+  groupBy: GroupBy;
+  /** Collapsed groups by key (groups.ts → groupKey, so each grouping keeps its own); not stored. */
+  collapsed: Readonly<Record<string, true>>;
   /** The column editor is open. */
   editorOpen: boolean;
   /** Shows a column at the end, or hides a shown one. */
@@ -73,7 +85,13 @@ interface PositionColumnsStore {
   setWidth(id: ColumnId, w: number, left?: ColumnWidths): void;
   /** Back to the column's default width. */
   resetWidth(id: ColumnId): void;
-  /** Back to the default columns, without a sort or widths (removes the stored preferences). */
+  setGroupBy(by: GroupBy): void;
+  /** Collapses an expanded group, or expands a collapsed one. */
+  toggleGroup(key: string): void;
+  /**
+   * Back to the default columns, without a sort or widths, grouped by underlying with every group
+   * expanded (removes the stored preferences).
+   */
   reset(): void;
   setEditorOpen(open: boolean): void;
   /** Closes the editor (Tape locked). */
@@ -81,26 +99,32 @@ interface PositionColumnsStore {
 }
 
 export const usePositionColumns = create<PositionColumnsStore>()((set, get) => {
+  /** The stored part of the state. */
+  const prefs = (): ColumnPrefs => {
+    const { columns, sort, widths, groupBy } = get();
+    return { columns, sort, widths, groupBy };
+  };
   const commit = (next: ColumnPrefs) => {
     savePrefs(next);
     set(next);
   };
   /** Applies a change to the shown columns; hiding the sorted column drops the sort. */
   const change = (edit: (cols: readonly ColumnId[]) => readonly ColumnId[]) => {
-    const { columns, sort, widths } = get();
-    const base = columns ?? DEFAULT_COLUMNS;
+    const p = prefs();
+    const base = p.columns ?? DEFAULT_COLUMNS;
     const next = edit(base);
     if (next === base) return;
-    commit({ columns: [...next], sort: sort && next.includes(sort.id) ? sort : null, widths });
+    commit({ ...p, columns: [...next], sort: p.sort && next.includes(p.sort.id) ? p.sort : null });
   };
   /** Applies a change to the widths. */
   const size = (edit: (widths: ColumnWidths) => ColumnWidths) => {
-    const { columns, sort, widths } = get();
-    const next = edit(widths);
-    if (next !== widths) commit({ columns, sort, widths: next });
+    const p = prefs();
+    const next = edit(p.widths);
+    if (next !== p.widths) commit({ ...p, widths: next });
   };
   return {
     ...loadPrefs(),
+    collapsed: {},
     editorOpen: false,
     toggle: (id) => change((c) => toggleColumn(c, id)),
     remove: (id) => change((c) => removeColumn(c, id)),
@@ -108,13 +132,26 @@ export const usePositionColumns = create<PositionColumnsStore>()((set, get) => {
     moveBy: (id, delta) => change((c) => moveColumnBy(c, id, delta)),
     moveToSlot: (id, slot) => change((c) => moveColumnToSlot(c, id, slot)),
     cycleSort: (id) => {
-      const { columns, sort, widths } = get();
-      if (!(columns ?? DEFAULT_COLUMNS).includes(id)) return;
-      commit({ columns, sort: nextSort(sort, id), widths });
+      const p = prefs();
+      if (!(p.columns ?? DEFAULT_COLUMNS).includes(id)) return;
+      commit({ ...p, sort: nextSort(p.sort, id) });
     },
     setWidth: (id, w, left) => size((ws) => sizeColumn(ws, id, w, left)),
     resetWidth: (id) => size((ws) => resetColumnWidth(ws, id)),
-    reset: () => commit(NONE),
+    setGroupBy: (groupBy) => {
+      if (groupBy !== get().groupBy) commit({ ...prefs(), groupBy });
+    },
+    toggleGroup: (key) =>
+      set(({ collapsed }) => {
+        const next = { ...collapsed };
+        if (next[key]) delete next[key];
+        else next[key] = true;
+        return { collapsed: next };
+      }),
+    reset: () => {
+      commit(NONE);
+      set({ collapsed: {} });
+    },
     setEditorOpen: (editorOpen) => set({ editorOpen }),
     closeTransient: () => set({ editorOpen: false }),
   };

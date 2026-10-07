@@ -3,7 +3,7 @@ import { option, stock } from '@shared/contract';
 import { createClock, NEW_YORK_ZONE, TOKEN_CLOCK } from '@shared/timeFormat';
 import type { AppNotification, NotificationKind } from '@shared/types';
 import { useNotificationsMessages } from './messages';
-import { alertInstrumentParts, filterNotifications, notificationText, opensTradePage, relativeTime, stampText, unreadCount } from './model';
+import { alertInstrumentParts, filterNotifications, notificationTarget, notificationText, relativeTime, stampText, unreadCount } from './model';
 
 const n = (id: string, kind: NotificationKind, t: number, read = false): AppNotification => ({
   id,
@@ -45,13 +45,26 @@ describe('relativeTime', () => {
   });
 });
 
-describe('opensTradePage', () => {
-  it('keeps the current page except for option notifications and Settings', () => {
-    expect(opensTradePage('fill', 'ord')).toBe(false);
-    expect(opensTradePage('price', 'acct')).toBe(false);
-    expect(opensTradePage('order', 'trade')).toBe(false);
-    expect(opensTradePage('fill', 'set')).toBe(true);
-    expect(opensTradePage('opt', 'ord')).toBe(true);
+describe('notificationTarget', () => {
+  it('opens fills in Portfolio › Trades, order updates in › Orders and option alerts in the chain, from any page', () => {
+    for (const page of ['acct', 'trade', 'set'] as const) {
+      expect(notificationTarget({ kind: 'fill' }, page)).toBe('trades');
+      expect(notificationTarget({ kind: 'order' }, page)).toBe('orders');
+      expect(notificationTarget({ kind: 'opt' }, page)).toBe('opt');
+    }
+  });
+
+  it('leaves Settings for the chart, and otherwise only selects the instrument', () => {
+    expect(notificationTarget({ kind: 'price' }, 'set')).toBe('chart');
+    expect(notificationTarget({ kind: 'price' }, 'acct')).toBeNull();
+    expect(notificationTarget({ kind: 'price' }, 'trade')).toBeNull();
+    expect(notificationTarget({ kind: 'sys' }, 'trade')).toBeNull();
+  });
+
+  it('treats a cancelled or rejected order like any other notice: Orders does not list it', () => {
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'set')).toBe('chart');
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'acct')).toBeNull();
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'trade')).toBeNull();
   });
 });
 

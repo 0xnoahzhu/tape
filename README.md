@@ -9,23 +9,36 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 ## Feature tour
 
-**Portfolio** — a two-tier account header: net liquidation, day / unrealized / realized P&L, buying
-power and excess liquidity with the margin cushion (red below 10%); under it cash (or margin loan),
-stock and option value, initial and maintenance margin, leverage and accrued dividends. Tabs Dashboard
-and Positions: a positions table (average cost, price, market value and P&L by default) that sorts by
-any column, with a **column editor** for IB's own P&L figures, contract details, quote fields, option
-greeks, 52-week ranges, volatility, option and trading activity, short-sale data, dividends, earnings
-dates, ETF NAV, futures open interest and bond details (145 columns; those Tape calculates are marked ƒ
-and give their formula, those not yet checked against IB's data say so, and the extra quote fields are
-asked of IB only while their column is shown, on the positions' own quote lines); a sector allocation
-chart. In the positions table, drag a header to move its column or its right edge to size it (the
-columns left of it keep their widths; double-click the edge for the default width); a wide table scrolls
-sideways with its scrollbar always shown, and Tape remembers the columns, their order and widths and the
-sort per device. The Dashboard's widgets add portfolio Greeks, concentration, today's P&L by position,
-option expirations, today's trades and **earnings & dividends** for the holdings.
-Ex-dividend dates and amounts come with IB's quotes. Earnings dates come from Wall Street Horizon when
-the account has that IBKR subscription; otherwise Tape estimates them from IB's market scanner (US stocks:
-the date and before the open / after the close, marked *Est.*, since IB marks none as confirmed).
+**Portfolio** (⌘1 / Ctrl+1) — a two-tier account header: net liquidation, day / unrealized / realized
+P&L, buying power and excess liquidity with the margin cushion (red below 10%); under it cash (or margin
+loan), stock and option value, initial and maintenance margin, leverage and accrued dividends. Tabs
+Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
+
+- **Positions**: a table (average cost, price, market value and P&L by default) grouped by **underlying**
+  (a stock with its options; the default), **sector** or not at all. A group row sums market value, % of
+  net liq (highlighted from 20%), unrealized and day P&L, and the other columns where a sum means
+  something (amounts across currencies in the account currency, marked with its code; deltas only within
+  one underlying); groups collapse, and
+  a single position stands on its own without a group row. The next **earnings or ex-dividend date**
+  within two weeks shows as a chip on the group (or the stock's row): *Earnings 10/23 AMC · Est.*, *Ex-div
+  10/15 $0.24*. Option rows read *Call · 12 DTE · 3.2% ITM*, the days to expiry highlighted within a week
+  (days count on New York's calendar, wherever you are).
+  The toolbar shows the top 3 groups' share of net liq (*Top 3 = 41% of net liq*) and, while options are
+  held, the portfolio Greeks (Δ in shares, $Δ, Γ, Θ per day, Vega per point). Every column sorts the
+  groups (by their sum, or their best row) and the rows within them. A **column editor** adds IB's own
+  P&L figures, contract details, quote fields, option greeks, 52-week ranges, volatility, option and
+  trading activity, short-sale data, dividends, earnings dates, ETF NAV, futures open interest and bond
+  details (145 columns; those Tape calculates are marked ƒ and give their formula, those not yet checked
+  against IB's data say so, and the extra quote fields are asked of IB only while their column is shown,
+  on the positions' own quote lines). Drag a header to move its column or its right edge to size it (the
+  columns left of it keep their widths; double-click the edge for the default width); a wide table
+  scrolls sideways with its scrollbar always shown, and Tape remembers the columns, their order and
+  widths, the sort and the grouping per device. Ex-dividend dates and amounts come with IB's quotes.
+  Earnings dates come from Wall Street Horizon when the account has that IBKR subscription; otherwise
+  Tape estimates them from IB's market scanner (US stocks: the date and before the open / after the
+  close, marked *Est.*, since IB marks none as confirmed).
+- **Orders**: working orders with their attributes (modify, cancel, cancel all).
+- **Trades**: today's executions with commissions.
 
 **Trade**
 
@@ -81,14 +94,15 @@ the date and before the open / after the close, marked *Est.*, since IB marks no
   the switch yourself, and a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
   note under the switch.
 
-**Orders** — working orders with their attributes (modify, cancel, cancel all) and today's trades with commissions.
-
 **Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
 events appear in the bell; each kind can also be pushed to the system notification center, with sound and
 do-not-disturb switches. On macOS and Windows, orders, fills and everything else each play their own
 system sound (chosen in Settings › Notifications, with a sample button; None mutes a category). On macOS
 Tape plays the sound itself, so a Focus mode does not mute it; use Tape's do-not-disturb. On Linux the
-notification server decides the sound. Clicking a notification about an instrument opens it.
+notification server decides the sound. Clicking a fill opens Portfolio › Trades, an order update Portfolio ›
+Orders (not a cancelled or rejected order, which that tab no longer lists: it counts as any other
+notification), an option risk alert the option chain; other notifications about an instrument open it in
+the chart (from the bell, outside Settings, they only select it).
 
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
 daily log files, retention and export.

@@ -119,7 +119,7 @@ function ticksFor(secType: SecType, profile: QuoteProfile): readonly number[] {
   switch (secType) {
     case 'STK':
       // The stock lists nest (basic ⊂ dividends ⊂ underlying), so a line switched between the
-      // options view and the dashboard is requested again at most once and then kept.
+      // options view and the Positions tab is requested again at most once and then kept.
       if (profile === 'underlying') return [100, 101, 106, 165, 318, 411, 456];
       return profile === 'dividends' ? [318, 456] : [318];
     case 'OPT':

@@ -675,17 +675,17 @@ export function customMinutesInput(raw: string): { text: string; minutes: number
 // ---------------------------------------------------------------------------
 // Shortcuts
 
-export type ShortcutId = 'command' | 'buy' | 'sell' | 'qty' | 'submit' | 'cancelLast' | 'pages' | 'settings' | 'theme' | 'lock';
+export type ShortcutId = 'command' | 'buy' | 'sell' | 'qty' | 'submit' | 'cancelLast' | 'pages' | 'orders' | 'settings' | 'theme' | 'lock';
 
 /** The keys of one combination, modifiers first: ['⌘', '⇧', 'L'] / ['Ctrl', 'Shift', 'L']. */
 export type KeyCombo = string[];
 
 export interface ShortcutRow {
   id: ShortcutId;
-  /** One key cap each; two for a pair (↑ / ↓) or a range (⌘1 – ⌘3). */
+  /** One key cap each; two for a pair (↑ / ↓, ⌘1 / ⌘2). */
   combos: KeyCombo[];
   /** Shown between two combinations. */
-  sep?: '/' | '–';
+  sep?: '/';
 }
 
 /** Shortcut rows in the design's order: ⌘ ⇧ ⏎ ⌫ glyphs on macOS, Ctrl / Shift / Enter / Backspace elsewhere. */
@@ -699,7 +699,9 @@ export function shortcutKeys(platform: string): ShortcutRow[] {
     { id: 'qty', combos: [['↑'], ['↓']], sep: '/' },
     { id: 'submit', combos: [[mac ? '⏎' : 'Enter']] },
     { id: 'cancelLast', combos: [mod(mac ? '⌫' : 'Backspace')] },
-    { id: 'pages', combos: [mod('1'), mod('3')], sep: '–' },
+    // The two pages, then Portfolio › Orders (a tab of the Portfolio page).
+    { id: 'pages', combos: [mod('1'), mod('2')], sep: '/' },
+    { id: 'orders', combos: [mod('3')] },
     { id: 'settings', combos: [mod(',')] },
     { id: 'theme', combos: [mod(mac ? '⇧' : 'Shift', 'L')] },
     { id: 'lock', combos: [mod('L')] },

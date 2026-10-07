@@ -14,6 +14,7 @@ import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
 import { livePrice, positionRow } from '../portfolio/calc';
+import { showPortfolio } from '../portfolio/uiState';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
 import { modifyOrderInTicket } from '../panels/actions';
@@ -105,7 +106,7 @@ function PositionRow({ p, netLiq }: { p: Position; netLiq: number | undefined })
   );
 }
 
-/** Only orders placed by this API client can be modified or cancelled here (as on the Orders page). */
+/** Only orders placed by this API client can be modified or cancelled here (as on Portfolio › Orders). */
 function OrderRow({ o, own }: { o: WorkingOrder; own: boolean }) {
   const m = useChartMessages();
   const common = useCommon();
@@ -223,7 +224,6 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
   const m = useChartMessages();
   const netLiq = useStore((s) => s.account?.netLiquidation);
   const myClientId = useStore((s) => s.connection.clientId);
-  const setPage = useStore((s) => s.setPage);
   const tab = useChartPrefs((s) => s.activityTab);
   const setTab = useChartPrefs((s) => s.setActivityTab);
   const clock = useClock();
@@ -253,7 +253,7 @@ export function SymbolActivityPanel({ onCollapse }: { onCollapse?: () => void })
             onChange={setTab}
           />
           <div style={{ flex: 1 }} />
-          <div onClick={() => setPage('ord')} style={{ display: 'flex', alignItems: 'center', color: 'var(--ac)', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
+          <div onClick={() => showPortfolio('ord')} style={{ display: 'flex', alignItems: 'center', color: 'var(--ac)', cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }}>
             {m.allOrders}
           </div>
           {onCollapse && (

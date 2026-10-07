@@ -1,20 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { option, stock } from '@shared/contract';
+import { contractKey, option, stock } from '@shared/contract';
 import type { Position, Quote } from '@shared/types';
 import {
-  CASH_KEY,
   ETF_SECTOR,
   MARGIN_CALL_CUSHION,
   OTHER_SECTOR,
   accountTotals,
-  allocation,
   fxRate,
   grossValue,
   leverage,
   leverageLabel,
   livePrice,
   marginCushion,
-  moneyShort,
   positionRow,
   positionTarget,
   qtyLabel,
@@ -41,12 +38,6 @@ function position(over: Partial<Position> = {}): Position {
   };
 }
 describe('labels', () => {
-  it('formats short money', () => {
-    expect(moneyShort(1_284_530.42)).toBe('$1.28M');
-    expect(moneyShort(52_400)).toBe('$52.4K');
-    expect(moneyShort(undefined)).toBe('—');
-  });
-
   it('formats weights with a true minus', () => {
     expect(weightLabel(12.94)).toBe('12.9%');
     expect(weightLabel(-1.04)).toBe('−1.0%');
@@ -92,58 +83,12 @@ describe('sectors', () => {
     const call = option('AAPL', '20261016', 230, 'C');
     expect(underlyingOf(call)).toEqual(stock('AAPL'));
     expect(underlyingOf(option('SPX', '20261016', 5700, 'P'))).toMatchObject({ symbol: 'SPX', secType: 'IND', exchange: 'CBOE' });
+    // An option on a non-USD stock: the stock in the option's currency, keyed as a stock row of it is.
+    const hk = { ...stock('700'), currency: 'HKD', primaryExchange: 'SEHK' };
+    expect(underlyingOf({ ...option('700', '20261029', 500, 'C'), currency: 'HKD' })).toEqual({ ...stock('700'), currency: 'HKD' });
+    expect(contractKey(underlyingOf({ ...option('700', '20261029', 500, 'C'), currency: 'HKD' }))).toBe(contractKey(underlyingOf(hk)));
     expect(positionTarget(call)).toEqual({ contract: stock('AAPL'), view: 'opt' });
     expect(positionTarget({ ...stock('NVDA'), conId: 4815747, exchange: 'NASDAQ' })).toEqual({ contract: stock('NVDA'), view: 'chart' });
-  });
-});
-
-describe('allocation', () => {
-  it('reproduces the design: sectors by size, then cash', () => {
-    const s = allocation(
-      [
-        { sector: 'Technology', value: 160_000 },
-        { sector: 'Consumer, Cyclical', value: -12_551 },
-        { sector: ETF_SECTOR, value: -2_550 },
-        { sector: 'Technology', value: 4_250 },
-      ],
-      1_134_456,
-      1_284_530,
-    );
-    expect(s.map((x) => x.key)).toEqual(['Technology', 'Consumer, Cyclical', ETF_SECTOR, CASH_KEY]);
-    expect(s.map((x) => x.opacity)).toEqual([1, 0.75, 0.5, 0.55]);
-    // Net-short sectors have no arc; the held slices fill the ring.
-    expect(s[1].len).toBe(0);
-    expect(s[2].len).toBe(0);
-    expect(s.reduce((a, x) => a + x.len, 0)).toBeCloseTo(100);
-    expect(s[0].len).toBeCloseTo((164_250 / (164_250 + 1_134_456)) * 100);
-    expect(s[0].offset).toBe(0);
-    expect(s[3].offset).toBeCloseTo(-s[0].len);
-    expect(s[1].pctOfNetLiq).toBeCloseTo((-12_551 / 1_284_530) * 100);
-  });
-
-  it('gives a margin loan (negative cash) no arc', () => {
-    const s = allocation([{ sector: 'Technology', value: 150 }], -50, 100);
-    expect(s.map((x) => [x.key, x.len, x.pctOfNetLiq])).toEqual([
-      ['Technology', 100, 150],
-      [CASH_KEY, 0, -50],
-    ]);
-    expect(s[1].offset).toBeCloseTo(-100);
-  });
-
-  it('merges small sectors into Other and keeps opacities visible', () => {
-    const items = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((sector, i) => ({ sector, value: 1000 - i * 100 }));
-    const s = allocation([...items, { sector: OTHER_SECTOR, value: 5 }], undefined, undefined, 6);
-    expect(s.map((x) => x.key)).toEqual(['A', 'B', 'C', 'D', 'E', OTHER_SECTOR]);
-    expect(s[5].value).toBe(500 + 400 + 300 + 5);
-    expect(Math.min(...s.map((x) => x.opacity))).toBeCloseTo(0.3);
-    expect(s[0].pctOfNetLiq).toBeUndefined();
-  });
-
-  it('shows only cash for an account without positions', () => {
-    const s = allocation([], 1_020_000, 1_020_000);
-    expect(s).toHaveLength(1);
-    expect(s[0]).toMatchObject({ key: CASH_KEY, len: 100, pctOfNetLiq: 100 });
-    expect(allocation([], undefined, undefined)).toEqual([]);
   });
 });
 

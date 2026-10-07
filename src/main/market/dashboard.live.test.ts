@@ -1,12 +1,12 @@
-// Live, read-only check of the dashboard's data against a running IB Gateway / TWS with a paper
-// account. Skipped unless TAPE_LIVE_IB is set, e.g.:
+// Live, read-only check of the Portfolio page's data against a running IB Gateway / TWS with a
+// paper account. Skipped unless TAPE_LIVE_IB is set, e.g.:
 //
 //   TAPE_LIVE_IB=127.0.0.1:4002 TAPE_CLIENT_ID=362 pnpm vitest run src/main/market/dashboard.live.test.ts
 //
-// Through the real services: the account values the header and the margin widget read (net
-// liquidation, excess liquidity, margins, today's realized P&L), the IB dividend tick on a
-// 'dividends' quote line (generic tick 456) and earnings (the paper account has no WSH
-// subscription: estimates from IB's market scanner).
+// Through the real services: the account values the header reads (net liquidation, excess
+// liquidity, margins, today's realized P&L), the IB dividend tick on a 'dividends' quote line
+// (generic tick 456, the Positions tab's 'positions-div' owner) and earnings (the paper account has
+// no WSH subscription: estimates from IB's market scanner).
 // Market data and account data only; no orders. Use a client id no other program uses.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -21,7 +21,7 @@ import { createMemoryDatabase } from '../db/memory';
 import { EventName, OUT_MSG_ID } from '../ib/tws';
 
 const live = process.env.TAPE_LIVE_IB;
-const dir = mkdtempSync(join(tmpdir(), 'tape-dashboard-live-'));
+const dir = mkdtempSync(join(tmpdir(), 'tape-portfolio-live-'));
 
 vi.mock('electron', () => ({
   app: {
@@ -42,7 +42,7 @@ async function until<T>(read: () => T | undefined, ms: number): Promise<T | unde
   }
 }
 
-describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 120_000 }, async () => {
+describe.skipIf(!live)('Portfolio data against a live IB Gateway', { timeout: 120_000 }, async () => {
   const { createApiLog } = await import('../ib/apiLog');
   const { createConnection } = await import('../ib/connection');
   const { createAccountService } = await import('../ib/account');
@@ -81,7 +81,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
   ctx.ib.onRequestError((e) => errors.push(`${e.reqId} ${e.code} ${e.message}`));
 
   afterAll(async () => {
-    ctx.quotes.setRendererSubscriptions('dashboard-div', []);
+    ctx.quotes.setRendererSubscriptions('positions-div', []);
     await ctx.ib.disconnect();
     rmSync(dir, { recursive: true, force: true });
     expect(orderFrames).toEqual([]);
@@ -92,7 +92,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
     expect(ctx.ib.isConnected()).toBe(true);
   });
 
-  it('has the account values of the header and the margin widget', async () => {
+  it('has the account values of the header', async () => {
     const s = await until(() => {
       const a = ctx.account.getSummary();
       return a?.netLiquidation && a.excessLiquidity !== undefined && a.maintMarginReq !== undefined && a.realizedPnL !== undefined ? a : undefined;
@@ -123,7 +123,7 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
       if (Array.isArray(tokens) && Number(tokens[0]) === OUT_MSG_ID.REQ_MKT_DATA) sent.push(tokens.join('|'));
     });
     ctx.quotes.setRendererSubscriptions(
-      'dashboard-div',
+      'positions-div',
       symbols.map((s) => ({ contract: stock(s), profile: 'dividends' as const })),
     );
     const quote = (s: string): Quote | undefined => ctx.quotes.getQuote(contractKey(stock(s)));
@@ -141,9 +141,9 @@ describe.skipIf(!live)('dashboard data against a live IB Gateway', { timeout: 12
   it('reports earnings (Wall Street Horizon or the scanner fallback)', { timeout: 600_000 }, async () => {
     const held = ctx.account.getPositions().filter((p) => p.contract.secType === 'STK').map((p) => p.contract);
     const stocks = (held.length ? held : [stock('AAPL')]).slice(0, 40);
-    // The scanner's price band comes from the quotes the widget's dividends line keeps.
+    // The scanner's price band comes from the quotes the Positions tab's dividends line keeps.
     ctx.quotes.setRendererSubscriptions(
-      'dashboard-div',
+      'positions-div',
       stocks.map((contract) => ({ contract, profile: 'dividends' as const })),
     );
     let scans = 0;

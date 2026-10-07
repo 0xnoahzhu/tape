@@ -957,6 +957,11 @@ export interface AppNotification {
   body: LocalizedText;
   /** Instrument to open when the notification is clicked. */
   contract?: ContractRef;
+  /**
+   * An order notice about an order that is no longer working (cancelled or rejected): Portfolio ›
+   * Orders does not list it, so a click opens its instrument as other notifications do.
+   */
+  orderDone?: true;
   read: boolean;
 }
 
