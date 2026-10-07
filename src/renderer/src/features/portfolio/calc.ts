@@ -4,7 +4,7 @@
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2, MINUS, pct } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { AccountSummary, ContractRef, Execution, NavPoint, Position, Quote, SecType } from '@shared/types';
+import type { AccountSummary, ContractRef, Execution, NavHistory, NavPoint, Position, Quote, SecType } from '@shared/types';
 
 export type RangeKey = '7D' | 'MTD' | 'YTD' | '1Y' | 'ALL';
 export const RANGES: readonly RangeKey[] = ['7D', 'MTD', 'YTD', '1Y', 'ALL'];
@@ -43,6 +43,22 @@ export function navSeries(nav: readonly NavPoint[], live?: { netLiq: number | un
     else if (live.t === last.t) out[out.length - 1] = { t: live.t, netLiq: live.netLiq };
   }
   return out;
+}
+
+/**
+ * The NAV series of the account shown: the connection's account, else (before the first connect
+ * of a run) the one main sent the history of. Never mixes accounts: the history and the live net
+ * liquidation are used only when they belong to it.
+ */
+export function shownNavSeries(
+  nav: NavHistory,
+  connectionAccount: string | undefined,
+  live: Pick<AccountSummary, 'account' | 'netLiquidation' | 'updatedAt'> | null,
+): NavPoint[] {
+  const account = connectionAccount || nav.account;
+  const points = account && nav.account === account ? nav.points : [];
+  const point = account && live?.account === account ? { netLiq: live.netLiquidation, t: live.updatedAt } : undefined;
+  return navSeries(points, point);
 }
 
 /** Start of a range in unix ms (local calendar for MTD / YTD); -Infinity for ALL. */

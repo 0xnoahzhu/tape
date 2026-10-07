@@ -228,9 +228,9 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
       case 'executions.put':
         return store.executionsPut(a[0]);
       case 'nav.append':
-        return store.navAppend(a[0]);
+        return store.navAppend(a[0], a[1]);
       case 'nav.replace':
-        return store.navReplace(a[0]);
+        return store.navReplace(a[0], a[1]);
       default:
         throw new Error(`Unknown write ${req.op}`);
     }
@@ -247,8 +247,12 @@ export function serve(port: MessagePort, opts: ServerOptions): void {
         return store.kvGet(a[0], a[1]);
       case 'executions.since':
         return store.executionsSince(a[0]);
+      case 'nav.get':
+        return store.navGet(a[0]);
       case 'nav.all':
         return store.navAll();
+      case 'nav.lastAccount':
+        return store.navLastAccount();
       case 'maintain': {
         const steps = startMaintenance();
         const evicted: string[] = [];

@@ -4,7 +4,8 @@
 //   watchlists.json     Watchlist[]
 //   alerts.json         PriceAlert[]
 //   notifications.json  AppNotification[] (newest first, capped)
-//   nav.json            NavPoint[] (oldest first); legacy: imported once into tape.db, then emptied
+//   nav.json            NavPoint[] (oldest first); legacy: imported once into tape.db (as samples
+//                       without an account, see ib/navHistory.ts), then emptied
 //   window.json         main window bounds
 //
 // The store never emits IPC events; index.ts broadcasts changes.

@@ -165,9 +165,11 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
       since: (t) => call('executions.since', [t], (m) => m.executions.since(t), (json) => JSON.parse(json) as Execution[]),
     },
     nav: {
-      append: (points) => call('nav.append', [points], (m) => m.nav.append(points)),
+      append: (account, points) => call('nav.append', [account, points], (m) => m.nav.append(account, points)),
+      get: (account) => call('nav.get', [account], (m) => m.nav.get(account), unpackNav),
       all: () => call('nav.all', [], (m) => m.nav.all(), unpackNav),
-      replace: (points) => call('nav.replace', [points], (m) => m.nav.replace(points)),
+      lastAccount: () => call('nav.lastAccount', [], (m) => m.nav.lastAccount(), (a) => a ?? undefined),
+      replace: (account, points) => call('nav.replace', [account, points], (m) => m.nav.replace(account, points)),
     },
     stats: () => call('cache.stats', [], (m) => m.stats()),
     clearMarketData() {

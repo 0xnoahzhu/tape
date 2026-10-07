@@ -68,6 +68,33 @@ const kvKey = (ns: string, key: string) => `${ns}\u0000${key}`;
 const COVERAGE_KV_NS = 'coverage';
 /** kv namespaces of cached market data, as sqlite.ts → MARKET_DATA_NS. */
 export const MEMORY_MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef'];
+/** An account's first NAV sample claims the unattributed rows within this factor of it, as sqlite.ts → NAV_CLAIM_FACTOR. */
+const NAV_CLAIM_FACTOR = 2;
+
+/** A NAV row as the SQLite table holds it (account null: unattributed). */
+interface NavRow {
+  t: number;
+  netLiq: number;
+  account: string | null;
+}
+
+const navPoint = (r: NavRow): NavPoint => ({ t: r.t, netLiq: r.netLiq });
+const validNav = (p: NavPoint | undefined): p is NavPoint => !!p && Number.isFinite(p.t) && Number.isFinite(p.netLiq);
+
+/**
+ * Upserts `account`'s points into rows sorted and unique by time, as sqlite.ts → navInsert: a row of
+ * another owner (an account, or none) at the same time is left alone.
+ */
+function navUpsert(rows: readonly NavRow[], account: string | null, points: readonly NavPoint[]): NavRow[] {
+  const byTime = new Map(rows.map((r) => [r.t, r]));
+  for (const p of points) {
+    if (!validNav(p)) continue;
+    const t = Math.round(p.t);
+    const cur = byTime.get(t);
+    if (!cur || cur.account === account) byTime.set(t, { t, netLiq: p.netLiq, account });
+  }
+  return [...byTime.values()].sort((a, b) => a.t - b.t);
+}
 
 export function createMemoryDatabase(): MemoryDatabase {
   /** Ascending, unique times per series (kept sorted on write, so reads never sort). */
@@ -75,7 +102,8 @@ export function createMemoryDatabase(): MemoryDatabase {
   /** JSON text like the SQLite table: readers get their own copy of every value. */
   const kv = new Map<string, { json: string; updatedAt: number }>();
   const execs = new Map<string, Execution>();
-  let nav: NavPoint[] = [];
+  /** Ascending, unique times (as the SQLite table, whose primary key is the time). */
+  let nav: NavRow[] = [];
   const listeners = new Set<(evicted: EvictedSeries) => void>();
   const notify = (evicted: EvictedSeries) => {
     for (const l of [...listeners]) l(evicted);
@@ -128,14 +156,31 @@ export function createMemoryDatabase(): MemoryDatabase {
       },
     },
     nav: {
-      async append(points) {
-        nav = [...nav, ...points].sort((a, b) => a.t - b.t);
+      async append(account, points) {
+        // As sqlite.ts → navAppend: an account without rows claims the unattributed ones first.
+        const first = account ? points.find((p) => validNav(p) && p.netLiq > 0) : undefined;
+        if (first && !nav.some((r) => r.account === account)) {
+          const low = first.netLiq / NAV_CLAIM_FACTOR;
+          const high = first.netLiq * NAV_CLAIM_FACTOR;
+          nav = nav.map((r) => (r.account === null && r.netLiq >= low && r.netLiq <= high ? { ...r, account } : r));
+        }
+        nav = navUpsert(nav, account, points);
+      },
+      async get(account) {
+        return nav.filter((r) => r.account === account).map(navPoint);
       },
       async all() {
-        return nav.slice();
+        return nav.map(navPoint);
       },
-      async replace(points) {
-        nav = points.slice().sort((a, b) => a.t - b.t);
+      async lastAccount() {
+        for (let i = nav.length - 1; i >= 0; i--) {
+          const account = nav[i].account;
+          if (account !== null) return account;
+        }
+        return undefined;
+      },
+      async replace(account, points) {
+        nav = navUpsert(nav.filter((r) => r.account !== account), account, points);
       },
     },
     async stats() {

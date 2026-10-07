@@ -26,9 +26,13 @@ export interface DbOps {
   'executions.put': [args: [rows: ExecutionRow[]], result: void];
   /** JSON array text, newest first. */
   'executions.since': [args: [since: number], result: string];
-  'nav.append': [args: [points: NavPoint[]], result: void];
+  /** account null: unattributed points (the nav.json import). */
+  'nav.append': [args: [account: string | null, points: NavPoint[]], result: void];
+  'nav.get': [args: [account: string], result: Float64Array];
+  /** Every row, unattributed ones included. */
   'nav.all': [args: [], result: Float64Array];
-  'nav.replace': [args: [points: NavPoint[]], result: void];
+  'nav.lastAccount': [args: [], result: string | null];
+  'nav.replace': [args: [account: string, points: NavPoint[]], result: void];
   /** Runs retention and vacuum now (tests, diagnostics). */
   maintain: [args: [], result: void];
   'cache.stats': [args: [], result: CacheStats];

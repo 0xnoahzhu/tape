@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Bar } from '@shared/types';
 import { createMemoryDatabase } from './memory';
+import { applyNavStep, caseAccounts, NAV_CASES, navState } from './navCases';
 
 const bar = (time: number, close = time): Bar => ({ time, open: close, high: close, low: close, close, volume: 1 });
 
@@ -81,5 +82,35 @@ describe('memory bar cache', () => {
     expect(await db.stats()).toEqual({ bytes: 0, series: 0, bars: 0, executions: 1 });
     expect(await db.kv.get('contract', '1')).toBeUndefined();
     expect(await db.kv.get('mine', '1')).toBeDefined();
+  });
+});
+
+describe('memory NAV log (the cases sqlite.test.ts runs too)', () => {
+  for (const c of NAV_CASES) {
+    it(c.name, async () => {
+      const db = createMemoryDatabase();
+      // Unattributed rows are what an append without an account writes.
+      await db.nav.append(null, [...c.legacy]);
+      for (const step of c.steps) {
+        await applyNavStep(db.nav, step);
+        if (step.then) expect(await navState(db.nav, caseAccounts(c))).toEqual(step.then);
+        if ('lastAccount' in step) expect(await db.nav.lastAccount()).toBe(step.lastAccount);
+      }
+    });
+  }
+
+  it('keeps one row per time (rounded like SQLite), ascending', async () => {
+    const db = createMemoryDatabase();
+    await db.nav.append('DU1', [
+      { t: 3.4, netLiq: 3 },
+      { t: 1, netLiq: 1 },
+      { t: NaN, netLiq: 2 },
+    ]);
+    await db.nav.append('DU1', [{ t: 3, netLiq: 33 }]);
+    expect(await db.nav.get('DU1')).toEqual([
+      { t: 1, netLiq: 1 },
+      { t: 3, netLiq: 33 },
+    ]);
+    expect(await db.nav.all()).toEqual(await db.nav.get('DU1'));
   });
 });
