@@ -1,7 +1,6 @@
 // Persistent caches of the main process. Hot data (quotes, books, orders) never goes through
-// here; these stores keep what would otherwise have to be requested from IB again
-// (bars, contract definitions, option chain parameters) and what IB does not keep for the API
-// (executions older than today, the NAV history).
+// here; these stores keep what would otherwise have to be requested from IB again (bars,
+// contract definitions, option chain parameters).
 //
 // All methods are async: the SQLite implementation runs in a worker thread so database work
 // never blocks the socket / IPC event loop. Writes never reject (persistence is best-effort and
@@ -20,15 +19,12 @@
 //   seconds first, then minutes and hours, then daily and longer, then the recently used ones;
 //   least recently used first;
 // - kv entries not rewritten for 180 days are deleted (contract details, option chains,
-//   coverage documents, head timestamps);
-// - executions are never deleted (the trade journal is the user's record); the NAV history is
-//   kept per account, each account's compacted to one point per day after 10 days by
-//   ib/navHistory.ts; unattributed rows (written before schema v4) are kept until claimed.
+//   coverage documents, head timestamps).
 // Then free pages are returned to the file system (incremental vacuum), the WAL is truncated and
 // the planner statistics refreshed. Evicted series are reported through onEvicted, so the
 // history service drops what it keeps in memory about them and refetches them cleanly.
 
-import type { Bar, CacheStats, Execution, NavPoint } from '@shared/types';
+import type { Bar, CacheStats } from '@shared/types';
 
 /**
  * How long maintenance keeps the bars of a series, by bar size: seconds (1 to 30 secs) are large
@@ -76,41 +72,9 @@ export interface KeyValueCache {
   delete(ns: string, key: string): Promise<void>;
 }
 
-export interface ExecutionJournal {
-  /** Inserts or replaces executions (matched by execId). */
-  put(executions: Execution[]): Promise<void>;
-  /** Executions with time >= `since` (unix ms), newest first. */
-  since(since: number): Promise<Execution[]>;
-}
-
-/**
- * Net liquidation samples, one history per account (sqlite.ts → navAppend has the rules). Rows
- * written before schema v4 have no account: they are shown by no read until an account claims
- * them.
- */
-export interface NavLog {
-  /**
-   * Adds `account`'s points; null: unattributed (the nav.json import only). A time held by
-   * another account's row is left alone; the same account's replaces the value. An account's
-   * first sample (it has no rows yet) first claims the unattributed rows within a factor of 2 of
-   * the first point (NAV_CLAIM_FACTOR), in the same transaction.
-   */
-  append(account: string | null, points: NavPoint[]): Promise<void>;
-  /** One account's points, ascending. */
-  get(account: string): Promise<NavPoint[]>;
-  /** Every row, unattributed ones included, ascending: for the nav.json import check and tests, never shown. */
-  all(): Promise<NavPoint[]>;
-  /** The account of the newest attributed sample (undefined: none yet). */
-  lastAccount(): Promise<string | undefined>;
-  /** Replaces one account's history (compaction); other accounts' and unattributed rows are kept. */
-  replace(account: string, points: NavPoint[]): Promise<void>;
-}
-
 export interface Database {
   readonly bars: BarCache;
   readonly kv: KeyValueCache;
-  readonly executions: ExecutionJournal;
-  readonly nav: NavLog;
   /** 'sqlite' when persistent, 'memory' when the database could not be opened. */
   readonly kind: 'sqlite' | 'memory';
   /** Size on disk and what the cache holds. */
@@ -118,8 +82,8 @@ export interface Database {
   /**
    * Deletes the market data caches (bars, series and the kv namespaces of coverage / head
    * timestamps, contract details and option chains) and returns the space to the file system
-   * (the SQLite worker serves other requests meanwhile), resolving once it is back. Executions
-   * and the NAV history are kept. Listeners hear 'all' before it runs. Rejects on database errors.
+   * (the SQLite worker serves other requests meanwhile), resolving once it is back. Other kv
+   * namespaces are kept. Listeners hear 'all' before it runs. Rejects on database errors.
    */
   clearMarketData(): Promise<void>;
   /**

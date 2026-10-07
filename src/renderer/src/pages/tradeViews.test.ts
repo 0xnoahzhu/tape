@@ -15,7 +15,7 @@ describe('trade page views', () => {
     expect(shownView('chart', true)).toBe('chart');
   });
 
-  it('the options desk always has Flow', () => {
-    expect(DESK_TABS).toEqual(['chain', 'vol', 'flow', 'pos']);
+  it('the options desk has Chain, Volatility and Positions', () => {
+    expect(DESK_TABS).toEqual(['chain', 'vol', 'pos']);
   });
 });

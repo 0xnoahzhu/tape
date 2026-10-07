@@ -378,8 +378,6 @@ export interface CacheStats {
   /** Stored bar series (contract + bar size + whatToShow + useRTH). */
   series: number;
   bars: number;
-  /** Journaled executions (never removed by the cache cleanup). */
-  executions: number;
   /** Unix ms of the least recently used series, when there is one. */
   oldestAccess?: number;
 }
@@ -434,22 +432,6 @@ export interface Position {
   /** Stock type from contract details ('COMMON', 'ETF', …); ETFs get their own sector. */
   stockType?: string;
   updatedAt: number;
-}
-
-/** A sampled net liquidation value, persisted to build the equity curve. */
-export interface NavPoint {
-  /** Unix ms. */
-  t: number;
-  netLiq: number;
-}
-
-/**
- * One account's NAV history (the history is kept per account and never mixed). `account` '' with
- * no points: no account has recorded a sample yet.
- */
-export interface NavHistory {
-  account: string;
-  points: NavPoint[];
 }
 
 // ---------------------------------------------------------------------------
@@ -949,7 +931,7 @@ export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartia
 export interface AppSnapshot {
   platform: string;
   appVersion: string;
-  /** True when market data comes from the built-in simulator (TAPE_DEMO=1). */
+  /** True when market data comes from the built-in simulator (TAPE_DEMO=1, development builds only). */
   demo: boolean;
   settings: Settings;
   /** Resolved theme ('system' resolved via nativeTheme). */
@@ -962,8 +944,6 @@ export interface AppSnapshot {
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
   notifications: AppNotification[];
-  /** The NAV history of the connection's account, else (before the first connect) of the account of the newest sample. */
-  nav: NavHistory;
   logFilePath: string;
   lock: LockState;
   /** This launch follows a Forgot-PIN reset (Settings › Connection opens, no auto-connect). */

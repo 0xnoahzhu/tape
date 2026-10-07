@@ -1,7 +1,7 @@
 // The dashboard's widget layout (pure): which widgets show, in which order, and how many of the
 // grid's three columns each spans. Persisted per device by layoutStore.ts.
 
-export const WIDGET_IDS = ['eq', 'alloc', 'margin', 'greeks', 'conc', 'contrib', 'expiry', 'fills', 'events', 'bench'] as const;
+export const WIDGET_IDS = ['alloc', 'margin', 'greeks', 'conc', 'contrib', 'expiry', 'fills', 'events'] as const;
 export type WidgetId = (typeof WIDGET_IDS)[number];
 
 /** Columns a widget spans in the 3-column grid: S, M, L (full row). */
@@ -23,7 +23,6 @@ export interface CatalogEntry {
 
 /** Every widget in the default order (the design's catalog). */
 export const CATALOG: readonly CatalogEntry[] = [
-  { id: 'eq', span: 2 },
   { id: 'alloc', span: 1 },
   { id: 'margin', span: 1 },
   { id: 'greeks', span: 1 },
@@ -32,14 +31,13 @@ export const CATALOG: readonly CatalogEntry[] = [
   { id: 'expiry', span: 1 },
   { id: 'fills', span: 1 },
   { id: 'events', span: 1 },
-  { id: 'bench', span: 1 },
 ];
 
 const DEFAULT_SPAN = new Map<WidgetId, Span>(CATALOG.map((c) => [c.id, c.span]));
 
 export const defaultSpan = (id: WidgetId): Span => DEFAULT_SPAN.get(id) ?? 1;
 
-/** All ten widgets at their default spans: 4 rows (eq+alloc | margin+greeks+conc | contrib+expiry | fills+events+bench). */
+/** All eight widgets at their default spans: 3 rows (alloc+margin+greeks | conc+contrib | expiry+fills+events). */
 export function defaultLayout(): Layout {
   return CATALOG.map(({ id, span }) => ({ id, span }));
 }
@@ -48,9 +46,10 @@ export const isWidgetId = (v: unknown): v is WidgetId => typeof v === 'string' &
 const isSpan = (v: unknown): v is Span => v === 1 || v === 2 || v === 3;
 
 /**
- * A stored layout: an array of { id, span }. Unknown and repeated ids are dropped, a missing or
- * invalid span takes the widget's default. Anything that is not an array is null (use the default
- * layout); an empty array is a valid, empty layout.
+ * A stored layout: an array of { id, span }. Unknown and repeated ids are dropped (among them the
+ * removed widgets of older versions, 'eq' and 'bench'), a missing or invalid span takes the
+ * widget's default. Anything that is not an array is null (use the default layout); an empty array
+ * is a valid, empty layout.
  */
 export function sanitizeLayout(raw: unknown): Layout | null {
   if (!Array.isArray(raw)) return null;

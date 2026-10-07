@@ -4,8 +4,6 @@
 //   watchlists.json     Watchlist[]
 //   alerts.json         PriceAlert[]
 //   notifications.json  AppNotification[] (newest first, capped)
-//   nav.json            NavPoint[] (oldest first); legacy: imported once into tape.db (as samples
-//                       without an account, see ib/navHistory.ts), then emptied
 //   window.json         main window bounds
 //
 // The store never emits IPC events; index.ts broadcasts changes.
@@ -14,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { defaultSettings, defaultWatchlists } from '@shared/defaults';
-import type { AppNotification, DeepPartial, NavPoint, PriceAlert, Settings, Watchlist } from '@shared/types';
+import type { AppNotification, DeepPartial, PriceAlert, Settings, Watchlist } from '@shared/types';
 import type { AppStore } from './context';
 import { createMessages } from './i18n';
 import { openJsonFile, type JsonFile } from './jsonFile';
@@ -28,7 +26,6 @@ import {
   loadSettings,
   sameData,
   sanitizeAlerts,
-  sanitizeNav,
   sanitizeNotifications,
   sanitizeWatchlists,
   sanitizeWindowBounds,
@@ -72,9 +69,8 @@ export function createStore(): AppStore {
   const watchlists = file<Watchlist[]>('watchlists.json', (raw) => sanitizeWatchlists(raw, defaultWatchlists()), defaultWatchlists);
   const alerts = file<PriceAlert[]>('alerts.json', sanitizeAlerts, () => []);
   const notifications = file<AppNotification[]>('notifications.json', sanitizeNotifications, () => [], false);
-  const nav = file<NavPoint[]>('nav.json', sanitizeNav, () => [], false);
   const windowBounds = file<WindowBounds | null>('window.json', sanitizeWindowBounds, () => null);
-  const files: JsonFile<unknown>[] = [settings, watchlists, alerts, notifications, nav, windowBounds];
+  const files: JsonFile<unknown>[] = [settings, watchlists, alerts, notifications, windowBounds];
 
   // The saved settings still had the removed read-only switch on: say so in the notification
   // list, and save the settings without the key so the notice is posted once.
@@ -141,10 +137,6 @@ export function createStore(): AppStore {
     getNotifications: () => notifications.get(),
     // Written by the notifier only, which keeps the list newest first.
     setNotifications: (list) => notifications.set(capNotifications(list)),
-
-    // NAV history lives in the database (ctx.db.nav); these only serve its one-time import.
-    getNav: () => nav.get(),
-    setNav: (points) => nav.set(points),
 
     getWindowBounds: () => windowBounds.get(),
     setWindowBounds(b) {

@@ -18,20 +18,7 @@ export const usePortfolioMessages = createMessages({
     excessLiquidityHint: 'Liquidation risk below zero',
     tabDash: 'Dashboard',
     tabPos: 'Positions',
-    tabPerf: 'Performance',
-
-    // Equity curve
-    modeValue: 'Value',
-    modePerf: 'Performance',
-    titleValue: 'Net liquidation value',
-    titlePerf: 'Return',
-    span7D: 'Past 7 days',
-    spanMTD: 'Month to date',
-    spanYTD: 'Year to date',
-    span1Y: 'Past year',
-    since: (date: string) => `Since ${date}`,
-    historyNote: (date: string) => `Tape records your net liquidation while connected; history starts ${date}.`,
-    noHistory: 'Tape records your net liquidation while connected. No history yet.',
+    tabAccount: 'Account',
 
     // Allocation
     allocation: 'Sector allocation',
@@ -76,11 +63,7 @@ export const usePortfolioMessages = createMessages({
     } as Record<string, string>,
     noPositions: 'No positions',
 
-    // Performance
-    returns: 'Returns',
-    maxDrawdown: (v: string) => `Max drawdown ${v}`,
-    historyFrom: (md: string) => `History from ${md}`,
-    noHistoryShort: 'No history yet',
+    // Account tab
     balances: 'Balances',
     stockValue: 'Stock value',
     optionValue: 'Option value',
@@ -93,7 +76,7 @@ export const usePortfolioMessages = createMessages({
     pnl: 'P&L',
     today: 'Today',
     unrealized: 'Unrealized',
-    realized: 'Realized',
+    realized: 'Realized today',
   },
   zh: {
     netLiq: '净清算值',
@@ -109,19 +92,7 @@ export const usePortfolioMessages = createMessages({
     excessLiquidityHint: '低于 0 会触发强平',
     tabDash: '概览',
     tabPos: '持仓',
-    tabPerf: '业绩',
-
-    modeValue: '金额',
-    modePerf: '收益率',
-    titleValue: '账户净值',
-    titlePerf: '收益率',
-    span7D: '近 7 天',
-    spanMTD: '本月至今',
-    spanYTD: '今年至今',
-    span1Y: '近 1 年',
-    since: (date: string) => `自 ${date} 起`,
-    historyNote: (date: string) => `Tape 在连接期间记录净清算值，历史从 ${date} 开始。`,
-    noHistory: 'Tape 在连接期间记录净清算值，目前还没有历史。',
+    tabAccount: '账户',
 
     allocation: '板块分布',
     netLiqShort: '净清算值',
@@ -170,10 +141,6 @@ export const usePortfolioMessages = createMessages({
     } as Record<string, string>,
     noPositions: '暂无持仓',
 
-    returns: '收益',
-    maxDrawdown: (v: string) => `最大回撤 ${v}`,
-    historyFrom: (md: string) => `记录始于 ${md}`,
-    noHistoryShort: '暂无记录',
     balances: '余额',
     stockValue: '股票市值',
     optionValue: '期权市值',
@@ -186,7 +153,7 @@ export const usePortfolioMessages = createMessages({
     pnl: '盈亏',
     today: '今日',
     unrealized: '未实现',
-    realized: '已实现',
+    realized: '今日已实现',
   },
 });
 

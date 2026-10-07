@@ -5,12 +5,10 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Bar, NavPoint } from '@shared/types';
-import { packBars, unpackBars, unpackNav } from './client';
-import { applyNavStep, caseAccounts, LIVE_ROWS, NAV_CASES, navState, PAPER, PAPER_ROWS, USER_ROWS } from './navCases';
+import type { Bar } from '@shared/types';
+import { packBars, unpackBars } from './client';
 import { configure, migrate, NewerSchemaError, SCHEMA_VERSION, schemaVersion } from './schema';
 import { inferRetention, openStore, SQL, type SqliteStore } from './sqlite';
-import type { NavLog } from './types';
 
 const DAY = 86_400;
 const NOW = Date.UTC(2026, 9, 4, 16); // unix ms
@@ -45,7 +43,7 @@ describe('SQLite store', () => {
     expect(pragma(db, 'user_version')).toBe(SCHEMA_VERSION);
     expect(Number(pragma(db, 'cache_size'))).toBeLessThan(0);
     const tables = (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>).map((t) => t.name);
-    expect(tables).toEqual(['bars', 'executions', 'kv', 'nav', 'series']);
+    expect(tables).toEqual(['bars', 'kv', 'series']);
     expect((db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'bars'").get() as { sql: string }).sql).toMatch(/WITHOUT ROWID/);
   });
 
@@ -112,82 +110,15 @@ describe('SQLite store', () => {
     expect(store.kvGet('contract', '265598')).toBeNull();
   });
 
-  it('executions: replace by id, newest first since a time', () => {
-    const row = (execId: string, time: number, price = 1) => ({ execId, time, json: JSON.stringify({ execId, time, price }) });
-    store.executionsPut([row('a.01', 1000), row('b.01', 3000), row('c.01', 2000)]);
-    store.executionsPut([row('b.01', 3000, 2)]);
-    expect(JSON.parse(store.executionsSince(2000))).toEqual([
-      { execId: 'b.01', time: 3000, price: 2 },
-      { execId: 'c.01', time: 2000, price: 1 },
-    ]);
-    expect(JSON.parse(store.executionsSince(5000))).toEqual([]);
-  });
-
-  it('nav: append per account (replacing equal timestamps), ascending reads, replace', () => {
-    store.navAppend('DU1', [
-      { t: 2000, netLiq: 2 },
-      { t: 1000, netLiq: 1 },
-    ]);
-    store.navAppend('DU1', [{ t: 2000, netLiq: 22 }]);
-    store.navAppend('U2', [{ t: 1500, netLiq: 15 }]);
-    expect(unpackNav(store.navGet('DU1'))).toEqual([
-      { t: 1000, netLiq: 1 },
-      { t: 2000, netLiq: 22 },
-    ]);
-    expect(unpackNav(store.navGet('U2'))).toEqual([{ t: 1500, netLiq: 15 }]);
-    expect(unpackNav(store.navAll()).map((p) => p.t)).toEqual([1000, 1500, 2000]);
-    expect(store.navLastAccount()).toBe('DU1');
-    store.navReplace('DU1', [{ t: 5000, netLiq: 5 }]);
-    expect(unpackNav(store.navGet('DU1'))).toEqual([{ t: 5000, netLiq: 5 }]);
-    expect(unpackNav(store.navGet('U2'))).toEqual([{ t: 1500, netLiq: 15 }]);
-    expect(store.navGet('none').length).toBe(0);
-  });
-
-  describe('nav: legacy rows and accounts (the cases memory.test.ts runs too)', () => {
-    /** The store as a NavLog, with the legacy rows inserted as schema v3 wrote them (no account). */
-    function navLog(legacy: readonly NavPoint[]): NavLog {
-      const insert = store.db.prepare('INSERT INTO nav (t, net_liq) VALUES (?, ?)');
-      for (const p of legacy) insert.run(p.t, p.netLiq);
-      return {
-        append: async (account, points) => store.navAppend(account, points),
-        get: async (account) => unpackNav(store.navGet(account)),
-        all: async () => unpackNav(store.navAll()),
-        lastAccount: async () => store.navLastAccount() ?? undefined,
-        replace: async (account, points) => store.navReplace(account, points),
-      };
-    }
-
-    for (const c of NAV_CASES) {
-      it(c.name, async () => {
-        const log = navLog(c.legacy);
-        for (const step of c.steps) {
-          await applyNavStep(log, step);
-          if (step.then) expect(await navState(log, caseAccounts(c))).toEqual(step.then);
-          if ('lastAccount' in step) expect(await log.lastAccount()).toBe(step.lastAccount);
-        }
-      });
-    }
-
-    it("the rows an account's first sample does not claim keep no account", () => {
-      navLog(USER_ROWS);
-      store.navAppend(PAPER, [{ t: Date.UTC(2026, 9, 7, 14), netLiq: 1_051_800 }]);
-      const owners = (store.db.prepare('SELECT account, count(*) AS n FROM nav GROUP BY account ORDER BY account').all() as Array<{ account: string | null; n: number }>).map(
-        (r) => [r.account, r.n],
-      );
-      expect(owners).toEqual([
-        [null, LIVE_ROWS.length],
-        [PAPER, PAPER_ROWS.length + 1],
-      ]);
-    });
-  });
-
   it('a failed statement inside a batch rolls back only its own savepoint', () => {
     store.transaction(() => {
-      store.navAppend('DU1', [{ t: 1, netLiq: 1 }]);
-      expect(() => store.transaction(() => store.db.exec('INSERT INTO nav (t, net_liq) VALUES (2, NULL)'))).toThrow();
-      store.navAppend('DU1', [{ t: 3, netLiq: 3 }]);
+      store.kvSet('ns', 'a', '1', 1);
+      expect(() => store.transaction(() => store.db.exec("INSERT INTO kv (ns, key, value, updated_at) VALUES ('ns', 'b', NULL, 2)"))).toThrow();
+      store.kvSet('ns', 'c', '3', 3);
     });
-    expect(unpackNav(store.navAll()).map((p) => p.t)).toEqual([1, 3]);
+    expect(store.kvGet('ns', 'a')).toEqual({ json: '1', updatedAt: 1 });
+    expect(store.kvGet('ns', 'b')).toBeNull();
+    expect(store.kvGet('ns', 'c')).toEqual({ json: '3', updatedAt: 3 });
   });
 
   describe('query plans (no full scans, no sorting)', () => {
@@ -203,23 +134,9 @@ describe('SQLite store', () => {
       expect(plan(store.db, SQL.barsExpireBound)).toMatch(/SEARCH bars USING PRIMARY KEY \(series_id=\? AND time<\?\)/);
     });
 
-    it('execution reads use the time index', () => {
-      const p = plan(store.db, SQL.executionsSince);
-      expect(p).toMatch(/SEARCH executions USING INDEX executions_time \(time>\?\)/);
-      expect(p).not.toMatch(/SCAN|TEMP B-TREE/);
-    });
-
     it('kv lookups and expiry use the primary key', () => {
       expect(plan(store.db, SQL.kvGet)).toMatch(/SEARCH kv USING PRIMARY KEY \(ns=\? AND key=\?\)/);
       expect(plan(store.db, SQL.kvExpire)).toMatch(/SEARCH kv USING PRIMARY KEY \(ns=\?\)/);
-    });
-
-    it("an account's NAV rows and the unattributed ones are found through the (account, t) index", () => {
-      for (const sql of [SQL.navByAccount, SQL.navHasRows, SQL.navClaim, SQL.navDeleteAccount]) {
-        const p = plan(store.db, sql);
-        expect(p).toMatch(/SEARCH nav USING (COVERING )?INDEX nav_account_t \(account=\?\)/);
-        expect(p).not.toMatch(/SCAN|TEMP B-TREE/);
-      }
     });
   });
 
@@ -282,8 +199,8 @@ describe('opening damaged or foreign files', () => {
     const store = openStore(file);
     expect(store.recovered).toMatch(/tape\.db\.corrupt-\d+$/);
     expect(existsSync(store.recovered!)).toBe(true);
-    store.navAppend('DU1', [{ t: 1, netLiq: 1 }]);
-    expect(store.navAll().length).toBe(2);
+    store.kvSet('ns', 'k', '1', 1);
+    expect(store.kvGet('ns', 'k')).toEqual({ json: '1', updatedAt: 1 });
     store.close();
   });
 
@@ -347,7 +264,7 @@ describe('files created elsewhere, other connections', () => {
        const { DatabaseSync } = require('node:sqlite');
        const db = new DatabaseSync(workerData.file);
        db.exec('BEGIN IMMEDIATE');
-       db.exec('INSERT INTO nav (t, net_liq) VALUES (1, 1)');
+       db.exec("INSERT INTO kv (ns, key, value, updated_at) VALUES ('ns', 'k', '1', 1)");
        parentPort.postMessage('locked');
        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
        db.exec('COMMIT');
@@ -359,7 +276,7 @@ describe('files created elsewhere, other connections', () => {
       const store = openStore(file);
       expect(store.recovered).toBeUndefined();
       expect(pragma(store.db, 'auto_vacuum')).toBe(2);
-      expect(Array.from(store.navAll())).toEqual([1, 1]); // waited for the commit
+      expect(store.kvGet('ns', 'k')).toEqual({ json: '1', updatedAt: 1 }); // waited for the commit
       store.close();
     } finally {
       await once(holder, 'exit');

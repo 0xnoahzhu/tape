@@ -10,9 +10,9 @@
 // its copy of the evicted data re-reads it only after the clear).
 
 import type { Transferable } from 'node:worker_threads';
-import type { Bar, Execution, NavPoint } from '@shared/types';
+import type { Bar } from '@shared/types';
 import { createMemoryDatabase } from './memory';
-import type { DbArgs, DbMessage, DbOp, DbRequest, DbResult, ExecutionRow } from './protocol';
+import type { DbArgs, DbMessage, DbOp, DbRequest, DbResult } from './protocol';
 import type { Database, EvictedSeries } from './types';
 
 /** How long close() waits for the worker to commit and close the file. */
@@ -36,7 +36,7 @@ export interface SqliteClient extends Database {
   readonly ready: Promise<void>;
 }
 
-const WRITE_OPS: ReadonlySet<DbOp> = new Set<DbOp>(['bars.put', 'kv.set', 'kv.delete', 'executions.put', 'nav.append', 'nav.replace']);
+const WRITE_OPS: ReadonlySet<DbOp> = new Set<DbOp>(['bars.put', 'kv.set', 'kv.delete']);
 
 interface Pending {
   op: DbOp;
@@ -138,9 +138,6 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
     });
   }
 
-  const executionRows = (list: Execution[]): ExecutionRow[] =>
-    list.filter((e) => e?.execId && Number.isFinite(e.time)).map((e) => ({ execId: e.execId, time: e.time, json: JSON.stringify(e) }));
-
   return {
     get kind() {
       return fellBack ? 'memory' : 'sqlite';
@@ -160,17 +157,6 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
       set: (ns, key, value) => call('kv.set', [ns, key, JSON.stringify(value ?? null), Date.now()], (m) => m.kv.set(ns, key, value)),
       delete: (ns, key) => call('kv.delete', [ns, key], (m) => m.kv.delete(ns, key)),
     },
-    executions: {
-      put: (list) => call('executions.put', [executionRows(list)], (m) => m.executions.put(list)),
-      since: (t) => call('executions.since', [t], (m) => m.executions.since(t), (json) => JSON.parse(json) as Execution[]),
-    },
-    nav: {
-      append: (account, points) => call('nav.append', [account, points], (m) => m.nav.append(account, points)),
-      get: (account) => call('nav.get', [account], (m) => m.nav.get(account), unpackNav),
-      all: () => call('nav.all', [], (m) => m.nav.all(), unpackNav),
-      lastAccount: () => call('nav.lastAccount', [], (m) => m.nav.lastAccount(), (a) => a ?? undefined),
-      replace: (account, points) => call('nav.replace', [account, points], (m) => m.nav.replace(account, points)),
-    },
     stats: () => call('cache.stats', [], (m) => m.stats()),
     clearMarketData() {
       notifyEvicted('all');
@@ -187,7 +173,7 @@ export function createSqliteClient(transport: DbTransport, log: (message: string
           // Quit: block until the worker committed and closed the file (the process may exit next).
           const closed = transport.waitClosed ? transport.waitClosed(CLOSE_TIMEOUT_MS) : await settlesWithin(done, CLOSE_TIMEOUT_MS);
           if (!closed) log('[db] the database worker did not close in time');
-          // Late calls (e.g. a NAV sample during quit) go nowhere instead of failing.
+          // Late calls (e.g. a write during quit) go nowhere instead of failing.
           useMemory(null);
         }
         await transport.terminate().catch(() => undefined);
@@ -228,11 +214,5 @@ export function unpackBars(buf: Float64Array): Bar[] {
   for (let i = 0, j = 0; i < n; i++, j += 6) {
     out[i] = { time: buf[j], open: buf[j + 1], high: buf[j + 2], low: buf[j + 3], close: buf[j + 4], volume: buf[j + 5] };
   }
-  return out;
-}
-
-export function unpackNav(buf: Float64Array): NavPoint[] {
-  const out = new Array<NavPoint>(buf.length / 2);
-  for (let i = 0; i < out.length; i++) out[i] = { t: buf[i * 2], netLiq: buf[i * 2 + 1] };
   return out;
 }

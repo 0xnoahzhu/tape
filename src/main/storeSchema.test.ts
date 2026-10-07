@@ -10,7 +10,6 @@ import {
   sameData,
   sanitizeAlerts,
   sanitizeContract,
-  sanitizeNav,
   sanitizeNotifications,
   sanitizeWatchlists,
   sanitizeWindowBounds,
@@ -317,14 +316,7 @@ describe('sanitizeNotifications', () => {
   });
 });
 
-describe('sanitizeNav and sanitizeWindowBounds', () => {
-  it('sorts NAV points and drops invalid ones', () => {
-    expect(sanitizeNav([{ t: 2, netLiq: 2 }, { t: 1, netLiq: 1 }, { t: 3 }])).toEqual([
-      { t: 1, netLiq: 1 },
-      { t: 2, netLiq: 2 },
-    ]);
-  });
-
+describe('sanitizeWindowBounds', () => {
   it('validates window bounds', () => {
     expect(sanitizeWindowBounds({ width: 1440.4, height: 900, x: 10, y: 20, maximized: false })).toEqual({ width: 1440, height: 900, x: 10, y: 20, maximized: false });
     expect(sanitizeWindowBounds({ width: 50, height: 99999 })).toEqual({ width: 200, height: 20000 });

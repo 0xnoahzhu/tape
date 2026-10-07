@@ -11,8 +11,7 @@
 
 import { existsSync, renameSync, statSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import type { Bar, CacheStats, NavPoint } from '@shared/types';
-import type { ExecutionRow } from './protocol';
+import type { Bar, CacheStats } from '@shared/types';
 import { configure, migrate, NewerSchemaError } from './schema';
 import { HOURS_RETENTION_DAYS, INTRADAY_RETENTION_DAYS, SECONDS_RETENTION_DAYS, type BarRetention } from './types';
 
@@ -71,14 +70,6 @@ const BAR_FIELDS = 6;
 const END_OF_TIME = Number.MAX_SAFE_INTEGER;
 /** PRAGMA auto_vacuum value of a file whose free pages incremental_vacuum can release. */
 const AUTO_VACUUM_INCREMENTAL = 2;
-/**
- * An account's first NAV sample claims the unattributed rows (written before schema v4) whose
- * value lies within this factor of it, bounds included: the history of the account that was
- * sampled before, not that of an account of a very different size (a paper account of 1.05M and
- * a live one of 31k never claim each other's rows; two accounts within a factor of 2 cannot be
- * told apart, and the first to record a sample takes both). memory.ts keeps the same rule.
- */
-export const NAV_CLAIM_FACTOR = 2;
 
 const SQLITE_ERROR = 1;
 const SQLITE_CORRUPT = 11;
@@ -94,12 +85,6 @@ export const SQL = {
   barsCount: 'SELECT count(*) AS n FROM bars WHERE series_id = ? AND time >= ? AND time <= ?',
   barsExpire: 'DELETE FROM bars WHERE series_id = ? AND time <= ?',
   barsExpireBound: 'SELECT time FROM bars WHERE series_id = ? AND time < ? ORDER BY time LIMIT 1 OFFSET ?',
-  executionsSince: 'SELECT json FROM executions WHERE time >= ? ORDER BY time DESC',
-  navByAccount: 'SELECT t, net_liq FROM nav WHERE account = ? ORDER BY t',
-  navHasRows: 'SELECT 1 FROM nav WHERE account = ? LIMIT 1',
-  /** Unattributed rows with a value in [low, high] go to the account (its first sample). */
-  navClaim: 'UPDATE nav SET account = ? WHERE account IS NULL AND net_liq BETWEEN ? AND ?',
-  navDeleteAccount: 'DELETE FROM nav WHERE account = ?',
   kvGet: 'SELECT value, updated_at FROM kv WHERE ns = ? AND key = ?',
   kvExpire: 'DELETE FROM kv WHERE ns = ? AND key IN (SELECT key FROM kv WHERE ns = ? AND updated_at < ? LIMIT ?)',
   /** Series keys starting with a contract key (the series sharing a head timestamp). */
@@ -136,25 +121,6 @@ export interface SqliteStore {
   kvGet(ns: string, key: string): { json: string; updatedAt: number } | null;
   kvSet(ns: string, key: string, json: string, updatedAt: number): void;
   kvDelete(ns: string, key: string): void;
-  executionsPut(rows: readonly ExecutionRow[]): void;
-  /** JSON array text, newest first. */
-  executionsSince(since: number): string;
-  /**
-   * Adds `account`'s points (null: unattributed, the nav.json import). A time held by another
-   * account's row (or an unattributed one) is left alone; the same account's replaces the value.
-   * When the account has no rows yet, it first claims the unattributed rows within
-   * NAV_CLAIM_FACTOR of its first valid point, in the same transaction; a null account never
-   * claims.
-   */
-  navAppend(account: string | null, points: readonly NavPoint[]): void;
-  /** One account's points, packed [t, netLiq] * n, ascending. */
-  navGet(account: string): Float64Array;
-  /** Every row (unattributed ones too), packed [t, netLiq] * n, ascending. */
-  navAll(): Float64Array;
-  /** The account of the newest attributed row, null when there is none. */
-  navLastAccount(): string | null;
-  /** Replaces one account's rows; other accounts' and unattributed rows are kept, nothing is claimed. */
-  navReplace(account: string, points: readonly NavPoint[]): void;
   /**
    * Writes the series accesses noted since the last flush (at most one per series per
    * ACCESS_WRITE_MS) in one transaction. Returns whether anything was written.
@@ -433,26 +399,6 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
     sql('DELETE FROM kv WHERE ns = ? AND key = ?').run(ns, key);
   }
 
-  /** Upserts `account`'s points; a row of another owner (an account, or none) at the same time is left alone. */
-  function navInsert(account: string | null, points: readonly NavPoint[]): void {
-    const insert = sql(
-      'INSERT INTO nav (t, net_liq, account) VALUES (?, ?, ?) ON CONFLICT (t) DO UPDATE SET net_liq = excluded.net_liq WHERE nav.account IS excluded.account',
-    );
-    for (const p of points) {
-      if (Number.isFinite(p?.t) && Number.isFinite(p?.netLiq)) insert.run(Math.round(p.t), p.netLiq, account);
-    }
-  }
-
-  /** Packs [t, net_liq] rows. */
-  function packNav(rows: Array<[number, number]>): Float64Array {
-    const out = new Float64Array(rows.length * 2);
-    for (let i = 0; i < rows.length; i++) {
-      out[i * 2] = rows[i][0];
-      out[i * 2 + 1] = rows[i][1];
-    }
-    return out;
-  }
-
   /** Deletes up to DELETE_CHUNK of the series' oldest bars before `before`; true when more may be left. */
   function deleteChunk(id: number, before: number): boolean {
     const bound = sql(SQL.barsExpireBound).get(id, before, DELETE_CHUNK - 1) as { time: number } | undefined;
@@ -656,55 +602,6 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
 
     kvDelete,
 
-    executionsPut(rows) {
-      if (!rows.length) return;
-      transaction(() => {
-        const insert = sql('INSERT OR REPLACE INTO executions (exec_id, time, json) VALUES (?, ?, ?)');
-        for (const r of rows) {
-          if (r?.execId && Number.isFinite(r.time) && typeof r.json === 'string') insert.run(r.execId, Math.round(r.time), r.json);
-        }
-      });
-    },
-
-    executionsSince(since) {
-      const rows = arrays(SQL.executionsSince).all(since) as unknown as Array<[string]>;
-      let out = '[';
-      for (let i = 0; i < rows.length; i++) out += (i ? ',' : '') + rows[i][0];
-      return out + ']';
-    },
-
-    navAppend(account, points) {
-      if (!points.length) return;
-      transaction(() => {
-        // "No rows yet" is the account's first sample since the migration (compaction keeps at
-        // least one row per day): an account claims once, unattributed rows written later stay so.
-        const first = account ? points.find((p) => Number.isFinite(p?.t) && Number.isFinite(p?.netLiq) && p.netLiq > 0) : undefined;
-        if (first && !sql(SQL.navHasRows).get(account)) sql(SQL.navClaim).run(account, first.netLiq / NAV_CLAIM_FACTOR, first.netLiq * NAV_CLAIM_FACTOR);
-        navInsert(account, points);
-      });
-    },
-
-    navGet(account) {
-      return packNav(arrays(SQL.navByAccount).all(account) as unknown as Array<[number, number]>);
-    },
-
-    navAll() {
-      return packNav(arrays('SELECT t, net_liq FROM nav ORDER BY t').all() as unknown as Array<[number, number]>);
-    },
-
-    navLastAccount() {
-      // Newest first by the primary key; stops at the first attributed row.
-      const row = sql('SELECT account FROM nav WHERE account IS NOT NULL ORDER BY t DESC LIMIT 1').get() as { account: string } | undefined;
-      return row?.account ?? null;
-    },
-
-    navReplace(account, points) {
-      transaction(() => {
-        sql(SQL.navDeleteAccount).run(account);
-        navInsert(account, points);
-      });
-    },
-
     flushAccess,
 
     stats() {
@@ -714,9 +611,8 @@ function createStore(db: DatabaseSync, file: string, recovered: string | undefin
         bars: number;
         oldest: number | null;
       };
-      const executions = (sql('SELECT count(*) AS n FROM executions').get() as { n: number }).n;
       const bytes = fileSize(file) + walBytes() || pragma('page_count') * pragma('page_size');
-      return { bytes, series: s.series, bars: s.bars, executions, ...(s.oldest != null ? { oldestAccess: s.oldest } : {}) };
+      return { bytes, series: s.series, bars: s.bars, ...(s.oldest != null ? { oldestAccess: s.oldest } : {}) };
     },
 
     clearMarketData() {

@@ -322,3 +322,14 @@ export function atmIv(call: Quote | undefined, put: Quote | undefined): number |
   const ivs = [call?.iv, put?.iv].filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
   return ivs.length ? ivs.reduce((a, b) => a + b, 0) / ivs.length : undefined;
 }
+
+/** Volume of the quoted chain rows by right (the desk header's P/C volume when the underlying has no day totals). */
+export function chainTotals(items: ReadonlyArray<{ right: OptionRight; quote: Quote | undefined }>): { callVol: number; putVol: number } {
+  const t = { callVol: 0, putVol: 0 };
+  for (const it of items) {
+    const v = it.quote?.volume ?? 0;
+    if (it.right === 'C') t.callVol += v;
+    else t.putVol += v;
+  }
+  return t;
+}

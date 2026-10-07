@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { OptionChainParams, Quote } from '@shared/types';
-import { atmIv, buildChain, cellColor, expiryKind, fixed, formatCell, groupByMonth, markOf, nearestIndex, optionData, strikeWindow, termExpiries, visibleExpiries } from './chain';
+import { atmIv, buildChain, cellColor, chainTotals, expiryKind, fixed, formatCell, groupByMonth, markOf, nearestIndex, optionData, strikeWindow, termExpiries, visibleExpiries } from './chain';
 
 const now = new Date(2026, 9, 3); // Sat 2026-10-03
 
@@ -155,5 +155,18 @@ describe('option data', () => {
   it('averages ATM IVs', () => {
     expect(atmIv({ ...q, iv: 0.2 }, { ...q, iv: 0.3 })).toBeCloseTo(0.25, 9);
     expect(atmIv({ ...q, iv: undefined }, undefined)).toBeUndefined();
+  });
+});
+
+describe('chainTotals', () => {
+  const quote = (x: Partial<Quote>): Quote => ({ key: 'k', updatedAt: 0, ...x });
+
+  it('totals volume by right', () => {
+    const t = chainTotals([
+      { right: 'C', quote: quote({ volume: 10 }) },
+      { right: 'P', quote: quote({ volume: 5 }) },
+      { right: 'C', quote: undefined },
+    ]);
+    expect(t).toEqual({ callVol: 10, putVol: 5 });
   });
 });

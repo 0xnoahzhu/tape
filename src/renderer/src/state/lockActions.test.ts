@@ -35,7 +35,7 @@ describe('lock state in the renderer', () => {
   });
 
   it('closes the dashboard catalog and leaves edit mode when locking', () => {
-    useDashboardLayout.setState({ edit: true, pickerOpen: true, drag: 'eq', over: 'alloc' });
+    useDashboardLayout.setState({ edit: true, pickerOpen: true, drag: 'alloc', over: 'margin' });
     applyLockState(state({ locked: true }));
     expect(useDashboardLayout.getState()).toMatchObject({ edit: false, pickerOpen: false, drag: null, over: null });
   });

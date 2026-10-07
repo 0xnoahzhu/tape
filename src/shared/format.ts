@@ -85,7 +85,7 @@ export function signColor(n: number | null | undefined): string {
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
 
 /**
- * Local "HH:MM:SS", always 24-hour: for technical and exported times (API log, CSV). Times people
+ * Local "HH:MM:SS", always 24-hour: for technical times (API log). Times people
  * read follow Settings › General › Time format through timeFormat.ts (createClock / useClock).
  */
 export function hms(t: number): string {

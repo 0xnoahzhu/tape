@@ -6,7 +6,7 @@ import type { ContractInfo } from '@shared/types';
 import { changePct } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
-import { chainTotals } from './flow';
+import { chainTotals } from './chain';
 import { useDailyCloses, useIvHistory } from './data';
 import { useM } from './messages';
 import type { DeskModel } from './model';
@@ -38,28 +38,26 @@ export function DeskHeader({ model }: { model: DeskModel }) {
   const chg = changePct(uq);
   const expLabel = exp ? shortExpiry(exp.expiry) : '';
 
-  // P/C volume: the underlying's day totals (ticks 29/30), else the visible chain.
-  let pc = DASH;
-  let pcSub = m.todayAll;
-  if (uq?.putVolume != null && uq.callVolume) {
-    pc = (uq.putVolume / uq.callVolume).toFixed(2);
-  } else {
-    const t = chainTotals(
-      model.quotedRows.flatMap((r) => [
-        { right: 'C' as const, quote: model.quotes[contractKey(r.callContract)] },
-        { right: 'P' as const, quote: model.quotes[contractKey(r.putContract)] },
-      ]),
-    );
-    if (t.callVol > 0) pc = (t.putVol / t.callVol).toFixed(2);
-    pcSub = expLabel;
-  }
+  // P/C volume: the underlying's day totals (ticks 29/30), else the quoted rows of the visible
+  // chain. P/C open interest comes only from the underlying's totals (ticks 27/28).
+  const chain = chainTotals(
+    model.quotedRows.flatMap((r) => [
+      { right: 'C' as const, quote: model.quotes[contractKey(r.callContract)] },
+      { right: 'P' as const, quote: model.quotes[contractKey(r.putContract)] },
+    ]),
+  );
+  const ratio = (put: number | undefined, call: number | undefined) => (put != null && call ? (put / call).toFixed(2) : DASH);
+  const dayVol = uq?.putVolume != null && !!uq.callVolume;
+  const pcVol = dayVol ? ratio(uq?.putVolume, uq?.callVolume) : ratio(chain.putVol, chain.callVol);
+  const pcOi = ratio(uq?.putOpenInterest, uq?.callOpenInterest);
 
   const metrics = [
     { l: m.ivAtm, v: model.ivAtm != null ? (model.ivAtm * 100).toFixed(1) + '%' : DASH, sub: model.ivAtmSource === 'underlying' ? m.days30 : expLabel },
     { l: m.ivRank, v: iv.stats ? (iv.stats.rank * 100).toFixed(0) : DASH, sub: m.w52 },
     { l: m.ivPct, v: iv.stats ? (iv.stats.percentile * 100).toFixed(0) + '%' : DASH, sub: m.w52 },
     { l: m.em, v: model.em != null ? '±' + f2(model.em) : DASH, sub: model.em != null && spot ? '±' + ((model.em / spot) * 100).toFixed(1) + '%' : expLabel },
-    { l: m.pc, v: pc, sub: pcSub },
+    { l: m.pc, v: pcVol, sub: dayVol ? m.todayAll : expLabel },
+    { l: m.pco, v: pcOi, sub: '' },
   ];
 
   const err = model.dataError;

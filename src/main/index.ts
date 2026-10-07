@@ -21,7 +21,6 @@ import { createCorporateEventsService } from './market/corporateEvents';
 import { createMarketCheckService } from './market/marketCheck';
 import { createAlertService } from './market/alerts';
 import { createAccountService } from './ib/account';
-import { readNavHistory } from './ib/navHistory';
 import { createOrderService } from './ib/orders';
 import { createAppearance, titleBarOverlay } from './appearance';
 import { installMenu } from './menu';
@@ -77,7 +76,8 @@ const m = createMessages({
 let mainWindow: BrowserWindow | null = null;
 
 const ctx = {
-  demo: process.env.TAPE_DEMO === '1',
+  // Development builds only, ignored when packaged (like TAPE_FAKE_BIOMETRICS).
+  demo: !app.isPackaged && process.env.TAPE_DEMO === '1',
   isDev,
   emit(event: TapeEvent) {
     for (const win of BrowserWindow.getAllWindows()) {
@@ -160,9 +160,7 @@ function resetApp(confirmation: string): Promise<void> {
   });
 }
 
-async function snapshot(): Promise<AppSnapshot> {
-  // The only async part comes first, so every other field is read in the same tick as the reply.
-  const nav = await readNavHistory(ctx.db, ctx.ib.getState().account).catch(() => ({ account: '', points: [] }));
+function snapshot(): AppSnapshot {
   return {
     platform: process.platform,
     appVersion: app.getVersion(),
@@ -177,7 +175,6 @@ async function snapshot(): Promise<AppSnapshot> {
     watchlists: ctx.store.getWatchlists(),
     priceAlerts: ctx.store.getPriceAlerts(),
     notifications: ctx.store.getNotifications(),
-    nav,
     logFilePath: ctx.apiLog.filePath(),
     lock: ctx.lock.getState(),
     afterReset: takeAfterReset(),

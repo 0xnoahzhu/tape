@@ -1,4 +1,4 @@
-// Market data simulator for demo mode (TAPE_DEMO=1).
+// Market data simulator for demo mode (TAPE_DEMO=1, development builds only).
 //
 // Quotes, bars, depth and option chains are generated from mean-reverting random walks with a
 // stable seed per symbol, anchored at the design's sample prices (unknown symbols get a

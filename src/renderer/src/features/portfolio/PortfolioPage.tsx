@@ -1,5 +1,5 @@
 // Portfolio page (design v6, "acct"): sticky account header with tabs, then the Dashboard
-// (customizable widget grid, dashboard/), Positions or Performance.
+// (customizable widget grid, dashboard/), Positions or Account.
 // Each tab fills the page height, so no bare page background shows under short content.
 
 import { useMemo, type ReactNode } from 'react';
@@ -11,9 +11,8 @@ import { TabItems } from '../../ui/primitives';
 import { accountTotals, todaysExecutions, type AccountTotals } from './calc';
 import { Dashboard, DashboardControls } from './dashboard/Dashboard';
 import { useNyDayStart } from './dashboard/data';
-import { useNavSeries } from './EquityCard';
+import { AccountView } from './AccountView';
 import { usePortfolioMessages } from './messages';
-import { PerformanceView } from './PerformanceView';
 import { PositionsTable } from './PositionsTable';
 import { usePortfolioUi, type PortfolioTab } from './uiState';
 import { usePositionRows } from './usePositionRows';
@@ -75,7 +74,7 @@ function Header({ account, totals }: { account: AccountSummary | null; totals: A
           tabs={[
             { key: 'dash', label: m.tabDash },
             { key: 'pos', label: m.tabPos },
-            { key: 'perf', label: m.tabPerf },
+            { key: 'account', label: m.tabAccount },
           ]}
           value={tab}
           onChange={setTab}
@@ -94,15 +93,14 @@ export function PortfolioPage() {
   const executions = useStore((s) => s.executions);
   const dayStart = useNyDayStart();
   const totals = useMemo(() => accountTotals(account, rows, todaysExecutions(executions, dayStart)), [account, rows, executions, dayStart]);
-  const series = useNavSeries();
   const symbol = !account?.currency || account.currency === 'USD' ? '$' : '';
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
       <Header account={account} totals={totals} />
-      {tab === 'dash' && <Dashboard rows={rows} account={account} totals={totals} series={series} symbol={symbol} />}
+      {tab === 'dash' && <Dashboard rows={rows} account={account} totals={totals} symbol={symbol} />}
       {tab === 'pos' && <PositionsTable rows={rows} />}
-      {tab === 'perf' && <PerformanceView series={series} account={account} totals={totals} />}
+      {tab === 'account' && <AccountView account={account} totals={totals} />}
     </div>
   );
 }

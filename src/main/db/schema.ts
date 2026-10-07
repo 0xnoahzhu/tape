@@ -1,8 +1,8 @@
 // Connection settings and schema migrations of tape.db (worker side).
 //
 // Designed for large tables: bars are clustered by (series, time) in a WITHOUT ROWID table, so a
-// range read is one B-tree seek plus a sequential scan however many rows the file holds; the
-// executions journal is indexed by time; WAL keeps writes from blocking reads and fsyncs rare.
+// range read is one B-tree seek plus a sequential scan however many rows the file holds; WAL
+// keeps writes from blocking reads and fsyncs rare.
 
 import type { DatabaseSync } from 'node:sqlite';
 
@@ -71,12 +71,21 @@ const MIGRATIONS: readonly string[] = [
   ALTER TABLE series DROP COLUMN intraday;
   DELETE FROM kv WHERE ns = 'coverage' AND key IN (SELECT key FROM series WHERE retention = 'hours');
   `,
-  // v4: NAV history per account. Rows written before have no account (NULL): they are not shown
-  // until an account claims them at runtime (sqlite.ts → navAppend: an account's first sample
-  // claims the unattributed rows within a factor of 2 of it); unclaimed rows are kept.
+  // v4: NAV history per account (rows written before kept no account, NULL). The table is gone
+  // since v5.
   `
   ALTER TABLE nav ADD COLUMN account TEXT;
   CREATE INDEX nav_account_t ON nav(account, t);
+  `,
+  // v5: tape.db holds caches only. The NAV samples (per account since v4) and the executions
+  // journal were Tape's own records, not IB data: both tables go with their indexes. Today's
+  // executions come from IB on every connect (reqExecutions). Maintenance's incremental vacuum
+  // returns the freed pages.
+  `
+  DROP INDEX IF EXISTS nav_account_t;
+  DROP TABLE IF EXISTS nav;
+  DROP INDEX IF EXISTS executions_time;
+  DROP TABLE IF EXISTS executions;
   `,
 ];
 

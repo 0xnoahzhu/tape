@@ -77,7 +77,8 @@ export function changePct(q: Quote | undefined): number | undefined {
 
 /**
  * Whether market data requests (quotes, bars, depth, chains, contract details) can be answered:
- * connected to IB, or the built-in simulator (TAPE_DEMO=1), which works offline.
+ * connected to IB, or the built-in simulator (TAPE_DEMO=1, development builds only), which
+ * works offline.
  */
 export function useMarketDataAvailable(): boolean {
   return useStore((s) => s.demo || s.connection.status === 'connected');

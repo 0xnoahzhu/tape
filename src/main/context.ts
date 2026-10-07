@@ -25,7 +25,6 @@ import type {
   Execution,
   HistoryPage,
   HistoryRequest,
-  NavPoint,
   OptionChainParams,
   OrderPreview,
   OrderRequest,
@@ -60,8 +59,6 @@ export interface AppStore {
   setPriceAlerts(alerts: PriceAlert[]): void;
   getNotifications(): AppNotification[];
   setNotifications(list: AppNotification[]): void;
-  getNav(): NavPoint[];
-  setNav(points: NavPoint[]): void;
   getWindowBounds(): { x?: number; y?: number; width: number; height: number; maximized?: boolean } | null;
   setWindowBounds(b: { x?: number; y?: number; width: number; height: number; maximized?: boolean }): void;
   /** Writes pending changes synchronously (called on quit). */
@@ -258,7 +255,7 @@ export interface Appearance {
 }
 
 export interface MainContext {
-  /** Market data comes from the built-in simulator (TAPE_DEMO=1). */
+  /** Market data comes from the built-in simulator (TAPE_DEMO=1, development builds only). */
   readonly demo: boolean;
   readonly isDev: boolean;
   /** Sends an event to every renderer. */

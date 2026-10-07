@@ -23,7 +23,6 @@ import type {
   LockState,
   MarketDataCheck,
   MarketDataCheckState,
-  NavPoint,
   NotificationKind,
   OptionChainParams,
   OrderPreview,
@@ -66,8 +65,6 @@ export type TapeEvent =
   | { type: 'notifications'; notifications: AppNotification[] }
   | { type: 'watchlists'; watchlists: Watchlist[] }
   | { type: 'priceAlerts'; alerts: PriceAlert[] }
-  /** `account`'s whole NAV history (sent on startup, on every connect and after each sample). */
-  | { type: 'nav'; account: string; points: NavPoint[] }
   /** The lock state changed (main is the only authority; the renderer just draws it). */
   | { type: 'lock'; state: LockState }
   /** Application menu commands, so menu accelerators and in-app shortcuts share one code path. */
@@ -147,12 +144,11 @@ export interface TapeApi {
   checkMarketData(opts?: { depth?: boolean; auto?: boolean }): Promise<MarketDataCheck>;
 
   // Local cache ------------------------------------------------------------
-  /** Size and contents of tape.db (bars, series, journaled executions). */
+  /** Size and contents of tape.db (size, series, bars). */
   getCacheStats(): Promise<CacheStats>;
   /**
    * Deletes the cached market data (bars, series, coverage, head timestamps, contract details,
-   * option chain parameters) and returns the space to the file system. Executions and the NAV
-   * history are kept.
+   * option chain parameters) and returns the space to the file system.
    */
   clearMarketDataCache(): Promise<void>;
 

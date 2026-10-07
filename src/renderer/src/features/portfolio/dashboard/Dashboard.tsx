@@ -4,13 +4,12 @@
 // (layoutStore.ts).
 
 import { useEffect, type DragEvent, type ReactNode } from 'react';
-import type { AccountSummary, NavPoint } from '@shared/types';
+import type { AccountSummary } from '@shared/types';
 import { GripIcon } from '../../../ui/icons';
 import type { AccountTotals, PositionRow } from '../calc';
 import { AllocationCard } from '../AllocationCard';
-import { EquityCard } from '../EquityCard';
 import { ConcentrationWidget, GreeksWidget, MarginWidget } from './AccountWidgets';
-import { BenchWidget, EventsWidget, FillsWidget } from './ActivityWidgets';
+import { EventsWidget, FillsWidget } from './ActivityWidgets';
 import { useOptionQuotes } from './data';
 import { CATALOG, SPANS, dropSide, hasWidget, type DropTarget, type LayoutItem, type WidgetId } from './layout';
 import { useDashboardLayout, useLayout } from './layoutStore';
@@ -21,7 +20,6 @@ export interface DashboardProps {
   rows: PositionRow[];
   account: AccountSummary | null;
   totals: AccountTotals;
-  series: NavPoint[];
   /** Currency symbol of the account ('$' or ''). */
   symbol: string;
 }
@@ -78,10 +76,8 @@ export function DashboardControls() {
 }
 
 function Widget({ id, props, quotes }: { id: WidgetId; props: DashboardProps; quotes: ReturnType<typeof useOptionQuotes> }) {
-  const { rows, account, totals, series, symbol } = props;
+  const { rows, account, totals, symbol } = props;
   switch (id) {
-    case 'eq':
-      return <EquityCard series={series} symbol={symbol} />;
     case 'alloc':
       return <AllocationCard rows={rows} cash={account?.totalCashValue} netLiq={account?.netLiquidation} symbol={symbol} />;
     case 'margin':
@@ -98,8 +94,6 @@ function Widget({ id, props, quotes }: { id: WidgetId; props: DashboardProps; qu
       return <FillsWidget />;
     case 'events':
       return <EventsWidget rows={rows} />;
-    case 'bench':
-      return <BenchWidget />;
   }
 }
 
