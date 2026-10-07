@@ -118,10 +118,12 @@ export function RowMenu({
                 className="hover-p2"
                 style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 0 20px', cursor: has ? 'default' : 'pointer', color: has ? 'var(--dm)' : 'var(--tx)' }}
               >
-                <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
-                  {nameOf(l.name, lang)}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
+                    {nameOf(l.name, lang)}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--dm)' }}>{has ? m.alreadyAdded : ''}</div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--dm)' }}>{has ? m.alreadyAdded : ''}</div>
               </div>
             );
           })}

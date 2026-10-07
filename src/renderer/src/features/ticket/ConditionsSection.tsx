@@ -89,7 +89,7 @@ function WatchedSymbol({ contract, fallback, onPick, disabled }: { contract: Con
             <MenuChoice
               key={contractKey(r.contract)}
               label={
-                <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                   <span style={{ font: '600 12px/1.4 var(--mono)' }}>{contractLabel(r.contract)}</span>
                   <span className="ellipsis" style={{ fontSize: 11, color: 'var(--dm)' }}>
                     {listingTag(r.contract, c.index)}

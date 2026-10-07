@@ -210,7 +210,7 @@ export function AdvancedPanel({
                 />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--dm)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 11, color: 'var(--dm)' }}>
                   <div>{trailingSl ? m.slInitial : m.stopLoss}</div>
                   <div style={{ color: signedColor(model.stopLossPct) }}>{signed(model.stopLossPct)}</div>
                 </div>

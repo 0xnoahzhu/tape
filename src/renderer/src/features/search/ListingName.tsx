@@ -31,13 +31,15 @@ export function ListingName({ name, tag, tagAtEnd, row, style }: { name: string;
   return (
     // Stretched to the row's height, so the whole name column is the hover area.
     <div {...hoverProps} style={{ display: 'flex', alignItems: 'center', alignSelf: 'stretch', gap: 8, minWidth: 0, ...style }}>
-      <div style={{ display: 'flex', flex: tagAtEnd ? 1 : undefined, minWidth: 0, fontSize: 12, color: 'var(--mu)' }}>
-        <div ref={textRef} className="ellipsis" style={{ minWidth: 0 }}>
-          {base}
+      <div style={{ display: 'flex', alignItems: 'baseline', flex: 1, gap: 8, minWidth: 0 }}>
+        <div style={{ display: 'flex', flex: tagAtEnd ? 1 : undefined, minWidth: 0, fontSize: 12, color: 'var(--mu)' }}>
+          <div ref={textRef} className="ellipsis" style={{ minWidth: 0 }}>
+            {base}
+          </div>
+          {suffix && <div style={{ flexShrink: 0, whiteSpace: 'pre' }}>{suffix}</div>}
         </div>
-        {suffix && <div style={{ flexShrink: 0, whiteSpace: 'pre' }}>{suffix}</div>}
+        {tag && <div style={listingTagStyle}>{tag}</div>}
       </div>
-      {tag && <div style={listingTagStyle}>{tag}</div>}
       {tip}
     </div>
   );

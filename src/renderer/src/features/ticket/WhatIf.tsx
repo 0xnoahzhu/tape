@@ -62,7 +62,7 @@ export function WhatIfRows({ T }: { T: TicketCtl }) {
   const margin = p ? marginText(p.initMargin) : null;
   const commission = p ? commissionText(p) : null;
   const row = (label: string, value: string, title?: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }} title={title}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }} title={title}>
       <div>{label}</div>
       <div className="num selectable ellipsis" style={{ color: 'var(--tx)', minWidth: 0 }}>
         {value}
