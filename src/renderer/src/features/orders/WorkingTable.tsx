@@ -20,11 +20,11 @@ import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 // session or GTD expiry ("Pre-submitted · DAY · Overnight + Day", "Pre-submitted · GTD 10/09
 // 04:00 PM ET", about 248px) stay readable at the minimum window width before IB's messages.
 // Contract gets the next share, for option labels ("AAPL 10/16 230 Call"); at that width Price
-// keeps room for "12,300.25", Last, beside it, for "1,234.56", Qty and Filled for "1,000" (a
-// stop-limit's "240.00 / 239.50" is in full on hover). The time column is sized for the clock
-// format (timeColumn).
+// and Last, beside it, keep room for "12,345.67", Qty and Filled for "100,000" (longer values, such
+// as a stop-limit's "240.00 / 239.50", are in full on hover). The time column is sized for the
+// clock format (timeColumn).
 export const workingColumns = (time: string): string =>
-  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.45fr) minmax(0,1.2fr) minmax(0,0.7fr) minmax(0,0.45fr) minmax(70px,2.75fr) 120px`;
+  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.6fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(70px,2.75fr) 120px`;
 
 function modify(o: WorkingOrder): void {
   const s = useStore.getState();
@@ -90,7 +90,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             <div className="ellipsis" style={{ color: 'var(--mu)' }} title={`${m.typeNames[o.orderType] ?? orderTypeLabel(o.orderType, m)} (${o.orderType})`}>
               {orderTypeLabel(o.orderType, m)}
             </div>
-            <div className="num" style={{ textAlign: 'right' }}>
+            <div className="num ellipsis" style={{ textAlign: 'right' }} title={f0(o.totalQuantity)}>
               {f0(o.totalQuantity)}
             </div>
             <div className="num ellipsis" style={{ textAlign: 'right' }} title={o.orderType === 'STP LMT' ? `${m.stopLimitTitle}: ${price}` : price}>
@@ -99,7 +99,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             <div className="num ellipsis" style={{ textAlign: 'right' }} title={lastCellTitle(o, last, quote, m)}>
               {lastPriceText(last)}
             </div>
-            <div className="num" style={{ textAlign: 'right', color: 'var(--mu)' }}>
+            <div className="num ellipsis" style={{ textAlign: 'right', color: 'var(--mu)' }} title={f0(o.filled)}>
               {f0(o.filled)}
             </div>
             <div className="ellipsis" style={{ color: st.tone === 'ac' ? 'var(--ac)' : 'var(--mu)' }} title={st.text}>
