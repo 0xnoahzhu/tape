@@ -236,6 +236,8 @@ describe('algos', () => {
     expect(algoParamProblem({ strategy: 'Vwap', params: { maxPctVol: 0.1, startTime: '09:30', endTime: '16:00', allowPastEndTime: true } })).toBeNull();
     expect(algoParamProblem({ strategy: 'Vwap', params: { maxPctVol: 0.9 } })).toBe('maxPctVol');
     expect(algoParamProblem({ strategy: 'Vwap', params: { startTime: '9.30' } })).toBe('startTime');
+    // A time the ticket could not read (on the 12-hour clock, "3:55" without AM / PM).
+    expect(algoParamProblem({ strategy: 'Vwap', params: { startTime: '3:55' } })).toBe('startTime');
     expect(algoParamProblem({ strategy: 'Vwap', params: { noTakeLiq: 1 } })).toBe('noTakeLiq');
     expect(algoParamProblem({ strategy: 'PctVol', params: {} })).toBe('pctVol');
     expect(algoParamProblem({ strategy: 'ArrivalPx', params: { riskAversion: 'Get Done' } })).toBeNull();

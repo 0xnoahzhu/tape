@@ -272,7 +272,9 @@ export const ALGO_ORDER_TYPES: readonly OrderType[] = ['LMT', 'MKT'];
 /** Algo parameters whose times IB takes in UTC without a date. */
 export const UTC_TIME_PARAMS: ReadonlySet<string> = new Set(['activeTimeStart', 'activeTimeEnd']);
 
-const HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+// Two-digit hours: the ticket stores every time it reads as "HH:MM" (parseTypedTime), so a
+// one-digit hour is text it could not read, such as a 12-hour "3:55" without AM / PM.
+const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /** The first parameter of an algo that is missing or out of range, or null. */
 export function algoParamProblem(algo: AlgoSpec): string | null {

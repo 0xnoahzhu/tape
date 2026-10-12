@@ -1345,9 +1345,10 @@ formatter, pure and used by both processes:
   format). On the 12-hour clock an hour of 1–11 without a leading zero and without AM / PM ("3:55") is
   ambiguous and rejected rather than read as morning. "03:55" reads as 24-hour, the form the ticket
   stores, so on the 12-hour clock (which writes "03:55 PM") the good-after and algo time fields keep a
-  typed "03:55" as "3:55" and it fails the same way (`ticket/timing.ts → goodAfterCommit`, applied as
-  the field is typed in and when it is left). The good-after field does not filter text while
-  an IME composes (pinyin for 上午 / 下午). Tables of clock times size the column with
+  typed "03:55" as "3:55" and it fails the same way, with the AM / PM hint (`ticket/timing.ts →
+  goodAfterCommit`, applied as the field is typed in and when it is left; the order rules take an algo
+  time with a two-digit hour only, `shared/orderRules.ts`). The good-after field does not filter text
+  while an IME composes (pinyin for 上午 / 下午). Tables of clock times size the column with
   `timeColumn(clock)` and keep the cells on one line. Native
   `datetime-local` inputs (GTD expiry) follow the OS; texts that echo their value use the clock.
 * Stored texts: notification titles and bodies are built once but read later, so their times are

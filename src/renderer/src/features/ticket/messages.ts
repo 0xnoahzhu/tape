@@ -320,6 +320,8 @@ export const useTicketM = createMessages({
     } satisfies Record<OrderProblem, string> as Record<OrderProblem, string>,
     /** The algo parameter named in an algoParam problem. */
     algoParamProblem: (name: string) => `Check the algo parameter “${name}”`,
+    /** An algo time's problem in the 12-hour format, where "3:55" without AM / PM is not accepted (as gat12h). */
+    algoTime12h: (name: string) => `Check the algo parameter “${name}”: add AM or PM (03:55 PM), or use 24-hour time (15:55)`,
     /** Algo parameter labels with their unit: a percentage, a New York time. */
     algoPct: (name: string) => `${name} (%)`,
     algoTime: (name: string) => `${name} (ET)`,
@@ -684,6 +686,7 @@ export const useTicketM = createMessages({
       orderRef: '备注不能包含控制字符',
     } satisfies Record<OrderProblem, string> as Record<OrderProblem, string>,
     algoParamProblem: (name: string) => `请检查算法参数「${name}」`,
+    algoTime12h: (name: string) => `请检查算法参数「${name}」：注明上午或下午（如 下午 03:55），或用 24 小时制（15:55）`,
     algoPct: (name: string) => `${name}（%）`,
     algoTime: (name: string) => `${name}（美东）`,
     attr: useAttrM.for('zh'),

@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { contractLabel, isTradable, multiplierOf } from '@shared/contract';
 import { roundToTick } from '@shared/format';
 import { isTimingProblem, sessionOf, tifChangeAllowed, timingProblem, unavailableReason, type TimingField, type TimingInput } from '@shared/orderTiming';
-import { algoParamProblem, isOrderProblem, MAIN_ORDER_TYPES, orderProblems, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
+import { algoInfo, algoParamProblem, isOrderProblem, MAIN_ORDER_TYPES, orderProblems, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
 import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
@@ -147,7 +147,12 @@ export function useTicket(origin?: PanelId) {
       // Name the parameter: "Check the algo parameter “Max % volume”".
       const algo = composeOrder({ ...input, contract, ticket }).request.algo;
       const tag = algo ? algoParamProblem(algo) : null;
-      if (tag) return m.algoParamProblem(m.attr.algoParams[tag] ?? tag);
+      if (algo && tag) {
+        const name = m.attr.algoParams[tag] ?? tag;
+        // A time may lack its AM / PM on the 12-hour clock, as the good-after time may.
+        const time = algoInfo(algo.strategy)?.params.find((p) => p.tag === tag)?.kind === 'time';
+        return time && clock.format === '12h' ? m.algoTime12h(name) : m.algoParamProblem(name);
+      }
     }
     if (isOrderProblem(e)) return ruleText(e);
     if (e === 'gat' && clock.format === '12h') return m.gat12h;

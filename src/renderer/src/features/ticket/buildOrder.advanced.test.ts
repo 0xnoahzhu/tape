@@ -12,6 +12,7 @@ import { buildOrderRequest, choiceProblem, combinationProblem, composeOrder, pen
 import { useTicketM } from './messages';
 import { newCondition } from './ticketConditions';
 import type { TicketMarket } from './ticketModel';
+import { goodAfterCommit } from './timing';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 const mkt: TicketMarket = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
@@ -211,6 +212,15 @@ describe('IB algos', () => {
     expect(err({ algo: 'PctVol', algoParams: {} })).toBe('algoParam');
     expect(err({ algo: 'PctVol', algoParams: { pctVol: '80' } })).toBe('algoParam');
     expect(err({ algo: 'Vwap', algoParams: { startTime: '25:00' } })).toBe('algoParam');
+  });
+
+  it('needs AM / PM for a time on the 12-hour clock, as the good-after time does', () => {
+    const build12 = (startTime: string) => buildOrderRequest({ ...input({ algo: 'Vwap', algoParams: { startTime } }), timeFormat: '12h' });
+    expect(build12('3:55')).toMatchObject({ ok: false, error: 'algoParam' });
+    // The field keeps a typed "03:55" as "3:55" (the clock writes "03:55 PM").
+    expect(build12(goodAfterCommit('03:55', '12h'))).toMatchObject({ ok: false, error: 'algoParam' });
+    expect(ok(build12('3:55 PM')).algo).toEqual({ strategy: 'Vwap', params: { startTime: '15:55' } });
+    expect(ok(build12('09:35')).algo).toEqual({ strategy: 'Vwap', params: { startTime: '09:35' } });
   });
 });
 
