@@ -10,7 +10,7 @@ import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useOrdersMessages, type OrdersMessages } from './messages';
 import { openTicket } from '../panels/actions';
-import { distanceText, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
+import { lastCellTitle, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
 import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
 import { openInstrument } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
@@ -77,7 +77,6 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
         const price = orderPriceText(o);
         const quote = quotes[contractKey(o.contract)];
         const last = orderLastPrice(o.contract, quote);
-        const lastTitle = last == null ? quote?.error?.message : distanceText(o, last, m);
         return (
           <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title}>
             <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
@@ -97,7 +96,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             <div className="num ellipsis" style={{ textAlign: 'right' }} title={o.orderType === 'STP LMT' ? `${m.stopLimitTitle}: ${price}` : price}>
               {price}
             </div>
-            <div className="num ellipsis" style={{ textAlign: 'right' }} title={lastTitle || undefined}>
+            <div className="num ellipsis" style={{ textAlign: 'right' }} title={lastCellTitle(o, last, quote, m)}>
               {lastPriceText(last)}
             </div>
             <div className="num" style={{ textAlign: 'right', color: 'var(--mu)' }}>

@@ -127,13 +127,13 @@ order IB reported, or else the request).
 each order's instrument in a Last column beside the order price (`orders/lastPrice.ts`): an
 option's mark, else its midpoint (as the Positions tab values it), else its last trade; a combo's
 net midpoint, else its last; anything else its last trade, else `lastPrice`'s fallbacks; "—"
-without a quote. Its tooltip says how far the limit or trigger (a trailing order's current stop) is
-from it, in percent of it ("Limit −0.43% from last"; nothing for market and offset-priced orders,
-or when either price is not positive, as a combo's net can be), or, without a price, the line's
-error. The orders' own instruments are quoted (an option its own quote, a combo its combo quote, a
-pair its rate; one line per instrument, shared with any other owner) only while the list shows,
-under the owners `orders` and `symbol-orders` (the panel's Open orders tab), which count as
-visible (`subscriptions.ts`).
+without a quote. Its tooltip has the price in full (a narrow cell cuts it) and how far the limit or
+trigger (a trailing order's current stop) is from it, in percent of it ("Limit −0.43% from last";
+nothing for market and offset-priced orders, or when either price is not positive, as a combo's net
+can be), or, without a price, the line's error (`lastCellTitle`). The orders' own instruments are
+quoted (an option its own quote, a combo its combo quote, a pair its rate; one line per instrument,
+shared with any other owner) only while the list shows, under the owners `orders` and
+`symbol-orders` (the panel's Open orders tab), which count as visible (`subscriptions.ts`).
 
 #### Order types and attributes
 

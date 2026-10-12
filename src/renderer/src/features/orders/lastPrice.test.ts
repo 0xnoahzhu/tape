@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import type { ContractRef, Quote, WorkingOrder } from '@shared/types';
-import { distanceFromLast, distanceText, lastPriceText, orderLastPrice, orderQuoteContract, orderQuoteContracts, orderReferencePrice } from './lastPrice';
+import { distanceFromLast, distanceText, lastCellTitle, lastPriceText, orderLastPrice, orderQuoteContract, orderQuoteContracts, orderReferencePrice } from './lastPrice';
 import { useOrdersMessages } from './messages';
 
 const en = useOrdersMessages.for('en');
@@ -175,5 +175,17 @@ describe('distanceText', () => {
   it('is empty without a distance', () => {
     expect(distanceText(order({ orderType: 'MOC' }), 227.48, en)).toBe('');
     expect(distanceText(order(), undefined, zh)).toBe('');
+  });
+});
+
+describe('lastCellTitle', () => {
+  it('has the price in full, which a narrow cell cuts, and the distance from it', () => {
+    expect(lastCellTitle(order({ limitPrice: 22_913.25 }), 23_012.25, quote({ last: 23_012.25 }), en)).toBe('23,012.25 · Limit −0.43% from last');
+    expect(lastCellTitle(order({ orderType: 'MKT', limitPrice: undefined }), 720_512, quote({ last: 720_512 }), zh)).toBe('720,512.00');
+  });
+
+  it('has the line’s error without a price', () => {
+    expect(lastCellTitle(order(), undefined, quote({ error: { code: 354, message: 'Requested market data is not subscribed.' } }), en)).toBe('Requested market data is not subscribed.');
+    expect(lastCellTitle(order(), undefined, undefined, en)).toBeUndefined();
   });
 });

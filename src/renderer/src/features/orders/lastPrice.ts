@@ -115,6 +115,15 @@ export function distanceText(o: WorkingOrder, last: number | undefined, m: FromL
 }
 
 /**
+ * Tooltip of a Last cell: the price in full (a narrow cell cuts it) and the order's distance from it
+ * ("23,012.25 · Limit −0.43% from last"); without a price, the line's error.
+ */
+export function lastCellTitle(o: WorkingOrder, last: number | undefined, q: Quote | undefined, m: FromLastLabels): string | undefined {
+  if (last == null) return q?.error?.message || undefined;
+  return [px(last), distanceText(o, last, m)].filter(Boolean).join(' · ');
+}
+
+/**
  * Subscribes the quotes of the listed orders' instruments under `owner` while mounted (pass [] when
  * the list is not shown: nothing is subscribed without orders) and returns them by contract key.
  * Instruments another owner already quotes share its line.

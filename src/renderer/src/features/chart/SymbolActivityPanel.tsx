@@ -23,7 +23,7 @@ import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
 import { useDesk } from '../options/deskStore';
-import { distanceText, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
+import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
 import { useOrdersMessages } from '../orders/messages';
 import { modifyOrderInTicket } from '../panels/actions';
 import { livePrice, positionRow, quoteContract, type PositionRow } from '../portfolio/calc';
@@ -195,7 +195,7 @@ function OrderRow({ o, own, fresh, quote, withLast }: { o: WorkingOrder; own: bo
           className="ellipsis"
           data-cell="last"
           style={{ fontFamily: 'var(--num)', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}
-          title={(last == null ? quote?.error?.message : distance) || undefined}
+          title={lastCellTitle(o, last, quote, om)}
         >
           {lastPriceText(last)}
         </div>
