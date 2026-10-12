@@ -877,9 +877,10 @@ above it differs: 200px of chart, 320px under the options desk (its header, tabs
 options by expiry, strike and right, `activityModel.ts → byInstrument`) and its open orders (newest
 first), each under column names, with Modify / Cancel for this client's orders and "All orders ›"
 (Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price" where
-contract and status keep 100px each beside it (`orderModel.ts → lastColumnFits`: from about 758px
-of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window); narrower, the
-column and its name are left out and the last price is in the tooltip of "qty @ price". Rows are
+contract and status keep 200px between them beside it (`orderModel.ts → lastColumnFits`: from about
+758px of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window while the
+watchlist is open); narrower, the column and its name are left out and the last price is in the
+tooltip of "qty @ price". Rows are
 valued like the Portfolio page (`portfolio/calc.ts → positionRow`, one price for value and P&L) from
 the panel's own quote owner, `symbol-activity` (visible; options with the `option` profile: their
 lines are mostly open already for the options risk watcher, and the stock's for the chart or the

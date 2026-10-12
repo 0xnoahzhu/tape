@@ -210,9 +210,11 @@ describe('order row layout', () => {
   });
 
   it('shows the Last column where contract and status keep room beside it', () => {
-    // The panel beside the docked ticket: about 566px in a 1180px window, 826px in a 1440px one.
+    // The panel beside the docked ticket: about 566px in a 1180px window, 826px in a 1440px one
+    // (813px in a 1180px window with the watchlist collapsed).
     expect(lastColumnFits(566, twelve)).toBe(false);
     expect(lastColumnFits(826, twelve)).toBe(true);
+    expect(lastColumnFits(813, twelve)).toBe(true);
     expect(lastColumnFits(757, twelve)).toBe(false);
     expect(lastColumnFits(758, twelve)).toBe(true);
     // The 24-hour clock's narrower time column leaves room sooner.

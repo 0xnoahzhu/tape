@@ -78,8 +78,8 @@ const LAST_W = 72;
 const ACTIONS_W = 110;
 const ROW_PAD = 24;
 const GAP = 12;
-/** Least width the contract and the status keep beside the Last column. */
-const TEXT_MIN_W = 100;
+/** Least width the contract and the status keep between them beside the Last column (split 1.5 : 1.3). */
+const TEXT_MIN_W = 200;
 
 /**
  * Columns of an order row and of the names above it. The time column is sized for the clock format
@@ -97,12 +97,12 @@ export function orderColumns(time: string, withLast: boolean): string {
 
 /**
  * Whether a panel `width` px wide has room for the Last column: the fixed columns, "qty @ price", Last
- * and TEXT_MIN_W for contract and status, with the gaps and the side padding. Narrower, the last
- * price is in the tooltip of "qty @ price".
+ * and TEXT_MIN_W for contract and status together, with the gaps and the side padding. Narrower, the
+ * last price is in the tooltip of "qty @ price".
  */
 export function lastColumnFits(width: number, time: string): boolean {
   const fixed = parseFloat(time) + SIDE_W + QTY_PRICE_W + LAST_W + ACTIONS_W;
-  return width >= 2 * ROW_PAD + fixed + 2 * TEXT_MIN_W + 6 * GAP;
+  return width >= 2 * ROW_PAD + fixed + TEXT_MIN_W + 6 * GAP;
 }
 
 // Modify loads the order the same way from here and from Portfolio › Orders.
