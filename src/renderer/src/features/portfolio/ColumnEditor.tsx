@@ -12,6 +12,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { useStore } from '../../state/store';
 import { GripIcon, SlidersIcon } from '../../ui/icons';
 import { GlyphButton, Popover, TextInput } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import type { PositionRow } from './calc';
 import { COLUMN_GROUPS, COLUMN_IDS, COLUMNS, PINNED, applies, type ColumnDef, type ColumnId } from './columns';
 import { usePositionColumns, useShownColumns } from './columnStore';
@@ -148,8 +149,9 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
         <div style={{ padding: 12, flexShrink: 0, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
           <TextInput value={query} onChange={setQuery} placeholder={m.searchColumns} autoFocus height={30} />
         </div>
-        {/* Block layout keeps every row at its fixed height when the list scrolls. */}
-        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', paddingBottom: 6 }}>
+        {/* Block layout keeps every row at its fixed height when the list scrolls; a search that
+            shortens it leaves the rows' width as it is (scrollGutter.ts). */}
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', ...stableGutter, paddingBottom: 6 }}>
           <div style={sectionLabel}>{m.shownColumns(shown.length)}</div>
           <ShownList ids={visible} all={shown} />
           <div style={{ ...sectionLabel, paddingTop: 14 }}>{m.allColumns}</div>

@@ -4,6 +4,7 @@
 import type { ReactNode } from 'react';
 import { shortExpiry } from '@shared/contract';
 import { DASH, f2, sg } from '@shared/format';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useIvHistory } from './data';
 import { useM } from './messages';
 import type { DeskModel } from './model';
@@ -36,11 +37,12 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
         flex: 1,
         minHeight: 0,
         overflow: 'auto',
+        ...stableGutter,
         display: 'grid',
         gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
         gridAutoRows: 'min-content',
         gap: 'var(--gap)',
-        padding: 'var(--pad)',
+        padding: 'var(--pad) max(0px, var(--pad) - var(--sbw, 0px)) var(--pad) var(--pad)',
         background: 'var(--gbg)',
       }}
     >

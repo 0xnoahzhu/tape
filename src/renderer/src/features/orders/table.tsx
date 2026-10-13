@@ -1,14 +1,17 @@
 // Grid rows shared by the working orders and trades tables (design: 12px header, 48px rows).
 
 import type { ReactNode } from 'react';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 
 /**
  * Scrolling table body. The header is its sticky first row rather than a sibling, so the
  * header and the rows share one width and their columns stay aligned when the scrollbar shows.
+ * Room for the scrollbar is kept whether it shows or not, and the header and rows give it back
+ * from their right padding (scrollGutter.ts): new rows never narrow the columns.
  */
 export function TableBody({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, fontVariantNumeric: 'tabular-nums' }}>
       {header}
       {children}
     </div>
@@ -25,7 +28,7 @@ export function HeaderRow({ columns, children }: { columns: string; children: Re
         display: 'grid',
         gridTemplateColumns: columns,
         gap: 12,
-        padding: '12px 32px',
+        padding: `12px ${lessGutter(32)} 12px 32px`,
         fontSize: 12,
         color: 'var(--dm)',
         background: 'var(--p)',
@@ -45,7 +48,7 @@ export function Row({ columns, title, children }: { columns: string; title?: str
         display: 'grid',
         gridTemplateColumns: columns,
         gap: 12,
-        padding: '0 32px',
+        padding: `0 ${lessGutter(32)} 0 32px`,
         height: 48,
         alignItems: 'center',
         boxShadow: 'inset 0 -1px 0 var(--ln2)',
@@ -58,5 +61,5 @@ export function Row({ columns, title, children }: { columns: string; title?: str
 }
 
 export function EmptyRow({ children }: { children: ReactNode }) {
-  return <div style={{ padding: '32px', textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{children}</div>;
+  return <div style={{ padding: `32px ${lessGutter(32)} 32px 32px`, textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{children}</div>;
 }

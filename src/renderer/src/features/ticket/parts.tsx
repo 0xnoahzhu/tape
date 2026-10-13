@@ -84,8 +84,9 @@ export function kindLabel(c: ContractRef, common: ReturnType<typeof useCommon>, 
 const sizeText = (n: number | undefined) => (n != null && n >= 0 ? f0(n) : '—');
 
 /**
- * The qty input between the ± buttons is 72px wide when the ticket shows its scrollbar, and mono
- * digits are 0.6em wide: 15px fits "100,000", longer quantities shrink so no digit is clipped.
+ * The qty input between the ± buttons is 77px wide in the docked ticket, scrollbar or not
+ * (scrollGutter.ts), and mono digits are 0.6em wide: 15px fits "100,000", longer quantities shrink
+ * so no digit is clipped.
  */
 const qtyFontSize = (text: string, S: TicketScale) => Math.max(10, Math.min(S.priceSize, Math.floor(S.qtyRoom / text.length)));
 

@@ -1175,7 +1175,9 @@ the sum of the minimums, the table scrolls sideways instead of cutting values. W
 (`data-overflow-x` on the card, compared with the card's outer width), `global.css` styles the card's
 scrollbars (`.pos-scroll`): on macOS that turns the overlay scrollbars, hidden until a scroll, into
 classic ones, so the horizontal one stays in view at the card's bottom edge (the card, not the page,
-scrolls both ways). A table that fits keeps the platform's look. Rows are keyed by conId
+scrolls both ways). A table that fits keeps the platform's look. The card keeps its vertical
+scrollbar's room (see *Conventions*); while its columns overflow, `.pos-scroll[data-overflow-x]` sets
+`--sbw` to the styled scrollbars' 10px, so the rows give back that width. Rows are keyed by conId
 (contract keys collide for SPX / SPXW) and memoized: a row redraws only when one of its values, its
 quote or its details change. The tracks reach the header and the rows through the table's
 `--pos-cols`, so sizing a column redraws no row.
@@ -1388,6 +1390,13 @@ formatter, pure and used by both processes:
   glyphs stay whole with tight line-heights such as `font: 13px/1`. Keep some padding between it
   and the inner edge of a scrolling box (the margin can make that box scroll by about 0.2em), and
   do not test it for truncation with `scrollWidth` (see the comment on the class).
+* A vertical scroller keeps its scrollbar's room (`ui/scrollGutter.ts`): `...stableGutter`
+  (`scrollbar-gutter: stable`) and a right padding written with `lessGutter(n)`, which gives back
+  `--sbw`, the width a classic scrollbar takes (macOS with a mouse or "Always", the styled 10px ones
+  on Windows / Linux; 0 with overlay scrollbars, kept current at run time). Its content then keeps
+  its width when the scrollbar appears (Advanced opening, rows added, a window resized). A header
+  outside the scroller reserves the same room so the columns stay aligned; a box that only holds
+  such scrollers (the Portfolio page) gets none, or their scrollbars would sit beside an empty strip.
 * No npm runtime dependencies: `dependencies` stays empty; renderer libraries are devDependencies
   bundled by Vite.
 

@@ -2,6 +2,7 @@
 
 import { Component, type CSSProperties, type ReactNode } from 'react';
 import { useCommon } from '../i18n/common';
+import { lessGutter, stableGutter } from './scrollGutter';
 
 interface Props {
   /** Area name for the console; not shown to the user. */
@@ -38,12 +39,13 @@ export function ErrorFallback({ error, style, onRetry }: { error: Error; style?:
     <div
       style={{
         background: 'var(--p)',
-        padding: '16px 20px',
+        padding: `16px ${lessGutter(20)} 16px 20px`,
         fontSize: 12,
         color: 'var(--r)',
         fontFamily: 'var(--mono)',
         whiteSpace: 'pre-wrap',
         overflow: 'auto',
+        ...stableGutter,
         ...style,
       }}
     >

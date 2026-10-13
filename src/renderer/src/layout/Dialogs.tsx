@@ -7,6 +7,7 @@ import { useCommon } from '../i18n/common';
 import { errorText, sendOrder } from '../state/orderActions';
 import { useStore } from '../state/store';
 import { Button, KeyValueRows, Modal } from '../ui/primitives';
+import { stableGutter } from '../ui/scrollGutter';
 
 export function ConfirmDialog() {
   const m = useCommon();
@@ -178,8 +179,10 @@ export function OrderConfirmDialog() {
   return (
     <Modal onClose={() => setPending(null)} zIndex={21}>
       <div style={{ font: '600 18px/1.2 var(--sans)', flexShrink: 0 }}>{p.modifyOrderId != null ? m.modifyOrder : m.confirmOrder}</div>
-      {/* The rows and IB's estimate scroll when they do not fit; the title and buttons stay. */}
-      <div style={{ minHeight: 0, overflowY: 'auto', display: 'grid', alignContent: 'start', gap: 18 }}>
+      {/* The rows and IB's estimate scroll when they do not fit; the title and buttons stay. The
+          estimate arriving can start the scroll: room for the scrollbar is kept in the dialog's
+          right padding, so the rows keep the buttons' width (scrollGutter.ts). */}
+      <div style={{ minHeight: 0, overflowY: 'auto', ...stableGutter, marginRight: 'calc(0px - var(--sbw, 0px))', display: 'grid', alignContent: 'start', gap: 18 }}>
         <KeyValueRows rows={p.rows} />
         {estimate && <OrderEstimate request={p.request} />}
       </div>

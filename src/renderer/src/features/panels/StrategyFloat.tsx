@@ -14,10 +14,11 @@ import type { CSSProperties } from 'react';
 import { shortExpiry } from '@shared/contract';
 import { f2, roundToTick, usd } from '@shared/format';
 import { isSending, useOrderFeedback } from '../../state/orderFeedback';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useDesk } from '../options/deskStore';
 import { useM } from '../options/messages';
 import type { DeskModel } from '../options/model';
-import { Condition, LegList, NetGreeks, OrderChoices, Payoff, SendButton, Stats, StrategyPanel, TemplatePicker, useStrategy, type StrategyCtl } from '../options/StrategyPanel';
+import { Condition, inset, LegList, NetGreeks, OrderChoices, Payoff, SendButton, Stats, StrategyPanel, TemplatePicker, useStrategy, type StrategyCtl } from '../options/StrategyPanel';
 import { orderPrice } from '../options/strategyModel';
 import { useStrategyPanelModel } from '../options/strategyPanelModel';
 import { addFromChain } from './actions';
@@ -97,7 +98,7 @@ function NarrowFooter({ ctl }: { ctl: StrategyCtl }) {
  */
 const STRATEGY_COLUMNS = 'minmax(360px,1fr) minmax(0,1.2fr) minmax(280px,0.9fr)';
 
-const heading: CSSProperties = { padding: '0 20px', fontSize: 12, color: 'var(--mu)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 };
+const heading: CSSProperties = { padding: inset(), fontSize: 12, color: 'var(--mu)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 };
 
 function LandscapeStrategy({ model, layout }: { model: DeskModel; layout: PanelLayout }) {
   const ctl = useStrategy(model, 'strategy');
@@ -106,12 +107,14 @@ function LandscapeStrategy({ model, layout }: { model: DeskModel; layout: PanelL
   const { view, legs, desk } = ctl;
   const { pad } = columnSpacing(layout);
   const column: CSSProperties = { background: 'var(--p)', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto', paddingTop: pad, paddingBottom: pad };
+  // The builder's parts give the scrollbar's room back on their right (inset).
+  const scroller: CSSProperties = { ...column, ...stableGutter };
   const priced = view != null && legs.length > 0;
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <StrategyTitle ctl={ctl} model={model} />
       <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: STRATEGY_COLUMNS, gap: 'var(--gap)', background: 'var(--gbg)' }}>
-        <div style={column}>
+        <div style={scroller}>
           <div style={{ ...heading, paddingBottom: 10 }}>
             <span>{pm.legs}</span>
             <span onClick={desk.clearLegs} className="hover-tx" style={{ color: 'var(--dm)', cursor: 'pointer' }}>
@@ -119,32 +122,32 @@ function LandscapeStrategy({ model, layout }: { model: DeskModel; layout: PanelL
             </span>
           </div>
           <TemplatePicker ctl={ctl} />
-          {!legs.length && <div style={{ margin: '0 20px', padding: 18, background: 'var(--p2)', fontSize: 12, color: 'var(--dm)', textAlign: 'center' }}>{m.empty}</div>}
+          {!legs.length && <div style={{ margin: inset(), padding: 18, background: 'var(--p2)', fontSize: 12, color: 'var(--dm)', textAlign: 'center' }}>{m.empty}</div>}
           {view && <LegList view={view} />}
-          <div onClick={addFromChain} style={{ padding: '12px 20px', fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>
+          <div onClick={addFromChain} style={{ padding: inset(12), fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>
             {pm.addFromChain}
           </div>
           {priced && (
             <>
-              <div style={{ ...heading, padding: '8px 20px 6px' }}>{m.netGreeks}</div>
+              <div style={{ ...heading, padding: inset(8, 6) }}>{m.netGreeks}</div>
               <NetGreeks view={view} m={m} />
             </>
           )}
         </div>
         {/* A short panel scrolls the statistics under the chart (which keeps its 200px minimum). */}
-        <div style={column}>
+        <div style={scroller}>
           {priced ? (
             <>
               <Payoff view={view} spot={model.spot} m={m} grow />
               <Stats view={view} m={m} />
             </>
           ) : (
-            <div style={{ margin: '0 20px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--p2)', fontSize: 12, color: 'var(--dm)' }}>{pm.noLegs}</div>
+            <div style={{ margin: inset(), flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--p2)', fontSize: 12, color: 'var(--dm)' }}>{pm.noLegs}</div>
           )}
         </div>
         {/* The choices scroll above the fixed send block; shorter still, the whole column scrolls. */}
         <div style={{ ...column, paddingBottom: 0 }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, display: 'flex', flexDirection: 'column' }}>
             {priced && (
               <>
                 <NetPrice ctl={ctl} />
@@ -173,7 +176,7 @@ function NetPrice({ ctl }: { ctl: StrategyCtl }) {
   };
   const btn: CSSProperties = { width: 40, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--mu)', flexShrink: 0 };
   return (
-    <div style={{ margin: '0 20px', display: 'flex', flexDirection: 'column', gap: 6, opacity: market ? 0.4 : 1, pointerEvents: market ? 'none' : undefined }}>
+    <div style={{ margin: inset(), display: 'flex', flexDirection: 'column', gap: 6, opacity: market ? 0.4 : 1, pointerEvents: market ? 'none' : undefined }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--dm)' }}>
         <span>{pm.netPrice}</span>
         {netPrice != null && (

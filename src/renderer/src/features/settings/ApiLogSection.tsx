@@ -10,6 +10,7 @@ import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { SearchIcon } from '../../ui/icons';
 import { Segmented, Toggle } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { countNewSince, filterLog, isInfo, logBody, logCounts, logDetail, newestFirst, tildify, type LogFilter } from './logic';
 import { useSettingsMessages } from './messages';
 import { SectionHeader, saveSettings } from './parts';
@@ -135,11 +136,14 @@ export function ApiLogSection() {
       </div>
       {/* Fills the rest of the panel (SettingsPage), so the footer stays on screen at any window height. */}
       <div style={{ flex: '1 0 auto', display: 'flex', flexDirection: 'column', boxShadow: 'inset 0 0 0 1px var(--ln)' }}>
+        {/* Keeps the same room for a scrollbar as the list, so its columns stay over the rows' (scrollGutter.ts). */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: COLS,
             gap: 12,
+            overflow: 'hidden',
+            ...stableGutter,
             padding: '9px 14px',
             fontSize: 11,
             lineHeight: '14px',
@@ -160,7 +164,7 @@ export function ApiLogSection() {
           </div>
         )}
         {/* About 500px at the design's 1440×900 window; the page scrolls instead below MIN_LIST_HEIGHT. */}
-        <div style={{ flex: '1 1 0', minHeight: MIN_LIST_HEIGHT, overflow: 'auto', font: '12px/1 var(--mono)', fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ flex: '1 1 0', minHeight: MIN_LIST_HEIGHT, overflow: 'auto', ...stableGutter, font: '12px/1 var(--mono)', fontVariantNumeric: 'tabular-nums' }}>
           {rows.length === 0 && <div style={{ padding: 14, font: '13px/1.5 var(--sans)', color: 'var(--dm)' }}>{src.length ? m.noMatch : m.emptyLog}</div>}
           {rows.map((e) => (
             <LogRow key={e.seq} e={e} open={openSeq === e.seq} raw={raw} show={show} sendL={m.send} recvL={m.recv} onToggle={toggleRow} />

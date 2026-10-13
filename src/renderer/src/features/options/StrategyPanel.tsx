@@ -9,6 +9,7 @@ import { isPanelSending } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import type { PanelId } from '../panels/model';
 import { TextInput, Toggle } from '../../ui/primitives';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { fixed } from './chain';
 import { useDesk } from './deskStore';
 import { buildListed, dropUnlisted } from './listing';
@@ -79,6 +80,13 @@ export function useStrategy(model: DeskModel, origin?: PanelId) {
 export type StrategyCtl = ReturnType<typeof useStrategy>;
 
 /**
+ * The builder's 20px side inset (`top` and `bottom` in px), as a padding or margin. Its parts sit in
+ * scrollers that keep their scrollbar's room, which the right side gives back (scrollGutter.ts):
+ * the parts are as wide as with overlay scrollbars whether the builder scrolls or not.
+ */
+export const inset = (top = 0, bottom = top) => `${top}px ${lessGutter(20)} ${bottom}px 20px`;
+
+/**
  * The docked builder (right column of the chain tab). `actions` goes at the end of its title row
  * (the pop-out button); `header` replaces the title row and `footer` the send button (the floating
  * builder in its narrow layout). With a `header`, it stays put above the scrolling builder (it is
@@ -112,7 +120,7 @@ export function StrategyPanel({
   const body = (
     <>
       <TemplatePicker ctl={ctl} />
-      {!legs.length && <div style={{ margin: '0 20px', padding: 18, background: 'var(--p2)', fontSize: 12, color: 'var(--dm)', textAlign: 'center' }}>{m.empty}</div>}
+      {!legs.length && <div style={{ margin: inset(), padding: 18, background: 'var(--p2)', fontSize: 12, color: 'var(--dm)', textAlign: 'center' }}>{m.empty}</div>}
       {view && <LegList view={view} />}
       {view && legs.length > 0 && (
         <>
@@ -120,9 +128,9 @@ export function StrategyPanel({
           <Stats view={view} m={m} />
           <Condition symbol={model.symbol} spot={spot} combo={legs.length > 1} />
           <OrderChoices combo={legs.length > 1} />
-          <div style={{ padding: '14px 20px 6px', fontSize: 12, color: 'var(--mu)' }}>{m.netGreeks}</div>
+          <div style={{ padding: inset(14, 6), fontSize: 12, color: 'var(--mu)' }}>{m.netGreeks}</div>
           <NetGreeks view={view} m={m} />
-          <div style={{ padding: '16px 20px 20px', marginTop: 'auto' }}>{footer ? footer(ctl) : <SendButton view={view} busy={sending} onSend={() => void send()} />}</div>
+          <div style={{ padding: inset(16, 20), marginTop: 'auto' }}>{footer ? footer(ctl) : <SendButton view={view} busy={sending} onSend={() => void send()} />}</div>
         </>
       )}
     </>
@@ -131,8 +139,9 @@ export function StrategyPanel({
     return (
       <div style={{ flex: 1, minHeight: 0, background: 'var(--p)', display: 'flex', flexDirection: 'column' }}>
         {header}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '12px 20px 10px', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        {/* Picking a template makes the builder scroll; its parts keep their width (inset). */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: inset(12, 10), display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
             <div style={{ fontSize: 12, color: 'var(--mu)' }}>{heading}</div>
             {clear}
           </div>
@@ -142,8 +151,8 @@ export function StrategyPanel({
     );
   }
   return (
-    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-      <div style={{ padding: '16px 20px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto', ...stableGutter }}>
+      <div style={{ padding: inset(16, 10), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontWeight: 600 }}>{m.strategy}</div>
         {actions ? (
           // The 26px button does not make the row taller than its text.
@@ -165,7 +174,7 @@ export function TemplatePicker({ ctl, style }: { ctl: StrategyCtl; style?: CSSPr
   const m = useM();
   const { desk, tmpl, current, open, isIndex, pickTemplate } = ctl;
   return (
-    <div style={{ padding: '0 20px 12px', display: 'flex', flexDirection: 'column', gap: 6, ...style }}>
+    <div style={{ padding: inset(0, 12), display: 'flex', flexDirection: 'column', gap: 6, ...style }}>
       <div
         onClick={() => desk.patch({ tmplOpen: !desk.tmplOpen })}
         className="hover-p2"
@@ -224,7 +233,7 @@ export function LegList({ view }: { view: StrategyView }) {
   const common = useCommon();
   const { updateLeg, removeLeg } = useDesk();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', padding: '0 20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', padding: inset() }}>
       {view.legs.map(({ leg, desc, mark }) => {
         const col = leg.side === 'BUY' ? 'var(--up)' : 'var(--dn)';
         return (
@@ -297,7 +306,7 @@ export function Payoff({ view, spot, m, grow = false }: { view: StrategyView; sp
 
   return (
     <>
-      <div style={{ padding: '14px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: inset(14, 0), display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ fontSize: 12, color: 'var(--mu)' }}>{m.payoff}</div>
         <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--dm)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -310,7 +319,7 @@ export function Payoff({ view, spot, m, grow = false }: { view: StrategyView; sp
           </div>
         </div>
       </div>
-      <div style={{ margin: '8px 20px 0', position: 'relative', ...(grow ? { flex: 1, minHeight: 200 } : { height: 150, flexShrink: 0 }) }}>
+      <div style={{ margin: inset(8, 0), position: 'relative', ...(grow ? { flex: 1, minHeight: 200 } : { height: 150, flexShrink: 0 }) }}>
         {chart ? (
           <>
             <svg viewBox={`0 0 ${W} 150`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
@@ -330,7 +339,7 @@ export function Payoff({ view, spot, m, grow = false }: { view: StrategyView; sp
           </div>
         )}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 20px 0', font: '10px/1 var(--num)', color: 'var(--dm)', minHeight: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', padding: inset(4, 0), font: '10px/1 var(--num)', color: 'var(--dm)', minHeight: 14 }}>
         <div>{chart?.lo}</div>
         <div style={{ color: 'var(--mu)' }}>{chart?.s}</div>
         <div>{chart?.hi}</div>
@@ -355,7 +364,7 @@ export function Stats({ view, m }: { view: StrategyView; m: DeskMessages }) {
   return (
     // Hairlines between rows only: the design's gray grid background also showed through the
     // 12px column gaps as vertical bars.
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', columnGap: 12, margin: '14px 20px 0', fontVariantNumeric: 'tabular-nums' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', columnGap: 12, margin: inset(14, 0), fontVariantNumeric: 'tabular-nums' }}>
       {stats.map((s, i) => (
         <div
           key={s.l}
@@ -388,7 +397,7 @@ export function Condition({ symbol, spot, combo }: { symbol: string; spot: numbe
   const px = condPx ?? (spot != null ? defaultTrigger(spot, condOp) : '');
   const op = condOp === '>=' ? '≥' : '≤';
   return (
-    <div style={{ margin: '14px 20px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ margin: inset(14, 0), display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div onClick={() => patch({ cond: !cond })} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <div style={{ fontSize: 13 }}>{m.condL}</div>
@@ -448,7 +457,7 @@ export function OrderChoices({ combo }: { combo: boolean }) {
     color: on ? 'var(--tx)' : 'var(--dm)',
   });
   return (
-    <div style={{ margin: '14px 20px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ margin: inset(14, 0), display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <div style={{ display: 'flex', padding: 2, boxShadow: 'inset 0 0 0 1px var(--ln)' }} role="radiogroup" aria-label={m.orderL}>
           {(['LMT', 'MKT'] as const).map((k) => (
@@ -488,7 +497,7 @@ export function NetGreeks({ view, m }: { view: StrategyView; m: DeskMessages }) 
     { l: m.vega, v: g ? sg(g.vega) : DASH },
   ];
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,auto)', gap: 1, background: 'var(--ln2)', margin: '0 20px', fontVariantNumeric: 'tabular-nums' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,auto)', gap: 1, background: 'var(--ln2)', margin: inset(), fontVariantNumeric: 'tabular-nums' }}>
       {items.map((x) => (
         <div key={x.l} style={{ background: 'var(--p2)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
           <div style={{ fontSize: 11, color: 'var(--dm)' }}>{x.l}</div>

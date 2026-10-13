@@ -48,6 +48,7 @@ import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, formatValue, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
@@ -77,6 +78,8 @@ const RESORT_MS = 1000;
 const GAP = 12;
 /** The rows' side padding; the sticky Symbol cell reaches over the left one. */
 const PAD = 32;
+/** The rows' padding: the right one gives back the room the card keeps for its scrollbar (scrollGutter.ts). */
+const ROW_PAD = `0 ${lessGutter(PAD)} 0 ${PAD}px`;
 /** How far a group's rows are indented under its group row (px, in the Symbol cell). */
 const INDENT = 16;
 /** Width of the strip that sizes a column, centred in the gap right of its header. */
@@ -496,7 +499,8 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   // scrolled to its right end would scroll back by as much and the edge would leave the pointer. The
   // scroll settles once, on release.
   const minWidth = live ? Math.max(minOf(sized), minOf(widths)) : minOf(widths);
-  // Compared with the card's outer width: the classic scrollbars this switches on take room inside it.
+  // Compared with the card's outer width: the room its vertical scrollbar keeps comes out of the
+  // rows' right padding (ROW_PAD, and so out of the table's minimum width), whichever scrollbars show.
   const overflowX = boxW > 0 && minWidth > boxW;
   const open = (c: ContractRef) => {
     const t = positionTarget(c);
@@ -561,10 +565,17 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
       data-overflow-x={overflowX || undefined}
       data-dragging={dragging?.id}
       onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
-      // Its own stacking context: the sticky header and column stay under the page's popovers.
-      style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, overflow: 'auto', isolation: 'isolate' }}
+      // Its own stacking context: the sticky header and column stay under the page's popovers. Rows
+      // added or a group expanded leave the columns' width as it is (scrollGutter.ts); while the
+      // columns overflow, global.css sets --sbw to its styled scrollbars' width.
+      style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, overflow: 'auto', ...stableGutter, isolation: 'isolate' }}
     >
-      <div ref={tableRef} role="table" aria-label={m.tabPos} style={{ minWidth, position: 'relative', '--pos-cols': template } as CSSProperties}>
+      <div
+        ref={tableRef}
+        role="table"
+        aria-label={m.tabPos}
+        style={{ minWidth: `calc(${minWidth - PAD}px + ${lessGutter(PAD)})`, position: 'relative', '--pos-cols': template } as CSSProperties}
+      >
         <div style={{ height: 8 }} />
         <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
         <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
@@ -645,7 +656,7 @@ const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, draggi
         display: 'grid',
         gridTemplateColumns: 'var(--pos-cols)',
         gap: GAP,
-        padding: `0 ${PAD}px`,
+        padding: ROW_PAD,
         fontSize: 12,
         background: 'var(--p)',
         boxShadow: 'inset 0 -1px 0 var(--ln2)',
@@ -883,7 +894,7 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, values, base
         display: 'grid',
         gridTemplateColumns: 'var(--pos-cols)',
         gap: GAP,
-        padding: `0 ${PAD}px`,
+        padding: ROW_PAD,
         height: 44,
         alignItems: 'center',
         boxShadow: 'inset 0 -1px 0 var(--ln2)',
@@ -1038,7 +1049,7 @@ const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested,
         display: 'grid',
         gridTemplateColumns: 'var(--pos-cols)',
         gap: GAP,
-        padding: `0 ${PAD}px`,
+        padding: ROW_PAD,
         height: 50,
         alignItems: 'center',
         boxShadow: 'inset 0 -1px 0 var(--ln2)',

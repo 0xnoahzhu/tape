@@ -128,7 +128,11 @@ a:hover {
 /* The Positions table's card while its columns are wider than it (PositionsTable.tsx sets
    data-overflow-x): its scrollbars are styled, which on macOS turns the overlay ones (hidden until
    a scroll) into classic ones, so the horizontal one stays in view at the card's bottom edge, in
-   both themes. A table that fits keeps the platform's look. */
+   both themes. A table that fits keeps the platform's look. --sbw is the room its rows give back for
+   the vertical one (scrollGutter.ts). */
+.pos-scroll[data-overflow-x] {
+  --sbw: 10px;
+}
 .pos-scroll[data-overflow-x]::-webkit-scrollbar {
   width: 10px;
   height: 10px;

@@ -6,6 +6,7 @@ import type { WatchItem, Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { MenuDivider, MenuItem, Popover } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { askRemoveItem, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
 import { addItem, clampMenu, itemKey, listAccepts, listHas, moveItem } from './model';
@@ -93,7 +94,7 @@ export function RowMenu({
       <div onClick={close} onContextMenu={close} style={{ position: 'absolute', inset: 0, zIndex: 6 }} />
       <div ref={menuRef} style={{ position: 'absolute', left: box.x, top: box.y, width: ROW_MENU_WIDTH, zIndex: 7 }}>
         {/* Block layout keeps every row at its fixed height when the menu has to scroll. */}
-        <Popover style={{ position: 'relative', zIndex: undefined, display: 'block', maxHeight: box.maxHeight, overflowY: 'auto' }}>
+        <Popover style={{ position: 'relative', zIndex: undefined, display: 'block', maxHeight: box.maxHeight, overflowY: 'auto', ...stableGutter }}>
           <div style={{ padding: '6px 12px 8px', font: '600 12px/1 var(--mono)', color: 'var(--mu)' }}>{label}</div>
           <div style={sectionLabel}>{m.moveTo}</div>
           {otherGroups.map((g) => {

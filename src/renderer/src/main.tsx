@@ -11,6 +11,7 @@ import { useOrderFeedback } from './state/orderFeedback';
 import { useStore } from './state/store';
 import { installLockKeyGuard } from './features/lock/actions';
 import { focusLockInput } from './features/lock/LockScreen';
+import { trackScrollbarWidth } from './ui/scrollGutter';
 
 // Debug handle for scripted screenshots (see src/main/devCapture.ts): the stores.
 (window as unknown as { __tape: unknown }).__tape = {
@@ -30,6 +31,8 @@ root.dataset.sk = 'a';
 root.dataset.platform = window.tapePlatform;
 root.dataset.th = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 root.dataset.cv = 'cn';
+// --sbw: the room a classic scrollbar takes, given back by scrollers with a stable gutter.
+trackScrollbarWidth();
 
 // Before anything else registers a key listener, so no shortcut runs behind the lock screen.
 installLockKeyGuard(focusLockInput);

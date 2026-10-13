@@ -6,6 +6,7 @@
 
 import type { ReactNode } from 'react';
 import type { PanelId } from '../panels/model';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { DepthBlock } from './DepthBlock';
 import {
   AdvancedBlock,
@@ -73,7 +74,11 @@ export function OrderTicket({
         </div>
       )}
 
-      <div className="ticket-body" style={{ flex: 1, overflow: 'auto', padding: '18px 24px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Opening Advanced makes the body scroll; its fields keep their width (scrollGutter.ts). */}
+      <div
+        className="ticket-body"
+        style={{ flex: 1, overflow: 'auto', ...stableGutter, padding: `18px ${lessGutter(24)} 20px 24px`, display: 'flex', flexDirection: 'column', gap: 16 }}
+      >
         <NotTradableNote T={T} />
         <QuoteBoxes T={T} S={S} />
         <MarketIssue T={T} />

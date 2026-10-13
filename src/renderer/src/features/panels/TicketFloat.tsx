@@ -20,6 +20,7 @@ import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { isSending, useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { useContractInfo as useChartContractInfo } from '../chart/contractInfo';
 import { useChartMessages } from '../chart/messages';
 import { sessionQuote, usesUsEquitySession } from '../chart/sessionQuote';
@@ -92,7 +93,7 @@ function LandscapeTicket({ layout }: { layout: PanelLayout }) {
   const S = ticketScale(layout);
   const { pad, gap } = columnSpacing(layout);
   const column: CSSProperties = { background: 'var(--p)', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' };
-  const scroll: CSSProperties = { flex: 1, minHeight: 0, overflow: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap };
+  const scroll: CSSProperties = { flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, padding: `${pad}px ${lessGutter(pad)} ${pad}px ${pad}px`, display: 'flex', flexDirection: 'column', gap };
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <TicketTitleBar T={T} />
@@ -304,7 +305,8 @@ function ConfirmColumn({ T, S, pad, gap }: { T: TicketCtl; S: TicketScale; pad: 
   const { label, busy } = useSubmitLabel(T);
   return (
     <>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: `${pad}px ${pad}px 0` }}>
+      {/* Opening a section makes Advanced scroll; its fields keep their width (scrollGutter.ts). */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, padding: `${pad}px ${lessGutter(pad)} 0 ${pad}px` }}>
         <AdvancedBlock T={T} session={false} />
       </div>
       <div style={{ flexShrink: 0, padding: pad, display: 'flex', flexDirection: 'column', gap, boxShadow: 'inset 0 1px 0 var(--ln2)', marginTop: pad }}>

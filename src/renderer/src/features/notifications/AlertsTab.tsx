@@ -8,6 +8,7 @@ import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuote
 import { errorText } from '../../state/orderActions';
 import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useAlertMessages } from '../alerts/messages';
 import { distancePct } from '../alerts/model';
 import { OptionsDesk } from '../options/OptionsDesk';
@@ -86,7 +87,7 @@ export function AlertsTab() {
   useQuoteSubscriptions('bell-alerts', contracts);
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, display: 'flex', flexDirection: 'column' }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', flexShrink: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{m.priceAlerts}</div>
         <div onClick={() => openAlertForm(symbol)} style={{ fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>

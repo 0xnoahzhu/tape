@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { shortExpiry, daysToExpiry } from '@shared/contract';
 import { useLang } from '../../i18n';
 import { TabItems } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { expiryKind, groupByMonth, visibleExpiries, type ChainExpiry, type ExpiryKind } from './chain';
 import { DESK_TABS, useDesk } from './deskStore';
 import { useM } from './messages';
@@ -98,6 +99,7 @@ function ExpiryPicker({ expiries, selected }: { expiries: ChainExpiry[]; selecte
                 width: 460,
                 maxHeight: 440,
                 overflow: 'auto',
+                ...stableGutter,
                 background: 'var(--p)',
                 boxShadow: '0 0 0 1px var(--ln),0 16px 48px rgba(0,0,0,.22)',
                 padding: '6px 0 10px',

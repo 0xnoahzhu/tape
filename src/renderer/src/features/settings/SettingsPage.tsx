@@ -4,6 +4,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore, type SettingsTab } from '../../state/store';
 import { ErrorBoundary } from '../../ui/ErrorBoundary';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { ApiLogSection } from './ApiLogSection';
 import { AppearanceSection } from './AppearanceSection';
 import { ConnectionSection } from './ConnectionSection';
@@ -74,7 +75,8 @@ export function SettingsPage() {
           );
         })}
       </div>
-      <div ref={scroller} style={{ background: 'var(--p)', overflow: 'auto', padding: '32px 40px', minHeight: 0 }}>
+      {/* Opening Connection's Advanced or turning Sound on makes the pane scroll; its content keeps its width (scrollGutter.ts). */}
+      <div ref={scroller} style={{ background: 'var(--p)', overflow: 'auto', ...stableGutter, padding: `32px ${lessGutter(40)} 32px 40px`, minHeight: 0 }}>
         {/* The API log fills the panel height (its list takes the rest); other sections keep their own height. */}
         <div style={{ maxWidth: tab === 'log' ? 'none' : 720, minHeight: tab === 'log' ? '100%' : undefined, display: 'flex', flexDirection: 'column', gap: 28 }}>
           <ErrorBoundary name={m.nav[tab] ?? tab} key={tab}>

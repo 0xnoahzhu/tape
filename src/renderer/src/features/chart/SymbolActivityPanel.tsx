@@ -22,6 +22,7 @@ import { useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useDesk } from '../options/deskStore';
 import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
 import { useOrdersMessages } from '../orders/messages';
@@ -331,7 +332,8 @@ export function SymbolActivityBar({ onExpand }: { onExpand: () => void }) {
       onClick={onExpand}
       title={m.expandPanel}
       className="hover-tx"
-      style={{ height: ACTIVITY_BAR_H, display: 'flex', alignItems: 'center', gap: 16, padding: '0 10px 0 24px', background: 'var(--p)', color: 'var(--mu)', fontSize: 12, cursor: 'pointer', minWidth: 0 }}
+      // Its right padding adds the panel's room for a scrollbar (--sbw), so the expand button is where the collapse button was.
+      style={{ height: ACTIVITY_BAR_H, display: 'flex', alignItems: 'center', gap: 16, padding: '0 calc(10px + var(--sbw, 0px)) 0 24px', background: 'var(--p)', color: 'var(--mu)', fontSize: 12, cursor: 'pointer', minWidth: 0 }}
     >
       <div>
         {m.position} <span className="num">{positions.length}</span>
@@ -371,7 +373,8 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
   const withLast = lastColumnFits(w, timeColumn(clock));
 
   return (
-    <div ref={root} data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto' }}>
+    // Rows added or the splitter dragged make the panel scroll; its columns keep their width (scrollGutter.ts).
+    <div ref={root} data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto', ...stableGutter }}>
       <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div
           style={{

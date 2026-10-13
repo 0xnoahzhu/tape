@@ -6,6 +6,7 @@ import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
 import { GlyphButton, TextInput } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { updateWatchlists } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
 import { createList, deleteList, listItemCount, newId, renameList } from './model';
@@ -120,6 +121,7 @@ export function ListMenu({
           flexDirection: 'column',
           maxHeight: 'calc(100% - 56px)',
           overflowY: 'auto',
+          ...stableGutter,
         }}
       >
         {builtIn.map((l) => {

@@ -15,6 +15,7 @@
 // Enter cannot reach the order ticket. A press outside, or on a chip, closes the picker.
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useChartPrefs } from './chartPrefs';
 import { useChartMessages } from './messages';
 import {
@@ -308,6 +309,7 @@ export function TimeframeBar({ maxWidth = 0, plotWidth }: { maxWidth?: number; p
             width: PICKER_W,
             maxHeight: place.maxH,
             overflowY: 'auto',
+            ...stableGutter,
             zIndex: 7,
             background: 'var(--p)',
             boxShadow: '0 0 0 1px var(--ln), 0 12px 32px rgba(0,0,0,.25)',

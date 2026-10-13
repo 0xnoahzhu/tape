@@ -11,6 +11,7 @@ import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
 import { GlyphButton, TextInput } from '../../ui/primitives';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { askDeleteGroup, updateList } from './actions';
 import { useWatchlistMessages } from './messages';
 import { canDeleteGroup, createGroup, groupNameTaken, itemKey, newId, pruneClosedGroups, renameGroup } from './model';
@@ -103,7 +104,20 @@ export function GroupList({
 
   const canDelete = canDeleteGroup(list);
   return (
-    <div ref={rootRef} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--rowGap)', padding: '4px 8px 8px' }}>
+    // Opening a group or adding rows makes the list scroll; the rows keep their width (scrollGutter.ts).
+    // 3 px stay on the right for the focus ring of "New group" (outline-offset 2 px), which the scroller clips.
+    <div
+      ref={rootRef}
+      style={{
+        flex: 1,
+        overflow: 'auto',
+        ...stableGutter,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--rowGap)',
+        padding: `4px max(3px, ${lessGutter(8)}) 8px 8px`,
+      }}
+    >
       {list.groups.map((g) => {
         const open = !closed[groupPrefKey(list.id, g.id)];
         const name = nameOf(g.name, lang);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AppNotification } from '@shared/types';
 import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
+import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { knownName, openNotificationTarget } from '../orders/navigation';
 import { useNotificationsMessages } from './messages';
 import { filterNotifications, NOTIFICATION_FILTERS, notificationTarget, notificationText, relativeTime, stampText, type NotificationFilter } from './model';
@@ -68,8 +69,10 @@ export function NotificationsTab() {
           </div>
         ))}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {items.length === 0 && <div style={{ padding: '32px 18px', textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{m.empty}</div>}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter }}>
+        {items.length === 0 && (
+          <div style={{ padding: `32px ${lessGutter(18)} 32px 18px`, textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{m.empty}</div>
+        )}
         {items.map((n) => {
           const text = notificationText(n, lang, clock);
           return (

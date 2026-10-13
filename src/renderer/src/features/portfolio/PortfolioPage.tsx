@@ -171,6 +171,8 @@ export function PortfolioPage() {
   const working = useMemo(() => workingOrders(orders), [orders]);
   const trades = useMemo(() => newestExecutions(executions), [executions]);
 
+  // No stable gutter: the page scrolls only when zoomed in with a small window, and its cards keep
+  // their own (scrollGutter.ts); a second one would leave an empty strip beside their scrollbars.
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
       <Header account={account} totals={totals} counts={{ positions: rows.length, orders: working.length, trades: trades.length }} />

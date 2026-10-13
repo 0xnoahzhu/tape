@@ -12,6 +12,7 @@ import type { ContractRef, LocalizedName, WatchItem } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { MenuDivider, Popover } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { fillMissingName, updateWatchlists } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
 import { starSections, toggleInGroup } from './model';
@@ -128,7 +129,7 @@ export function WatchStar({ contract, name, size }: { contract: ContractRef; nam
       </div>
       {/* Block layout keeps every row at its fixed height when the menu has to scroll. */}
       {open && (
-        <Popover style={{ top: 'calc(100% + 4px)', right: place.right, width: STAR_MENU_W, display: 'block', maxHeight: place.maxH, overflowY: 'auto' }}>
+        <Popover style={{ top: 'calc(100% + 4px)', right: place.right, width: STAR_MENU_W, display: 'block', maxHeight: place.maxH, overflowY: 'auto', ...stableGutter }}>
           <div style={{ padding: '6px 12px 8px', font: '600 12px/1 var(--mono)', color: 'var(--mu)' }}>{label}</div>
           {sections.map((s, i) => {
             const listName = nameOf(s.list.name, lang);

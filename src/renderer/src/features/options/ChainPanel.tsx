@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode 
 import { f2 } from '@shared/format';
 import type { OptionRight, OrderAction } from '@shared/types';
 import { Segmented } from '../../ui/primitives';
+import { stableGutter } from '../../ui/scrollGutter';
 import { revealPanel } from '../panels/actions';
 import { cellColor, COLUMN_PRESETS, formatCell, type ColumnKey, type OptionData } from './chain';
 import { useDesk, type StrikeRange } from './deskStore';
@@ -75,7 +76,10 @@ export function ChainPanel({ model, onVisible, state }: { model: DeskModel; onVi
       </div>
       {state ? (
         <>
-          <ChainHeaders keys={keys} widths={columnWidths(keys, [])} />
+          {/* The room the chain keeps for its scrollbar, so the columns stay put when it loads (scrollGutter.ts). */}
+          <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+            <ChainHeaders keys={keys} widths={columnWidths(keys, [])} />
+          </div>
           {state}
         </>
       ) : (
@@ -156,7 +160,7 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
   const template = cols(widths);
   const minWidth = 2 * widths.reduce((a, w) => a + w, 0) + STRIKE_COL + ROW_PAD;
   return (
-    <div ref={ref} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+    <div ref={ref} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter }}>
       <div style={{ minWidth }}>
         <div ref={head} style={{ position: 'sticky', top: 0, zIndex: 1 }}>
           <ChainHeaders keys={keys} widths={widths} />
