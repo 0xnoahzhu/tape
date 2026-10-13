@@ -1,4 +1,4 @@
-// Settings › API log: every frame between the client and TWS / IB Gateway (store.apiLog),
+// Settings › Logs: every frame between the client and TWS / IB Gateway (store.apiLog),
 // with filters, search, raw view, pause, clear, export, log-file and retention settings.
 
 import { useApiLogStream } from '../../hooks/useApiLogStream';

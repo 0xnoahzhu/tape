@@ -717,7 +717,7 @@ Every frame is recorded raw in a ring of the newest 20,000 (`ib/apiLog.ts`) and,
 appended to `api-YYYYMMDD.log` (local day) in the logs folder; entries are decoded only when read.
 Live `apiLog` events are sent only while a view streams them (`STREAM_BY_DEFAULT = false`):
 
-1. A view (Settings › API log, the Connection mini log) mounts and `useApiLogStream` calls
+1. A view (Settings › Logs, the Connection mini log) mounts and `useApiLogStream` calls
    `setApiLogStreaming(true)`, then `getApiLog()` once that has resolved.
 2. Batches (every 250 ms) carry every frame recorded after streaming started, so they can overlap
    the loaded entries; the renderer keeps entries by `seq` (`bridge.ts → appendLog`,

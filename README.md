@@ -250,7 +250,7 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`
 and the defaults are used instead; an unreadable `tape.db` is moved aside as `tape.db.corrupt-<timestamp>`
 and recreated. API log files (`api-YYYYMMDD.log`) go to the system log folder (macOS
-`~/Library/Logs/Tape`) and are deleted after the retention period chosen in *Settings › API log*.
+`~/Library/Logs/Tape`) and are deleted after the retention period chosen in *Settings › Logs*.
 
 ## Packaging
 
@@ -333,7 +333,7 @@ design/            design files (source of truth for the UI)
   a socket to the API port (127.0.0.1 by default).
 - The app does not navigate away from its own page; external links open in your default browser (https only).
 - Local files (see *Data on disk*) are plain JSON and log text. API log files contain account ids and order
-  details; turn off *Also write to log file* in *Settings › API log* if you do not want them on disk.
+  details; turn off *Also write to log file* in *Settings › Logs* if you do not want them on disk.
 
 ## Lock screen
 

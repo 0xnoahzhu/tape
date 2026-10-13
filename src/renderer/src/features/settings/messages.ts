@@ -20,7 +20,7 @@ const en = {
     notif: 'Notifications',
     sec: 'Privacy & Security',
     keys: 'Shortcuts',
-    log: 'API Log',
+    log: 'Logs',
   },
 
   // Connection
@@ -342,7 +342,7 @@ const zh: typeof en = {
     notif: '通知',
     sec: '隐私与安全',
     keys: '快捷键',
-    log: 'API 日志',
+    log: '日志',
   },
 
   connDesc: '通过 TWS 或 IB Gateway 的 API 端口连接。需在 TWS 中启用 “Enable ActiveX and Socket Clients”。',
