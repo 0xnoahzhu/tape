@@ -289,9 +289,11 @@ with `electron-builder --linux` after `pnpm build`.
 - **Electron fuses.** The packaged binary has `runAsNode`, `NODE_OPTIONS` and `--inspect` turned off and only
   loads the `app.asar` it was built with (embedded asar integrity), so it cannot be used as a plain Node
   runtime or started with modified app code. Check with `npx @electron/fuses read --app release/mac-arm64/Tape.app`.
-- **Signing.** electron-builder signs with a code signing identity from your keychain when it finds one and
-  skips signing otherwise. Hardened runtime and notarization are off for local builds; to distribute, use a
-  Developer ID certificate (`CSC_NAME` / `CSC_LINK`), enable `hardenedRuntime` and configure notarization.
+- **Signing.** electron-builder signs with a code signing identity from your keychain when it finds one;
+  otherwise the app keeps the ad-hoc signature made right after the fuses are flipped (an unsigned build with
+  flipped fuses is killed at launch on Apple Silicon). Hardened runtime and notarization are off for local
+  builds; to distribute, use a Developer ID certificate (`CSC_NAME` / `CSC_LINK`), enable `hardenedRuntime`
+  and configure notarization.
   macOS only delivers system notifications from signed apps.
 
 ## Project structure
