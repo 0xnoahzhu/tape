@@ -3,11 +3,14 @@
 // (today's executions); the last two are the orders feature's tables. ⌘1 opens Positions, ⌘3 and
 // the menu's Orders open Orders (uiState.ts → showPortfolio). Each tab fills the page height, so no
 // bare page background shows under short content. The Orders tab's bar holds "Cancel all…" (IB's
-// global cancel, confirmed in its own dialog: layout/Dialogs.tsx → CancelAllDialog).
+// global cancel, confirmed in its own dialog: layout/Dialogs.tsx → CancelAllDialog). While the
+// figures are not live (disconnected, connecting, another account's summary) the header dims them and
+// says since when they are the last IB sent (calc.ts → headerStale).
 
 import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
 import type { AccountSummary } from '@shared/types';
+import { useClock } from '../../i18n';
 import { useAccountId } from '../../lib/account';
 import { cancelAllOrders } from '../../lib/orders';
 import { useCommon } from '../../i18n/common';
@@ -21,6 +24,8 @@ import { WorkingTable } from '../orders/WorkingTable';
 import {
   MARGIN_CALL_CUSHION,
   accountTotals,
+  asOfText,
+  headerStale,
   leverage,
   leverageLabel,
   marginCushion,
@@ -149,18 +154,35 @@ function CancelAllButton() {
   );
 }
 
+/** "Disconnected · as of 09:41 AM" over the header while its figures are not live. */
+function StaleNote({ account }: { account: AccountSummary | null }) {
+  const m = usePortfolioMessages();
+  const clock = useClock();
+  const stale = useStore((s) => headerStale(s.connection.status, account, s.connection.account));
+  if (!stale || !account) return null;
+  return (
+    <div data-pos="stale" title={m.staleHint} style={{ padding: '16px 32px 0', marginBottom: -12, fontSize: 12, fontWeight: 600, color: 'var(--mu)' }}>
+      {m.stale[stale](asOfText(account.updatedAt, Date.now(), clock))}
+    </div>
+  );
+}
+
 function Header({ account, totals, counts }: { account: AccountSummary | null; totals: AccountTotals; counts: Counts }) {
   const m = usePortfolioMessages();
   const accountId = useAccountId();
   const tab = usePortfolioUi((s) => s.tab);
   const setTab = usePortfolioUi((s) => s.setTab);
+  // The last account's figures stay while Tape is not connected to it: dimmed, never shown as live.
+  const stale = useStore((s) => headerStale(s.connection.status, account, s.connection.account) != null);
   const a = account;
   const { dayPnl, unrealized, realized } = totals;
+  const dim = stale ? { opacity: 0.5 } : undefined;
 
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--p)', boxShadow: '0 1px 0 var(--ln)', flexShrink: 0 }}>
+      <StaleNote account={account} />
       {/* Tier 1. The bottom padding holds the cushion under Excess Liquidity. */}
-      <div style={{ padding: '24px 32px 32px', display: 'flex', alignItems: 'last baseline', gap: '24px 44px', flexWrap: 'wrap' }}>
+      <div style={{ padding: '24px 32px 32px', display: 'flex', alignItems: 'last baseline', gap: '24px 44px', flexWrap: 'wrap', ...dim }}>
         <Stat label={accountId === DASH ? m.netLiq : `${m.netLiq} · ${accountId}`} big>
           {money(a?.netLiquidation, a?.currency)}
         </Stat>
@@ -179,7 +201,9 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
           {f0(a?.excessLiquidity)}
         </Stat>
       </div>
-      <AccountStrip account={a} totals={totals} />
+      <div style={dim}>
+        <AccountStrip account={a} totals={totals} />
+      </div>
       <div data-pos="tabs" style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 28, padding: '0 32px' }}>
         <TabItems<PortfolioTab>
           tabs={[

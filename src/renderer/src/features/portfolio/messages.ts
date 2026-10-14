@@ -15,6 +15,13 @@ export type GreekId = 'delta' | 'dollarDelta' | 'gamma' | 'theta' | 'vega';
 export const usePortfolioMessages = createMessages({
   en: {
     netLiq: 'Net liquidation',
+    /** The header's figures while they are not live (calc.ts → headerStale), dimmed: "Disconnected · as of 09:41 AM". */
+    stale: {
+      disconnected: (t: string) => `Disconnected · as of ${t}`,
+      connecting: (t: string) => `Connecting · as of ${t}`,
+      otherAccount: (t: string) => `Another account · as of ${t}`,
+    },
+    staleHint: 'The last figures IBKR sent: they are not live and update again once Tape is connected to this account.',
     dayPnl: 'Day P&L',
     unrealizedPnl: 'Unrealized P&L',
     buyingPower: 'Buying Power',
@@ -507,6 +514,12 @@ export const usePortfolioMessages = createMessages({
   },
   zh: {
     netLiq: '净清算值',
+    stale: {
+      disconnected: (t: string) => `未连接 · 截至 ${t}`,
+      connecting: (t: string) => `连接中 · 截至 ${t}`,
+      otherAccount: (t: string) => `其他账户 · 截至 ${t}`,
+    },
+    staleHint: '这是 IBKR 最后发送的数据，并非实时；连接到此账户后会继续更新。',
     dayPnl: '今日盈亏',
     unrealizedPnl: '未实现盈亏',
     buyingPower: '购买力',

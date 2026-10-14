@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
+import { createClock } from '@shared/timeFormat';
 import type { Position, Quote } from '@shared/types';
 import {
   ETF_SECTOR,
   MARGIN_CALL_CUSHION,
   OTHER_SECTOR,
   accountTotals,
+  asOfText,
   fxRate,
+  headerStale,
   grossValue,
   leverage,
   leverageLabel,
@@ -318,5 +321,28 @@ describe('margin cushion', () => {
     expect(marginCushion(undefined, 100)).toBeNull();
     expect(marginCushion(5, 0)).toBeNull();
     expect(MARGIN_CALL_CUSHION).toBe(10);
+  });
+});
+
+describe('header staleness', () => {
+  const summary = { account: 'U1' };
+
+  it('marks the figures as not live while Tape is not connected to their account', () => {
+    expect(headerStale('connected', summary, 'U1')).toBeNull();
+    expect(headerStale('disconnected', summary, 'U1')).toBe('disconnected');
+    expect(headerStale('connecting', summary, 'U1')).toBe('connecting');
+    expect(headerStale('reconnecting', summary, 'U1')).toBe('connecting');
+    // A summary of another account than the connected one is not this account's.
+    expect(headerStale('connected', summary, 'U2')).toBe('otherAccount');
+    // Nothing to mark without figures.
+    expect(headerStale('disconnected', null, 'U1')).toBeNull();
+  });
+
+  it('says since when, with the date when not today', () => {
+    const clock = createClock('24h', 'en');
+    const now = new Date(2026, 9, 14, 10, 0).getTime();
+    expect(asOfText(new Date(2026, 9, 14, 9, 41).getTime(), now, clock)).toBe('09:41');
+    expect(asOfText(new Date(2026, 9, 13, 16, 0).getTime(), now, clock)).toBe('10/13 16:00');
+    expect(asOfText(new Date(2026, 9, 14, 9, 41).getTime(), now, createClock('12h', 'zh'))).toBe('上午 09:41');
   });
 });

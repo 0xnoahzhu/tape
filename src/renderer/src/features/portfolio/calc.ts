@@ -1,9 +1,10 @@
-// Pure portfolio computations: sectors, position rows, account totals and the margin cushion. No
-// React and no store access, so everything is unit tested.
+// Pure portfolio computations: sectors, position rows, account totals, the margin cushion and whether
+// the header's figures are live. No React and no store access, so everything is unit tested.
 
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
-import type { AccountSummary, ContractRef, Execution, Position, Quote, SecType } from '@shared/types';
+import type { Clock } from '@shared/timeFormat';
+import type { AccountSummary, ConnectionStatus, ContractRef, Execution, Position, Quote, SecType } from '@shared/types';
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -300,4 +301,30 @@ export function marginCushion(excessLiquidity: number | undefined, netLiq: numbe
   if (!finite(excessLiquidity) || !finite(netLiq) || netLiq <= 0) return null;
   const pct = (excessLiquidity / netLiq) * 100;
   return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct < MARGIN_CALL_CUSHION };
+}
+
+// ---------------------------------------------------------------------------
+// Staleness
+
+/**
+ * Why the header's figures are not live: Tape is not connected, is connecting or reconnecting, or the
+ * summary is another account's than the connected one. They are then the last IB sent, and the header
+ * dims them with the time (AccountSummary.updatedAt).
+ */
+export type HeaderStale = 'disconnected' | 'connecting' | 'otherAccount';
+
+/** Why the header's figures are not live, or null while they are (or there are none). */
+export function headerStale(status: ConnectionStatus, summary: Pick<AccountSummary, 'account'> | null, connectedAccount: string | undefined): HeaderStale | null {
+  if (!summary) return null;
+  if (status === 'connecting' || status === 'reconnecting') return 'connecting';
+  if (status !== 'connected') return 'disconnected';
+  return connectedAccount && summary.account && summary.account !== connectedAccount ? 'otherAccount' : null;
+}
+
+/** When figures were last updated: "09:41 AM", with the date when not today ("10/13 04:00 PM"). */
+export function asOfText(t: number, now: number, clock: Clock): string {
+  const a = new Date(t);
+  const b = new Date(now);
+  const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return clock.time(t, sameDay ? {} : { date: 'md' });
 }

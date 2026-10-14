@@ -11,8 +11,9 @@ Architecture notes for contributors are in [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 **Portfolio** (⌘1 / Ctrl+1) — a two-tier account header: net liquidation, day / unrealized / realized
 P&L, buying power and excess liquidity with the margin cushion (red below 10%); under it cash (or margin
-loan), stock and option value, initial and maintenance margin, leverage and accrued dividends. Tabs
-Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
+loan), stock and option value, initial and maintenance margin, leverage and accrued dividends. While Tape
+is not connected the last figures stay, dimmed, with when IBKR last sent them (*Disconnected · as of …*).
+Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
 
 - **Positions**: a table (average cost, price, market value and P&L by default) grouped by **underlying**
   (a stock with its options; the default), **sector** or not at all. A group row sums market value, % of

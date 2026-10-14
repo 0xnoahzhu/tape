@@ -1212,7 +1212,11 @@ liquidity hangs the margin cushion: a 3px bar with a tick at 10 % and "18.4% cus
 and excess liquidity stays the last stat so that a wrapped row carries it on its last line. Tier 2 is
 one 13px line of balances and margin that wraps item by item, each label and value on one baseline
 (the sans label and the mono value sit 2px apart otherwise). Totals are `calc.ts → accountTotals`
-(re-marked to the rows' prices).
+(re-marked to the rows' prices). The last account's figures stay while Tape is disconnected or
+(re)connecting (main replaces the summary only once a session is ready, and blanks it on a switch):
+`calc.ts → headerStale` then dims both tiers and a line over them says why and since when, from
+`AccountSummary.updatedAt` ("Disconnected · as of 09:41 AM", "Connecting · …", or "Another account · …"
+for a summary that is not the connected account's).
 
 **Orders tab.** `orders/WorkingTable.tsx` lists the working orders; its actions cell
 (`orders/OrderActions.tsx`, `lib/orders.ts → orderRowAction`) offers Modify / Cancel only for an order
