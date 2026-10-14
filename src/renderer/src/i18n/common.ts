@@ -173,6 +173,10 @@ export const useCommon = createMessages({
     cancelAllUnconfirmed: 'The connection closed after the global cancel was sent: IBKR may have cancelled the orders. Check Orders after reconnecting.',
     /** The review while Tape is not connected: its Confirm arms once it is (a plain reconnect keeps the review). */
     reviewOffline: 'Not connected to TWS / IB Gateway: the order can be confirmed once Tape is connected again.',
+    /** A second order from the docked ticket / builder or a floating panel while the first still waits for IBKR. */
+    previousOrderSending: 'The previous order is still waiting for IBKR; this one was not sent',
+    /** The docked ticket's and builder's button while their order waits for IBKR. */
+    submitting: 'Submitting…',
     /**
      * TWS / IB Gateway cannot carry orders (orderActions.ts → connectionHealthText): it lost its
      * connection to IBKR (1100), or does not answer the heartbeat. `app`: TWS or IB Gateway.
@@ -338,6 +342,8 @@ export const useCommon = createMessages({
     },
     cancelAllUnconfirmed: '全部撤单指令发出后连接已关闭：IBKR 可能已撤销这些订单。重新连接后请在订单中查看。',
     reviewOffline: '未连接 TWS / IB Gateway：重新连接后才能确认此订单。',
+    previousOrderSending: '上一笔订单仍在等待 IBKR 确认，本笔订单未发送',
+    submitting: '提交中…',
     health: {
       linkLostChip: '与 IBKR 断开 (1100)',
       unresponsiveChip: (app: string) => `${app} 无响应`,

@@ -60,7 +60,7 @@ export async function startBridge(): Promise<void> {
     lock: snap.lock,
     marketDataCheck: snap.marketDataCheck,
     biometricsSeen: s.biometricsSeen || snap.lock.biometrics.available,
-    ticket: { ...initialTicket(snap.settings), side: s.ticket.side },
+    ticket: { ...initialTicket(snap.settings, s.symbol), side: s.ticket.side },
     // After a Forgot-PIN reset Tape opens on Settings › Connection, as on a fresh install.
     ...(snap.afterReset ? { page: 'set' as const, settingsTab: 'conn' as const } : {}),
   }));

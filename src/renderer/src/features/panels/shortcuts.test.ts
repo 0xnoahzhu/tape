@@ -4,14 +4,27 @@ import { useStore } from '../../state/store';
 import { barSide, claimPanelKeys, dockBack, panelKeysOwner, popOut, revealPanel, setCollapsed } from './actions';
 import { barShortcutSide, escapePanel, panelKeyAction, type ShortcutKey } from './shortcuts';
 
-const key = (k: string, patch: Partial<ShortcutKey> = {}): ShortcutKey => ({ key: k, metaKey: false, ctrlKey: false, altKey: false, isComposing: false, defaultPrevented: false, editable: false, ...patch });
+/** A key pressed with the focus in the ticket's panel (its bar), unless `patch` says otherwise. */
+const key = (k: string, patch: Partial<ShortcutKey> = {}): ShortcutKey => ({
+  key: k,
+  metaKey: false,
+  ctrlKey: false,
+  altKey: false,
+  isComposing: false,
+  defaultPrevented: false,
+  editable: false,
+  inTicket: true,
+  ...patch,
+});
 
 describe('B / S on the floating ticket’s bar', () => {
   const trade = () => ({ ...useStore.getState(), page: 'trade' as const, view: 'chart' as const, symbol: stock('AAPL') });
 
-  it('picks the side while the ticket is collapsed to its bar', () => {
+  it('picks the side while the ticket is collapsed to its bar and has the focus', () => {
     expect(barShortcutSide(key('b'), trade(), true)).toBe('BUY');
     expect(barShortcutSide(key('S'), trade(), true)).toBe('SELL');
+    // Typed with the focus on the page (after a search, a click on the chart): not the ticket's.
+    expect(barShortcutSide(key('s', { inTicket: false }), trade(), true)).toBeNull();
   });
 
   it('does nothing when expanded or docked, typing, off the ticket’s views, with a dialog, an index or a modify', () => {

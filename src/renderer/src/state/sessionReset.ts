@@ -4,12 +4,13 @@
 // orders, fills, positions and values never show under the new connection (the positions count as
 // not listed until main says IB listed the new account's). Everything opened on the previous
 // session goes with them: the order review (never sent), a cancel confirmation, the Cancel all
-// dialog, the cancels waiting for IB, the ticket's "Modify" and the floating panels' order strips.
-// A plain reconnect keeps them all.
+// dialog, the cancels waiting for IB, the ticket (it starts fresh on the same instrument: a side,
+// size or "Modify" prepared on one account never carries over to another, e.g. from paper to live)
+// and the floating panels' order strips. A plain reconnect keeps them all.
 
 import { useCommon } from '../i18n/common';
 import { useOrderFeedback } from './orderFeedback';
-import { useStore } from './store';
+import { initialTicket, useStore } from './store';
 
 export function resetSessionState(): void {
   const reviewOpen = useStore.getState().pendingOrder != null;
@@ -25,7 +26,7 @@ export function resetSessionState(): void {
     cancelAll: null,
     // Their ids name the new login's orders now.
     pendingCancels: [],
-    ticket: s.ticket.modifyingOrderId == null ? s.ticket : { ...s.ticket, modifyingOrderId: null },
+    ticket: initialTicket(s.settings, s.symbol),
   }));
   useOrderFeedback.getState().clear();
   if (reviewOpen) useStore.getState().showToast(useCommon.now().sessionChanged, 'error');

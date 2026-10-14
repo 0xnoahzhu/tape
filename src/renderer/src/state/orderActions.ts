@@ -32,7 +32,7 @@ import { cancelKey, isCancelPending, ofConnectedAccounts } from '../lib/orders';
 import { panelShown } from '../features/panels/actions';
 import type { PanelId } from '../features/panels/model';
 import { usePanels } from '../features/panels/panelStore';
-import { useOrderFeedback } from './orderFeedback';
+import { isPanelSending, useOrderFeedback } from './orderFeedback';
 import { useStore, type ConfirmRow, type PendingOrder, type StoreState } from './store';
 
 /** Strips Electron's IPC wrapper from error messages. */
@@ -220,17 +220,21 @@ function panelOnScreen(id: PanelId): boolean {
  * (state/orderFeedback.ts): an accepted order collapses the panel to its bar, a rejection keeps it
  * expanded (and a late one expands it again) with the form as it was. When that panel is not on
  * screen when IB answers (docked back, another page or view), the toasts report as well, so no
- * answer goes unseen. A panel's second order while the first still waits for IB is not sent (its
- * button is disabled, and ⏎ must not send it twice). Nothing is sent either while TWS / IB Gateway
- * cannot carry it (connectionHealthText).
+ * answer goes unseen. A second order from the same place (a floating panel, or the docked ticket
+ * and builder together) while the first still waits for IB is not sent: their buttons are disabled
+ * and ⏎ does nothing meanwhile; should its review be confirmed anyway, it stays open with a toast.
+ * Nothing is sent either while TWS / IB Gateway cannot carry it (connectionHealthText).
  */
 export async function sendOrder(p: PendingOrder): Promise<boolean> {
   const s = useStore.getState();
   const m = useCommon.now();
-  s.setPendingOrder(null);
   const panel = p.origin ?? null;
+  if (isPanelSending(p.origin)) {
+    s.showToast(m.previousOrderSending, 'warning');
+    return false;
+  }
+  s.setPendingOrder(null);
   const feedback = useOrderFeedback.getState();
-  if (panel && feedback.sent[panel]?.phase === 'sending') return false;
   const key = contractKey(p.request.contract);
   const seq = panel
     ? feedback.begin(panel, {
@@ -292,10 +296,14 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
     fail(unhealthy);
     return false;
   }
+  // The docked ticket and builder wait for this answer (their buttons, ⏎); a panel has its strip.
+  if (!panel) useOrderFeedback.getState().setDockedSending(true);
   try {
     if (p.modifyOrderId != null) {
       const { confirmed } = await window.tape.modifyOrder(p.modifyOrderId, p.request, p.session);
-      s.patchTicket({ modifyingOrderId: null });
+      // The ticket starts fresh (unless another Modify began meanwhile): nothing of the modified
+      // order carries over to the next new order.
+      useStore.getState().endModify(p.modifyOrderId);
       accepted(p.modifyOrderId, confirmed ? m.orderModified(p.modifyOrderId) : m.modifySentUnconfirmed(p.modifyOrderId), confirmed);
       watchLateRejection([p.modifyOrderId], rejectedLater);
     } else {
@@ -314,6 +322,8 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
     }
     fail(orderErrorText(err));
     return false;
+  } finally {
+    if (!panel) useOrderFeedback.getState().setDockedSending(false);
   }
 }
 

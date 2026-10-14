@@ -688,7 +688,7 @@ export function submitText(T: TicketCtl): string {
  * account a red line above it says so ("LIVE account U…: orders use real money").
  */
 export function SubmitBlock({ T, S, label, busy = false, cancelModify = true }: { T: TicketCtl; S: TicketScale; label?: string; busy?: boolean; cancelModify?: boolean }) {
-  const { tradable, buy, modifying, patch, m, c } = T;
+  const { tradable, buy, modifying, m, c } = T;
   const enabled = tradable && !busy;
   const live = useStore((s) => s.connection.status === 'connected' && !s.connection.isPaper && !!s.connection.account);
   const account = useStore((s) => (s.settings.appearance.showAccountId ? (s.connection.account ?? '') : ''));
@@ -722,7 +722,8 @@ export function SubmitBlock({ T, S, label, busy = false, cancelModify = true }: 
         {label ?? submitText(T)}
       </button>
       {cancelModify && modifying != null && (
-        <div onClick={() => patch({ modifyingOrderId: null })} className="hover-tx" style={{ alignSelf: 'center', fontSize: 12, color: 'var(--dm)', cursor: 'pointer' }}>
+        // The ticket starts fresh: nothing of the order carries over to a new one.
+        <div onClick={() => useStore.getState().endModify()} className="hover-tx" style={{ alignSelf: 'center', fontSize: 12, color: 'var(--dm)', cursor: 'pointer' }}>
           {m.cancelModify}
         </div>
       )}

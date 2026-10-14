@@ -3,7 +3,7 @@ import { stock } from '@shared/contract';
 import type { ConnectionState, Execution, OrderRequest, Position, WorkingOrder } from '@shared/types';
 import { applyConnection } from './bridge';
 import { useOrderFeedback } from './orderFeedback';
-import { useStore } from './store';
+import { initialTicket, useStore } from './store';
 
 const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false };
 const order = { orderId: 40, clientId: 7, key: '7:40', account: 'DUP899854', contract: stock('AAPL'), status: 'Submitted' } as WorkingOrder;
@@ -24,7 +24,8 @@ function paperSession(): ConnectionState {
     confirm: { title: 'Cancel order', rows: [], label: 'Cancel order', session: 0, run: () => undefined },
     cancelAll: { session: 0 },
     pendingCancels: ['7:40'],
-    ticket: { ...s.ticket, qty: 25, modifyingOrderId: 40 },
+    symbol: stock('AAPL'),
+    ticket: { ...s.ticket, qty: 25, oca: true, ocaGroup: 'tp-sl', orderRef: 'loaded', modifyingOrderId: 40 },
     toast: null,
   }));
   useOrderFeedback.setState({
@@ -42,10 +43,20 @@ describe('a new connection session', () => {
     applyConnection({ ...paper, status: 'connecting', port: 4001, session: 1, accounts: [], account: undefined, isPaper: false });
     const s = useStore.getState();
     expect(s).toMatchObject({ orders: [], executions: [], positions: [], positionsLoaded: false, account: null, pendingOrder: null, confirm: null, cancelAll: null, pendingCancels: [] });
-    expect(s.ticket).toMatchObject({ modifyingOrderId: null, qty: 25 });
+    // The modify ends with a fresh ticket: nothing of the previous account's order carries over.
+    expect({ ...s.ticket, conds: [] }).toEqual({ ...initialTicket(s.settings, s.symbol), conds: [] });
     expect(useOrderFeedback.getState().sent).toEqual({});
     // The review was never sent, and the user is told.
     expect(s.toast).toMatchObject({ tone: 'error', text: 'The connection switched to another account; the order was not sent' });
+  });
+
+  it('starts the ticket fresh on the same instrument: a side or size prepared on paper never reaches live', () => {
+    const paper = paperSession();
+    useStore.setState((s) => ({ ticket: { ...s.ticket, side: 'SELL', qty: 2_500, limitPrice: 158.11, orderRef: 'paper test', modifyingOrderId: null } }));
+    applyConnection({ ...paper, port: 4001, session: 1, accounts: ['U18630011'], account: 'U18630011', isPaper: false });
+    const s = useStore.getState();
+    expect(s.symbol).toEqual(stock('AAPL'));
+    expect({ ...s.ticket, conds: [] }).toEqual({ ...initialTicket(s.settings, s.symbol), conds: [] });
   });
 
   it('keeps a confirmation that is not bound to a session', () => {

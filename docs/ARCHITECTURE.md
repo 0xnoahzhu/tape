@@ -118,7 +118,7 @@ keep their state, so nothing is announced twice. On a new session the services f
 the previous one at once: `orders.ts` its orders, fills and notice state, `account.ts` the summary
 (a null `account` event) and positions; the renderer drops its mirrors and what was opened on that
 session (`state/sessionReset.ts`: the order review, a cancel confirmation, Cancel all, the cancels
-waiting for IB, the ticket's Modify, the panels' order strips) and lists orders and fills only of the login's accounts
+waiting for IB, the ticket, which starts fresh on the same instrument, the panels' order strips) and lists orders and fills only of the login's accounts
 (`state/connectedLists.ts`, `lib/orders.ts → ofConnectedAccounts`; all of an advisor login's
 accounts). The API log notes each new session. The first time a session is ready on a live account
 (the first of the run, or one a switch started; never again on a plain reconnect) `becomeReady` posts a
@@ -1169,7 +1169,10 @@ once the connection can carry the order again.
 behind the dialog) and arms `CONFIRM_ARM_MS` (600 ms) after the order arrives, or after the tick: until
 then a capture-phase keydown handler holds ⏎ back (`orderReview.ts → enterAction`: a held ⏎ never
 acts, ⏎ on Cancel after Tab closes at once, ⏎ with nothing focused confirms once armed), its click does
-nothing, and it fades in. Escape and Cancel always work. A danger `ConfirmDialog` (cancel an order,
+nothing, and it fades in. Escape and Cancel always work. Every dialog's Escape (the review, a
+confirmation, Cancel all, the PIN dialog) is marked handled (`preventDefault`), so
+the floating panels (`panelKeyAction`, `escapePanel`) and the notifications panel leave it alone once
+the dialog has closed. A danger `ConfirmDialog` (cancel an order,
 disconnect, delete) arms its button the same way, and Cancel all its red button after the check box.
 
 **Modify review.** `useTicket.submit` refuses a modify whose order is no longer working or that IB's
@@ -1179,7 +1182,40 @@ last list left out (`notReported`; a toast, no review; main's `modify()` refuses
 "— → after"), adds a Filled row after the quantity when part has filled, and marks a modify that asks
 for nothing new `unchanged` (`modifyChanges`, the requests compared with sorted keys): the review says
 "Nothing changed" and its Confirm never arms. The title is "Modify order #58", the button "Confirm
-modify #58".
+modify #58". ↑ / ↓ do not change the quantity while modifying (B / S already keep the side).
+
+**Ending a modify** (`store.ts → endModify`): once the modify is sent (`sendOrder`, only while that
+order is still the one being modified: a Modify started meanwhile stays), on "Cancel modify" (docked and
+floating), when another instrument is selected and when Tape moves to another account or Gateway
+(`sessionReset.ts`), the ticket starts fresh (`initialTicket`): nothing "Modify" loaded from the working
+order (side, size, OCA group, conditions, algo, note…) carries over to a new order, whose review would
+look like the one just approved. A session change starts it fresh without a modify too (on the same
+instrument): a side or size prepared on the paper account never waits in the ticket of the live one.
+
+**Instruments and defaults.** Selecting another instrument (`selectSymbol`: the watchlist, search, a
+notification, Modify of another contract) starts the ticket at that instrument's default size
+(`defaultQtyFor`: 1 for options, futures, futures options, warrants and combos, else Settings › Trade's
+default order size) and Buy, and drops the typed prices; selecting the same one again keeps the size and
+side. A new default in Settings › Trade changes the open ticket only where it still has the previous one
+(`tradeDefaultsPatch`): a size typed or a session chosen on the ticket stays, as does a modify.
+
+**Keys and sending.** The ticket's keys (`useTicketKeys.ts → ticketKeyAction`: B / S the side, which
+drops typed prices like the side switch, ↑ / ↓ the size, ⏎ the review) act only while the focus is in
+the ticket: the docked ticket (`OrderTicket.tsx`: its root is focusable, carries `data-ticket-keys` and
+takes the focus when pressed outside a control; a field left with ⏎ or Esc hands the focus back to it,
+`fields.tsx`) or the floating ticket's panel (`data-panel-root="ticket"`). A review dismissed with Esc,
+Cancel or a click outside gives the focus back to the ticket or panel it was opened from (read as it
+opens, `ui/focus.ts → keysHome`, `giveKeysBack` once it is gone), and so does a menu of the ticket closing
+(`ui/select.tsx → Dropdown`: a pick with the mouse leaves the focus on the page). After Confirm the focus
+stays on the page, so ⏎ pressed again and again never chains into a second review of the same order: the ticket (or the
+bar an accepted order collapsed the floating ticket to) waits for a click. With the focus on the page
+(after a symbol search, a click on the chart or the watchlist) they do nothing, so typing a symbol never
+flips the side or submits; ⏎ only on the ticket itself, never held, and not while a dialog is open. Sends
+from no floating panel (the docked ticket and strategy builder) share one in-flight guard
+(`orderFeedback.ts → dockedSending`, `isPanelSending(undefined)`): from Confirm until IB answers (or
+the 2 s wait ends) their buttons read "Submitting…" and are disabled, ⏎ does nothing, and a review
+confirmed meanwhile stays open with a toast instead of sending a second order; a floating panel has its
+own guard.
 
 **Strategies** (`options/sendStrategy.ts`): a single leg is sent as a limit order on its contract
 (a stock leg as the shares it stands for: it counts 100-share lots, as its description, the combo
@@ -1235,8 +1271,9 @@ small window. Pressing in the panel focuses it (`tabIndex=-1`), so its keys work
 the field (focus goes to the panel), the next Esc collapses the panel (dialogs and menus take their Esc
 first; `panelKeyAction`). With nothing focused, Esc still collapses the panel the user last worked in
 — pressed in, or expanded by B / S, Modify or a quote — until they press somewhere else
-(`shortcuts.ts → escapePanel`). The ticket's ⏎ / ↑ / ↓ / B / S work as docked (`useTicketKeys` treats
-the focused panel like the page); ⏎ does nothing while the last order still waits for IB.
+(`shortcuts.ts → escapePanel`). The ticket's ⏎ / ↑ / ↓ / B / S work as docked, only while the focus is
+in the panel (`useTicketKeys`), never from the page; ⏎ does nothing while the last order still waits
+for IB.
 
 **Persistence** (`panelStore.ts`, localStorage `tape.floatingPanels`, read and written in try/catch):
 per panel `floating`, `collapsed`, the expanded rectangle and the bar's position, relative to the content
@@ -1250,7 +1287,9 @@ and the status strip); from 900px three columns that scale up a little from 1240
 ticket's ask box and More, and the strategy's leg descriptions, would be cut). Ticket
 (`TicketFloat.tsx`): market (bid / ask boxes, a click fills the limit price; the Book,
 `ticket/DepthBlock.tsx`, as docked; the position and working orders are in the Trade page's activity
-panel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position,
+panel), entry (side, order type and More, quantity with 100 / 500 / 1K / Position — Position closes the
+connected account's position: its size and the closing side, which drops typed prices like the side
+switch, `quickActions.ts → closePatch`; while modifying only the size, since IB keeps the side —,
 price ± one tick with Bid / Mid / Ask on the tick — the mid rounds to the passive side, `quickActions.ts`
 —, TIF, the trading session; "Modifying #1234 · Cancel modify" on top while modifying), confirm (the
 Advanced sections as one-line rows that scroll, then fixed: the status strip, the totals (with IBKR's
@@ -1275,12 +1314,13 @@ new order flashes in the Trade page's activity panel
 (`chart/activityModel.ts → isFreshOrder`, 15 s from IB's acceptance). An
 accepted order (placed or modified) always collapses the panel to its bar; a rejection keeps it
 expanded, and a late rejection expands a panel its order collapsed. The docked panels keep their
-toasts.
+toasts; their buttons read "Submitting…" the same way (*Order ticket › Keys and sending*).
 
 **Collapsed bar** (`CollapsedBar.tsx`): about 420 × 40 with the drag handle (symbol and last price;
 strategy: name and net price), the latest order's status ("Buy 100 · 60/100", "Filled"), Buy / Sell
 (ticket) and ▴. A click on the bar (without dragging) or the chevron expands it, as do ⏎ on the bar, B /
-S (`shortcuts.ts`, with that side), Modify (orders list, activity panel, the strip) and a chain quote
+S while the bar has the focus (`shortcuts.ts → barShortcutSide`, with that side; never from the page),
+Modify (orders list, activity panel, the strip) and a chain quote
 (`actions.ts → openTicket`, `revealPanel`); docked, those actions behave as before. "+ Add
 from the chain" shows the chain and collapses the strategy panel until a quote is picked. The bar has its
 own remembered position (first: the bottom-right corner of the content area).
@@ -1601,8 +1641,8 @@ the user's and saved as edited. The renderer edits them with the pure functions 
   another conId or exchange of the same instrument counts as in the list.
 * Name editors closed with Enter / Escape and a group deleted from its header give focus back to
   a ✎ (the group's own, or the group now in its place) or to "+ New group" / "New list"
-  (`ui/focus.ts → useRefocus`). Focus left on `<body>` would let the next Enter submit the
-  order ticket (`useTicketKeys`).
+  (`ui/focus.ts → useRefocus`), so the next Enter works the list rather than going nowhere (the
+  order ticket's keys never act from `<body>`, `useTicketKeys`).
 
 ### Time format
 

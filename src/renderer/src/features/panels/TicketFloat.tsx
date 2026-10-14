@@ -12,7 +12,7 @@
 // the order (OrderStrip); an accepted order collapses the panel to its bar (state/orderActions.ts).
 
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
-import { contractKey, isTradable } from '@shared/contract';
+import { isTradable } from '@shared/contract';
 import { change, f0, px, signColor } from '@shared/format';
 import { usEquitySession } from '@shared/session';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
@@ -52,7 +52,8 @@ import { CollapsedBar } from './CollapsedBar';
 import { columnSpacing, panelLayout, ticketScale, type PanelLayout } from './layout';
 import { usePanelMessages } from './messages';
 import { OrderStrip } from './OrderStrip';
-import { closingSide, positionQty, priceTarget, QTY_CHIPS, qtyChipText, quotePrice, stepPrice } from './quickActions';
+import { accountPosition } from '../ticket/orderRisk';
+import { closePatch, closingSide, positionQty, priceTarget, QTY_CHIPS, qtyChipText, quotePrice, stepPrice } from './quickActions';
 
 /** The panel's content for its width. */
 export function TicketFloatContent({ width }: { width: number }) {
@@ -237,8 +238,9 @@ function QuickChip({ children, onClick, title, disabled }: { children: ReactNode
 
 function EntryColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
   const pm = usePanelMessages();
-  const key = contractKey(T.symbol);
-  const position = useStore((s) => s.positions.find((p) => contractKey(p.contract) === key)?.quantity);
+  // The position an order here changes: the connected account's, or a modified order's own account's.
+  const modifiedAccount = T.modifiedOrder?.account;
+  const position = useStore((s) => accountPosition(s, T.symbol, modifiedAccount ?? s.connection.account));
   const lock: CSSProperties | undefined = T.tradable ? undefined : { opacity: 0.4, pointerEvents: 'none' };
   const closeQty = positionQty(position);
   const priced = T.main.key === 'limitPrice' || T.main.key === 'stopPrice';
@@ -253,7 +255,8 @@ function EntryColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--sel)', fontSize: 12 }}>
           <div style={{ color: 'var(--ac)', fontWeight: 600 }}>{pm.modifying(T.modifying)}</div>
           <div style={{ color: 'var(--dm)' }}>·</div>
-          <div onClick={() => T.patch({ modifyingOrderId: null })} className="hover-tx" style={{ color: 'var(--mu)', cursor: 'pointer' }}>
+          {/* The ticket starts fresh: nothing of the order carries over to a new one. */}
+          <div onClick={() => useStore.getState().endModify()} className="hover-tx" style={{ color: 'var(--mu)', cursor: 'pointer' }}>
             {pm.cancelModify}
           </div>
         </div>
@@ -270,7 +273,12 @@ function EntryColumn({ T, S }: { T: TicketCtl; S: TicketScale }) {
               </QuickChip>
             ))}
             {closeQty != null && (
-              <QuickChip onClick={() => T.patch({ qty: closeQty })} title={position != null ? `${closingSide(position) === 'SELL' ? T.c.sell : T.c.buy} ${f0(closeQty)}` : undefined}>
+              // Closes the position: its size and the closing side (only the size while modifying,
+              // whose side IB keeps); the tooltip says exactly what the click sets.
+              <QuickChip
+                onClick={() => T.patch(closePatch(position, T.t.side, T.modifying != null))}
+                title={T.modifying == null ? `${closingSide(position) === 'SELL' ? T.c.sell : T.c.buy} ${f0(closeQty)}` : f0(closeQty)}
+              >
                 {pm.positionQty}
               </QuickChip>
             )}

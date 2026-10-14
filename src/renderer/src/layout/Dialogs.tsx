@@ -4,9 +4,11 @@
 // a danger confirmation's button, Cancel all's): until then its click does nothing and ⏎ is held
 // back in the capture phase, so a double-click or ⏎⏎ that opened the dialog never confirms it.
 // The button keeps the focus meanwhile (never `disabled`, which would leave ⏎ on a button behind
-// the dialog), and fades in as it arms. Escape and Cancel / Back always work.
+// the dialog), and fades in as it arms. Escape and Cancel / Back always work; a dialog's Escape is
+// marked handled (preventDefault), so nothing behind it (a floating panel, the notifications
+// panel) takes the same key as its own once the dialog is gone.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { contractLabel } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
 import { cancelBlock, isSourceBlock } from '@shared/orderOwnership';
@@ -17,6 +19,7 @@ import { useCommon } from '../i18n/common';
 import { cancelAllExpect, cancelAllOrders } from '../lib/orders';
 import { connectionHealthText, orderErrorText, readOnlyWarning, sendCancelAll, sendOrder } from '../state/orderActions';
 import { useStore } from '../state/store';
+import { keysHome, useRefocus } from '../ui/focus';
 import { AccountTag, Button, KeyValueRows, Modal } from '../ui/primitives';
 import { stableGutter } from '../ui/scrollGutter';
 import { CONFIRM_ARM_MS, confirmLabel, enterAction, mayArm, needsAcknowledgement, reviewRows, reviewTitle, warningRows } from './orderReview';
@@ -76,7 +79,9 @@ export function ConfirmDialog() {
   useEffect(() => {
     if (!req) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      close();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -245,11 +250,23 @@ function OrderEstimate({ request, session }: { request: OrderRequest; session: n
  * CONFIRM_ARM_MS after the order (or the tick) arrives; a modify that changes nothing says so and
  * never arms, nor does any order while Tape is not connected or TWS / IB Gateway lost IB or does
  * not answer (a red line says so; it arms once that is over).
+ *
+ * Dismissed (Escape, Cancel, a click outside), it gives the keys back to the ticket or floating panel
+ * it was opened from, so B / S / ↑ / ↓ / ⏎ work there again at once. After Confirm the focus stays on
+ * the page: ⏎ pressed again and again never chains into a second review and send of the same order.
  */
 export function OrderConfirmDialog() {
   const m = useCommon();
   const p = useStore((s) => s.pendingOrder);
   const setPending = useStore((s) => s.setPendingOrder);
+  const open = p != null;
+  // Read in the render that opens the review, before its commit gives Confirm the focus (autoFocus).
+  const home = useMemo(() => (open ? keysHome(document.activeElement) : null), [open]);
+  const refocus = useRefocus();
+  const dismiss = useCallback(() => {
+    setPending(null);
+    refocus(() => home);
+  }, [setPending, refocus, home]);
   const connected = useStore((s) => s.connection.status === 'connected');
   const showId = useStore((s) => s.settings.appearance.showAccountId);
   // IB answered with its Read-Only refusal on this connection: it will refuse this order too.
@@ -269,7 +286,8 @@ export function OrderConfirmDialog() {
     // Capture phase: runs before the order ticket's own Enter shortcut.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setPending(null);
+        e.preventDefault();
+        dismiss();
         return;
       }
       const target = e.target === confirmRef.current ? 'confirm' : handlesEnter(e.target) ? 'other' : 'none';
@@ -282,7 +300,7 @@ export function OrderConfirmDialog() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [p, setPending, arming.ref]);
+  }, [p, dismiss, arming.ref]);
   if (!p) return null;
   const buy = p.request.action === 'BUY';
   // IB estimates new single-instrument orders (a modify would be estimated as an extra order).
@@ -290,7 +308,7 @@ export function OrderConfirmDialog() {
   const ack = needsAcknowledgement(p);
   const toggleAck = () => setAcknowledged((a) => !a);
   return (
-    <Modal onClose={() => setPending(null)} zIndex={21}>
+    <Modal onClose={dismiss} zIndex={21}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
         <div style={{ font: '600 18px/1.2 var(--sans)', minWidth: 0 }}>{reviewTitle(p)}</div>
         <AccountTag paper={p.isPaper} text={p.isPaper ? m.paperTag : m.liveTag} title={p.isPaper ? m.paperTip : m.liveTip} />
@@ -325,7 +343,7 @@ export function OrderConfirmDialog() {
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8, flexShrink: 0 }}>
-        <Button kind="secondary" onClick={() => setPending(null)}>
+        <Button kind="secondary" onClick={dismiss}>
           {m.cancel}
         </Button>
         <Button

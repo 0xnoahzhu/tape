@@ -3,9 +3,15 @@
 // With Level 2 on, the Book (DepthBlock.tsx) sits between the bid / ask and the entry fields.
 // The parts and the controller are shared with the floating ticket (features/panels):
 // parts.tsx, DepthBlock.tsx, useTicket.ts.
+//
+// Docked, the ticket is focusable (TICKET_KEYS_ATTR, like a floating panel's root): a press in it
+// gives it the keys, and its B / S / ↑ / ↓ / ⏎ work only while the focus is in it
+// (useTicketKeys.ts), never from the page. Its button reads "Submitting…" while its order (or the
+// docked strategy builder's) waits for IB, and nothing more is sent meanwhile.
 
-import type { ReactNode } from 'react';
+import { useRef, type PointerEvent, type ReactNode } from 'react';
 import type { PanelId } from '../panels/model';
+import { isDockedSending, useOrderFeedback } from '../../state/orderFeedback';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { DepthBlock } from './DepthBlock';
 import {
@@ -26,6 +32,10 @@ import {
   type TicketScale,
 } from './parts';
 import { useTicket, type TicketCtl } from './useTicket';
+import { TICKET_KEYS_ATTR } from './useTicketKeys';
+
+/** Controls that take the focus themselves when pressed (a press elsewhere focuses the ticket). */
+const FOCUSABLE = 'input, textarea, select, button, a[href], [tabindex], [contenteditable="true"]';
 
 /**
  * `header` replaces the title row and `footer` the totals and the submit button, `origin` names the
@@ -41,9 +51,22 @@ export function OrderTicket({
   const T = useTicket(origin);
   const { m, c, symbol, label } = T;
   const S: TicketScale = DOCKED_SCALE;
+  // Docked (no panel around it): the ticket itself holds the keys, and the in-flight guard is its own.
+  const docked = origin == null;
+  const sending = useOrderFeedback(isDockedSending) && docked;
+  const root = useRef<HTMLDivElement>(null);
+  const takeKeys = (e: PointerEvent<HTMLDivElement>) => {
+    const t = e.target as Element;
+    if (t !== root.current && t.closest(FOCUSABLE) !== root.current) return;
+    root.current?.focus({ preventScroll: true });
+  };
 
   return (
-    <div style={{ gridColumn: 2, gridRow: '1 / 3', background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, ...(header ? { flex: 1 } : null) }}>
+    <div
+      ref={root}
+      {...(docked ? { tabIndex: -1, [TICKET_KEYS_ATTR]: '', onPointerDown: takeKeys } : null)}
+      style={{ gridColumn: 2, gridRow: '1 / 3', background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, outline: 'none', ...(header ? { flex: 1 } : null) }}
+    >
       {header ? (
         header(T)
       ) : (
@@ -98,7 +121,7 @@ export function OrderTicket({
         ) : (
           <>
             <Totals T={T} S={S} />
-            <SubmitBlock T={T} S={S} />
+            <SubmitBlock T={T} S={S} busy={sending} label={sending ? c.submitting : undefined} />
           </>
         )}
       </div>

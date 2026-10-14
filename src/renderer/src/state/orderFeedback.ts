@@ -1,6 +1,8 @@
 // The latest order sent from each floating panel (features/panels): its status strip and its
 // collapsed bar follow it from "Submitting…" to IB's live status. Orders sent from anywhere else
-// keep their toasts. Written by orderActions.ts; the live status comes from the store's orders.
+// (the docked ticket and strategy builder) keep their toasts; while one of them waits for IB,
+// `dockedSending` holds their buttons and ⏎ back, as a panel's own order does for that panel.
+// Written by orderActions.ts; the live status comes from the store's orders.
 // The strips belong to the connection session they were sent on: they go when Tape moves to
 // another account or Gateway (state/sessionReset.ts).
 
@@ -39,6 +41,9 @@ export interface SentOrder {
 
 interface FeedbackState {
   sent: Partial<Record<PanelId, SentOrder>>;
+  /** An order or modify sent from no floating panel (the docked ticket or builder) waits for IB's answer. */
+  dockedSending: boolean;
+  setDockedSending(sending: boolean): void;
   begin(id: PanelId, order: Omit<SentOrder, 'seq' | 'phase'>): number;
   /** Updates the order `seq` of panel `id` (nothing when a newer one replaced it). */
   update(id: PanelId, seq: number, patch: Partial<SentOrder>): void;
@@ -51,6 +56,8 @@ let seq = 0;
 
 export const useOrderFeedback = create<FeedbackState>()((set) => ({
   sent: {},
+  dockedSending: false,
+  setDockedSending: (dockedSending) => set({ dockedSending }),
   begin: (id, order) => {
     seq += 1;
     const next: SentOrder = { ...order, seq, phase: 'sending' };
@@ -75,5 +82,14 @@ export const useOrderFeedback = create<FeedbackState>()((set) => ({
 /** Whether a floating panel waits for IB's answer to its order (its submit button is disabled). */
 export const isSending = (id: PanelId) => (s: FeedbackState): boolean => s.sent[id]?.phase === 'sending';
 
-/** Whether the order last sent from panel `id` still waits for IB (false for the docked panels: no `id`). */
-export const isPanelSending = (id: PanelId | undefined): boolean => id != null && isSending(id)(useOrderFeedback.getState());
+/** Whether an order sent from the docked ticket or strategy builder waits for IB (their buttons are disabled). */
+export const isDockedSending = (s: FeedbackState): boolean => s.dockedSending;
+
+/**
+ * Whether the order last sent from panel `id` still waits for IB; without `id` (the docked ticket
+ * and builder), whether theirs does: a second ⏎ or click then sends nothing.
+ */
+export const isPanelSending = (id: PanelId | undefined): boolean => {
+  const s = useOrderFeedback.getState();
+  return id != null ? isSending(id)(s) : isDockedSending(s);
+};

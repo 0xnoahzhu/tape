@@ -15,7 +15,7 @@ import {
 import { confirmCancel, connectionHealthText, explainCancelBlock, orderErrorText, orderLine, sendCancelAll, sendOrder, submitOrder } from './orderActions';
 import { usePanels } from '../features/panels/panelStore';
 import { isPanelSending, useOrderFeedback } from './orderFeedback';
-import { useStore } from './store';
+import { initialTicket, useStore } from './store';
 
 const placeOrder = vi.fn();
 const cancelOrder = vi.fn();
@@ -294,10 +294,13 @@ describe('orders sent from a floating panel', () => {
 
   it('a modify shows as such, ends modifying and collapses the panel too', async () => {
     modifyOrder.mockResolvedValue({ confirmed: true });
-    useStore.getState().patchTicket({ modifyingOrderId: 31 });
+    useStore.getState().patchTicket({ modifyingOrderId: 31, oca: true, ocaGroup: 'tp-sl', condition: true, orderRef: 'scale out', qty: 40, side: 'SELL' });
     await sendOrder({ ...pending, modifyOrderId: 31 });
     expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ kind: 'modify', phase: 'sent', orderId: 31 });
-    expect(useStore.getState().ticket.modifyingOrderId).toBeNull();
+    // A fresh ticket: nothing of the modified order (OCA group, conditions, note, side, size) carries
+    // over to the next new order.
+    const s = useStore.getState();
+    expect(s.ticket).toMatchObject({ modifyingOrderId: null, oca: false, ocaGroup: '', condition: false, orderRef: '', side: 'BUY', qty: initialTicket(s.settings, s.symbol).qty });
     expect(ticketPanel().collapsed).toBe(true);
   });
 
@@ -313,6 +316,18 @@ describe('orders sent from a floating panel', () => {
     await sendOrder({ ...pending, modifyOrderId: 31, account: 'U222' });
     // The strip finds the order (and its position) in U222, the account the review named.
     expect(useOrderFeedback.getState().sent.ticket).toMatchObject({ kind: 'modify', account: 'U222', positionBefore: 3, orderId: 31 });
+  });
+
+  it('a modify keeps another Modify started while it waited for IB', async () => {
+    let resolve!: (v: { confirmed: boolean }) => void;
+    modifyOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    useStore.getState().patchTicket({ modifyingOrderId: 31 });
+    const sent = sendOrder({ ...pending, modifyOrderId: 31 });
+    useStore.getState().patchTicket({ modifyingOrderId: 32, ocaGroup: 'other' });
+    resolve({ confirmed: true });
+    await sent;
+    expect(useStore.getState().ticket).toMatchObject({ modifyingOrderId: 32, ocaGroup: 'other' });
+    useStore.getState().endModify();
   });
 
   it('a panel docked meanwhile is not collapsed (nothing to collapse), and a toast reports the order', async () => {
@@ -368,6 +383,20 @@ describe('orders sent from a floating panel', () => {
     useStore.setState({ orders: [] });
   });
 
+  it('a second confirmed review while the panel’s order waits stays open, with a toast', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[]; confirmed: boolean }) => void;
+    placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    const first = sendOrder(pending);
+    const second = { ...pending, session: 0 };
+    useStore.setState({ pendingOrder: second });
+    await expect(sendOrder(second)).resolves.toBe(false);
+    expect(useStore.getState().pendingOrder).toBe(second);
+    expect(useStore.getState().toast).toMatchObject({ tone: 'warning', text: 'The previous order is still waiting for IBKR; this one was not sent' });
+    resolve({ orderId: 31, childOrderIds: [], confirmed: true });
+    await first;
+    useStore.setState({ pendingOrder: null });
+  });
+
   it('an order from the docked ticket keeps its toasts', async () => {
     placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [], confirmed: true });
     await sendOrder({ ...pending, origin: undefined });
@@ -384,6 +413,59 @@ describe('orders sent from a floating panel', () => {
   });
 });
 
+describe('orders sent from the docked ticket or strategy builder', () => {
+  const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.56, tif: 'DAY', outsideRth: false };
+  const docked = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', session: 0, isPaper: true };
+
+  beforeEach(() => {
+    setUp(4002);
+    useOrderFeedback.setState({ sent: {}, dockedSending: false });
+    for (const f of [placeOrder, modifyOrder]) f.mockReset();
+  });
+
+  it('cannot overlap: a second ⏎ or click while the first waits for IB sends nothing, the next one after it does', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[]; confirmed: boolean }) => void;
+    placeOrder.mockReturnValue(new Promise((r) => (resolve = r)));
+    const first = sendOrder(docked);
+    // The docked ticket's and builder's buttons are busy, and useTicket.submit / useStrategy.send stop here.
+    expect(isPanelSending(undefined)).toBe(true);
+    expect(isPanelSending('ticket')).toBe(false);
+    await expect(sendOrder(docked)).resolves.toBe(false);
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    resolve({ orderId: 31, childOrderIds: [], confirmed: true });
+    await expect(first).resolves.toBe(true);
+    expect(isPanelSending(undefined)).toBe(false);
+    placeOrder.mockResolvedValue({ orderId: 32, childOrderIds: [], confirmed: true });
+    await expect(sendOrder(docked)).resolves.toBe(true);
+    expect(placeOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds a modify the same way, and lets go once IB refused it', async () => {
+    let reject!: (e: Error) => void;
+    modifyOrder.mockReturnValue(new Promise((_, r) => (reject = r)));
+    const first = sendOrder({ ...docked, modifyOrderId: 31 });
+    expect(isPanelSending(undefined)).toBe(true);
+    reject(ipcError('modifyOrder', 'Order rejected (201)'));
+    await expect(first).resolves.toBe(false);
+    expect(isPanelSending(undefined)).toBe(false);
+  });
+
+  it('is independent of a floating panel’s order', async () => {
+    let resolve!: (v: { orderId: number; childOrderIds: number[]; confirmed: boolean }) => void;
+    placeOrder.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    usePanels.getState().setFloating('strategy', true);
+    useStore.setState({ page: 'trade', view: 'opt' });
+    const fromPanel = sendOrder({ ...docked, origin: 'strategy' });
+    expect(isPanelSending(undefined)).toBe(false);
+    placeOrder.mockResolvedValueOnce({ orderId: 33, childOrderIds: [], confirmed: true });
+    await expect(sendOrder(docked)).resolves.toBe(true);
+    resolve({ orderId: 34, childOrderIds: [], confirmed: true });
+    await fromPanel;
+    usePanels.getState().setFloating('strategy', false);
+    useStore.setState({ view: 'chart' });
+  });
+});
+
 describe('orders while IB Gateway cannot carry them', () => {
   const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.56, tif: 'DAY', outsideRth: false };
   const docked = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', session: 0, isPaper: true };
@@ -391,7 +473,7 @@ describe('orders while IB Gateway cannot carry them', () => {
 
   beforeEach(() => {
     setUp(4002);
-    useOrderFeedback.setState({ sent: {} });
+    useOrderFeedback.setState({ sent: {}, dockedSending: false });
     for (const f of [placeOrder, modifyOrder, cancelOrder]) f.mockReset();
   });
   afterEach(() => health({}));
@@ -409,6 +491,7 @@ describe('orders while IB Gateway cannot carry them', () => {
     expect(useStore.getState().toast?.text).toBe('Order failed: IB Gateway is not responding: nothing was sent. Tape reconnects if it stays silent.');
     expect(placeOrder).not.toHaveBeenCalled();
     expect(modifyOrder).not.toHaveBeenCalled();
+    expect(isPanelSending(undefined)).toBe(false);
     health({});
     placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [], confirmed: true });
     await expect(sendOrder(docked)).resolves.toBe(true);

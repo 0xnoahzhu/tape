@@ -26,10 +26,11 @@ function Panel() {
   const openSettings = useStore((s) => s.openSettings);
   const unread = useStore((s) => unreadCount(s.notifications));
 
-  // Escape closes the panel unless a dialog above it (confirm, order review, alert form) is open.
+  // Escape closes the panel unless a dialog above it (confirm, order review, alert form) is open or
+  // has just taken the key to close itself (a dialog marks its Escape handled).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
       const s = useStore.getState();
       if (s.confirm || s.pendingOrder || s.alertForm) return;
       s.setBell(false);

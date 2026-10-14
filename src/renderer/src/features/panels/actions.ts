@@ -83,7 +83,8 @@ export function modifyOrderInTicket(o: WorkingOrder): void {
 export function barSide(side: OrderAction): void {
   const s = useStore.getState();
   if (!isTradable(s.symbol) || s.ticket.modifyingOrderId != null) return;
-  s.patchTicket({ side, limitPrice: null, stopPrice: null });
+  // As the side switch: prices typed for the other side go.
+  s.patchTicket({ side, limitPrice: null, stopPrice: null, limitOffset: null });
   revealPanel('ticket');
 }
 

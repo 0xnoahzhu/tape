@@ -109,7 +109,8 @@ export function App() {
   useEffect(() => onCommand((c) => runCommand(c, dark)), [dark]);
 
   // Global shortcuts. Trade-specific keys (B / S / ↑ / ↓ / ⏎) live in the order ticket (and, on
-  // the floating ticket's bar, B / S in features/panels/shortcuts.ts).
+  // the floating ticket's bar, B / S in features/panels/shortcuts.ts), and act only while the
+  // ticket has the focus, never from the page.
   // None of them works while the lock screen is up, nor (but ⌘L) while a dialog is open: a key
   // left unhandled goes nowhere (the menu ignores accelerators, menuTemplate.ts).
   useEffect(() => {

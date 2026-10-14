@@ -1,8 +1,9 @@
-// The floating ticket's quick actions (features/panels/TicketFloat): quantity chips, the position
-// size, and limit prices from the quote (bid / mid / ask) or one tick away. Pure.
+// The floating ticket's quick actions (features/panels/TicketFloat): quantity chips, closing the
+// position, and limit prices from the quote (bid / mid / ask) or one tick away. Pure.
 
 import { roundToTick } from '@shared/format';
 import type { OrderAction, OrderType } from '@shared/types';
+import type { TicketState } from '../../state/store';
 
 /** Quantity chips: 100, 500, 1K. */
 export const QTY_CHIPS: readonly number[] = [100, 500, 1000];
@@ -18,6 +19,19 @@ export function positionQty(position: number | undefined): number | null {
 
 /** The side that closes a position: a long one is sold, a short one bought back. */
 export const closingSide = (position: number): OrderAction => (position > 0 ? 'SELL' : 'BUY');
+
+/**
+ * What the Position chip puts in the ticket: the position's size and the side that closes it, so the
+ * ticket reads "Sell 100" for a long 100 (never "Buy 100", which would double it). A side change
+ * drops the prices typed for the other side, as the side switch does. While an order is modified
+ * its side is locked (IB keeps it): only the size.
+ */
+export function closePatch(position: number, side: OrderAction, modifying: boolean): Partial<TicketState> {
+  const qty = Math.abs(position);
+  const close = closingSide(position);
+  if (modifying || close === side) return { qty };
+  return { qty, side: close, limitPrice: null, stopPrice: null, limitOffset: null };
+}
 
 const ok = (n: number | undefined): n is number => n != null && Number.isFinite(n) && n > 0;
 

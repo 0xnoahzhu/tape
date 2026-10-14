@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closingSide, positionQty, priceTarget, QTY_CHIPS, qtyChipText, quotePrice, stepPrice } from './quickActions';
+import { closePatch, closingSide, positionQty, priceTarget, QTY_CHIPS, qtyChipText, quotePrice, stepPrice } from './quickActions';
 
 describe('quantity chips', () => {
   it('are 100, 500 and 1K', () => {
@@ -15,6 +15,16 @@ describe('quantity chips', () => {
     expect(positionQty(Number.NaN)).toBeNull();
     expect(closingSide(200)).toBe('SELL');
     expect(closingSide(-300)).toBe('BUY');
+  });
+
+  it('close the position: its size and the closing side, dropping prices typed for the other side', () => {
+    // Long 100 with the ticket on Buy: Sell 100, never Buy 100 (which would double it).
+    expect(closePatch(100, 'BUY', false)).toEqual({ qty: 100, side: 'SELL', limitPrice: null, stopPrice: null, limitOffset: null });
+    expect(closePatch(-300, 'SELL', false)).toEqual({ qty: 300, side: 'BUY', limitPrice: null, stopPrice: null, limitOffset: null });
+    // Already on the closing side: the typed price stays.
+    expect(closePatch(100, 'SELL', false)).toEqual({ qty: 100 });
+    // A modified order keeps its side (IB refuses to switch it): only the size.
+    expect(closePatch(100, 'BUY', true)).toEqual({ qty: 100 });
   });
 });
 

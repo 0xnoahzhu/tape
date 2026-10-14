@@ -171,7 +171,8 @@ export function useTicket(origin?: PanelId) {
   };
 
   const submit = () => {
-    // A floating panel's order still waiting for IB: its button is disabled, ⏎ must not send again.
+    // This ticket's order (a floating panel's, or docked: the docked ticket's or builder's) still
+    // waits for IB: its button is disabled, and ⏎ must not send again.
     if (isPanelSending(origin)) return;
     const s = useStore.getState();
     // A modify needs the order still working: one that has filled, been cancelled or gone meanwhile,

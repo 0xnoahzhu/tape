@@ -5,7 +5,7 @@
 import { useCommon } from '../../i18n/common';
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, usd } from '@shared/format';
-import { isPanelSending } from '../../state/orderFeedback';
+import { isDockedSending, isPanelSending, useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import type { PanelId } from '../panels/model';
 import { TextInput, Toggle } from '../../ui/primitives';
@@ -25,12 +25,15 @@ import { orderPrice, strategyView, withNetPrice, type StrategyView } from './str
  * The strategy builder's state and actions, shared by the docked panel and the floating one
  * (features/panels/StrategyFloat): the legs' view at the order's price (the floating panel's
  * − / + may set it), the template picker and the send flow. `origin`: the floating panel the
- * order is sent from (its status strip reports it instead of toasts).
+ * order is sent from (its status strip reports it instead of toasts). `sending`: its legs are being
+ * resolved for the review; `waiting`: docked, its order (or the docked ticket's) waits for IB, and
+ * nothing more is sent meanwhile (a floating panel shows its own "Submitting…").
  */
 export function useStrategy(model: DeskModel, origin?: PanelId) {
   const desk = useDesk();
   const { legs, tmpl, tmplOpen, netPrice } = desk;
   const [sending, setSending] = useState(false);
+  const waiting = useOrderFeedback(isDockedSending) && origin == null;
   const { underlying, spot } = model;
 
   const view = useMemo(
@@ -74,7 +77,7 @@ export function useStrategy(model: DeskModel, origin?: PanelId) {
       setSending(false);
     }
   };
-  return { desk, legs, tmpl, view, sending, send, isIndex, current, open, pickTemplate, model };
+  return { desk, legs, tmpl, view, sending, waiting, send, isIndex, current, open, pickTemplate, model };
 }
 
 export type StrategyCtl = ReturnType<typeof useStrategy>;
@@ -109,7 +112,8 @@ export function StrategyPanel({
 }) {
   const m = useM();
   const ctl = useStrategy(model, origin);
-  const { desk, legs, view, sending, send } = ctl;
+  const { desk, legs, view, sending, waiting, send } = ctl;
+  const c = useCommon();
   const { spot } = model;
 
   const clear = (
@@ -130,7 +134,7 @@ export function StrategyPanel({
           <OrderChoices combo={legs.length > 1} />
           <div style={{ padding: inset(14, 6), fontSize: 12, color: 'var(--mu)' }}>{m.netGreeks}</div>
           <NetGreeks view={view} m={m} />
-          <div style={{ padding: inset(16, 20), marginTop: 'auto' }}>{footer ? footer(ctl) : <SendButton view={view} busy={sending} onSend={() => void send()} />}</div>
+          <div style={{ padding: inset(16, 20), marginTop: 'auto' }}>{footer ? footer(ctl) : <SendButton view={view} busy={sending || waiting} label={waiting ? c.submitting : undefined} onSend={() => void send()} />}</div>
         </>
       )}
     </>

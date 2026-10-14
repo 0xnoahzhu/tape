@@ -2,8 +2,9 @@
 // headings and items, and a 34px Select box built on them. Used by the order ticket (order type,
 // conditions, algos).
 
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { giveKeysBack, keysHome } from './focus';
 import { stableGutter } from './scrollGutter';
 
 export interface Choice<K> {
@@ -26,7 +27,9 @@ const editable = (t: EventTarget | null) => {
  * While it is open it owns the keyboard: ↑ / ↓ / Home / End move through the available items,
  * Enter picks the highlighted one, and no key reaches the ticket's shortcuts (Enter there would
  * submit the order behind the menu). A text field the menu belongs to (a symbol search) keeps its
- * typing; Enter there picks the highlighted item, if any.
+ * typing; Enter there picks the highlighted item, if any. A menu of the order ticket or a floating
+ * panel gives it the keys back when it closes: a pick with the mouse leaves the focus on the page
+ * (its items take none), where the ticket's keys would not work.
  */
 export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLElement | null; onClose: () => void; width?: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -61,6 +64,10 @@ export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLEle
     active?.scrollIntoView({ block: 'nearest' });
     if (active && active.getAttribute('aria-disabled') !== 'true') highlight(active);
   }, [pos]);
+  useEffect(() => {
+    const home = keysHome(anchor);
+    return () => void giveKeysBack(home);
+  }, [anchor]);
   useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

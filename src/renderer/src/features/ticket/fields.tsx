@@ -2,12 +2,19 @@
 
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { parseNum } from '@shared/format';
+import { TICKET_KEYS_ATTR } from './useTicketKeys';
 
-/** Enter commits, Escape leaves the field; both just blur (the store already has the value). */
+/**
+ * Enter commits, Escape leaves the field; both just blur (the store already has the value). The
+ * focus goes to the ticket around the field (the docked ticket, or a floating panel), not the page,
+ * so the ticket's keys go on working there: the next ⏎ opens the review (useTicketKeys.ts).
+ */
 function blurOnKeys(e: KeyboardEvent<HTMLInputElement>): void {
   if (e.key === 'Enter' || e.key === 'Escape') {
     e.preventDefault();
+    const home = e.currentTarget.closest<HTMLElement>(`[${TICKET_KEYS_ATTR}],[data-panel-root]`);
     e.currentTarget.blur();
+    home?.focus({ preventScroll: true });
   }
 }
 

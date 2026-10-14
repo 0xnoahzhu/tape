@@ -199,6 +199,7 @@ const en = {
   orderReviewD: 'Every order, modify and cancel is reviewed in a dialog before it is sent',
   alwaysOn: 'Always on',
   defaultQty: 'Default order size',
+  defaultQtyD: 'Stocks, ETFs and the like; options, futures and warrants start at 1 contract',
   outsideRth: 'Allow outside RTH by default',
   outsideRthD: 'New orders start in Extended hours (pre-market and after-hours) instead of Regular hours',
 
@@ -512,6 +513,7 @@ const zh: typeof en = {
   orderReviewD: '所有下单、改单、撤单都需在弹窗中确认后发送',
   alwaysOn: '始终开启',
   defaultQty: '默认下单数量',
+  defaultQtyD: '适用于股票、ETF 等；期权、期货和权证默认 1 张合约',
   outsideRth: '默认允许盘前盘后',
   outsideRthD: '新订单的交易时段默认为盘前盘后，而不是常规时段',
 

@@ -9,7 +9,7 @@ import { presetPrice } from '../features/alerts/model';
 import { ticketTimingFor } from '../features/orders/model';
 import { newCondition } from '../features/ticket/ticketConditions';
 import { ofConnectedAccounts } from '../lib/orders';
-import { contractKey, stock } from '@shared/contract';
+import { contractKey, sameContract, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import { sessionOutsideRth } from '@shared/orderTiming';
 import type { PanelId } from '../features/panels/model';
@@ -341,7 +341,11 @@ interface UiState {
 interface Actions {
   setPage(page: Page): void;
   setView(view: TradeView): void;
-  /** Selects an instrument for the Trade page; resets price overrides in the ticket. */
+  /**
+   * Selects an instrument for the Trade page. The ticket drops its price overrides; another
+   * instrument also starts at its default size and Buy (a stock's 100 must not become 100 option
+   * contracts, a sell must not open a short), and a modify in progress ends with a fresh ticket.
+   */
   selectSymbol(contract: ContractRef, name?: LocalizedName): void;
   /** Selects an instrument and switches to the Trade page (optionally a view). */
   openSymbol(contract: ContractRef, view?: TradeView, name?: LocalizedName): void;
@@ -350,6 +354,13 @@ interface Actions {
   setWatchlistCollapsed(collapsed: boolean): void;
   patchTicket(patch: Partial<TicketState>): void;
   resetTicket(): void;
+  /**
+   * Ends modifying an order (it was sent, or "Cancel modify"): the ticket starts fresh for the
+   * instrument, so nothing loaded from that order (side, size, OCA group, conditions, algo, note…)
+   * carries over to a new order. `orderId`: only while that order is still the one being modified
+   * (another Modify started meanwhile stays).
+   */
+  endModify(orderId?: number): void;
   ask(req: ConfirmRequest): void;
   closeConfirm(): void;
   setCancelAll(req: CancelAllRequest | null): void;
@@ -387,12 +398,43 @@ export function withModifiedTiming(patch: Partial<TicketState>, s: Pick<StoreSta
   return o ? { ...patch, ...ticketTimingFor(o) } : patch;
 }
 
-export function initialTicket(settings: Settings): TicketState {
+/** Instruments traded by the contract (options, futures, warrants, combos): their orders start at 1. */
+const CONTRACT_SIZED: readonly SecType[] = ['OPT', 'FOP', 'FUT', 'WAR', 'BAG'];
+
+/**
+ * The size a new order on `contract` starts at: 1 contract for options, futures, warrants and
+ * combos (each is a multiple of the underlying), else Settings › Trade's default order size.
+ */
+export function defaultQtyFor(contract: Pick<ContractRef, 'secType'>, settings: Pick<Settings, 'trading'>): number {
+  return CONTRACT_SIZED.includes(contract.secType) ? 1 : settings.trading.defaultQty;
+}
+
+/**
+ * Settings › Trade's new defaults (size, extended hours) for the open ticket: only what the user
+ * has left at the previous default changes, never a size or session typed or chosen on the ticket,
+ * nor an order being modified.
+ */
+export function tradeDefaultsPatch(
+  s: Pick<StoreState, 'ticket' | 'symbol'>,
+  prev: Pick<Settings, 'trading'>,
+  next: Pick<Settings, 'trading'>,
+): Partial<TicketState> {
+  if (s.ticket.modifyingOrderId != null) return {};
+  const qty = defaultQtyFor(s.symbol, next);
+  const session = defaultSession(next);
+  return {
+    ...(s.ticket.qty === defaultQtyFor(s.symbol, prev) && qty !== s.ticket.qty ? { qty } : {}),
+    ...(s.ticket.session === defaultSession(prev) && session !== s.ticket.session ? { session } : {}),
+  };
+}
+
+/** A fresh ticket; for `contract`, at its default size (defaultQtyFor). */
+export function initialTicket(settings: Settings, contract?: Pick<ContractRef, 'secType'>): TicketState {
   const session = defaultSession(settings);
   return {
     side: 'BUY',
     orderType: 'LMT',
-    qty: settings.trading.defaultQty,
+    qty: contract ? defaultQtyFor(contract, settings) : settings.trading.defaultQty,
     limitPrice: null,
     limitFromQuote: false,
     stopPrice: null,
@@ -516,25 +558,8 @@ export const useStore = create<StoreState>()((set, get) => ({
     set((s) => ({
       symbol: contract,
       symbolName: name,
-      ticket: {
-        ...s.ticket,
-        limitPrice: null,
-        limitFromQuote: false,
-        stopPrice: null,
-        limitOffset: null,
-        takeProfit: null,
-        stopLoss: null,
-        slLimit: null,
-        slOffset: null,
-        adjTrigger: null,
-        adjStop: null,
-        adjLimit: null,
-        // Price rows that follow the reference instrument follow the new one; a directed route
-        // may not exist for it.
-        conds: s.ticket.conds.map((c) => (c.kind === 'price' && c.contract == null ? { ...c, value: null } : c)),
-        route: 'SMART',
-        modifyingOrderId: null,
-      },
+      // A modify ends: nothing of that order carries over (Modify loads the order after this).
+      ticket: s.ticket.modifyingOrderId != null ? initialTicket(s.settings, contract) : selectedTicket(s.ticket, contract, s.symbol, s.settings),
     })),
   openSymbol: (contract, view, name) => {
     // Keep the known name only when the same instrument is reopened.
@@ -553,7 +578,13 @@ export const useStore = create<StoreState>()((set, get) => ({
     set({ watchlistCollapsed });
   },
   patchTicket: (patch) => set((s) => ({ ticket: { ...s.ticket, ...normalizeTicketPatch(withModifiedTiming(patch, s)) } })),
-  resetTicket: () => set((s) => ({ ticket: initialTicket(s.settings) })),
+  resetTicket: () => set((s) => ({ ticket: initialTicket(s.settings, s.symbol) })),
+  endModify: (orderId) =>
+    set((s) => {
+      const id = s.ticket.modifyingOrderId;
+      if (id == null || (orderId != null && id !== orderId)) return s;
+      return { ticket: initialTicket(s.settings, s.symbol) };
+    }),
   ask: (confirm) => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),
   setCancelAll: (cancelAll) => set({ cancelAll }),
@@ -578,6 +609,35 @@ export const useStore = create<StoreState>()((set, get) => ({
   setPinDialog: (pinDialog) => set({ pinDialog }),
   setUnlocking: (unlocking) => set({ unlocking }),
 }));
+
+/**
+ * The ticket for a newly selected instrument (not while modifying): the prices typed for the
+ * previous one go. Another instrument also starts at its default size and Buy; reselecting the same
+ * one keeps what the user set up.
+ */
+function selectedTicket(t: TicketState, contract: ContractRef, prev: ContractRef, settings: Settings): TicketState {
+  const other = !sameContract(contract, prev);
+  return {
+    ...t,
+    ...(other ? { qty: defaultQtyFor(contract, settings), side: 'BUY' as const } : {}),
+    limitPrice: null,
+    limitFromQuote: false,
+    stopPrice: null,
+    limitOffset: null,
+    takeProfit: null,
+    stopLoss: null,
+    slLimit: null,
+    slOffset: null,
+    adjTrigger: null,
+    adjStop: null,
+    adjLimit: null,
+    // Price rows that follow the reference instrument follow the new one; a directed route
+    // may not exist for it.
+    conds: t.conds.map((c) => (c.kind === 'price' && c.contract == null ? { ...c, value: null } : c)),
+    route: 'SMART',
+    modifyingOrderId: null,
+  };
+}
 
 /** Whether the lock screen covers the app (locked, or still animating the unlock). */
 export const isCovered = (s: Pick<StoreState, 'lock' | 'unlocking'>): boolean => s.lock.locked || s.unlocking;

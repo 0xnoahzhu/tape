@@ -85,8 +85,18 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
   the reason. The totals show IBKR's **what-if** (initial margin change and commission) as you edit, and
   every order, modify and strategy goes through the **order review** (see *Order review* below; it cannot
-  be turned off); keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit, ⏎ again to confirm once the
-  review's Confirm has armed). A red **Delayed 15 min** or **Frozen** tag
+  be turned off); keyboard entry once the ticket has the focus (click in it; B / S, ↑ / ↓ for quantity,
+  neither while modifying an order; ⏎ to submit, ⏎ again to confirm once the review's Confirm has armed).
+  A review closed with Esc or Cancel, or a menu of the ticket, gives the keys back to the ticket; after
+  Confirm the ticket waits for a click, so ⏎ pressed again and again never sends the same order twice.
+  Keys typed anywhere else — after a symbol search, a click on the chart or the watchlist — never reach the
+  ticket, so typing a symbol cannot flip the side or send anything. While an order waits for IBKR's answer
+  the button reads *Submitting…* and nothing more is sent. Another instrument starts at its default size
+  (*Settings › Trade*'s for stocks and ETFs, 1 contract for options, futures and warrants) and Buy, so a
+  stock's 100 never becomes 100 option contracts; selecting the same one again keeps what you set, and a new
+  default size or session in Settings › Trade never overwrites one you changed on the ticket. After a
+  modify, or *Cancel modify*, the ticket starts fresh: nothing of the working order (its side, size, OCA
+  group, conditions, algo, note) carries into the next new order. A red **Delayed 15 min** or **Frozen** tag
   under the bid / ask says when IBKR's prices for the instrument are not live, and on a live account a red
   line above the submit button says orders use real money. With Level 2 on, a 5-level book sits between the
   bid / ask and the entry fields; a click loads a limit order at that level, buying at an ask and selling at
@@ -95,9 +105,10 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart or
   option chain then uses the full width. Drag it by its header, resize it from any edge or corner. It is
   laid out for its size: from about 900 px wide in three columns (market: bid / ask and, with Level 2 on,
-  the 5-level book; entry: side, type, quantity and price with quick chips 100 / 500 / 1K / Position and
-  Bid / Mid / Ask, ± one tick; confirm: the advanced sections, the totals with IBKR's what-if, the submit
-  button), narrower as the docked panel. After a submit a status strip follows the order (submitted,
+  the 5-level book; entry: side, type, quantity and price with quick chips 100 / 500 / 1K / Position (closes
+  the position: its size and the closing side, so a long 100 reads *Sell 100*) and Bid / Mid / Ask, ± one
+  tick; confirm: the advanced sections, the totals with IBKR's what-if, the submit button), narrower as the
+  docked panel. After a submit a status strip follows the order (submitted,
   partial fills with progress, filled with average price, position change and commission, or IBKR's
   rejection), and the new order flashes in the open orders under the chart. The chevron (or Esc)
   collapses it to a slim bar with the latest order's status and Buy / Sell; an accepted order does this by
@@ -245,8 +256,9 @@ and marks the one orders go to (IBKR's first; Tape does not pick another).
 on the same port (paper ↔ live), starts afresh: the previous account's orders, trades, positions and account
 values are cleared at once, so one account's orders never show (or can be cancelled) under another. An order
 review or cancel confirmation opened before the switch closes without sending anything, and the new account's
-existing orders and today's fills are not announced as new. A plain reconnect to the same account keeps
-everything. Order, fill and option risk notifications name the account they are about: *Buy 100 AAPL
+existing orders and today's fills are not announced as new, and the order ticket starts fresh on the same
+instrument (a side or size prepared on paper never waits in the ticket for live). A plain reconnect to the
+same account keeps everything. Order, fill and option risk notifications name the account they are about: *Buy 100 AAPL
 submitted · PAPER DUP899854* (the id left out with *Settings › Privacy › Account ID: Hide*, also in earlier
 notifications; PAPER / LIVE never is). Clicking a fill or order notification of an account that is no
 longer connected opens its instrument rather than *Portfolio › Trades / Orders*, which list the connected
