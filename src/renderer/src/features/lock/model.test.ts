@@ -92,4 +92,9 @@ describe('PIN dialog flow', () => {
     expect(startPinFlow('remove').step).toBe('current');
     expect(verified(startPinFlow('remove'), 't').step).toBe('current');
   });
+
+  it('verifies with the current PIN only (a change that weakens the lock)', () => {
+    expect(startPinFlow('verify').step).toBe('current');
+    expect(verified(startPinFlow('verify'), 't')).toMatchObject({ step: 'current', token: 't' });
+  });
 });

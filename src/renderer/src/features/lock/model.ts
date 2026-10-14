@@ -79,9 +79,9 @@ export function cellLook(index: number, length: number, state: { error: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Set / change / remove PIN dialog
+// Set / change / remove PIN dialog (and verify: the current PIN for a change that weakens the lock)
 
-export type PinDialogMode = 'set' | 'change' | 'remove';
+export type PinDialogMode = 'set' | 'change' | 'remove' | 'verify';
 export type PinStep = 'current' | 'new' | 'confirm';
 
 export interface PinFlow {
@@ -89,7 +89,7 @@ export interface PinFlow {
   step: PinStep;
   /** The new PIN entered in the 'new' step, waiting for its confirmation. */
   first: string;
-  /** Token from verifying the current PIN (or biometrics), for change and remove. */
+  /** Token from verifying the current PIN (or biometrics), for change, remove and verify. */
   token: string | null;
   error: 'wrong' | 'mismatch' | null;
 }
@@ -98,9 +98,9 @@ export function startPinFlow(mode: PinDialogMode): PinFlow {
   return { mode, step: mode === 'set' ? 'new' : 'current', first: '', token: null, error: null };
 }
 
-/** The current PIN (or biometrics) was verified: remove is ready, change asks for the new PIN. */
+/** The current PIN (or biometrics) was verified: remove and verify are done, change asks for the new PIN. */
 export function verified(flow: PinFlow, token: string): PinFlow {
-  return { ...flow, token, step: flow.mode === 'remove' ? 'current' : 'new', error: null };
+  return { ...flow, token, step: flow.mode === 'change' ? 'new' : 'current', error: null };
 }
 
 export function enteredNew(flow: PinFlow, pin: string): PinFlow {

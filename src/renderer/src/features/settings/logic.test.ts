@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { NO_SOUND } from '@shared/notificationSounds';
+import { createClock } from '@shared/timeFormat';
 import type { ApiLogEntry, DepthBook, MarketCheckItem, MarketDataCheck, Quote } from '@shared/types';
 import {
   autoCheckPlan,
@@ -22,13 +24,19 @@ import {
   soundListPlace,
   soundListReveal,
   soundListScroll,
+  soundPickAsks,
   comboLabel,
   countNewSince,
   customMinutesInput,
   farmList,
   filterLog,
+  changeRetention,
+  connectionChangeAsk,
+  dndEndText,
   formatBytes,
   hostAppName,
+  enteredPort,
+  isLivePort,
   isInfo,
   logBody,
   logCounts,
@@ -94,6 +102,41 @@ describe('connection inputs', () => {
     expect(hostAppName(7496, 'gateway')).toBe('TWS');
     expect(hostAppName(5000, 'tws')).toBe('TWS');
     expect(hostAppName(5000, 'gateway')).toBe('IB Gateway');
+  });
+
+  it('asks before a connection change that reconnects, or that makes the port a live one', () => {
+    const paper = { host: '127.0.0.1', port: 4002, clientId: 7 };
+    const live = { ...paper, port: 4001 };
+    // A session is live or being established: main reconnects at once.
+    expect(connectionChangeAsk('connected', paper, { ...paper, clientId: 8 })).toBe('reconnect');
+    expect(connectionChangeAsk('reconnecting', paper, { ...paper, host: 'localhost' })).toBe('reconnect');
+    expect(connectionChangeAsk('connecting', paper, live)).toBe('reconnect');
+    expect(connectionChangeAsk('connected', paper, paper)).toBeNull();
+    // Disconnected: only a switch to a live port.
+    expect(connectionChangeAsk('disconnected', paper, live)).toBe('livePort');
+    expect(connectionChangeAsk('disconnected', paper, { ...paper, port: 7496 })).toBe('livePort');
+    expect(connectionChangeAsk('disconnected', live, { ...live, port: 7496 })).toBeNull();
+    expect(connectionChangeAsk('disconnected', live, paper)).toBeNull();
+    expect(connectionChangeAsk('disconnected', live, { ...live, clientId: 9 })).toBeNull();
+    expect(connectionChangeAsk('disconnected', paper, { ...paper, port: 5000 })).toBeNull();
+  });
+
+  it('knows IB’s live trading ports', () => {
+    expect(isLivePort(4001)).toBe(true);
+    expect(isLivePort(7496)).toBe(true);
+    expect(isLivePort(4002)).toBe(false);
+    expect(isLivePort(7497)).toBe(false);
+    expect(isLivePort(5000)).toBe(false);
+  });
+
+  it('marks the port being typed: the live hint shows before the field is committed', () => {
+    expect(enteredPort(null, 4002)).toBe(4002);
+    expect(enteredPort('4001', 4002)).toBe(4001);
+    expect(isLivePort(enteredPort(' 7496 ', 7497))).toBe(true);
+    expect(enteredPort('400', 4001)).toBe(400);
+    // Empty or invalid: the saved port still counts.
+    expect(enteredPort('', 4001)).toBe(4001);
+    expect(enteredPort('40o1', 4001)).toBe(4001);
   });
 
   it('colors the status dot green only while connected', () => {
@@ -555,6 +598,61 @@ describe('api log', () => {
   });
 });
 
+describe('api log retention', () => {
+  function io(expiring = { files: 2, bytes: 161_480_704 }) {
+    const asked: Array<{ files: number; bytes: number }> = [];
+    const pending: Array<() => void> = [];
+    const calls = {
+      expiring: vi.fn(async () => expiring),
+      save: vi.fn(),
+      ask: vi.fn((e: { files: number; bytes: number }, save: () => void) => void (asked.push(e), pending.push(save))),
+    };
+    return { calls, asked, confirm: () => pending.shift()?.() };
+  }
+
+  it('asks before a shorter retention deletes files, naming how many and how much', async () => {
+    const t = io();
+    await changeRetention(7, 1, t.calls);
+    expect(t.calls.expiring).toHaveBeenCalledWith(1);
+    expect(t.asked).toEqual([{ files: 2, bytes: 161_480_704 }]);
+    expect(t.calls.save).not.toHaveBeenCalled();
+    t.confirm();
+    expect(t.calls.save).toHaveBeenCalledWith(1);
+  });
+
+  it('saves at once when a shorter retention deletes nothing, and for a longer one', async () => {
+    const none = io({ files: 0, bytes: 0 });
+    await changeRetention(30, 7, none.calls);
+    expect(none.calls.ask).not.toHaveBeenCalled();
+    expect(none.calls.save).toHaveBeenCalledWith(7);
+    const longer = io();
+    await changeRetention(7, 30, longer.calls);
+    expect(longer.calls.expiring).not.toHaveBeenCalled();
+    expect(longer.calls.save).toHaveBeenCalledWith(30);
+    const same = io();
+    await changeRetention(7, 7, same.calls);
+    expect(same.calls.save).not.toHaveBeenCalled();
+  });
+
+  it('saves nothing when main cannot tell what would go', async () => {
+    const t = io();
+    t.calls.expiring.mockRejectedValueOnce(new Error('Tape is locked'));
+    await expect(changeRetention(7, 1, t.calls)).rejects.toThrow('Tape is locked');
+    expect(t.calls.save).not.toHaveBeenCalled();
+    expect(t.calls.ask).not.toHaveBeenCalled();
+  });
+});
+
+describe('do-not-disturb end', () => {
+  it('writes the local time, with the date when it is not today', () => {
+    const clock = createClock('12h', 'en');
+    const now = new Date(2026, 9, 14, 10, 0).getTime();
+    expect(dndEndText(new Date(2026, 9, 14, 11, 0).getTime(), now, clock)).toBe('11:00 AM');
+    expect(dndEndText(new Date(2026, 9, 15, 9, 0).getTime(), now, clock)).toBe('10/15 09:00 AM');
+    expect(dndEndText(new Date(2026, 9, 14, 21, 0).getTime(), now, createClock('24h', 'zh'))).toBe('21:00');
+  });
+});
+
 describe('shortcuts', () => {
   const labels = (platform: string) =>
     shortcutKeys(platform).map((k) => k.combos.map((c) => comboLabel(c, platform === 'darwin')).join(` ${k.sep} `));
@@ -624,6 +722,17 @@ describe('notification sound helpers', () => {
     expect(soundCategoryOff(system, 'fill')).toBe(false);
     expect(soundCategoryOff(system, 'other')).toBe(false);
     expect(soundCategoryOff({ ...system, sys: false }, 'other')).toBe(true);
+  });
+
+  it('soundPickAsks before None silences a category with critical notices', () => {
+    // Orders (rejections, refused cancels) and Other (connection lost, option risk) ask.
+    expect(soundPickAsks('order', 'Glass', NO_SOUND)).toBe(true);
+    expect(soundPickAsks('other', 'Glass', NO_SOUND)).toBe(true);
+    // Fills are never critical; another sound, or None again, saves at once.
+    expect(soundPickAsks('fill', 'Glass', NO_SOUND)).toBe(false);
+    expect(soundPickAsks('order', 'Glass', 'Ping')).toBe(false);
+    expect(soundPickAsks('order', NO_SOUND, 'Ping')).toBe(false);
+    expect(soundPickAsks('order', NO_SOUND, NO_SOUND)).toBe(false);
   });
 
   it('soundLabel translates known ids and shows system names as they are', () => {

@@ -1,10 +1,11 @@
-// Pure helpers for the Settings page: input validation, connection labels,
-// market data observation, API log filtering/formatting and shortcut labels.
+// Pure helpers for the Settings page: input validation, connection labels, do-not-disturb,
+// market data observation, API log filtering/formatting and retention, and shortcut labels.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
 import { DEPTH_PARTIAL, depthPermissions, isFullBook } from '@shared/depthPermissions';
 import { DASH, hmsMs } from '@shared/format';
 import { CATEGORY_KINDS, NO_SOUND, PLATFORM_SOUNDS, soundPlatform, type SoundCategory } from '@shared/notificationSounds';
+import type { Clock } from '@shared/timeFormat';
 import type {
   ApiLogEntry,
   ConnectionState,
@@ -19,6 +20,17 @@ import type {
 } from '@shared/types';
 
 // ---------------------------------------------------------------------------
+// Do-not-disturb
+
+/** When do-not-disturb ends, in local time: "10:30 AM", with the date when not today ("10/15 09:00 PM"). */
+export function dndEndText(until: number, now: number, clock: Clock): string {
+  const a = new Date(until);
+  const b = new Date(now);
+  const sameDay = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return clock.time(until, sameDay ? {} : { date: 'md' });
+}
+
+// ---------------------------------------------------------------------------
 // Notification sounds
 
 /** The picker's choices on `platform`: None first, then the platform's sounds. */
@@ -29,6 +41,16 @@ export function soundChoices(platform: string): string[] {
 /** True when every kind of the category is kept out of the OS notification center (so it is never heard). */
 export function soundCategoryOff(system: Settings['notifications']['system'], category: SoundCategory): boolean {
   return CATEGORY_KINDS[category].every((kind) => !system[kind]);
+}
+
+/**
+ * Picking None for a category asks first when the category holds critical notices (an order rejected,
+ * a refused cancel or modify; the connection lost, option risk: main's CRITICAL_KINDS order, conn and
+ * opt): they would still show, but silently. Fills are never critical; another sound saves at once.
+ * `current` is the category's sound as the picker shows it (resolveSound).
+ */
+export function soundPickAsks(category: SoundCategory, current: string, next: string): boolean {
+  return next === NO_SOUND && current !== NO_SOUND && category !== 'fill';
 }
 
 /** A sound's name as the picker shows it: translated where there is a name for it, else the system name. */
@@ -153,6 +175,34 @@ export function portForMode(mode: Mode, currentPort: number): number {
   const other = mode === 'tws' ? DEFAULT_PORTS.gateway : DEFAULT_PORTS.tws;
   const own = mode === 'tws' ? DEFAULT_PORTS.tws : DEFAULT_PORTS.gateway;
   return currentPort === other.live || currentPort === own.live ? own.live : own.paper;
+}
+
+/** IB's live trading ports (TWS 7496, IB Gateway 4001): orders sent through them use real money. */
+export function isLivePort(port: number): boolean {
+  return port === DEFAULT_PORTS.tws.live || port === DEFAULT_PORTS.gateway.live;
+}
+
+/**
+ * The port the Port field shows: the one being typed once it is a valid port, else the saved one
+ * (the live port hint follows what the user enters, before it is committed).
+ */
+export function enteredPort(draft: string | null, saved: number): number {
+  return (draft == null ? null : parsePort(draft)) ?? saved;
+}
+
+type ConnectionParams = Pick<Settings['connection'], 'host' | 'port' | 'clientId'>;
+
+/**
+ * What a change of host, port or client id in Settings › Connection asks first. 'reconnect': a
+ * session is live or being (re)established, and main reconnects as soon as the change is saved.
+ * 'livePort': Tape is disconnected and the port becomes one of IB's live trading ports, so the next
+ * Connect (or launch) trades real money. null: saved at once.
+ */
+export function connectionChangeAsk(status: ConnectionState['status'], cur: ConnectionParams, next: ConnectionParams): 'reconnect' | 'livePort' | null {
+  const changed = next.host !== cur.host || next.port !== cur.port || next.clientId !== cur.clientId;
+  if (!changed) return null;
+  if (status !== 'disconnected') return 'reconnect';
+  return isLivePort(next.port) && !isLivePort(cur.port) ? 'livePort' : null;
 }
 
 /** "TWS" or "IB Gateway": inferred from well-known ports, otherwise the configured mode. */
@@ -634,6 +684,30 @@ export function logDetail(e: ApiLogEntry): string {
 /** "/Users/me/Library/Logs/x.log" -> "~/Library/Logs/x.log". */
 export function tildify(path: string): string {
   return path.replace(/^\/(Users|home)\/[^/]+(?=\/|$)/, '~');
+}
+
+/** Log files a retention would delete (main's apiLogExpiring). */
+export interface ExpiringLogs {
+  files: number;
+  bytes: number;
+}
+
+/**
+ * A click on one of Settings › Logs' retention chips. Main deletes the expired log files as
+ * soon as the retention is saved, so a shorter one asks first (`ask`, naming how many files and
+ * how much goes, then `save` when confirmed); a longer one, or a shorter one with nothing to
+ * delete, saves at once.
+ */
+export async function changeRetention(
+  current: number,
+  next: number,
+  io: { expiring(keepDays: number): Promise<ExpiringLogs>; save(keepDays: number): void; ask(expiring: ExpiringLogs, save: () => void): void },
+): Promise<void> {
+  if (next === current) return;
+  if (next > current) return void io.save(next);
+  const expiring = await io.expiring(next);
+  if (expiring.files > 0) io.ask(expiring, () => io.save(next));
+  else io.save(next);
 }
 
 // ---------------------------------------------------------------------------

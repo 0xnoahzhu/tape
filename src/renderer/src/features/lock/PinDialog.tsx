@@ -1,6 +1,8 @@
 // Set / change / remove the lock PIN. Set: new PIN, then confirm. Change: current PIN (or Touch ID /
-// Windows Hello), new PIN, confirm. Remove: current PIN. Main checks the current PIN and hands out
-// a single-use token for the change; the PIN never stays in the renderer after the dialog closes.
+// Windows Hello), new PIN, confirm. Remove: current PIN. Verify: current PIN only, for a settings
+// change that weakens the lock (the request's onVerified sends it with the token). Main checks the
+// current PIN and hands out a single-use token for the change; the PIN never stays in the renderer
+// after the dialog closes.
 
 import { useEffect, useRef, useState } from 'react';
 import { errorText } from '../../state/orderActions';
@@ -81,6 +83,10 @@ function PinDialog({ req }: { req: PinDialogRequest }) {
           close();
           showToast(m.pinRemoved);
           return;
+        } else if (req.mode === 'verify') {
+          close();
+          await req.onVerified?.(res.token);
+          return;
         } else {
           setFlow(verified(flow, res.token));
         }
@@ -122,7 +128,8 @@ function PinDialog({ req }: { req: PinDialogRequest }) {
     }
   };
 
-  const title = req.mode === 'set' ? m.setTitle : req.mode === 'change' ? m.changeTitle : m.removeTitle;
+  const title = req.mode === 'set' ? m.setTitle : req.mode === 'change' ? m.changeTitle : req.mode === 'verify' ? m.verifyTitle : m.removeTitle;
+  const desc = req.mode === 'remove' ? m.removeDesc : req.mode === 'verify' ? m.verifyDesc : m.pinDesc;
   const step = flow.step === 'current' ? m.stepCurrent : flow.step === 'new' ? m.stepNew : m.stepConfirm;
   const kind = lock.biometrics.kind;
   const bio = req.mode === 'change' && flow.step === 'current' && unlockWith === 'biometric' && kind != null && lock.biometrics.available;
@@ -132,7 +139,8 @@ function PinDialog({ req }: { req: PinDialogRequest }) {
     <Modal onClose={busy ? undefined : close} zIndex={22}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ font: '600 18px/1.2 var(--sans)' }}>{title}</div>
-        <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--mu)', textWrap: 'pretty' }}>{req.mode === 'remove' ? m.removeDesc : m.pinDesc}</div>
+        <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--mu)', textWrap: 'pretty' }}>{desc}</div>
+        {req.detail && <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--tx)' }}>{req.detail}</div>}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '6px 0' }}>
         <div style={{ fontSize: 13, color: 'var(--mu)' }}>{step}</div>

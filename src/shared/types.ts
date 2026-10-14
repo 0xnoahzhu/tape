@@ -1049,6 +1049,12 @@ export interface AppNotification {
    */
   orderDone?: true;
   /**
+   * Needs attention now (an order rejected, the connection to IB lost, an option at risk of
+   * assignment): its OS notification comes through do-not-disturb. Only on order, conn and opt
+   * notices.
+   */
+  critical?: true;
+  /**
    * The account an order, fill or option risk notice is about (its title names it too: PAPER / LIVE
    * and the id). A click leads to Portfolio › Orders or Trades only while that account's login is
    * connected: those lists are the connected login's, so another account's notice opens its
@@ -1105,7 +1111,11 @@ export interface Settings {
     sound: boolean;
     /** Sound id per category (shared/notificationSounds.ts): orders, fills, everything else. */
     sounds: Record<'order' | 'fill' | 'other', string>;
-    dnd: boolean;
+    /**
+     * Do-not-disturb ends at this time (Unix ms); null: off. It always ends by itself (shared/dnd.ts)
+     * and never holds back critical notifications.
+     */
+    dndUntil: number | null;
   };
   apiLog: {
     writeFile: boolean;

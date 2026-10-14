@@ -253,6 +253,7 @@ describe('IbConnection', () => {
     expect(t.last()).toMatchObject({ status: 'reconnecting', reconnectAttempt: 1 });
     expect(t.last().unresponsive).toBeUndefined();
     expect(t.notices.map((n) => n.title.en)).toEqual(['IB Gateway stopped responding']);
+    expect(t.notices[0].critical).toBe(true);
     expect(t.notices[0].body.en).toBe('127.0.0.1:4002 did not answer for 40 s, so Tape closed the connection. Retrying every 5 s, up to 10 times.');
     vi.advanceTimersByTime(5_000);
     expect(t.api().connects).toEqual([7, 7]);
@@ -334,6 +335,8 @@ describe('IbConnection', () => {
     expect(t.last().reconnectAttempt).toBeUndefined();
     expect(ready).toHaveBeenCalledTimes(2);
     expect(t.notices.map((n) => n.title.en)).toEqual(['Disconnected from IB Gateway', 'Reconnected to IB Gateway']);
+    // Losing the connection comes through do-not-disturb; getting it back does not need to.
+    expect(t.notices.map((n) => n.critical)).toEqual([true, undefined]);
     expect(t.notices[1].body.en).toBe('Reconnected after 10 s offline. All subscriptions restored.');
   });
 
@@ -351,6 +354,7 @@ describe('IbConnection', () => {
     expect(t.api().connects).toHaveLength(11);
     expect(t.last()).toMatchObject({ status: 'disconnected' });
     expect(t.notices.map((n) => n.title.en)).toEqual(['Disconnected from IB Gateway', 'Could not reconnect to IB Gateway']);
+    expect(t.notices.map((n) => n.critical)).toEqual([true, true]);
     expect(t.notices[1].body.en).toBe('Gave up after 10 attempts. Connection refused at 127.0.0.1:4002.');
     vi.advanceTimersByTime(60_000);
     expect(t.api().connects).toHaveLength(11);
@@ -998,6 +1002,7 @@ describe('IbConnection', () => {
     expect(t.last().ibLinkLost).toBeUndefined();
     expect(ready).toHaveBeenCalledTimes(2);
     expect(t.notices.map((n) => n.title.en)).toEqual(['IB Gateway lost its connection to IB', 'IB Gateway reconnected to IB']);
+    expect(t.notices.map((n) => n.critical)).toEqual([true, undefined]);
     // 1102 (data maintained) restores it as well.
     t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
     t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data maintained.', 1102);

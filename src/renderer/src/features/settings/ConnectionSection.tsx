@@ -1,16 +1,18 @@
-// Settings › Connection: host/port, connect/disconnect, status (with paper or live and, for a
-// login with several accounts, each of them and the one orders go to), farms, recent API traffic,
-// auto-reconnect, and the client id under Advanced.
+// Settings › Connection: host/port (a live trading port marked in red), connect/disconnect, status
+// (with paper or live and, for a login with several accounts, each of them and the one orders go
+// to), farms, recent API traffic, auto-reconnect, and the client id under Advanced. Changing host,
+// port or client id while connected asks first (applyConnection), and so does turning auto-reconnect
+// off (a dropped connection then stays down; a reconnect under way stops at once).
 
 import { useApiLogStream } from '../../hooks/useApiLogStream';
 import { useEffect, useRef, useState } from 'react';
 import { hmsMs } from '@shared/format';
 import type { ConnectionState, Settings } from '@shared/types';
-import { maskAccounts } from '../../lib/account';
+import { accountRow, maskAccounts } from '../../lib/account';
 import { errorText } from '../../state/orderActions';
 import { useStore, type ConfirmRequest } from '../../state/store';
 import { Segmented, TextInput } from '../../ui/primitives';
-import { farmList, hostAppName, logBody, parseClientId, parseHost, parsePort, portForMode, statusDotColor } from './logic';
+import { connectionChangeAsk, enteredPort, farmList, hostAppName, isLivePort, logBody, parseClientId, parseHost, parsePort, portForMode, statusDotColor } from './logic';
 import { useSettingsMessages, type SettingsMessages } from './messages';
 import { Disclosure, SectionHeader, SettingToggle, saveSettings } from './parts';
 
@@ -22,6 +24,24 @@ export function ConnectionSection() {
   // IB refused the client id (326): show the field right away.
   const cidInUse = useStore((s) => s.connection.status !== 'connected' && s.connection.lastError?.code === 326);
   const apply = (patch: ConnectionPatch) => applyConnection(patch, m);
+  const ask = useStore((s) => s.ask);
+  const retrying = useStore((s) => s.connection.status === 'reconnecting');
+  const toggleReconnect = () => {
+    const save = () => saveSettings({ connection: { autoReconnect: !cfg.autoReconnect } });
+    if (!cfg.autoReconnect) return void save();
+    ask({
+      title: m.reconnectOffTitle,
+      rows: [{ label: m.host, value: `${cfg.host}:${cfg.port}` }],
+      note: m.reconnectOffNote,
+      warnings: retrying ? [m.reconnectOffNow] : undefined,
+      label: m.ruleOffLabel,
+      danger: true,
+      run: save,
+    });
+  };
+  // The Port field's text while it is being edited: the live port hint follows what is typed.
+  const [portDraft, setPortDraft] = useState<string | null>(null);
+  const port = enteredPort(portDraft, cfg.port);
 
   return (
     <>
@@ -40,15 +60,17 @@ export function ConnectionSection() {
       />
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
         <DraftField label={m.host} value={cfg.host} parse={parseHost} invalidText={m.hostInvalid} commit={(host) => apply({ host })} />
-        <DraftField label={m.port} value={String(cfg.port)} parse={parsePort} invalidText={m.portInvalid} commit={(port) => apply({ port })} />
+        <DraftField label={m.port} value={String(cfg.port)} parse={parsePort} invalidText={m.portInvalid} commit={(port) => apply({ port })} onDraft={setPortDraft} />
       </div>
+      {/* Also while disconnected (no reconnect dialog then): the next Connect trades real money. */}
+      {isLivePort(port) && <div style={{ marginTop: -16, fontSize: 12, fontWeight: 600, color: 'var(--r)' }}>{m.livePortHint(hostAppName(port, cfg.mode))}</div>}
       <ConnectionStatus />
       <RecentTraffic />
       <SettingToggle
         label={m.autoReconnect}
         desc={m.autoReconnectD}
         on={cfg.autoReconnect}
-        onToggle={() => saveSettings({ connection: { autoReconnect: !cfg.autoReconnect } })}
+        onToggle={toggleReconnect}
       />
       <Disclosure label={m.advanced} forceOpen={cidInUse}>
         <div style={{ width: CLIENT_ID_WIDTH }}>
@@ -67,8 +89,12 @@ type ConnectionPatch = Partial<Pick<Settings['connection'], 'mode' | 'host' | 'p
 
 /**
  * Saves connection parameters. Main reconnects as soon as host, port or client id change, so
- * while a session is live this asks first, like the Disconnect button: editing the fields must
- * not drop the session silently. Resolves once saved or dismissed.
+ * while a session is live, or being (re)established, this asks first, like the Disconnect button:
+ * editing the fields must not switch the session silently. The dialog names the account being
+ * left, says that working orders stay at IB and which orders Tape can no longer cancel afterwards
+ * (those of another client id), and in red when the new port is IB's live trading port. While
+ * disconnected only a switch to a live port asks (the next Connect, or the next launch, trades
+ * real money). Resolves once saved or dismissed.
  */
 async function applyConnection(patch: ConnectionPatch, m: SettingsMessages): Promise<void> {
   const { connection: conn, settings } = useStore.getState();
@@ -76,18 +102,34 @@ async function applyConnection(patch: ConnectionPatch, m: SettingsMessages): Pro
   const next = { ...cfg, ...patch };
   const addrChanged = next.host !== cfg.host || next.port !== cfg.port;
   const cidChanged = next.clientId !== cfg.clientId;
-  if (conn.status === 'connected' && (addrChanged || cidChanged)) {
-    // Rows start from the live session's values, as in the Disconnect dialog.
+  const toLive = isLivePort(next.port);
+  const asks = connectionChangeAsk(conn.status, cfg, next);
+  if (asks === 'reconnect') {
+    // Rows start from the session's values, as in the Disconnect dialog.
     const addr = `${conn.host}:${conn.port}`;
     const cid = String(conn.clientId);
+    const showId = settings.appearance.showAccountId;
     const ok = await confirmAsync({
-      title: m.reconnectTitle,
+      // A move to a live port says so in the title and the address row, not only in the warning.
+      title: toLive ? m.reconnectLiveTitle : m.reconnectTitle,
       rows: [
-        { label: 'Host', value: addrChanged ? `${addr} → ${next.host}:${next.port}` : addr },
-        { label: 'Client ID', value: cidChanged ? `${cid} → ${next.clientId}` : cid },
+        ...(conn.account ? [accountRow(conn.isPaper, conn.account, showId)] : []),
+        { label: m.host, value: addrChanged ? `${addr} → ${next.host}:${next.port}` : addr, ...(toLive ? { color: 'var(--r)' } : {}) },
+        { label: m.clientId, value: cidChanged ? `${cid} → ${next.clientId}` : cid },
       ],
-      note: m.reconnectNote,
+      warnings: toLive ? [m.livePort] : undefined,
+      note: `${m.reconnectNote} ${cidChanged ? m.reconnectCid(conn.clientId) : m.reconnectOwn(conn.clientId)}`,
       label: m.reconnectLabel,
+      danger: true,
+    });
+    if (!ok) return;
+  } else if (asks === 'livePort') {
+    const ok = await confirmAsync({
+      title: m.livePortTitle,
+      rows: [{ label: m.host, value: `${cfg.host}:${cfg.port} → ${next.host}:${next.port}` }],
+      warnings: [m.livePort],
+      note: m.livePortNote,
+      label: m.livePortLabel,
       danger: true,
     });
     if (!ok) return;
@@ -120,12 +162,15 @@ function DraftField<T extends string | number>({
   parse,
   commit,
   invalidText,
+  onDraft,
 }: {
   label: string;
   value: string;
   parse: (s: string) => T | null;
   commit: (v: T) => Promise<void>;
   invalidText: string;
+  /** Told the text being edited, and null once the field shows the persisted value again. */
+  onDraft?: (draft: string | null) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const ref = useRef<HTMLInputElement>(null);
@@ -139,6 +184,8 @@ function DraftField<T extends string | number>({
   useEffect(() => {
     if (document.activeElement !== ref.current) setDraft(null);
   }, [value]);
+
+  useEffect(() => onDraft?.(draft), [draft, onDraft]);
 
   const finish = () => {
     if (draft == null) return;
@@ -237,8 +284,8 @@ function ConnectionStatus() {
       ask({
         title: m.disconnect,
         rows: [
-          { label: 'Host', value: `${conn.host}:${conn.port}` },
-          { label: 'Client ID', value: String(conn.clientId) },
+          { label: m.host, value: `${conn.host}:${conn.port}` },
+          { label: m.clientId, value: String(conn.clientId) },
         ],
         note: m.disconnectNote,
         label: m.disconnectLabel,

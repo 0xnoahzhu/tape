@@ -102,6 +102,8 @@ export interface NewNotification {
   contract?: ContractRef;
   /** See AppNotification.orderDone. */
   orderDone?: true;
+  /** See AppNotification.critical (kept on order, conn and opt notices only). */
+  critical?: true;
   /** See AppNotification.account (kept on order, fill and opt notices only). */
   account?: string;
 }
@@ -110,7 +112,16 @@ export interface TapeApi {
   getSnapshot(): Promise<AppSnapshot>;
 
   // Settings ---------------------------------------------------------------
+  /**
+   * Refused while a lock PIN exists when the patch weakens the lock (a longer auto-lock, Never, or
+   * Touch ID / Windows Hello where the PIN alone unlocked): those go through updateLockSettings.
+   */
   updateSettings(patch: DeepPartial<Settings>): Promise<Settings>;
+  /**
+   * Changes the lock preferences; once a PIN exists, needs a token from verifyLockPin (the PIN
+   * itself: a Touch ID / Windows Hello token does not count).
+   */
+  updateLockSettings(lock: Partial<Settings['lock']>, token: string | null): Promise<Settings>;
 
   // Connection -------------------------------------------------------------
   connect(): Promise<void>;
@@ -216,9 +227,11 @@ export interface TapeApi {
 
   // API log ----------------------------------------------------------------
   getApiLog(): Promise<ApiLogEntry[]>;
-  /** Live `apiLog` events are sent only while a view streams them (the API log page, the mini log). */
+  /** Live `apiLog` events are sent only while a view streams them (Settings › Logs, the Connection mini log). */
   setApiLogStreaming(on: boolean): Promise<void>;
   clearApiLog(): Promise<void>;
+  /** The log files a retention of `keepDays` would delete now (Settings › Logs asks before a shorter one). */
+  apiLogExpiring(keepDays: number): Promise<{ files: number; bytes: number }>;
   /** Shows a save dialog and writes the full in-memory log. Returns the path or null if cancelled. */
   exportApiLog(): Promise<string | null>;
   revealLogFile(): Promise<void>;
@@ -263,6 +276,7 @@ export type TapeInvokeMethod = Exclude<keyof TapeApi, 'onEvent'>;
 export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> = {
   getSnapshot: 'allow',
   updateSettings: 'deny',
+  updateLockSettings: 'deny',
   connect: 'deny',
   disconnect: 'deny',
   setQuoteSubscriptions: 'allow',
@@ -296,6 +310,7 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   getApiLog: 'deny',
   setApiLogStreaming: 'allow',
   clearApiLog: 'deny',
+  apiLogExpiring: 'deny',
   exportApiLog: 'deny',
   revealLogFile: 'deny',
   openExternal: 'deny',

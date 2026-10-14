@@ -132,8 +132,17 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   note under the switch.
 
 **Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
-events appear in the bell; each kind can also be pushed to the system notification center, with sound and
-do-not-disturb switches. On macOS and Windows, orders, fills and everything else each play their own
+events appear in the bell; each kind can also be pushed to the system notification center, with a sound
+switch. Turning off the system notifications of fills, order updates, the connection or option risk asks
+first, and so do turning the sound off and choosing *None* for the order or other sounds (critical
+notifications then still show, but play no sound). **Do-not-disturb** always ends by itself: it is started for an hour or until 09:00 AM New York time
+(there is no "until turned off"), a *DND* tag next to the bell shows while it is on (its tooltip says
+when it ends), and critical notifications come through it with their sound: an order rejected, a cancel
+or modify IBKR refused, an order the connection lost before IBKR confirmed it, the connection to TWS / IB
+Gateway lost (also IB's own link, error 1100) and an option at risk of assignment or a short option losing
+its premium. A critical notification also shows as a red message in Tape's window. A do-not-disturb left
+on by an older version is turned off on upgrade, with a note in the bell.
+On macOS and Windows, orders, fills and everything else each play their own
 system sound (chosen in Settings › Notifications, with a sample button; None mutes a category). On macOS
 Tape plays the sound itself, so a Focus mode does not mute it; use Tape's do-not-disturb. On Linux the
 notification server decides the sound. Clicking a fill opens Portfolio › Trades, an order update Portfolio ›
@@ -142,10 +151,13 @@ notification), an option risk alert the option chain; other notifications about 
 the chart (from the bell, outside Settings, they only select it).
 
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
-daily log files, retention and export.
+daily log files, retention and export. A shorter retention deletes the older files right away, so Tape
+first says how many files and how much it deletes and asks; turning off the log file asks too (lines
+already recorded are still written).
 
 **General** — dark, light or system theme (the dock / window icon follows the theme, and on macOS so does
-Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention, English and
+Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention (a new
+profile starts with CN in Chinese and US otherwise), English and
 中文, and 12-hour ("09:41 AM", "上午 09:41"; the default) or 24-hour ("09:41") clock times everywhere you
 read them; the API log and what is sent to IB stay 24-hour.
 
@@ -264,6 +276,15 @@ notifications; PAPER / LIVE never is). Clicking a fill or order notification of 
 longer connected opens its instrument rather than *Portfolio › Trades / Orders*, which list the connected
 account's.
 
+Changing the host, port or client id while Tape is connected (or connecting) asks first: the dialog names
+the account being left, says that working orders stay at IB and that Tape can modify or cancel one by one
+only the orders of its own client id (those placed with the old one, or in TWS or IBKR Mobile, are then
+cancelled there or with *Cancel all orders…*), and says in red when the new port is a live trading port
+(4001 or 7496). While disconnected, switching the port to a live one asks too, since the next Connect (or
+launch) trades real money, and *Settings › Connection* marks a live port in red under the Port field, as soon as it is typed.
+Turning *Auto-reconnect* off asks too: a dropped connection then stays down until you press *Connect*, and a
+reconnect under way stops at once.
+
 **Market data sharing and error 10197.** IBKR delivers real-time market data to one session per username.
 A paper account receives data only when *Share real-time market data subscriptions with paper trading
 account* is enabled for it (Client Portal › Settings › Account Settings › Paper Trading Account), and only
@@ -335,7 +356,8 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`
 and the defaults are used instead; an unreadable `tape.db` is moved aside as `tape.db.corrupt-<timestamp>`
 and recreated. API log files (`api-YYYYMMDD.log`) go to the system log folder (macOS
-`~/Library/Logs/Tape`) and are deleted after the retention period chosen in *Settings › Logs*.
+`~/Library/Logs/Tape`) and are deleted after the retention period chosen in *Settings › Logs* (at each
+launch, and right away, after a confirmation, when the period is shortened).
 
 ## Packaging
 
@@ -429,6 +451,14 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   a PIN and locks once it is saved. *Settings › Privacy & Security* sets the idle time (15 / 30 / 60 minutes,
   custom or never; no keyboard or mouse input on the computer, checked every 15 s), the unlock method, the
   unlock sound, and changes or removes the PIN. Tape starts locked whenever a PIN is set.
+- **Weakening the lock needs the PIN**: a longer idle time (or never), and Touch ID / Windows Hello where
+  *PIN only* was chosen, are saved only after the current PIN is entered (the main process checks it; Touch
+  ID cannot stand in here). A shorter idle time, *PIN only* and the sound change at once. This keeps a
+  passer-by at an unlocked Tape from turning the lock off in one click; it is not a boundary, since
+  `settings.json` can be edited by your user account.
+- **Notifications while locked**: system notifications say only what happened (*New fill*, *Order
+  rejected*, *Order needs attention*, *Alert triggered*, *1 new notification*), never the symbol, side,
+  quantity or price; the bell keeps the full text for after the unlock.
 - **PIN**: exactly 6 characters of any kind (letters are case-sensitive; digits, symbols and other scripts
   work; spaces and control characters do not). It is only stored as a salted scrypt hash in `lock.json`.
   After 5 wrong PINs in a row Tape waits 30 s before the next attempt, doubling up to 15 minutes; the count
@@ -440,7 +470,8 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   at the computer can still use IBKR through another program, and the files in the user data folder are
   readable by your user account. *Forgot PIN?* needs no PIN either: anyone at the computer can reset Tape
   (losing its local data) and connect it to the running IB Gateway again. Use the lock as a privacy screen;
-  to prevent trading, lock the computer itself or log out of IB Gateway.
+  to prevent trading, lock the computer itself or log out of IB Gateway. *Settings › Privacy & Security* and
+  the *Reset Tape* dialog say so too.
 - **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes all of
   Tape's local data: settings, watchlists, price alerts, notifications, API logs, the PIN, the database
   (market data caches) and the window position; only the language and the theme are kept. Tape then

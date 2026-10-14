@@ -190,7 +190,7 @@ export interface ConfirmRequest {
   title: string;
   rows: ConfirmRow[];
   note?: string;
-  /** Red lines under the rows: what the action costs or why it may fail (a stop-loss left unprotected, Read-Only API on). */
+  /** Red lines under the rows: what the action costs or why it may fail (a stop-loss left unprotected, Read-Only API on, a live trading port). */
   warnings?: string[];
   label: string;
   danger?: boolean;
@@ -259,8 +259,13 @@ export interface AlertFormState {
 
 /** Set, change or remove the lock PIN. `lockAfter`: lock once a new PIN is saved (lock button, ⌘L). */
 export interface PinDialogRequest {
-  mode: 'set' | 'change' | 'remove';
+  /** 'verify': the current PIN only, for a settings change that weakens the lock. */
+  mode: 'set' | 'change' | 'remove' | 'verify';
   lockAfter?: boolean;
+  /** verify: what is being changed ("Auto-lock: 15 min → Never"). */
+  detail?: string;
+  /** verify: runs with main's single-use token once the PIN is verified (the dialog has closed). */
+  onVerified?: (token: string) => void | Promise<void>;
 }
 
 export interface Toast {

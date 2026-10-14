@@ -94,8 +94,6 @@ export interface LogFileWriter {
    * not been issued yet, including one whose append is still opening the file.
    */
   flushSync(): void;
-  /** Forgets the pending lines (file logging was turned off). */
-  discard(): void;
 }
 
 interface Chunk {
@@ -247,11 +245,6 @@ export function createLogFileWriter(opts: LogFileWriterOptions): LogFileWriter {
       } catch (err) {
         console.error('[apiLog] writing the log file failed:', err);
       }
-    },
-    discard() {
-      stopTimers();
-      lines = 0;
-      bytes = 0;
     },
   };
 }

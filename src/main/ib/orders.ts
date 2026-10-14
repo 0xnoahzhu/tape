@@ -471,9 +471,11 @@ export function createOrderService(ctx: MainContext): OrderService {
    * A notice about an order or fill (`about`: its contract, for the click, and its account, which
    * the title names and the click checks: Orders and Trades list the connected login's).
    * `orderDone`: the order is cancelled or rejected (no longer on Portfolio › Orders, where a click
-   * on an order notice leads).
+   * on an order notice leads). `critical`: a rejection, a cancel or modify IB refused late, or an
+   * order the closing connection left unconfirmed: the order is not what the user believes, so the
+   * notice comes through do-not-disturb.
    */
-  function notify(n: NoticeText, about: { contract: ContractRef; account?: string }, kind: 'fill' | 'order', orderDone = false): void {
+  function notify(n: NoticeText, about: { contract: ContractRef; account?: string }, kind: 'fill' | 'order', orderDone = false, critical = false): void {
     try {
       const account = noticeAccountId(about.account);
       const { title, body } = withAccount(n, noticeAccount(account));
@@ -483,6 +485,7 @@ export function createOrderService(ctx: MainContext): OrderService {
         body,
         contract: about.contract,
         ...(orderDone && { orderDone: true as const }),
+        ...(critical && { critical: true as const }),
         ...(account ? { account } : {}),
       });
     } catch (err) {
@@ -680,7 +683,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     const o = orders.get(key);
     const outcome = legOutcomes.get(key);
     legOutcomes.delete(key);
-    if (o) notify(orderNotice(o, 'rejected', orderErrors.get(key) ?? o.message, { outcome: outcome && bracketOutcomeText(outcome) }), o, 'order', true);
+    if (o) notify(orderNotice(o, 'rejected', orderErrors.get(key) ?? o.message, { outcome: outcome && bracketOutcomeText(outcome) }), o, 'order', true, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -912,14 +915,14 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (cancelsInFlight.has(key)) {
       forgetCancel(key);
       const o = orders.get(key);
-      if (o) notify(orderNotice(o, 'cancelRefused', reason), o, 'order');
+      if (o) notify(orderNotice(o, 'cancelRefused', reason), o, 'order', false, true);
       return;
     }
     const late = lateRequests.get(key);
     if (!late) return;
     dropLate(late);
     if (late.verb === 'modify') {
-      if (late.existing) notify(orderNotice(late.existing, 'modifyRefused', reason), late.existing, 'order');
+      if (late.existing) notify(orderNotice(late.existing, 'modifyRefused', reason), late.existing, 'order', false, true);
       return;
     }
     if (orders.has(key)) return;
@@ -1250,7 +1253,7 @@ export function createOrderService(ctx: MainContext): OrderService {
         if (!orders.has(k)) notified.set(k, 'rejected');
       }
     }
-    notify(orderNotice(requestNotice(req), 'rejected', reason, { outcome: outcome && bracketOutcomeText(outcome) }), { contract: req.contract, account }, 'order', true);
+    notify(orderNotice(requestNotice(req), 'rejected', reason, { outcome: outcome && bracketOutcomeText(outcome) }), { contract: req.contract, account }, 'order', true, true);
   }
 
   async function place(input: OrderRequest, reviewed?: number): Promise<PlaceOrderResult> {
@@ -1313,7 +1316,7 @@ export function createOrderService(ctx: MainContext): OrderService {
         if (p.bracket) forgetBracket(p.bracket);
         return new Error(ORDER_NOT_SENT_MESSAGE);
       }
-      notify(orderNotice(requestNotice(p.req), 'unconfirmed'), { contract: p.req.contract, account: p.account }, 'order');
+      notify(orderNotice(requestNotice(p.req), 'unconfirmed'), { contract: p.req.contract, account: p.account }, 'order', false, true);
       return new Error(ORDER_UNCONFIRMED_MESSAGE);
     }
     const leg = p.bracket && err instanceof OrderRefused ? p.bracket.legs.find((l) => l.orderId === err.orderId) : undefined;

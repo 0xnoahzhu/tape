@@ -31,14 +31,53 @@ const m = createMessages({
       other: 'Sound sample: Other notifications',
     },
     sampleBody: 'This is how these notifications sound.',
+    // While Tape is locked the OS notification says only what happened, never the symbol, side,
+    // quantity or price: it shows on the screen of a computer left alone. The bell keeps the text.
+    locked: {
+      fill: 'New fill',
+      order: 'Order update',
+      rejected: 'Order rejected',
+      attention: 'Order needs attention',
+      price: 'Alert triggered',
+      opt: 'Option risk alert',
+      conn: 'Connection update',
+      lost: 'Connection to IB lost',
+      sys: '1 new notification',
+    },
+    lockedBody: 'Tape is locked. Unlock it to see the details.',
   },
   zh: {
     testTitle: '测试通知',
     testBody: '如果你看到了系统通知，说明配置正确。',
     sampleTitle: { order: '提示音试听：下单通知', fill: '提示音试听：成交通知', other: '提示音试听：其他通知' },
     sampleBody: '这类通知的提示音就是这样。',
+    locked: {
+      fill: '新成交',
+      order: '订单更新',
+      rejected: '订单被拒',
+      attention: '订单需要处理',
+      price: '提醒已触发',
+      opt: '期权风险提醒',
+      conn: '连接状态变化',
+      lost: '与 IB 的连接已中断',
+      sys: '1 条新通知',
+    },
+    lockedBody: 'Tape 已锁定，解锁后查看详情。',
   },
 });
+
+type LockedText = keyof ReturnType<typeof m>['locked'];
+
+/**
+ * The generic title of a notification shown while Tape is locked. A critical order notice is a
+ * rejection when the order is done (orders.ts marks both), otherwise a cancel or modify IB refused,
+ * or an order left unconfirmed by a closing connection: the order is still there, so it needs a look.
+ */
+function lockedTitle(item: AppNotification): LockedText {
+  if (item.kind === 'order' && item.critical) return item.orderDone ? 'rejected' : 'attention';
+  if (item.kind === 'conn' && item.critical) return 'lost';
+  return item.kind;
+}
 
 /** OS notifications kept alive so their click handlers survive garbage collection. */
 const MAX_LIVE = 50;
@@ -81,8 +120,9 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     // macOS always shows the app icon; elsewhere pass the theme-matched one.
     const dark = ctx.appearance.isDark();
     const icon = platform === 'darwin' ? null : iconImage(dark, 'window');
-    const title = resolveTimeTokens(item.title[lang], clock);
-    const body = resolveTimeTokens(item.body[lang], clock);
+    const locked = ctx.lock.isLocked();
+    const title = locked ? m(lang).locked[lockedTitle(item)] : resolveTimeTokens(item.title[lang], clock);
+    const body = locked ? m(lang).lockedBody : resolveTimeTokens(item.body[lang], clock);
     const sound = notificationSound(settings, item.kind, platform);
     const file = soundFile(platform, sound);
     const os = new Notification({
@@ -97,7 +137,9 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     const release = () => live.delete(os);
     os.on('click', () => {
       release();
-      markRead([item.id]);
+      // Behind the lock the click only shows the window (the OS text was generic): the notice stays
+      // unread in the bell.
+      if (!ctx.lock.isLocked()) markRead([item.id]);
       // Orders and Trades list the connected login's accounts: another account's notice opens the chart.
       const otherAccount = !!item.account && !ctx.ib.getState().accounts.includes(item.account);
       if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone, otherAccount) });
@@ -129,7 +171,7 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
       const n = sanitizeNewNotification(raw);
       if (!n) throw new Error('Invalid notification');
       const item = add(n);
-      if (shouldShowSystem(ctx.store.getSettings(), item.kind)) showSystem(item);
+      if (shouldShowSystem(ctx.store.getSettings(), item.kind, false, item.critical)) showSystem(item);
       return item;
     },
     markRead(ids) {

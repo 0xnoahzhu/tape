@@ -85,6 +85,8 @@ function notifyNew(alerts: RiskAlert[]): void {
         title: { en: riskNotifTitle(a, en, paper, showId), zh: riskNotifTitle(a, zh, paper, showId) },
         body: { en: riskMessage(a, en), zh: riskMessage(a, zh) },
         contract: underlyingFor(a.position.contract.symbol, s.watchlists),
+        // Risk (assignment, a short option's loss), not the expiry reminder: comes through do-not-disturb.
+        ...(a.rule !== 'exp' && { critical: true as const }),
         ...(a.position.account ? { account: a.position.account } : {}),
       })
       .catch(() => undefined);

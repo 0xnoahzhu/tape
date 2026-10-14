@@ -198,9 +198,10 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     for (const l of [...sessionListeners]) safely(() => l(reason), 'session');
   }
 
-  function notify(n: NoticeText): void {
+  /** `critical`: the connection to IB is lost (comes through do-not-disturb). */
+  function notify(n: NoticeText, critical = false): void {
     try {
-      ctx.notifier.notify({ kind: 'conn', title: n.title, body: n.body });
+      ctx.notifier.notify({ kind: 'conn', title: n.title, body: n.body, ...(critical && { critical: true as const }) });
     } catch (err) {
       console.error('[ib] notification failed:', err);
     }
@@ -432,7 +433,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     if (wasReady) {
       droppedAt = Date.now();
       if (!silent) ctx.apiLog.note('in', 'socket close', [['reason', 'closed by TWS / IB Gateway']], true);
-      notify(silent ? connectionNotices.silent(mode(), params, retry) : connectionNotices.disconnected(mode(), params, retry));
+      notify(silent ? connectionNotices.silent(mode(), params, retry) : connectionNotices.disconnected(mode(), params, retry), true);
     }
     if (retry && (wasReady || reconnectAttempt > 0 || retryFirstAttempt)) {
       scheduleRetry();
@@ -452,7 +453,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       retryFirstAttempt = false;
       droppedAt = 0;
       setState({ status: 'disconnected', reconnectAttempt: undefined, latencyMs: undefined });
-      notify(connectionNotices.gaveUp(mode(), failureReason(lastFailure ?? { code: 0, message: '' }, params), attempts));
+      notify(connectionNotices.gaveUp(mode(), failureReason(lastFailure ?? { code: 0, message: '' }, params), attempts), true);
       return;
     }
     reconnectAttempt++;
@@ -552,7 +553,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       case 2110: // the link is (still) broken, e.g. said to a socket that connects during the outage
         // Orders and modifies are refused until 1101 / 1102 (orders.ts); a cancel is still sent.
         // One notice per outage: a 2110 after its 1100 says nothing new.
-        if (!state.ibLinkLost) notify(connectionNotices.lost(mode()));
+        if (!state.ibLinkLost) notify(connectionNotices.lost(mode()), true);
         setState({ lastError: { code, message: cleanIbMessage(message), time: Date.now() }, ibLinkLost: true });
         return;
       case 1101:

@@ -32,6 +32,7 @@ import { createBiometrics } from './lock/biometrics';
 import { createLockFile, LOCK_FILE } from './lock/lockFile';
 import { readResetMarker, removeResetMarker, startReset, wipeTapeData, type WipeResult } from './lock/reset';
 import { createLockService } from './lock/service';
+import { createSettingsGuard } from './lock/settingsGuard';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const isDev = !app.isPackaged && !!process.env.VITE_DEV_SERVER_URL;
@@ -121,6 +122,8 @@ ctx.lock = createLockService({
 });
 
 const apiLogViewers = createLogViewers(ctx.apiLog);
+// Settings changes that weaken the lock need the PIN (lock/settingsGuard.ts).
+const settingsGuard = createSettingsGuard({ store: ctx.store, lock: ctx.lock });
 
 // Appearance subscribes first (in its factory), so the theme is applied before this broadcast.
 ctx.store.onSettingsChanged((settings) => ctx.emit({ type: 'settings', settings, dark: ctx.appearance.isDark() }));
@@ -191,7 +194,8 @@ function takeAfterReset(): boolean {
 
 const handlers: TapeHandlers = {
   getSnapshot: async () => snapshot(),
-  updateSettings: async (patch) => ctx.store.updateSettings(patch),
+  updateSettings: async (patch) => settingsGuard.update(patch),
+  updateLockSettings: async (lock, token) => settingsGuard.updateLock(lock, token),
   connect: () => ctx.ib.connect(),
   disconnect: () => ctx.ib.disconnect(),
   setQuoteSubscriptions: async (owner, subs) => ctx.quotes.setRendererSubscriptions(owner, subs),
@@ -230,6 +234,7 @@ const handlers: TapeHandlers = {
     ctx.apiLog.clear();
     ctx.emit({ type: 'apiLog', entries: [], reset: true, logFilePath: ctx.apiLog.filePath() });
   },
+  apiLogExpiring: (keepDays) => ctx.apiLog.expiring(keepDays),
   exportApiLog: async () => {
     const win = ctx.getMainWindow();
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');

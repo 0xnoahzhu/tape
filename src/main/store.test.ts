@@ -27,14 +27,22 @@ describe('createStore', () => {
   });
   afterEach(() => rmSync(env.dir, { recursive: true, force: true }));
 
-  it('first launch: defaults, language from the locale, settings saved', () => {
+  it('first launch: defaults, language and up / down colours from the locale, settings saved', () => {
     env.locale = 'zh-CN';
     const store = createStore();
-    expect(store.getSettings().appearance.language).toBe('zh');
+    expect(store.getSettings().appearance).toMatchObject({ language: 'zh', upColor: 'cn' });
     expect(store.getWatchlists()).toEqual(defaultWatchlists());
     expect(store.getNotifications()).toEqual([]);
     store.flush();
-    expect(read('settings.json').appearance.language).toBe('zh');
+    expect(read('settings.json').appearance).toMatchObject({ language: 'zh', upColor: 'cn' });
+  });
+
+  it('first launch in English: green up, red down (the US convention)', () => {
+    env.locale = 'en-US';
+    const store = createStore();
+    expect(store.getSettings().appearance).toMatchObject({ language: 'en', upColor: 'us' });
+    store.flush();
+    expect(read('settings.json').appearance.upColor).toBe('us');
   });
 
   it('keeps the saved language on later launches', () => {
@@ -43,6 +51,36 @@ describe('createStore', () => {
     const s = createStore().getSettings();
     expect(s.appearance.language).toBe('en');
     expect(s.appearance.theme).toBe('dark');
+  });
+
+  it('keeps saved up / down colours on later launches, whatever the locale or language', () => {
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ appearance: { language: 'en', upColor: 'cn' } }));
+    env.locale = 'en-US';
+    expect(createStore().getSettings().appearance.upColor).toBe('cn');
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ appearance: { language: 'zh', upColor: 'us' } }));
+    env.locale = 'zh-CN';
+    expect(createStore().getSettings().appearance.upColor).toBe('us');
+  });
+
+  it('turns the former open-ended do-not-disturb off and says so once', () => {
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ notifications: { dnd: true, sound: false }, appearance: { language: 'zh' } }));
+    const store = createStore();
+    expect(store.getSettings().notifications).toMatchObject({ dndUntil: null, sound: false });
+    expect(store.getNotifications()).toMatchObject([{ kind: 'sys', read: false, title: { en: 'Do not disturb was turned off', zh: '勿扰模式已关闭' } }]);
+    store.flush();
+    expect('dnd' in read('settings.json').notifications).toBe(false);
+    expect(read('settings.json').notifications.sound).toBe(false);
+    expect(createStore().getNotifications()).toHaveLength(1);
+  });
+
+  it('posts both notices when both removed switches were on', () => {
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ connection: { readOnly: true }, notifications: { dnd: true } }));
+    expect(createStore().getNotifications().map((n) => n.title.en)).toEqual(['Do not disturb was turned off', 'Read-only mode was removed']);
+  });
+
+  it('posts nothing for a do-not-disturb that was off', () => {
+    writeFileSync(join(env.dir, 'settings.json'), JSON.stringify({ notifications: { dnd: false } }));
+    expect(createStore().getNotifications()).toEqual([]);
   });
 
   it('updateSettings merges, persists and notifies with (next, prev)', () => {

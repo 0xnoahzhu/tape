@@ -252,6 +252,8 @@ describe('OrderService', () => {
     expect(t.notices.map((n) => [n.kind, n.title.en, n.body.en])).toEqual([['order', 'Buy 100 AAPL rejected · PAPER DU1', 'The API interface is currently in Read-Only mode. (321)']]);
     // Not on Portfolio › Orders: a click opens the instrument.
     expect(t.notices[0].orderDone).toBe(true);
+    // A rejection comes through do-not-disturb.
+    expect(t.notices[0].critical).toBe(true);
   });
 
   it('fails when IB sets the order Inactive, with the reason that follows', async () => {
@@ -411,6 +413,8 @@ describe('OrderService', () => {
     await expect(c).resolves.toEqual({ status: 'Cancelled' });
     expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL submitted · PAPER DU1', 'Buy 100 AAPL cancelled · PAPER DU1']);
     expect(t.notices.map((n) => n.orderDone)).toEqual([undefined, true]);
+    // Neither is critical: do-not-disturb holds them back.
+    expect(t.notices.map((n) => n.critical)).toEqual([undefined, undefined]);
   });
 
   it('keeps a working order in its trading session', async () => {
@@ -622,6 +626,7 @@ describe('OrderService', () => {
     t.emit('execDetails', -1, ibAapl, exec('e.02.01', 40));
     t.emit('commissionReport', { execId: 'e.02.01', commission: 1, currency: 'USD', realizedPNL: 1.7976931348623157e308 });
     expect(t.notices.map((n) => [n.kind, n.title.en, n.body.en])).toEqual([['fill', 'AAPL: bought 40 shares · PAPER DU1', 'Avg 226.95 · Commission 1.00 · Order #50']]);
+    expect(t.notices[0].critical).toBeUndefined();
     expect(t.notices[0].contract?.symbol).toBe('AAPL');
     // without a commission report the fill is announced after 3 s
     t.emit('execDetails', -1, ibAapl, exec('e.03.01', 60));
@@ -742,7 +747,8 @@ describe('OrderService', () => {
       t.error(40, 10148, 'OrderId 40 that needs to be cancelled cannot be cancelled, state: Filled.');
       expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([['Cancel of Buy 100 AAPL refused · PAPER DU1', 'OrderId 40 that needs to be cancelled cannot be cancelled, state: Filled. (10148)']]);
       expect(t.notices[0].title.zh).toBe('买入 100 AAPL 撤单被拒绝 · 模拟 DU1');
-      // The order still works although the user believes it cancelled: not done.
+      // The order still works although the user believes it cancelled: critical, not done.
+      expect(t.notices[0]).toMatchObject({ critical: true });
       expect(t.notices[0].orderDone).toBeUndefined();
     });
 
@@ -1175,6 +1181,7 @@ describe('OrderService', () => {
       t.error(40, 201, 'Order rejected - reason:Invalid Price');
       expect(t.notices.map((n) => [n.title.en, n.body.en])).toEqual([['Modify of Buy 100 AAPL refused – order unchanged · PAPER DU1', 'Order rejected - reason:Invalid Price (201)']]);
       expect(t.notices[0].title.zh).toBe('买入 100 AAPL 改单被拒绝，订单未变 · 模拟 DU1');
+      expect(t.notices[0].critical).toBe(true);
     });
   });
 
@@ -1203,6 +1210,8 @@ describe('OrderService', () => {
         ['Buy 100 AAPL not confirmed · PAPER DU1', 'The connection closed after the order was sent, before IB confirmed it: IB may have it. Check Orders after reconnecting before sending it again'],
       ]);
       expect(t.notices[0].orderDone).toBeUndefined();
+      // Comes through do-not-disturb: sending it again could double the order.
+      expect(t.notices[0].critical).toBe(true);
       // The same account again: IB has it.
       t.setConnected(true);
       t.ready();

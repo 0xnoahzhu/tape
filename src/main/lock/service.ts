@@ -8,7 +8,8 @@
 // * The wrong-PIN counter applies in memory even when lock.json cannot be written, and a wait
 //   follows a monotonic clock too, so setting the system clock forward does not end it early.
 // * PIN checks are serialized, so concurrent attempts cannot slip past the backoff.
-// * A PIN change or removal needs a fresh, single-use token from verifyPin / verifyBiometrics.
+// * A PIN change or removal needs a fresh, single-use token from verifyPin / verifyBiometrics; a
+//   lock preference change that weakens the lock needs one from verifyPin (authorize).
 
 import { randomBytes } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
@@ -57,6 +58,11 @@ export interface LockService {
   verifyBiometrics(): Promise<VerifyResult>;
   setPin(pin: string, token: string | null): Promise<LockState>;
   removePin(token: string): Promise<LockState>;
+  /**
+   * Takes a token from verifyPin (only the PIN's: Touch ID / Windows Hello must not be able to turn
+   * themselves on) for a change that weakens the lock (lock/settingsGuard.ts). Single use.
+   */
+  authorize(token: string | null): boolean;
   /** Re-reads whether Touch ID / Windows Hello can be used (lid, keyboard and enrolment change). */
   refreshBiometrics(): Promise<LockState>;
   /** Starts the auto-lock timer (after app ready). */
@@ -330,6 +336,8 @@ export function createLockService(deps: LockServiceDeps): LockService {
       changed();
       return snapshot();
     },
+
+    authorize: (token) => takeToken(token, ['pin']),
 
     refreshBiometrics,
     startAutoLock() {

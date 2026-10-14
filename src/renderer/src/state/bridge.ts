@@ -1,8 +1,10 @@
 // Connects the store to the main process: loads the snapshot and applies push events.
 
 import type { TapeEvent } from '@shared/ipc';
-import type { ApiLogEntry, ConnectionState, Quote } from '@shared/types';
+import type { ApiLogEntry, AppNotification, ConnectionState, Quote } from '@shared/types';
+import { newCriticalNotifications, notificationText } from '../features/notifications/model';
 import { openNotificationTarget } from '../features/orders/navigation';
+import { currentClock, currentLang } from '../i18n';
 import { applyLockState } from './lockActions';
 import { resetSessionState } from './sessionReset';
 import { initialTicket, isCovered, useStore } from './store';
@@ -170,9 +172,12 @@ function apply(e: TapeEvent): void {
     case 'apiLog':
       set((s) => ({ apiLog: e.reset ? e.entries : appendLog(s.apiLog, e.entries), logFilePath: e.logFilePath || s.logFilePath }));
       break;
-    case 'notifications':
+    case 'notifications': {
+      const prev = useStore.getState().notifications;
       set({ notifications: e.notifications });
+      toastCritical(prev, e.notifications);
       break;
+    }
     case 'watchlists':
       set({ watchlists: e.watchlists });
       break;
@@ -190,6 +195,19 @@ function apply(e: TapeEvent): void {
       if (!isCovered(useStore.getState())) commandListeners.forEach((l) => l(e.command));
       break;
   }
+}
+
+/**
+ * A critical notification that just arrived (an order rejected, the connection lost, an option at
+ * risk) also shows as an error toast in the window, whatever do-not-disturb or the system
+ * notification switches say. Not while the lock screen covers the app (the bell keeps it).
+ */
+function toastCritical(prev: AppNotification[], next: AppNotification[]): void {
+  const s = useStore.getState();
+  const [latest] = newCriticalNotifications(prev, next);
+  if (!latest || isCovered(s)) return;
+  const { title, body } = notificationText(latest, currentLang(), currentClock(), s.settings.appearance.showAccountId);
+  s.showToast(`${title} · ${body}`, 'error');
 }
 
 type CommandListener = (c: Extract<TapeEvent, { type: 'command' }>['command']) => void;

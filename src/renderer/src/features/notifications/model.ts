@@ -53,6 +53,15 @@ export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone'
   return page === 'set' ? 'chart' : null;
 }
 
+/**
+ * Critical notifications (an order rejected, the connection lost, an option at risk) that arrived
+ * with this list update: in `next`, unread and not in `prev`. Newest first.
+ */
+export function newCriticalNotifications(prev: AppNotification[], next: AppNotification[]): AppNotification[] {
+  const seen = new Set(prev.map((n) => n.id));
+  return next.filter((n) => n.critical && !n.read && !seen.has(n.id)).sort((a, b) => b.t - a.t);
+}
+
 export function unreadCount(list: AppNotification[]): number {
   let n = 0;
   for (const x of list) if (!x.read) n++;

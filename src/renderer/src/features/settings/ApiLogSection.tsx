@@ -11,7 +11,7 @@ import { useStore } from '../../state/store';
 import { SearchIcon } from '../../ui/icons';
 import { Segmented, Toggle } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
-import { countNewSince, filterLog, isInfo, logBody, logCounts, logDetail, newestFirst, tildify, type LogFilter } from './logic';
+import { changeRetention, countNewSince, filterLog, formatBytes, isInfo, logBody, logCounts, logDetail, newestFirst, tildify, type LogFilter } from './logic';
 import { useSettingsMessages } from './messages';
 import { SectionHeader, saveSettings } from './parts';
 
@@ -72,7 +72,38 @@ export function ApiLogSection() {
     }
   };
 
-  const toggleWriteFile = () => saveSettings({ apiLog: { writeFile: !logCfg.writeFile } });
+  // Turning the file off leaves no record on disk of what is sent from then on: asked first.
+  const toggleWriteFile = () => {
+    if (!logCfg.writeFile) return void saveSettings({ apiLog: { writeFile: true } });
+    ask({
+      title: m.writeOffTitle,
+      rows: [{ label: m.writeOffFile, value: logFilePath ? tildify(logFilePath) : '—' }],
+      note: m.writeOffNote,
+      label: m.writeOffLabel,
+      danger: true,
+      run: () => saveSettings({ apiLog: { writeFile: false } }),
+    });
+  };
+
+  // A shorter retention deletes log files right away: asked first, naming what goes.
+  const setKeep = (keepDays: number) =>
+    changeRetention(logCfg.keepDays, keepDays, {
+      expiring: (d) => window.tape.apiLogExpiring(d),
+      save: (d) => void saveSettings({ apiLog: { keepDays: d } }),
+      ask: ({ files, bytes }, save) =>
+        ask({
+          title: m.keepTitle,
+          rows: [
+            { label: m.keepNew, value: m.keepDays(keepDays) },
+            { label: m.keepFiles, value: f0(files) },
+            { label: m.keepSize, value: formatBytes(bytes) },
+          ],
+          note: m.keepDeleteNote,
+          label: m.keepDeleteLabel,
+          danger: true,
+          run: save,
+        }),
+    }).catch((err: unknown) => showToast(errorText(err), 'error'));
 
   return (
     <>
@@ -216,7 +247,7 @@ export function ApiLogSection() {
               return (
                 <div
                   key={d}
-                  onClick={() => saveSettings({ apiLog: { keepDays: d } })}
+                  onClick={() => void setKeep(d)}
                   style={{
                     padding: '5px 10px',
                     cursor: 'pointer',

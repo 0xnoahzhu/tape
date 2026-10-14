@@ -2,8 +2,9 @@
 
 import type { NewNotification, NotificationView } from '@shared/ipc';
 import { NOTIFICATION_KINDS } from '@shared/defaults';
+import { dndActive } from '@shared/dnd';
 import type { AppNotification, NotificationKind, Settings } from '@shared/types';
-import { capNotifications, isObject, sanitizeContract, sanitizeLocalizedText, sanitizeNoticeAccount } from './storeSchema';
+import { CRITICAL_KINDS, capNotifications, isObject, sanitizeContract, sanitizeLocalizedText, sanitizeNoticeAccount } from './storeSchema';
 
 /** Validates a notification request (it may come from the renderer). Returns null when invalid. */
 export function sanitizeNewNotification(raw: unknown): NewNotification | null {
@@ -15,6 +16,8 @@ export function sanitizeNewNotification(raw: unknown): NewNotification | null {
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
   if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
+  // A price alert or a system notice is never critical, whoever asks (the renderer can).
+  if (raw.critical === true && CRITICAL_KINDS.includes(n.kind)) n.critical = true;
   const account = sanitizeNoticeAccount(raw.account, n.kind);
   if (account) n.account = account;
   return n;
@@ -24,6 +27,7 @@ export function createNotification(n: NewNotification, id: string, t: number): A
   const item: AppNotification = { id, t, kind: n.kind, title: n.title, body: n.body, read: false };
   if (n.contract) item.contract = n.contract;
   if (n.orderDone) item.orderDone = true;
+  if (n.critical) item.critical = true;
   if (n.account) item.account = n.account;
   return item;
 }
@@ -46,12 +50,15 @@ export function markNotificationsRead(list: AppNotification[], ids: string[] | '
 }
 
 /**
- * Whether an OS notification should be shown. Do-not-disturb always wins; `force`
- * (the test notification) ignores the per-kind rule.
+ * Whether an OS notification should be shown. Do-not-disturb holds back everything but a
+ * `critical` notification (an order rejected, the connection to IB lost, an option at risk), the
+ * test and the sound samples included; the per-kind rule applies to every real notification, a
+ * critical one too (turning a kind off is asked for in Settings). `force` (the test notification)
+ * ignores the per-kind rule.
  */
-export function shouldShowSystem(settings: Settings, kind: NotificationKind, force = false): boolean {
-  const { dnd, system } = settings.notifications;
-  return !dnd && (force || system[kind]);
+export function shouldShowSystem(settings: Settings, kind: NotificationKind, force = false, critical = false, now: number = Date.now()): boolean {
+  const n = settings.notifications;
+  return (critical || !dndActive(n, now)) && (force || n.system[kind]);
 }
 
 /**

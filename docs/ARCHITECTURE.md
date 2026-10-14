@@ -59,7 +59,7 @@ through the shared `MainContext` (never inside their factory).
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
 | `appearance.ts` | Theme (`nativeTheme.themeSource`), theme-matched dock/window icon and, via `finderIcon.ts`, the macOS Finder icon (see *Appearance*) |
 | `menu.ts` | Application menu (localized), menu commands |
-| `lock/` | `ctx.lock`: lock state, PIN, idle auto-lock, biometrics, Forgot-PIN reset (see *Lock screen*) |
+| `lock/` | `ctx.lock`: lock state, PIN, idle auto-lock, biometrics, Forgot-PIN reset, the PIN check on settings that weaken the lock (see *Lock screen*) |
 | `ipcDispatch.ts` | The `InvokeResult` envelope around every handler and the lock's IPC allow-list |
 
 ### Connection
@@ -350,7 +350,7 @@ locked (`LOCK_POLICY`), and an order that is not a what-if one is never sent fro
 closed). The API log marks IB's what-if answers `whatIf=1` with their estimate (margin changes,
 commission), so they do not read like working orders.
 
-### Notifications
+### Notifications, do-not-disturb and the lock
 
 `notifications.ts` adds every notification to the bell list (`notifications.json`) and shows an OS
 notification when `notificationModel.ts → shouldShowSystem` allows it. Order and fill notices
@@ -364,8 +364,29 @@ connection already names the new one. The account is kept on the notice too (`Ap
 on `order`, `fill` and `opt` only): a click on a fill or order notice leads to Portfolio › Trades or
 Orders only while that account's login is connected (`notifications/model.ts → notificationTarget`,
 `notificationModel.ts → viewForKind`), else it opens the instrument, since those lists are the connected
-login's. The bell applies Settings › Privacy when it shows a notice (`notificationText`): with
-account IDs hidden, an id stored in an earlier notice is left out too.
+login's. The bell and the critical toast apply Settings › Privacy when they show a notice
+(`notificationText`): with account IDs hidden, an id stored in an earlier notice is left out too.
+
+* **Critical** (`AppNotification.critical`, accepted on `order`, `conn` and `opt` only, also when the
+  renderer asks): an order rejection, a cancel or modify IB refused after Tape's wait, and an order
+  the closing connection left unconfirmed (`ib/orders.ts`: the order is not what the user believes);
+  the connection closed (also by Tape when IB Gateway stopped answering) or given up and IB's 1100
+  (`ib/connection.ts`); an option at risk of assignment or a short option's loss (the renderer's
+  `options/riskWatcher.ts`; not the expiry reminder). A critical notification comes through
+  do-not-disturb (the per-kind switch still applies: turning off fills, order updates, the connection or
+  option risk is confirmed in Settings), and the renderer shows a new one as an error toast too
+  (`bridge.ts → toastCritical`, not behind the lock screen).
+* **Do-not-disturb** is `settings.notifications.dndUntil` (Unix ms, or null), never open-ended:
+  `shared/dnd.ts → dndEnd` gives an hour from now or the next 09:00 in New York, and the settings schema
+  turns a past end into null and cuts a later one to `DND_MAX_MS` (25 h). The former boolean `dnd` is
+  dropped on load; when it was on, the store posts a one-time notice that it was turned off
+  (`storeSchema.ts → hadOpenEndedDnd`, like the removed read-only switch). The renderer's `DndIndicator`
+  (top bar, left of the bell) and Settings › Notifications use `useDndUntil`, which re-renders when it
+  ends by itself.
+* **While locked** (`ctx.lock.isLocked()` when it is shown) the OS notification has a generic title by
+  kind ("New fill", "Order rejected", "Order needs attention" for the other critical order notices,
+  "Alert triggered", "Connection to IB lost", "1 new notification") and "Tape is locked…" as its body, also in the
+  Windows toast XML; the bell list keeps the full text.
 
 ### Notification sounds
 
@@ -376,8 +397,8 @@ orders show filled) and
 other (`price`, `opt`, `conn`, `sys`). `settings.notifications.sounds` holds one sound id per
 category; defaults are distinct per platform (macOS Tink / Glass / Purr; Windows the IM, Reminder
 and Default sound events). A sound only goes with a notification that is shown: none when Tape's
-do-not-disturb is on or the kind's system switch is off, and none with the Sound switch off or the
-category set to None (`main/notificationSound.ts`):
+do-not-disturb is on (unless the notification is critical) or the kind's system switch is off, and
+none with the Sound switch off or the category set to None (`main/notificationSound.ts`):
 
 | Platform | How the sound plays |
 | --- | --- |
@@ -882,6 +903,13 @@ Live `apiLog` events are sent only while a view streams them (`STREAM_BY_DEFAULT
 4. Streaming is tracked per renderer (`createLogViewers`, keyed by webContents): the last view to
    unmount turns it off, and a reload (`did-start-loading`) or a destroyed window ends it too.
 
+Retention (`settings.apiLog.keepDays`, `apiLogFiles.ts → expiredLogFiles`) is applied at launch and as
+soon as the setting changes. Settings › Logs therefore asks before a shorter one
+(`settings/logic.ts → changeRetention`): `apiLogExpiring(keepDays)` (refused while locked) answers how
+many files and bytes it would delete, and the confirmation names them; nothing to delete, or a longer
+retention, saves at once. Turning *Also write to log file* off is confirmed too; the writer then flushes
+the lines recorded so far instead of dropping them.
+
 ### Appearance
 
 `appearance.ts` sets `nativeTheme.themeSource` from `settings.appearance.theme`. Whenever the resolved
@@ -933,6 +961,13 @@ Main is the only authority on whether Tape is locked; the renderer draws `LockSt
   memory first and persisted best-effort (a disk that cannot be written neither disables the backoff nor
   blocks the right PIN), and each wait also has a monotonic deadline (`performance.now`), so moving the
   system clock forward does not end it.
+* `settingsGuard.ts` — while a PIN exists, `updateSettings` refuses a lock patch that weakens the lock
+  (`@shared/lock → loosensLock`: a longer auto-lock or Never, Touch ID / Windows Hello where *PIN only*
+  was set); `updateLockSettings(lock, token)` applies it with a token from `verifyPin` (`authorize`
+  takes PIN tokens only, so biometrics cannot turn themselves on). Changes that tighten the lock need
+  nothing. The renderer asks for the PIN with the PIN dialog's `verify` mode (`PrivacySection.tsx →
+  changeLock`). It guards against a change made in passing, not against the user account, which can
+  edit `settings.json`.
 * `pin.ts` / `lockFile.ts` — the PIN rule is shared (`@shared/lock`: 6 code points after NFC, no whitespace or
   control characters). `userData/lock.json` (mode 0600, written atomically and synchronously) holds the
   scrypt record (random 16-byte salt, N 2^15, r 8, p 1; compared with `timingSafeEqual`), the count of
@@ -962,7 +997,9 @@ Main is the only authority on whether Tape is locked; the renderer draws `LockSt
   caption buttons take the lock screen's background (`Appearance.setLocked`; restored ~1.1 s after the
   unlock, when the renderer's animation has played). Handlers that wait for the user (the API log's save
   dialog) check the lock again afterwards. Scripted captures (`devCapture.ts`) never run in a packaged app. IB stays connected; alerts
-  keep running in main.
+  keep running in main, and their OS notifications say only what happened (see *Notifications,
+  do-not-disturb and the lock*). Settings › Privacy & Security (with a PIN) and the Reset dialog say that
+  the lock does not stop trading through the logged-in IB Gateway.
 * Renderer: `features/lock/LockScreen.tsx` sits above everything (z-index 40) while the app under it is
   `inert`; `state/lockActions.ts` closes dialogs, the bell, popovers and drops a pending order review when
   locking, and collapses floating panels to their bars (they stay collapsed after the unlock); a capture key listener (`features/lock/actions.ts → installLockKeyGuard`) keeps every shortcut
@@ -1006,10 +1043,14 @@ delete open files):
   red) of the top bar and the review.
 * Design tokens are CSS variables in `styles/tokens.css`. The root element carries
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
-  Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
+  Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green. A new profile
+  gets cn in Chinese and us otherwise (`defaults.ts → defaultUpColor`, set with the language at first
+  launch, and for a settings file without it, such as the one a Forgot-PIN reset writes); a saved
+  choice is never changed.
 * `ConfirmRequest` (the shared confirmation dialog, `layout/Dialogs.tsx`) takes optional `warnings`,
   red lines after the note: what the action costs or why it may fail (a stop-loss left without
-  protection, Read-Only API on).
+  protection, Read-Only API on, and IB's live trading port in Settings › Connection's reconnect and
+  live-port dialogs, `settings/logic.ts → isLivePort`).
 * `src/renderer/src/lib/retiredKeys.ts` — per-device `localStorage` keys of features that are gone,
   removed at startup (`main.tsx`): `tape.dash.v1`, the Portfolio dashboard's layout.
 
@@ -1036,8 +1077,19 @@ do nothing but lock, and the ticket's and the floating panels' keys wait.
 red or "PAPER · DUP899854" muted while connected (the id only while Settings › Privacy shows account IDs;
 the word never hides), else OFFLINE / CONNECTING; a click opens Settings › Connection. Beside it the
 Read-Only API chip and, while TWS / IB Gateway lost IB or does not answer, the health chip (see
-*Connection*). Settings › Connection lists every account of a login that manages several and marks the
-one orders go to (the connection's `account`, IB's first; there is no picker).
+*Connection*). Left of the bell, while do-not-disturb is on, a DND tag (`features/settings/DndIndicator.tsx`:
+its tooltip says when it ends, a click opens Settings › Notifications). Settings › Connection lists every
+account of a login that manages several and marks the one orders go to (the connection's `account`, IB's
+first; there is no picker). A host, port or client id change there asks first
+(`settings/logic.ts → connectionChangeAsk`): while a session is live or being established, the
+reconnect dialog (the account being left, working orders staying at IB, which orders Tape can no longer
+cancel one by one, and IB's live port in red); while disconnected, only a switch to a live trading port.
+A live port is also marked in red under the Port field, the saved one or the one being typed
+(`enteredPort`). Turning auto-reconnect off asks first too (a dropped connection then stays down; a
+reconnect under way stops at once), as do, in Settings › Notifications, turning off the system
+notifications of fills, orders, the connection or option risk, turning the sound off, and None for the
+order or other sounds (`soundPickAsks`: the categories with critical notices, which would then play none).
+Turning any of them on saves at once.
 
 ### Trade page (`pages/TradePage.tsx`)
 

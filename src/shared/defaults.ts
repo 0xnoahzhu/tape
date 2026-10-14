@@ -3,11 +3,18 @@
 import { index, stock } from './contract';
 import { defaultSounds } from './notificationSounds';
 import { DEFAULT_TIME_FORMAT } from './timeFormat';
-import type { Lang, NotificationKind, Settings, Watchlist } from './types';
+import type { Lang, NotificationKind, Settings, UpColor, Watchlist } from './types';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['fill', 'order', 'price', 'opt', 'conn', 'sys'];
 
 export const DEFAULT_PORTS = { tws: { live: 7496, paper: 7497 }, gateway: { live: 4001, paper: 4002 } } as const;
+
+/**
+ * Price direction colours by language: red up for Chinese (the convention of Chinese markets and
+ * apps), green up otherwise (the US convention, also for the US markets Tape trades). Only a new
+ * profile gets it; a saved choice is kept whatever the language.
+ */
+export const defaultUpColor = (language: Lang): UpColor => (language === 'zh' ? 'cn' : 'us');
 
 /** `platform` (process.platform) picks the default notification sounds. */
 export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Settings {
@@ -21,13 +28,13 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
       autoReconnect: true,
     },
     trading: { defaultQty: 100, outsideRthDefault: false },
-    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, upColor: 'cn', showAccountId: true },
+    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, upColor: defaultUpColor(language), showAccountId: true },
     features: { depth: false, depthSetByUser: false },
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },
       sound: true,
       sounds: defaultSounds(platform),
-      dnd: false,
+      dndUntil: null,
     },
     apiLog: { writeFile: true, keepDays: 7 },
     lock: { autoLock: '60', customMinutes: 90, unlockWith: 'biometric', sound: true },

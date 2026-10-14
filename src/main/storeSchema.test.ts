@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import { defaultSettings, defaultWatchlists } from '@shared/defaults';
+import { DND_MAX_MS } from '@shared/dnd';
 import type { AppNotification } from '@shared/types';
 import {
   MAX_NOTIFICATIONS,
   applySettingsPatch,
+  hadOpenEndedDnd,
   hadReadOnlyMode,
   languageFromLocale,
   loadSettings,
@@ -21,10 +23,9 @@ describe('loadSettings', () => {
 
   it('notification sounds: saved ids of any platform load, missing or unknown ones take the default', () => {
     // Settings saved before the sound choices existed.
-    expect(loadSettings({ notifications: { sound: false, dnd: true } }, defaults).notifications).toEqual({
+    expect(loadSettings({ notifications: { sound: false } }, defaults).notifications).toEqual({
       ...defaults.notifications,
       sound: false,
-      dnd: true,
     });
     const s = loadSettings({ notifications: { sounds: { order: 'none', fill: 'Notification.Mail', other: 'Bogus' } } }, defaults);
     expect(s.notifications.sounds).toEqual({ order: 'none', fill: 'Notification.Mail', other: 'Purr' });
@@ -79,6 +80,57 @@ describe('loadSettings', () => {
     expect(loadSettings({ features: { depth: false, depthSetByUser: true } }, defaults).features).toEqual({ depth: false, depthSetByUser: true });
     // A patch from the renderer that still names the removed switches changes nothing else.
     expect(applySettingsPatch(on, { features: { options: true } as never })).toEqual(on);
+  });
+
+  it('drops the former open-ended do-not-disturb: it loads as off', () => {
+    const s = loadSettings({ notifications: { dnd: true, sound: false } }, defaults);
+    expect(s.notifications.dndUntil).toBeNull();
+    expect('dnd' in s.notifications).toBe(false);
+    expect(s.notifications.sound).toBe(false);
+  });
+
+  it('tells whether the former open-ended do-not-disturb was on', () => {
+    expect(hadOpenEndedDnd({ notifications: { dnd: true } })).toBe(true);
+    expect(hadOpenEndedDnd({ notifications: { dnd: 'true' } })).toBe(true);
+    expect(hadOpenEndedDnd({ notifications: { dnd: false } })).toBe(false);
+    expect(hadOpenEndedDnd({ notifications: { dndUntil: Date.now() + 60_000 } })).toBe(false);
+    expect(hadOpenEndedDnd({ notifications: true })).toBe(false);
+    expect(hadOpenEndedDnd(null)).toBe(false);
+  });
+
+  it('do-not-disturb always has an end: past ends load as off, later ones are cut to the longest offered', () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.UTC(2026, 9, 14, 15);
+      vi.setSystemTime(now);
+      const until = (v: unknown) => loadSettings({ notifications: { dndUntil: v } }, defaults).notifications.dndUntil;
+      expect(until(now + 3_600_000)).toBe(now + 3_600_000);
+      expect(until(String(now + 60_000))).toBe(now + 60_000);
+      expect(until(now - 1)).toBeNull();
+      expect(until(now)).toBeNull();
+      expect(until(null)).toBeNull();
+      expect(until(now + 30 * 86_400_000)).toBe(now + DND_MAX_MS);
+      expect(until('soon')).toBeNull();
+      // A patch from the renderer is held to the same rules.
+      const on = applySettingsPatch(defaults, { notifications: { dndUntil: now + 600_000 } });
+      expect(on.notifications.dndUntil).toBe(now + 600_000);
+      expect(applySettingsPatch(on, { notifications: { dndUntil: Number.MAX_SAFE_INTEGER } }).notifications.dndUntil).toBe(now + DND_MAX_MS);
+      expect(applySettingsPatch(on, { notifications: { dndUntil: 'x' as never } }).notifications.dndUntil).toBe(now + 600_000);
+      expect(applySettingsPatch(on, { notifications: { dndUntil: null } }).notifications.dndUntil).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('up / down colours follow the language when the file has none (after a Forgot-PIN reset)', () => {
+    expect(defaultSettings('en').appearance.upColor).toBe('us');
+    expect(defaultSettings('zh').appearance.upColor).toBe('cn');
+    // The reset keeps only the language and the theme; the defaults are the system language's.
+    expect(loadSettings({ appearance: { language: 'zh', theme: 'dark' } }, defaultSettings('en')).appearance.upColor).toBe('cn');
+    expect(loadSettings({ appearance: { language: 'en' } }, defaultSettings('zh')).appearance.upColor).toBe('us');
+    // A saved choice stays, whatever the language.
+    expect(loadSettings({ appearance: { language: 'en', upColor: 'cn' } }, defaults).appearance.upColor).toBe('cn');
+    expect(loadSettings({ appearance: { language: 'zh', upColor: 'us' } }, defaults).appearance.upColor).toBe('us');
   });
 
   it('tells whether the removed read-only setting was on', () => {
@@ -335,6 +387,17 @@ describe('sanitizeNotifications', () => {
 
   it('drops entries with unknown kinds or missing text', () => {
     expect(sanitizeNotifications([{ ...n(1), kind: 'spam' }, { ...n(2), title: 'x' }, n(3)])).toEqual([n(3)]);
+  });
+
+  it('keeps the critical mark on order, connection and option risk notices only', () => {
+    const rejected = { ...n(1), kind: 'order' as const, critical: true as const };
+    const lost = { ...n(2), kind: 'conn' as const, critical: true as const };
+    expect(sanitizeNotifications([rejected, lost, { ...n(3), kind: 'price', critical: true }, { ...n(4), kind: 'opt', critical: 1 }])).toEqual([
+      { ...n(4), kind: 'opt' },
+      { ...n(3), kind: 'price' },
+      lost,
+      rejected,
+    ]);
   });
 
   it('keeps the account on order, fill and option risk notices only', () => {

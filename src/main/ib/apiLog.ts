@@ -1,4 +1,4 @@
-// API log: every frame sent to / received from TWS or IB Gateway (API log page, export, daily
+// API log: every frame sent to / received from TWS or IB Gateway (Settings › Logs, export, daily
 // log files).
 //
 // Recording runs inside the socket handler for every tick, so a frame is stored raw in a fixed
@@ -14,7 +14,7 @@
 // it already holds. Each batch also carries the current day's log file path. Renderers stream
 // through createLogViewers(): one vote per renderer, withdrawn when it reloads or closes.
 
-import { readdir, unlink, writeFile } from 'node:fs/promises';
+import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { EventName, type Order, type OrderState } from './tws';
@@ -375,20 +375,26 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
 
   function setFileLogging(on: boolean): void {
     if (on === fileOn) return;
+    // Turned off: the frames recorded while it was on still go to the file (flush formats them
+    // now, up to the newest, and moves `written` there).
+    if (!on) void files.flush();
     fileOn = on;
     written = ring.last;
-    if (!on) files.discard();
+  }
+
+  /** The expired log files for `keepDays` (none when the folder does not exist yet). */
+  async function expiredFiles(keepDays: number): Promise<{ dir: string; names: string[] }> {
+    const dir = apiLogDir();
+    try {
+      return { dir, names: expiredLogFiles(await readdir(dir), keepDays) };
+    } catch {
+      return { dir, names: [] };
+    }
   }
 
   async function prune(keepDays: number): Promise<void> {
-    const dir = apiLogDir();
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch {
-      return; // no log folder yet
-    }
-    for (const name of expiredLogFiles(names, keepDays)) {
+    const { dir, names } = await expiredFiles(keepDays);
+    for (const name of names) {
       await unlink(join(dir, name)).catch((err: unknown) => console.error(`[apiLog] could not delete ${name}:`, err));
     }
   }
@@ -402,6 +408,7 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
     ctx.ib.on(EventName.completedOrder, (_c: unknown, _o: unknown, state: OrderState) => annotate('completedOrder', state));
     ctx.store.onSettingsChanged((next, prev) => {
       setFileLogging(next.apiLog.writeFile);
+      // A shorter retention deletes now (Settings › Logs names the files and asks first).
       if (next.apiLog.keepDays !== prev.apiLog.keepDays) void prune(next.apiLog.keepDays);
     });
   });
@@ -423,6 +430,21 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
       await writeFile(path, text, 'utf8');
     },
     filePath,
+    async expiring(keepDays) {
+      if (typeof keepDays !== 'number' || !Number.isFinite(keepDays)) throw new Error('Invalid retention');
+      const { dir, names } = await expiredFiles(keepDays);
+      let bytes = 0;
+      let count = 0;
+      for (const name of names) {
+        try {
+          bytes += (await stat(join(dir, name))).size;
+          count++;
+        } catch {
+          // Gone meanwhile: nothing to delete.
+        }
+      }
+      return { files: count, bytes };
+    },
     setStreaming(on) {
       viewers = Math.max(0, viewers + (on ? 1 : -1));
       const next = streamByDefault || viewers > 0;

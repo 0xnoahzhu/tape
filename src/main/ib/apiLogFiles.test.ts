@@ -157,15 +157,6 @@ describe('log file writer', () => {
     expect(calls).toEqual(['mkdir /logs', `append ${FILE} 1`, 'mkdirSync /logs', `appendSync ${FILE} two\n`]);
   });
 
-  it('forgets pending lines when discarded', async () => {
-    const { writer, add, collect } = setup();
-    add('a');
-    writer.discard();
-    await vi.advanceTimersByTimeAsync(FLUSH_MS * 2);
-    expect(collect).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it('keeps going after a failed append', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { add, calls, pending, finish } = setup();

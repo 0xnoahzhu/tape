@@ -3,7 +3,7 @@ import { option, stock } from '@shared/contract';
 import { createClock, NEW_YORK_ZONE, TOKEN_CLOCK } from '@shared/timeFormat';
 import type { AppNotification, NotificationKind } from '@shared/types';
 import { useNotificationsMessages } from './messages';
-import { alertInstrumentParts, filterNotifications, notificationTarget, notificationText, relativeTime, stampText, unreadCount } from './model';
+import { alertInstrumentParts, filterNotifications, newCriticalNotifications, notificationTarget, notificationText, relativeTime, stampText, unreadCount } from './model';
 
 const n = (id: string, kind: NotificationKind, t: number, read = false): AppNotification => ({
   id,
@@ -15,6 +15,17 @@ const n = (id: string, kind: NotificationKind, t: number, read = false): AppNoti
 });
 
 const list = [n('fill', 'fill', 5), n('order', 'order', 1, true), n('price', 'price', 4), n('conn', 'conn', 3, true), n('opt', 'opt', 2)];
+
+describe('newCriticalNotifications', () => {
+  it('finds the critical notices that just arrived, unread, newest first', () => {
+    const rejected = { ...n('rejected', 'order', 10), critical: true as const };
+    const lost = { ...n('lost', 'conn', 11), critical: true as const };
+    const seen = { ...n('seen', 'conn', 9), critical: true as const };
+    const read = { ...n('read', 'opt', 12, true), critical: true as const };
+    expect(newCriticalNotifications([seen, ...list], [rejected, lost, read, seen, n('new fill', 'fill', 13), ...list]).map((x) => x.id)).toEqual(['lost', 'rejected']);
+    expect(newCriticalNotifications(list, list)).toEqual([]);
+  });
+});
 
 describe('filterNotifications', () => {
   it('filters by tab and sorts newest first', () => {

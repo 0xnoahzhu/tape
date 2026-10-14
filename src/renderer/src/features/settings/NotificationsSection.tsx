@@ -1,6 +1,11 @@
 // Settings › Notifications: which kinds are pushed to the OS, sound (one per category, not on
 // Linux), do-not-disturb, test.
 //
+// Turning off the system notifications of fills, order updates, the connection or option risk
+// asks first, and so do turning the sound off and None for the order or other sounds (their
+// critical notices would play none). Do-not-disturb is started for an hour or until 09:00 New York time and ends by
+// itself (shared/dnd.ts); critical notifications come through it.
+//
 // Sound picker: a listbox under (or, near the bottom of the pane, over) the button, sized to the
 // visible part of the settings pane so opening it never scrolls the page, in whole rows so no
 // name shows cut at its edges. ↑ ↓ Home End move, Enter / Space pick, Escape / Tab close; the
@@ -8,11 +13,27 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { NOTIFICATION_KINDS } from '@shared/defaults';
+import { DND_CHOICES, DND_MORNING, dndEnd, type DndChoice } from '@shared/dnd';
 import { NO_SOUND, SOUND_CATEGORIES, resolveSound, type SoundCategory } from '@shared/notificationSounds';
+import type { NotificationKind } from '@shared/types';
+import { useClock } from '../../i18n';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
-import { Toggle } from '../../ui/primitives';
-import { hasSoundChoice, SOUND_ROW_H, soundCategoryOff, soundChoices, soundLabel, soundListKey, soundListPlace, soundListReveal, soundListScroll } from './logic';
+import { Chip, Toggle } from '../../ui/primitives';
+import { useDndUntil } from './DndIndicator';
+import {
+  dndEndText,
+  hasSoundChoice,
+  SOUND_ROW_H,
+  soundCategoryOff,
+  soundChoices,
+  soundLabel,
+  soundListKey,
+  soundListPlace,
+  soundListReveal,
+  soundListScroll,
+  soundPickAsks,
+} from './logic';
 import { useSettingsMessages } from './messages';
 import { LabelBlock, SectionHeader, SettingToggle, saveSettings } from './parts';
 
@@ -20,9 +41,24 @@ export function NotificationsSection() {
   const m = useSettingsMessages();
   const n = useStore((s) => s.settings.notifications);
   const showToast = useStore((s) => s.showToast);
+  const ask = useStore((s) => s.ask);
   const platform = useStore((s) => s.platform);
 
   const test = () => window.tape.testNotification().catch((err: unknown) => showToast(errorText(err), 'error'));
+
+  const toggleKind = (kind: NotificationKind) => {
+    const save = () => saveSettings({ notifications: { system: { [kind]: !n.system[kind] } } });
+    const note = m.ruleOffNote[kind];
+    // Turning on, or off a kind trading does not depend on: at once.
+    if (!n.system[kind] || !note) return void save();
+    ask({ title: m.ruleOffTitle, rows: [{ label: m.ruleOffKind, value: m.rules[kind].l }], note, label: m.ruleOffLabel, danger: true, run: save });
+  };
+
+  const toggleSound = () => {
+    const save = () => saveSettings({ notifications: { sound: !n.sound } });
+    if (!n.sound) return void save();
+    ask({ title: m.soundOffTitle, rows: [{ label: m.ruleOffKind, value: m.soundOffAll }], note: m.soundOffNote, label: m.ruleOffLabel, danger: true, run: save });
+  };
 
   return (
     <>
@@ -42,15 +78,15 @@ export function NotificationsSection() {
           >
             <LabelBlock label={m.rules[kind].l} desc={m.rules[kind].d} />
             <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <Toggle on={n.system[kind]} onClick={() => saveSettings({ notifications: { system: { [kind]: !n.system[kind] } } })} />
+              <Toggle on={n.system[kind]} onClick={() => toggleKind(kind)} />
             </div>
           </div>
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <SettingToggle height={56} label={m.sound} desc={m.soundD} on={n.sound} onToggle={() => saveSettings({ notifications: { sound: !n.sound } })} />
+        <SettingToggle height={56} label={m.sound} desc={m.soundD} on={n.sound} onToggle={toggleSound} />
         {n.sound && hasSoundChoice(platform) && SOUND_CATEGORIES.map((category) => <SoundRow key={category} category={category} />)}
-        <SettingToggle height={56} label={m.dnd} desc={m.dndD} on={n.dnd} onToggle={() => saveSettings({ notifications: { dnd: !n.dnd } })} />
+        <DndRow />
       </div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <div
@@ -72,6 +108,32 @@ export function NotificationsSection() {
         <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.testD}</div>
       </div>
     </>
+  );
+}
+
+/** Do-not-disturb: off, or on until a time it ends by itself (never "until turned off"). */
+function DndRow() {
+  const m = useSettingsMessages();
+  const clock = useClock();
+  const until = useDndUntil();
+  const start = (choice: DndChoice) => saveSettings({ notifications: { dndUntil: dndEnd(choice, Date.now()) } });
+  return (
+    <div style={{ minHeight: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '8px 0', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+      <LabelBlock label={m.dnd} desc={until == null ? m.dndD : m.dndOn(dndEndText(until, Date.now(), clock))} />
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {until == null ? (
+          DND_CHOICES.map((choice) => (
+            <Chip key={choice} active={false} onClick={() => void start(choice)} style={{ fontSize: 13, padding: '7px 12px', color: 'var(--tx)' }}>
+              {choice === 'hour' ? m.dndHour : m.dndMorning(clock.wall(DND_MORNING))}
+            </Chip>
+          ))
+        ) : (
+          <Chip active onClick={() => void saveSettings({ notifications: { dndUntil: null } })} style={{ fontSize: 13, padding: '7px 12px' }}>
+            {m.dndOff}
+          </Chip>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -100,6 +162,7 @@ function SoundRow({ category }: { category: SoundCategory }) {
   const platform = useStore((s) => s.platform);
   const n = useStore((s) => s.settings.notifications);
   const showToast = useStore((s) => s.showToast);
+  const ask = useStore((s) => s.ask);
   const [open, setOpen] = useState(false);
   const [focus, setFocus] = useState(0);
   const [place, setPlace] = useState({ up: false, maxH: 0 });
@@ -110,7 +173,8 @@ function SoundRow({ category }: { category: SoundCategory }) {
   const value = resolveSound(platform, category, n.sounds[category]);
   const valueLabel = soundLabel(value, m.soundNames);
   const off = soundCategoryOff(n.system, category);
-  const previewBlocked = value === NO_SOUND ? m.soundPreviewNone : n.dnd ? m.soundPreviewDnd : null;
+  const dnd = useDndUntil() != null;
+  const previewBlocked = value === NO_SOUND ? m.soundPreviewNone : dnd ? m.soundPreviewDnd : null;
   const idBase = `sound-${category}`;
 
   const openList = () => {
@@ -127,7 +191,11 @@ function SoundRow({ category }: { category: SoundCategory }) {
   };
   const pick = (id: string) => {
     close(true);
-    if (id !== n.sounds[category]) void saveSettings({ notifications: { sounds: { [category]: id } } });
+    if (id === n.sounds[category]) return;
+    const save = () => saveSettings({ notifications: { sounds: { [category]: id } } });
+    const note = m.soundNoneNote[category];
+    if (!soundPickAsks(category, value, id) || !note) return void save();
+    ask({ title: m.soundNoneTitle, rows: [{ label: m.ruleOffKind, value: m.soundCats[category].l }], note, label: m.soundNoneLabel, danger: true, run: save });
   };
   const preview = () => {
     if (previewBlocked) return;

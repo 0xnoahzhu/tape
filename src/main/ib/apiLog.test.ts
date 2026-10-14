@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -413,18 +413,41 @@ describe('API log', () => {
       expect(lines()).toEqual(expectedLines(log.getEntries()));
     });
 
-    it('writes only while enabled', async () => {
+    it('writes only while enabled, and what was recorded before it was turned off', async () => {
       const { log, receive, setSettings } = await setup({ writeFile: true });
       receive(tickPrice(1));
       setSettings({ writeFile: false });
-      expect(vi.getTimerCount()).toBe(0); // the pending batch is dropped
+      expect(vi.getTimerCount()).toBe(0); // the pending batch is taken at once, not dropped
       receive(tickPrice(2));
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(FLUSH_MS);
+      await vi.waitFor(() => expect(lines()).toHaveLength(1));
       setSettings({ writeFile: true });
       receive(tickPrice(3));
       for (const quit of electron.quit) quit();
-      expect(lines()).toEqual([formatLogLine(log.getEntries()[2])]);
+      const entries = log.getEntries();
+      expect(lines()).toEqual([formatLogLine(entries[0]), formatLogLine(entries[2])]);
+    });
+
+    it('tells which files a retention would delete now, and how large they are', async () => {
+      const { log } = await setup();
+      // Today is 2026-10-04: 1 day keeps only today's file, 3 days keeps Oct 2–4.
+      writeFileSync(join(electron.dir, 'api-20261004.log'), 'x'.repeat(10));
+      writeFileSync(join(electron.dir, 'api-20261002.log'), 'x'.repeat(200));
+      writeFileSync(join(electron.dir, 'api-20261001.log'), 'x'.repeat(3000));
+      writeFileSync(join(electron.dir, 'notes.txt'), 'x'.repeat(50_000));
+      expect(await log.expiring(1)).toEqual({ files: 2, bytes: 3200 });
+      expect(await log.expiring(3)).toEqual({ files: 1, bytes: 3000 });
+      expect(await log.expiring(7)).toEqual({ files: 0, bytes: 0 });
+      // Nothing is deleted by asking.
+      expect(existsSync(join(electron.dir, 'api-20261001.log'))).toBe(true);
+      await expect(log.expiring('1' as never)).rejects.toThrow('Invalid retention');
+    });
+
+    it('a missing log folder expires nothing', async () => {
+      const { log } = await setup();
+      electron.dir = join(electron.dir, 'missing');
+      expect(await log.expiring(1)).toEqual({ files: 0, bytes: 0 });
     });
 
     it('formats file lines without decoding entries while nobody streams', async () => {

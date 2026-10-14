@@ -32,6 +32,17 @@ describe('sanitizeNewNotification', () => {
     expect(createNotification({ kind: 'order', title: text, body: text, orderDone: true }, 'id', 1).orderDone).toBe(true);
   });
 
+  it('keeps the critical mark on order, connection and option risk notices only', () => {
+    expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, critical: true })).toEqual({ kind: 'order', title: text, body: text, critical: true });
+    expect(sanitizeNewNotification({ kind: 'conn', title: text, body: text, critical: true })?.critical).toBe(true);
+    expect(sanitizeNewNotification({ kind: 'opt', title: text, body: text, critical: true })?.critical).toBe(true);
+    // A price alert, a fill or a system notice cannot claim to be critical (the renderer may ask).
+    for (const kind of ['price', 'fill', 'sys'] as const) expect(sanitizeNewNotification({ kind, title: text, body: text, critical: true })).toEqual({ kind, title: text, body: text });
+    expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, critical: 'yes' })).toEqual({ kind: 'order', title: text, body: text });
+    expect(createNotification({ kind: 'conn', title: text, body: text, critical: true }, 'id', 1).critical).toBe(true);
+    expect('critical' in createNotification({ kind: 'conn', title: text, body: text }, 'id', 1)).toBe(false);
+  });
+
   it('keeps the account on order, fill and option risk notices only', () => {
     expect(sanitizeNewNotification({ kind: 'fill', title: text, body: text, account: 'DUP899854' })).toEqual({ kind: 'fill', title: text, body: text, account: 'DUP899854' });
     expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, account: 'U18630011' })?.account).toBe('U18630011');
@@ -94,9 +105,28 @@ describe('shouldShowSystem', () => {
     expect(shouldShowSystem(withRules({ system: { ...base.notifications.system, fill: false } }), 'fill')).toBe(false);
   });
 
-  it('do-not-disturb always wins, even for the forced test', () => {
-    expect(shouldShowSystem(withRules({ dnd: true }), 'fill')).toBe(false);
-    expect(shouldShowSystem(withRules({ dnd: true }), 'sys', true)).toBe(false);
+  const NOW = Date.UTC(2026, 9, 14, 15);
+  const dnd = withRules({ dndUntil: NOW + 60_000 });
+
+  it('do-not-disturb holds back every notification but a critical one, the forced test too', () => {
+    expect(shouldShowSystem(dnd, 'fill', false, false, NOW)).toBe(false);
+    expect(shouldShowSystem(dnd, 'sys', true, false, NOW)).toBe(false);
+    expect(shouldShowSystem(dnd, 'order', false, false, NOW)).toBe(false);
+    // An order rejected, the connection lost, an option at risk.
+    expect(shouldShowSystem(dnd, 'order', false, true, NOW)).toBe(true);
+    expect(shouldShowSystem(dnd, 'conn', false, true, NOW)).toBe(true);
+    expect(shouldShowSystem(dnd, 'opt', false, true, NOW)).toBe(true);
+  });
+
+  it('do-not-disturb ends by itself', () => {
+    expect(shouldShowSystem(dnd, 'fill', false, false, NOW + 59_999)).toBe(false);
+    expect(shouldShowSystem(dnd, 'fill', false, false, NOW + 60_000)).toBe(true);
+    expect(shouldShowSystem(withRules({ dndUntil: null }), 'fill', false, false, NOW)).toBe(true);
+  });
+
+  it('a kind turned off stays off for critical notifications too (turning it off is confirmed)', () => {
+    const off = withRules({ dndUntil: NOW + 60_000, system: { ...base.notifications.system, order: false } });
+    expect(shouldShowSystem(off, 'order', false, true, NOW)).toBe(false);
   });
 
   it('the test notification ignores a disabled rule', () => {

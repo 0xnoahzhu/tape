@@ -182,6 +182,30 @@ describe('lock service', () => {
     expect(t.svc.lock()).toBe(false);
   });
 
+  it('authorizes a change that weakens the lock with a fresh PIN token only, once', async () => {
+    const t = setup(await withPin('111111'), { biometrics: fakeProvider().provider });
+    await t.svc.unlockWithPin('111111');
+    expect(t.svc.authorize(null)).toBe(false);
+    expect(t.svc.authorize('made-up')).toBe(false);
+    // Touch ID / Windows Hello must not be able to turn themselves on.
+    const bio = await t.svc.verifyBiometrics();
+    if (!bio.ok) throw new Error('expected a token');
+    expect(t.svc.authorize(bio.token)).toBe(false);
+    const pin = await t.svc.verifyPin('111111');
+    if (!pin.ok) throw new Error('expected a token');
+    expect(t.svc.authorize(pin.token)).toBe(true);
+    expect(t.svc.authorize(pin.token)).toBe(false);
+    // Expired, or taken by locking.
+    const late = await t.svc.verifyPin('111111');
+    if (!late.ok) throw new Error('expected a token');
+    t.advance(5 * 60_000 + 1);
+    expect(t.svc.authorize(late.token)).toBe(false);
+    const locked = await t.svc.verifyPin('111111');
+    if (!locked.ok) throw new Error('expected a token');
+    t.svc.lock();
+    expect(t.svc.authorize(locked.token)).toBe(false);
+  });
+
   it('rejects malformed PINs', async () => {
     const { svc } = setup();
     await expect(svc.setPin('12345', null)).rejects.toThrow(/6 characters/);

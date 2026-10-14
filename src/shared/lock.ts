@@ -1,6 +1,6 @@
 // Lock screen helpers shared by main and the renderer.
 
-import type { Lang } from './types';
+import type { Lang, Settings } from './types';
 
 // ---------------------------------------------------------------------------
 // PIN rule: exactly six characters of any kind (letters are case-sensitive; digits, symbols and
@@ -50,4 +50,25 @@ export function resetWordMatches(input: string, lang: Lang): boolean {
 /** Main accepts the word of either language (the language may change while the dialog is open). */
 export function isResetConfirmation(input: unknown): boolean {
   return typeof input === 'string' && (resetWordMatches(input, 'en') || resetWordMatches(input, 'zh'));
+}
+
+// ---------------------------------------------------------------------------
+// Lock preferences that weaken the lock
+
+type LockPrefs = Pick<Settings['lock'], 'autoLock' | 'customMinutes' | 'unlockWith'>;
+
+/** Idle minutes before the auto-lock; Infinity for Never. */
+export function autoLockMinutes(l: Pick<LockPrefs, 'autoLock' | 'customMinutes'>): number {
+  if (l.autoLock === 'never') return Infinity;
+  return l.autoLock === 'custom' ? l.customMinutes : Number(l.autoLock);
+}
+
+/**
+ * Whether going from `cur` to `next` weakens the lock: a longer auto-lock (Never is the longest),
+ * or Touch ID / Windows Hello allowed where only the PIN unlocked. With a PIN set, main accepts
+ * such a change only with the current PIN (updateLockSettings); changes that tighten it are free.
+ */
+export function loosensLock(cur: LockPrefs, next: LockPrefs): boolean {
+  if (autoLockMinutes(next) > autoLockMinutes(cur)) return true;
+  return cur.unlockWith === 'pin' && next.unlockWith === 'biometric';
 }

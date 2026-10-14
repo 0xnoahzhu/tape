@@ -33,6 +33,8 @@ const { createNotifier, SAMPLE_LIFETIME_MS } = await import('./notifications');
 
 const aapl = { symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' } as const;
 const text = (s: string) => ({ en: s, zh: `${s} (zh)` });
+/** Do-not-disturb on for the next hour. */
+const DND = () => ({ dndUntil: Date.now() + 3_600_000 });
 
 function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin') {
   let settings = patch(defaultSettings('en', platform));
@@ -115,6 +117,56 @@ describe('Notifier', () => {
     expect(t.list()).toHaveLength(2);
   });
 
+  it('critical notifications come through do-not-disturb, with their sound', () => {
+    const t = setup((s) => ({ ...s, notifications: { ...s.notifications, ...DND() } }));
+    t.notifier.notify({ kind: 'fill', title: text('Filled'), body: text('100 AAPL') });
+    t.notifier.notify({ kind: 'order', title: text('Submitted'), body: text('Buy 100 AAPL') });
+    expect(os.shown).toHaveLength(0);
+    t.notifier.notify({ kind: 'order', title: text('Rejected'), body: text('Buy 100 AAPL'), critical: true });
+    t.notifier.notify({ kind: 'conn', title: text('Connection lost'), body: text('Reconnecting'), critical: true });
+    // A price alert cannot claim to be critical.
+    t.notifier.notify({ kind: 'price', title: text('AAPL above 230'), body: text('230.10'), critical: true });
+    expect(os.shown.map((n) => n.options.title)).toEqual(['Rejected', 'Connection lost']);
+    os.shown.forEach((n) => n.emitter.emit('show'));
+    expect(t.played).toEqual(['/System/Library/Sounds/Tink.aiff', '/System/Library/Sounds/Purr.aiff']);
+    expect(t.list().find((n) => n.title.en === 'Rejected')?.critical).toBe(true);
+    expect(t.list()).toHaveLength(5);
+  });
+
+  it('while Tape is locked, the OS notification says only what happened; the bell keeps the details', () => {
+    const t = setup((s) => ({ ...s, appearance: { ...s.appearance, language: 'en' } }));
+    t.lock.locked = true;
+    const fill = t.notifier.notify({ kind: 'fill', title: text('Bought 100 SPCX'), body: text('100 @ 158.11'), contract: aapl });
+    t.notifier.notify({ kind: 'order', title: text('Buy 100 SPCX rejected'), body: text('Limit 158.11'), orderDone: true, critical: true });
+    t.notifier.notify({ kind: 'order', title: text('Cancel of Buy 100 SPCX refused'), body: text('Limit 158.11'), critical: true });
+    t.notifier.notify({ kind: 'order', title: text('Buy 100 SPCX submitted'), body: text('Limit 158.11') });
+    t.notifier.notify({ kind: 'price', title: text('SPCX above 160'), body: text('160.05') });
+    t.notifier.notify({ kind: 'conn', title: text('Disconnected'), body: text('127.0.0.1:4001'), critical: true });
+    t.notifier.notify({ kind: 'sys', title: text('Update'), body: text('x') });
+    expect(os.shown.map((n) => [n.options.title, n.options.body])).toEqual([
+      ['New fill', 'Tape is locked. Unlock it to see the details.'],
+      ['Order rejected', 'Tape is locked. Unlock it to see the details.'],
+      ['Order needs attention', 'Tape is locked. Unlock it to see the details.'],
+      ['Order update', 'Tape is locked. Unlock it to see the details.'],
+      ['Alert triggered', 'Tape is locked. Unlock it to see the details.'],
+      ['Connection to IB lost', 'Tape is locked. Unlock it to see the details.'],
+      ['1 new notification', 'Tape is locked. Unlock it to see the details.'],
+    ]);
+    expect(t.list().find((n) => n.id === fill.id)).toMatchObject({ title: text('Bought 100 SPCX'), body: text('100 @ 158.11') });
+    // Unlocked: the full text again.
+    t.lock.locked = false;
+    t.notifier.notify({ kind: 'fill', title: text('Bought 100 SPCX'), body: text('100 @ 158.11') });
+    expect(os.shown[7].options).toMatchObject({ title: 'Bought 100 SPCX', body: '100 @ 158.11' });
+  });
+
+  it('the locked text is in the language set, also in the Windows toast', () => {
+    const t = setup((s) => ({ ...s, appearance: { ...s.appearance, language: 'zh' } }), 'win32');
+    t.lock.locked = true;
+    t.notifier.notify({ kind: 'fill', title: text('Bought 100 SPCX'), body: text('100 @ 158.11') });
+    expect(os.shown[0].options).toMatchObject({ title: '新成交', body: 'Tape 已锁定，解锁后查看详情。' });
+    expect(os.shown[0].options.toastXml).not.toContain('SPCX');
+  });
+
   it('skips the OS notification when unsupported', () => {
     os.supported = false;
     const t = setup();
@@ -154,11 +206,14 @@ describe('Notifier', () => {
   it('clicking while Tape is locked only shows the window: nothing behind the lock changes', () => {
     const t = setup();
     t.lock.locked = true;
-    t.notifier.notify({ kind: 'opt', title: text('Risk'), body: text('Delta'), contract: aapl });
+    const n = t.notifier.notify({ kind: 'opt', title: text('Risk'), body: text('Delta'), contract: aapl });
     t.events.length = 0;
     os.shown[0].emitter.emit('click');
     expect(t.showMainWindow).toHaveBeenCalled();
     expect(t.events.some((e) => e.type === 'openContract')).toBe(false);
+    // The banner was generic: the bell keeps the notice unread for after the unlock.
+    expect(t.list().find((x) => x.id === n.id)?.read).toBe(false);
+    expect(t.events.some((e) => e.type === 'notifications')).toBe(false);
   });
 
   it('clicking a notification without an instrument just shows the window', () => {
@@ -189,7 +244,7 @@ describe('Notifier', () => {
     expect(t.list()[0]).toMatchObject({ kind: 'sys', title: { en: 'Test notification' } });
 
     const s = defaultSettings('en');
-    t.setSettings({ ...s, notifications: { ...s.notifications, dnd: true } });
+    t.setSettings({ ...s, notifications: { ...s.notifications, ...DND() } });
     t.notifier.test();
     expect(os.shown).toHaveLength(1);
     expect(t.list()).toHaveLength(2);
@@ -230,7 +285,7 @@ describe('Notifier', () => {
     });
 
     it('makes no sound when do-not-disturb is on or the kind is kept out of the OS', () => {
-      const t = setup((s) => notifs(s, { dnd: true }));
+      const t = setup((s) => notifs(s, DND()));
       t.notifier.notify({ kind: 'fill', title: text('a'), body: text('b') });
       const s = defaultSettings('en');
       t.setSettings(notifs(s, { system: { ...s.notifications.system, fill: false } }));
@@ -282,7 +337,7 @@ describe('Notifier', () => {
       ]);
       expect(t.played).toEqual(['Glass', 'Tink', 'Purr'].map((name) => `/System/Library/Sounds/${name}.aiff`));
       expect(t.list()).toHaveLength(0);
-      t.setSettings(notifs(s0, { dnd: true }));
+      t.setSettings(notifs(s0, DND()));
       t.notifier.test('fill');
       expect(os.shown).toHaveLength(3);
       expect(() => t.notifier.test('nope' as never)).toThrow('Invalid sound category');

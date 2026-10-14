@@ -45,6 +45,8 @@ export function ResetDialog({ onClose }: { onClose: () => void }) {
           <div style={{ color: 'var(--tx)' }}>{m.keeps}</div>
         </div>
       </div>
+      {/* The lock does not keep anyone from trading through the logged-in IB Gateway (README › Lock screen). */}
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--mu)', textWrap: 'pretty' }}>{m.resetNote}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.typeToConfirm}</div>
         <input

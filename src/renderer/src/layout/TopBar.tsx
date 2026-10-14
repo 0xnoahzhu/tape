@@ -3,7 +3,8 @@
 // Windows / Linux: a small logo at the left; native caption buttons overlay the right edge.
 // Before the bell, the account badge: LIVE (red) or PAPER and the account Tape trades, or OFFLINE.
 // While IB refuses requests in Read-Only API mode, a red chip there says so (and where to turn it off);
-// another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer).
+// another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer). Left of
+// the bell, a DND tag while do-not-disturb is on (features/settings/DndIndicator.tsx).
 
 import type { CSSProperties } from 'react';
 import { useCommon } from '../i18n/common';
@@ -16,6 +17,7 @@ import { AccountTag, IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
 import { requestLock } from '../features/lock/actions';
 import { useLockMessages } from '../features/lock/messages';
+import { DndIndicator } from '../features/settings/DndIndicator';
 
 /**
  * IB answered a request of this connection with its Read-Only refusal (ConnectionState.readOnlyApi):
@@ -148,6 +150,7 @@ export function TopBar() {
         <AccountBadge />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 12, boxShadow: 'inset 1px 0 0 var(--ln2)' }}>
+        <DndIndicator />
         <IconButton size={34} title={m.notifications} active={bellOpen} onClick={() => setBell(!bellOpen)}>
           <BellIcon />
           {unread && <Dot top={8} right={8} />}

@@ -119,13 +119,15 @@ export interface IbConnection {
 
 export interface ApiLog {
   getEntries(): ApiLogEntry[];
-  /** Live entries are pushed to renderers only while at least one view streams them (API log page). */
+  /** Live entries are pushed to renderers only while at least one view streams them (Settings › Logs). */
   setStreaming(on: boolean): void;
   clear(): void;
   /** Writes the in-memory log as text. */
   exportTo(path: string): Promise<void>;
   /** Today's log file path (may not exist yet). */
   filePath(): string;
+  /** The log files (count and total size) a retention of `keepDays` would delete now. */
+  expiring(keepDays: number): Promise<{ files: number; bytes: number }>;
   /** Records a synthetic entry (e.g. "socket close" from the client side). */
   note(dir: 'out' | 'in', name: string, fields: Array<[string, string]>, err?: boolean): void;
 }

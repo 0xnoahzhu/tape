@@ -5,7 +5,8 @@
 // unknown keys are dropped, types are coerced where the intent is clear, numbers are clamped,
 // and entries that cannot be repaired are skipped.
 
-import { NOTIFICATION_KINDS } from '@shared/defaults';
+import { defaultUpColor, NOTIFICATION_KINDS } from '@shared/defaults';
+import { DND_MAX_MS } from '@shared/dnd';
 import { KNOWN_SOUNDS } from '@shared/notificationSounds';
 import { TIME_FORMATS } from '@shared/timeFormat';
 import type {
@@ -89,6 +90,18 @@ const hostName: Leaf<string> = (v, d) => {
   return s.length > 0 && s.length <= 253 && !/\s/.test(s) ? s : d;
 };
 
+/**
+ * Do-not-disturb's end: null (off) or a time within DND_MAX_MS from now. An end already past loads
+ * as off; a later one (a hand-edited file) is cut to the longest Tape offers, so it still ends.
+ */
+const dndUntil: Leaf<number | null> = (v, d) => {
+  if (v === null) return null;
+  const t = toNumber(v);
+  if (!Number.isFinite(t)) return d;
+  const now = Date.now();
+  return t <= now ? null : Math.min(Math.round(t), now + DND_MAX_MS);
+};
+
 const notificationRules = Object.fromEntries(NOTIFICATION_KINDS.map((k) => [k, bool])) as Spec<Record<NotificationKind, boolean>>;
 
 const SETTINGS_SPEC: Spec<Settings> = {
@@ -114,7 +127,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     sound: bool,
     // Any platform's id loads (a profile may move between machines); unknown ids keep the fallback.
     sounds: { order: oneOf(KNOWN_SOUNDS), fill: oneOf(KNOWN_SOUNDS), other: oneOf(KNOWN_SOUNDS) },
-    dnd: bool,
+    dndUntil,
   },
   apiLog: { writeFile: bool, keepDays: nearest(KEEP_DAYS) },
   lock: {
@@ -145,11 +158,15 @@ function sanitize<T>(spec: Spec<T>, raw: unknown, fallback: T): T {
 /**
  * Saved settings deep-merged over the defaults. Files from before depthSetByUser (which also had
  * the removed features.options / .flow) count Level 2 on as the user's choice: it was off by default.
+ * A file without up / down colours (the one a Forgot-PIN reset writes keeps only the language and
+ * the theme) takes the convention of its language, not of the defaults' language.
  */
 export function loadSettings(raw: unknown, defaults: Settings): Settings {
   const s = sanitize(SETTINGS_SPEC, raw, defaults);
   const saved = isObject(raw) && isObject(raw.features) ? raw.features : null;
   if (saved && saved.depthSetByUser === undefined && s.features.depth) s.features.depthSetByUser = true;
+  const appearance = isObject(raw) && isObject(raw.appearance) ? raw.appearance : null;
+  if (appearance && appearance.upColor === undefined) s.appearance.upColor = defaultUpColor(s.appearance.language);
   return s;
 }
 
@@ -160,6 +177,15 @@ export function loadSettings(raw: unknown, defaults: Settings): Settings {
  */
 export function hadReadOnlyMode(raw: unknown): boolean {
   return isObject(raw) && isObject(raw.connection) && bool(raw.connection.readOnly, false);
+}
+
+/**
+ * Whether saved settings have the former do-not-disturb switch (`notifications.dnd`) on. It had no
+ * end, so loadSettings drops it (do-not-disturb now ends by itself, `dndUntil`) and the store says
+ * once that it was turned off.
+ */
+export function hadOpenEndedDnd(raw: unknown): boolean {
+  return isObject(raw) && isObject(raw.notifications) && bool(raw.notifications.dnd, false);
 }
 
 /** Applies a (possibly untrusted) partial update; invalid values keep the current value. */
@@ -318,6 +344,9 @@ export function sanitizeAlerts(raw: unknown): PriceAlert[] | null {
 // ---------------------------------------------------------------------------
 // Notifications
 
+/** Kinds a notification can be critical in (AppNotification.critical): orders, connection, option risk. */
+export const CRITICAL_KINDS: readonly NotificationKind[] = ['order', 'conn', 'opt'];
+
 /** Kinds a notification names an account in (AppNotification.account): orders, fills, option risk. */
 export const ACCOUNT_KINDS: readonly NotificationKind[] = ['order', 'fill', 'opt'];
 
@@ -336,6 +365,7 @@ function sanitizeNotification(raw: unknown): AppNotification | null {
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
   if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
+  if (raw.critical === true && CRITICAL_KINDS.includes(n.kind)) n.critical = true;
   const account = sanitizeNoticeAccount(raw.account, n.kind);
   if (account) n.account = account;
   return n;

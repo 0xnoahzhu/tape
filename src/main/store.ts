@@ -11,8 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
-import { defaultSettings, defaultWatchlists } from '@shared/defaults';
-import type { AppNotification, DeepPartial, PriceAlert, Settings, Watchlist } from '@shared/types';
+import { defaultSettings, defaultUpColor, defaultWatchlists } from '@shared/defaults';
+import type { AppNotification, DeepPartial, LocalizedText, PriceAlert, Settings, Watchlist } from '@shared/types';
 import type { AppStore } from './context';
 import { createMessages } from './i18n';
 import { openJsonFile, type JsonFile } from './jsonFile';
@@ -20,6 +20,7 @@ import { createNotification, prependNotification } from './notificationModel';
 import {
   applySettingsPatch,
   capNotifications,
+  hadOpenEndedDnd,
   hadReadOnlyMode,
   isObject,
   languageFromLocale,
@@ -39,11 +40,17 @@ const m = createMessages({
     readOnlyRemovedTitle: 'Read-only mode was removed',
     readOnlyRemovedBody:
       'Tape no longer has its own read-only mode, which you had on: orders you send now go to IB. To block them, turn on “Read-Only API” in IB Gateway › Configure › Settings › API › Settings (TWS: Global Configuration › API › Settings).',
+    dndOffTitle: 'Do not disturb was turned off',
+    dndOffBody:
+      'Do not disturb was on with no end, which could keep fills and order updates out of the notification center for days. It now ends by itself, after an hour or at 9:00 AM New York time, and never holds back order rejections, connection loss or option risk alerts. Turn it on again in Settings › Notifications.',
   },
   zh: {
     readOnlyRemovedTitle: '只读模式已移除',
     readOnlyRemovedBody:
       'Tape 已移除自带的只读模式（你之前开启了它），发出的订单会直接交给 IB。如需禁止下单，请在 IB Gateway › Configure › Settings › API › Settings（TWS：Global Configuration › API › Settings）中打开 “Read-Only API”。',
+    dndOffTitle: '勿扰模式已关闭',
+    dndOffBody:
+      '之前的勿扰模式没有结束时间，可能让成交和订单通知好几天都不进系统通知中心。现在勿扰模式会自动结束（1 小时后，或美东时间上午 9:00），并且不会拦下订单被拒、连接中断和期权风险提醒。可在 设置 › 通知 中重新开启。',
   },
 });
 
@@ -57,11 +64,13 @@ export function createStore(): AppStore {
   const provisionalLanguage = languageFromLocale(app.getPreferredSystemLanguages()[0]);
 
   let readOnlyRemoved = false;
+  let dndTurnedOff = false;
   const settings = file<Settings>(
     'settings.json',
     (raw) => {
       if (!isObject(raw)) return null;
       readOnlyRemoved = hadReadOnlyMode(raw);
+      dndTurnedOff = hadOpenEndedDnd(raw);
       return loadSettings(raw, defaultSettings(provisionalLanguage, process.platform));
     },
     () => defaultSettings(provisionalLanguage, process.platform),
@@ -72,15 +81,14 @@ export function createStore(): AppStore {
   const windowBounds = file<WindowBounds | null>('window.json', sanitizeWindowBounds, () => null);
   const files: JsonFile<unknown>[] = [settings, watchlists, alerts, notifications, windowBounds];
 
-  // The saved settings still had the removed read-only switch on: say so in the notification
-  // list, and save the settings without the key so the notice is posted once.
-  if (readOnlyRemoved) {
-    const notice = createNotification(
-      { kind: 'sys', title: m.both((t) => t.readOnlyRemovedTitle), body: m.both((t) => t.readOnlyRemovedBody) },
-      randomUUID(),
-      Date.now(),
-    );
-    notifications.set(prependNotification(notifications.get(), notice));
+  // The saved settings still had a removed switch on (Tape's read-only mode; the do-not-disturb
+  // without an end): say so in the notification list, and save the settings without the key so
+  // the notice is posted once.
+  const notices: Array<{ title: LocalizedText; body: LocalizedText }> = [];
+  if (readOnlyRemoved) notices.push({ title: m.both((t) => t.readOnlyRemovedTitle), body: m.both((t) => t.readOnlyRemovedBody) });
+  if (dndTurnedOff) notices.push({ title: m.both((t) => t.dndOffTitle), body: m.both((t) => t.dndOffBody) });
+  if (notices.length) {
+    for (const n of notices) notifications.set(prependNotification(notifications.get(), createNotification({ kind: 'sys', ...n }, randomUUID(), Date.now())));
     settings.set(settings.get());
   }
 
@@ -100,11 +108,13 @@ export function createStore(): AppStore {
     return next;
   }
 
-  // First launch (or unreadable settings): pick the language from the app locale and save.
+  // First launch (or unreadable settings): pick the language from the app locale, and the up /
+  // down colours of that language (the provisional language may differ), and save.
   if (settings.status !== 'ok') {
     const firstLaunch = () => {
       const current = settings.get();
-      commitSettings({ ...current, appearance: { ...current.appearance, language: languageFromLocale(app.getLocale()) } });
+      const language = languageFromLocale(app.getLocale());
+      commitSettings({ ...current, appearance: { ...current.appearance, language, upColor: defaultUpColor(language) } });
       // Save even when nothing changed, so the next launch is not a first launch again.
       settings.set(settings.get());
     };
