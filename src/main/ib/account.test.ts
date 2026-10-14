@@ -1,12 +1,17 @@
 import type { Contract, IBApi } from './tws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IbConnection, IbListener, MainContext } from '../context';
+import type { TapeEvent } from '@shared/ipc';
+import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
 import { createAccountService } from './account';
 
-/** A connection stub: tests emit IB callbacks; requests are recorded. */
+/** A connection stub: tests emit IB callbacks; requests and emitted events are recorded. */
 function setup() {
   const listeners = new Map<string, Set<IbListener>>();
+  const ready = new Set<(api: IBApi) => void>();
+  const closed = new Set<() => void>();
+  const sessionChanged = new Set<(reason: SessionChangeReason) => void>();
   const calls: Array<[string, ...unknown[]]> = [];
+  const events: TapeEvent[] = [];
   const api = new Proxy(
     {},
     {
@@ -17,22 +22,41 @@ function setup() {
     },
   ) as unknown as IBApi;
   let reqId = 500;
+  let account = 'DU1';
+  let session = 0;
   const ib = {
     api,
-    getState: () => ({ status: 'connected', host: 'h', port: 1, clientId: 1, accounts: ['DU1'], account: 'DU1', isPaper: true, farms: {} }),
+    getState: () => ({ status: 'connected', host: 'h', port: 1, clientId: 1, session, accounts: [account], account, isPaper: account.startsWith('D'), farms: {} }),
     nextReqId: () => reqId++,
     on(event: string, l: IbListener) {
       if (!listeners.has(event)) listeners.set(event, new Set());
       listeners.get(event)!.add(l);
       return () => listeners.get(event)!.delete(l);
     },
-    onReady: () => () => undefined,
-    onClosed: () => () => undefined,
+    onReady: (l: (api: IBApi) => void) => (ready.add(l), () => ready.delete(l)),
+    onClosed: (l: () => void) => (closed.add(l), () => closed.delete(l)),
+    onSessionChange: (l: (reason: SessionChangeReason) => void) => (sessionChanged.add(l), () => sessionChanged.delete(l)),
   } as unknown as IbConnection;
-  const ctx = { ib, emit: () => undefined, contracts: { getInfo: async () => null } } as unknown as MainContext;
+  const ctx = { ib, emit: (e: TapeEvent) => events.push(e), contracts: { getInfo: async () => null } } as unknown as MainContext;
   const svc = createAccountService(ctx);
   const emit = (event: string, ...args: unknown[]) => listeners.get(event)?.forEach((l) => l(...args));
-  return { svc, emit, calls };
+  return {
+    svc,
+    emit,
+    calls,
+    events,
+    ready: () => ready.forEach((l) => l(api)),
+    close: () => closed.forEach((l) => l()),
+    /** The connected account changes without a session event (as a late managedAccounts once could). */
+    setAccount: (a: string) => void (account = a),
+    /** Tape moves to another account, as connection.ts does it: close, new session, (ready by the test). */
+    switchSession: (to: string) => {
+      closed.forEach((l) => l());
+      account = to;
+      session++;
+      sessionChanged.forEach((l) => l('params'));
+    },
+  };
 }
 
 const aapl: Contract = { conId: 265598, symbol: 'AAPL', secType: 'STK' as never, exchange: 'NASDAQ', primaryExch: 'NASDAQ', currency: 'USD' };
@@ -85,6 +109,74 @@ describe('account service', () => {
     expect(after).toMatchObject({ dailyPnL: 160, pnlValue: 22_765 });
     expect(after.pnlUnrealized).toBeUndefined();
     expect(after.pnlRealized).toBeUndefined();
+  });
+
+  describe('when the account changes', () => {
+    async function loaded() {
+      const t = setup();
+      await vi.advanceTimersByTimeAsync(0);
+      t.ready();
+      t.emit('accountSummary', t.calls.find((c) => c[0] === 'reqAccountSummary')![1], 'DU1', 'NetLiquidation', '100000', 'USD');
+      t.emit('updatePortfolio', aapl, 100, 227.5, 22_750, 200.5, 2_700, 0, 'DU1');
+      await vi.advanceTimersByTimeAsync(300);
+      expect(t.svc.getSummary()).toMatchObject({ account: 'DU1', netLiquidation: 100_000 });
+      expect(t.svc.getPositions()).toHaveLength(1);
+      t.events.length = 0;
+      return t;
+    }
+
+    it('empties the summary and positions at once when the session changes', async () => {
+      const t = await loaded();
+      t.switchSession('U1');
+      // At once, not with the next batch: the renderer never shows DU1's values under U1.
+      expect(t.events).toEqual([
+        { type: 'account', summary: null },
+        { type: 'positions', positions: [] },
+      ]);
+      expect(t.svc.getSummary()).toBeNull();
+      expect(t.svc.getPositions()).toEqual([]);
+      // The new account loads as on a first connect.
+      t.calls.length = 0;
+      t.ready();
+      expect(t.calls.find((c) => c[0] === 'reqAccountUpdates')).toEqual(['reqAccountUpdates', true, 'U1']);
+      t.emit('updatePortfolio', aapl, 5, 227.5, 1_137.5, 210, 87.5, 0, 'U1');
+      expect(t.svc.getPositions().map((p) => [p.account, p.quantity])).toEqual([['U1', 5]]);
+    });
+
+    it('keeps the values across a plain reconnect to the same account', async () => {
+      const t = await loaded();
+      t.close();
+      t.ready();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(t.svc.getSummary()).toMatchObject({ account: 'DU1', netLiquidation: 100_000 });
+      expect(t.svc.getPositions()).toHaveLength(1);
+      expect(t.events.filter((e) => e.type === 'account' && e.summary == null)).toEqual([]);
+    });
+
+    it('drops another account’s values at the handshake even without a session event, telling the renderer', async () => {
+      const t = await loaded();
+      t.close();
+      t.setAccount('U1');
+      t.ready();
+      expect(t.events).toEqual([
+        { type: 'account', summary: null },
+        { type: 'positions', positions: [] },
+      ]);
+      expect(t.svc.getPositions()).toEqual([]);
+    });
+
+    it('drops another account’s positions at the handshake when no summary came', async () => {
+      const t = setup();
+      await vi.advanceTimersByTimeAsync(0);
+      t.ready();
+      t.emit('position', 'DU1', aapl, 100, 200.5);
+      expect(t.svc.getSummary()).toBeNull();
+      t.close();
+      t.setAccount('U1');
+      t.ready();
+      expect(t.svc.getPositions()).toEqual([]);
+      expect(t.events).toContainEqual({ type: 'positions', positions: [] });
+    });
   });
 
   it('keeps IB’s exchange rates by currency', async () => {

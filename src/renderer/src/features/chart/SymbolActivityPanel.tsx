@@ -17,6 +17,7 @@ import { isOrderActive, type ContractRef, type Position, type Quote, type QuoteS
 import { lastPrice, useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
+import { useConnectedOrders } from '../../state/connectedLists';
 import { confirmCancel } from '../../state/orderActions';
 import { useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
@@ -257,7 +258,7 @@ function OrderList({ orders, myClientId, withLast }: { orders: WorkingOrder[]; m
 function useSymbolActivity() {
   const symbol = useStore((s) => s.symbol);
   const allPositions = useStore((s) => s.positions);
-  const allOrders = useStore((s) => s.orders);
+  const allOrders = useConnectedOrders();
   const sym = symbol.symbol;
   const positions = useMemo(() => allPositions.filter((p) => p.contract.symbol === sym && p.quantity !== 0).sort(byInstrument), [allPositions, sym]);
   const orders = useMemo(

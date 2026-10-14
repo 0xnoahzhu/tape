@@ -6,6 +6,7 @@ import { defaultSettings } from '@shared/defaults';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { ConnectionState, OrderRequest, Settings } from '@shared/types';
 import type { MainContext } from '../context';
+import { createAccountService } from './account';
 import { createConnection, FIRST_REQ_ID } from './connection';
 import { createOrderService, NOT_CONNECTED_MESSAGE } from './orders';
 import { FakeTws } from './tws/__fixtures__/fakeTws';
@@ -15,8 +16,16 @@ class FakeApi extends EventEmitter {
   connects: number[] = [];
   disconnects = 0;
   currentTimeRequests = 0;
+  /** Every other request (req… / cancel…, e.g. the services' on ready) as [name, ...args]. */
+  requests: Array<[string, ...unknown[]]> = [];
   constructor(readonly opts: { host: string; port: number }) {
     super();
+    return new Proxy(this, {
+      get: (target, name, receiver) =>
+        typeof name === 'string' && !(name in target) && /^(req|cancel)/.test(name)
+          ? (...args: unknown[]) => (target.requests.push([name, ...args]), receiver)
+          : Reflect.get(target, name, receiver),
+    });
   }
   connect(clientId: number) {
     this.connects.push(clientId);
@@ -72,7 +81,7 @@ function setup(patch: Partial<Settings['connection']> = {}) {
   };
   const states = () => events.filter((e): e is Extract<TapeEvent, { type: 'connection' }> => e.type === 'connection').map((e) => e.state);
   const last = (): ConnectionState => ib.getState();
-  return { ib, apis, notices, notes, states, last, changeSettings, api: () => apis[apis.length - 1] };
+  return { ctx, ib, apis, events, notices, notes, states, last, changeSettings, api: () => apis[apis.length - 1] };
 }
 
 describe('IbConnection', () => {
@@ -525,7 +534,10 @@ describe('IbConnection', () => {
       expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
       // The old socket's close was seen before the instance was dropped.
       expect(closed).toHaveBeenCalledTimes(1);
-      expect(t.notes).toEqual([{ name: 'socket close', fields: [['reason', 'user disconnect']] }]);
+      expect(t.notes).toEqual([
+        { name: 'socket close', fields: [['reason', 'user disconnect']] },
+        { name: 'new session', fields: [['reason', 'host, port or client id changed'], ['session', '1']] },
+      ]);
       expect(t.notices).toEqual([]);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(t.apis).toHaveLength(1);
@@ -548,7 +560,10 @@ describe('IbConnection', () => {
       await done;
       // The change has applied its parameters by the time the status says 'disconnected'.
       expect(t.last()).toMatchObject({ status: 'disconnected', port: 7497 });
-      expect(t.notes).toEqual([{ name: 'socket close', fields: [['reason', 'settings changed']] }]);
+      expect(t.notes).toEqual([
+        { name: 'socket close', fields: [['reason', 'settings changed']] },
+        { name: 'new session', fields: [['reason', 'host, port or client id changed'], ['session', '1']] },
+      ]);
       // A connect() right away goes to the new port and is not ended by a late close of the old one.
       const p = t.ib.connect();
       expect(t.apis.map((a) => [a.opts.port, a.connects.length])).toEqual([
@@ -611,6 +626,206 @@ describe('IbConnection', () => {
       t.api().handshake();
       await expect(manual).resolves.toBeUndefined();
       expect(t.last()).toMatchObject({ status: 'connected', port: 7497 });
+    });
+  });
+
+  describe('sessions', () => {
+    /** Logs the closed, session and ready listener calls in order (ready with the account it sees). */
+    function track(t: ReturnType<typeof setup>) {
+      const log: string[] = [];
+      t.ib.onClosed(() => log.push('closed'));
+      t.ib.onSessionChange((reason) => log.push(`session:${reason}`));
+      t.ib.onReady(() => log.push(`ready:${t.last().account}`));
+      return log;
+    }
+
+    /** Connected to the paper account DUP899854 on 4002; the log and the states start empty. */
+    async function connected() {
+      const t = setup();
+      const log = track(t);
+      const p = t.ib.connect();
+      t.api().handshake();
+      await p;
+      await vi.advanceTimersByTimeAsync(0); // settings subscription is deferred
+      log.length = 0;
+      const seen = t.states().length;
+      return { t, log, later: () => t.states().slice(seen) };
+    }
+
+    const refuse = (api: FakeApi) => {
+      api.emit('error', new Error(`connect ECONNREFUSED 127.0.0.1:${api.opts.port}`), 502, -1);
+      api.emit('disconnected');
+    };
+
+    it('starts a new session when host, port or client id change', async () => {
+      const { t, log, later } = await connected();
+      expect(t.last()).toMatchObject({ session: 0, account: 'DUP899854', isPaper: true });
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(log).toEqual(['closed', 'session:params']);
+      // The account is unknown until the new login names it: the new port never shows with the paper account.
+      expect(t.last()).toMatchObject({ status: 'connecting', port: 4001, session: 1, accounts: [], isPaper: false });
+      expect(t.last().account).toBeUndefined();
+      expect(later().filter((st) => st.port === 4001 && st.account === 'DUP899854')).toEqual([]);
+      t.api().handshake(1, 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log).toEqual(['closed', 'session:params', 'ready:U18630011']);
+      expect(t.last()).toMatchObject({ status: 'connected', session: 1, account: 'U18630011', isPaper: false });
+      expect(t.notes.map((n) => n.name)).toEqual(['socket close', 'new session']);
+    });
+
+    it('starts a new session when the Gateway on the same port reports other accounts', async () => {
+      const { t, log, later } = await connected();
+      t.api().emit('disconnected');
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(t.last()).toMatchObject({ status: 'reconnecting', session: 0, account: 'DUP899854' });
+      // IB Gateway logged in to the live user meanwhile (its Live / Paper switch, a re-login).
+      t.api().handshake(1, 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log).toEqual(['closed', 'session:accounts', 'ready:U18630011']);
+      expect(t.last()).toMatchObject({ status: 'connected', session: 1, accounts: ['U18630011'], account: 'U18630011', isPaper: false });
+      // The new session's state never carries the previous account.
+      expect(later().filter((st) => st.session === 1 && st.account !== 'U18630011')).toEqual([]);
+    });
+
+    it('keeps the session, the account and paper / live across a plain reconnect and its retries', async () => {
+      const { t, log, later } = await connected();
+      t.api().emit('disconnected');
+      for (let i = 0; i < 2; i++) {
+        await vi.advanceTimersByTimeAsync(5_000);
+        refuse(t.api());
+      }
+      await vi.advanceTimersByTimeAsync(5_000);
+      t.api().handshake(4100);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log.filter((x) => x.startsWith('session'))).toEqual([]);
+      expect(log.at(-1)).toBe('ready:DUP899854');
+      expect(later().every((st) => st.session === 0 && st.account === 'DUP899854' && st.isPaper)).toBe(true);
+    });
+
+    it('starts a new session on a port change made while disconnected', async () => {
+      const { t, log } = await connected();
+      t.api().emit('disconnected');
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(5_000);
+        refuse(t.api());
+      }
+      expect(t.last().status).toBe('disconnected');
+      log.length = 0;
+      // As on 10-13 at 19:05: Tape gave up on 4002, then the port changed.
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(log).toEqual(['session:params']);
+      expect(t.last()).toMatchObject({ status: 'disconnected', port: 4001, session: 1, accounts: [], isPaper: false });
+      expect(t.apis).toHaveLength(1);
+      const p = t.ib.connect();
+      t.api().handshake(1, 'U18630011');
+      await p;
+      expect(log).toEqual(['session:params', 'ready:U18630011']);
+    });
+
+    it('never becomes ready before the login’s accounts are known: it asks for them again', async () => {
+      const { t, log } = await connected();
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      t.api().emit('connected');
+      t.api().emit('nextValidId', 1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(log).toEqual(['closed', 'session:params']);
+      expect(t.last()).toMatchObject({ status: 'connecting', port: 4001, accounts: [] });
+      expect(t.last().account).toBeUndefined();
+      expect(t.api().requests).toEqual([['reqManagedAccts']]);
+      t.api().emit('managedAccounts', 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log).toEqual(['closed', 'session:params', 'ready:U18630011']);
+      expect(t.last()).toMatchObject({ status: 'connected', account: 'U18630011', isPaper: false });
+    });
+
+    it('fails an attempt whose accounts never come', async () => {
+      const t = setup();
+      const ready = vi.fn();
+      t.ib.onReady(ready);
+      const p = t.ib.connect();
+      const failed = expect(p).rejects.toThrow();
+      t.api().emit('nextValidId', 1);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await failed;
+      expect(ready).not.toHaveBeenCalled();
+      expect(t.api().requests).toEqual([['reqManagedAccts']]);
+    });
+
+    it('switching paper → live → paper lists only the connected account’s orders and announces none of them', async () => {
+      const t = setup();
+      Object.assign(t.ctx, { ib: t.ib, contracts: { resolve: async (c: unknown) => c, getInfo: async () => null } });
+      t.ctx.account = createAccountService(t.ctx);
+      t.ctx.orders = createOrderService(t.ctx);
+      await vi.advanceTimersByTimeAsync(0); // deferred subscriptions
+      const p = t.ib.connect();
+      t.api().handshake(58, 'DUP899854');
+      await p;
+      t.api().emit('openOrderEnd');
+
+      // To live, where IBKR Mobile's GTC orders (order id 0, client 0) work, as on 10-13 at 19:08.
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      t.api().handshake(1, 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      const gtc = [
+        [1620569957, 'CBRS', 'SELL', 8, 200],
+        [2124812801, 'SPCX', 'BUY', 20, 144],
+        [780760062, 'SMR', 'BUY', 100, 6],
+        [780759989, 'SPCX', 'SELL', 8, 175],
+      ] as const;
+      for (const [permId, symbol, action, totalQuantity, lmtPrice] of gtc) {
+        const contract = { conId: permId, symbol, secType: 'STK', exchange: 'SMART', currency: 'USD' };
+        const order = { orderId: 0, clientId: 0, permId, account: 'U18630011', action, totalQuantity, orderType: 'LMT', lmtPrice, tif: 'GTC' };
+        t.api().emit('openOrder', 0, contract, order, { status: 'PreSubmitted' });
+      }
+      t.api().emit('openOrderEnd');
+      expect(t.ctx.orders.getOrders()).toHaveLength(4);
+      expect(t.notices.filter((n) => n.kind === 'order')).toEqual([]);
+
+      // Back to paper: the live rows and values go before the paper handshake.
+      t.events.length = 0;
+      t.changeSettings({ port: 4002 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.events.filter((e) => e.type === 'orders')).toEqual([{ type: 'orders', orders: [] }]);
+      expect(t.events).toContainEqual({ type: 'account', summary: null });
+      expect(t.last()).toMatchObject({ status: 'connecting', port: 4002, session: 2, accounts: [] });
+      t.api().handshake(58, 'DUP899854');
+      await vi.advanceTimersByTimeAsync(0);
+      t.api().emit('openOrderEnd');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(t.ctx.orders.getOrders()).toEqual([]);
+      expect(t.notices.filter((n) => n.kind === 'order')).toEqual([]);
+    });
+
+    it('forgets the paper orders when the Gateway on the same port comes back logged in to live', async () => {
+      const t = setup();
+      Object.assign(t.ctx, { ib: t.ib, contracts: { resolve: async (c: unknown) => c, getInfo: async () => null } });
+      t.ctx.account = createAccountService(t.ctx);
+      t.ctx.orders = createOrderService(t.ctx);
+      await vi.advanceTimersByTimeAsync(0);
+      const p = t.ib.connect();
+      t.api().handshake(58, 'DUP899854');
+      await p;
+      const contract = { conId: 265598, symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' };
+      t.api().emit('openOrder', 58, contract, { orderId: 58, clientId: 7, permId: 9058, account: 'DUP899854', action: 'BUY', totalQuantity: 100, orderType: 'LMT', lmtPrice: 1, tif: 'DAY' }, { status: 'Submitted' });
+      t.api().emit('openOrderEnd');
+      expect(t.ctx.orders.getOrders()).toHaveLength(1);
+      // The same instance reconnects (same parameters) to a Gateway now logged in to the live user.
+      t.api().emit('disconnected');
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(t.apis).toHaveLength(1);
+      expect(t.ctx.orders.getOrders()).toHaveLength(1); // kept while it may be a plain reconnect
+      t.api().handshake(1, 'U18630011');
+      expect(t.ctx.orders.getOrders()).toEqual([]);
+      t.api().emit('openOrderEnd');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(t.notices.filter((n) => n.kind === 'order')).toEqual([]);
+      // Order #58 of the paper login is nothing to cancel on the live one.
+      await expect(t.ctx.orders.cancel(58)).rejects.toThrow('Order #58 was not found');
+      expect(t.api().requests.filter((r) => r[0] === 'cancelOrder')).toEqual([]);
     });
   });
 

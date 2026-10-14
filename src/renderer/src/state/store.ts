@@ -8,6 +8,7 @@ import { create } from 'zustand';
 import { presetPrice } from '../features/alerts/model';
 import { ticketTimingFor } from '../features/orders/model';
 import { newCondition } from '../features/ticket/ticketConditions';
+import { ofConnectedAccounts } from '../lib/orders';
 import { contractKey, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import { sessionOutsideRth } from '@shared/orderTiming';
@@ -180,6 +181,12 @@ export interface ConfirmRequest {
   note?: string;
   label: string;
   danger?: boolean;
+  /**
+   * The connection session (ConnectionState.session) the dialog acts on, for one that sends to IB
+   * (a cancel): it closes when Tape moves to another account or Gateway. Generic confirmations
+   * (watchlists, settings) leave it out and stay.
+   */
+  session?: number;
   run: () => void | Promise<void>;
 }
 
@@ -193,6 +200,12 @@ export interface PendingOrder {
   modifyOrderId?: number;
   /** Description used in the success toast, e.g. "Buy 100 AAPL". */
   summary: string;
+  /**
+   * The connection session (ConnectionState.session) the order was built and reviewed on
+   * (submitOrder fills it in): sendOrder and main refuse it once Tape has moved to another
+   * account or Gateway, and the review closes then.
+   */
+  session: number;
   /**
    * The floating panel the order is sent from (features/panels): its status strip and bar report
    * it instead of toasts. Undefined from anywhere else (the docked ticket too).
@@ -317,7 +330,7 @@ export function normalizeTicketPatch(patch: Partial<TicketState>): Partial<Ticke
  */
 export function withModifiedTiming(patch: Partial<TicketState>, s: Pick<StoreState, 'orders' | 'connection'>): Partial<TicketState> {
   if (patch.modifyingOrderId == null) return patch;
-  const o = s.orders.find((x) => x.orderId === patch.modifyingOrderId && x.clientId === s.connection.clientId);
+  const o = ofConnectedAccounts(s.orders, s.connection.accounts).find((x) => x.orderId === patch.modifyingOrderId && x.clientId === s.connection.clientId);
   return o ? { ...patch, ...ticketTimingFor(o) } : patch;
 }
 
@@ -405,7 +418,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   appVersion: '',
   logFilePath: '',
   settings: settings0,
-  connection: { status: 'disconnected', host: '127.0.0.1', port: 4002, clientId: 7, accounts: [], isPaper: false, farms: {} },
+  connection: { status: 'disconnected', host: '127.0.0.1', port: 4002, clientId: 7, session: 0, accounts: [], isPaper: false, farms: {} },
   account: null,
   positions: [],
   orders: [],

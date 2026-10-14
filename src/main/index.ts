@@ -205,11 +205,11 @@ const handlers: TapeHandlers = {
   checkMarketData: (opts) => ctx.marketCheck.run({ depth: !!opts?.depth, trigger: opts?.auto ? 'auto' : 'user' }),
   getCacheStats: () => ctx.db.stats(),
   clearMarketDataCache: () => ctx.db.clearMarketData(),
-  placeOrder: (req) => ctx.orders.place(req),
-  modifyOrder: (id, req) => ctx.orders.modify(id, req),
-  previewOrder: (req) => ctx.orders.preview(req),
-  cancelOrder: (id) => ctx.orders.cancel(id),
-  cancelAllOrders: () => ctx.orders.cancelAll(),
+  placeOrder: (req, session) => ctx.orders.place(req, session),
+  modifyOrder: (id, req, session) => ctx.orders.modify(id, req, session),
+  previewOrder: (req, session) => ctx.orders.preview(req, session),
+  cancelOrder: (id, session) => ctx.orders.cancel(id, session),
+  cancelAllOrders: (session) => ctx.orders.cancelAll(session),
   refreshExecutions: () => ctx.orders.refreshExecutions(),
   saveWatchlists: async (lists) => {
     ctx.store.setWatchlists(lists);

@@ -71,6 +71,7 @@ describe('the new order’s flash', () => {
     expect(isFreshOrder(order(), sent({ kind: 'modify' }), 2_000)).toBe(false);
     expect(isFreshOrder(order({ orderId: 13 }), sent(), 2_000)).toBe(false);
     expect(isFreshOrder(order({ clientId: 0 }), sent(), 2_000)).toBe(false);
+    expect(isFreshOrder(order({ account: 'U1' }), sent({ account: 'DU1' }), 2_000)).toBe(false);
     expect(isFreshOrder(order(), sent({ phase: 'sending', acceptedAt: undefined }), 2_000)).toBe(false);
     expect(isFreshOrder(order(), undefined, 2_000)).toBe(false);
   });

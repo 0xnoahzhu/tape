@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { OrderRequest } from '@shared/types';
-import type { IbConnection, IbListener, MainContext } from '../context';
-import { CONNECTION_CHANGED_MESSAGE, createOrderService, sameGoodAfter } from './orders';
+import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
+import { CONNECTION_CHANGED_MESSAGE, createOrderService, sameGoodAfter, SESSION_CHANGED_MESSAGE } from './orders';
 
 const CLIENT_ID = 101;
 
@@ -13,6 +13,7 @@ function fakeIb() {
   const listeners = new Map<string, Set<IbListener>>();
   const ready = new Set<(api: IBApi) => void>();
   const closed = new Set<() => void>();
+  const sessionChanged = new Set<(reason: SessionChangeReason) => void>();
   const reqErrors = new Set<(e: { reqId: number; code: number; message: string }) => void>();
   const calls: Array<[string, ...unknown[]]> = [];
   const newApi = () =>
@@ -29,13 +30,15 @@ function fakeIb() {
   let api = newApi();
   let connected = true;
   let clientId = CLIENT_ID;
+  let account = 'DU1';
+  let session = 0;
   let orderId = 50;
   let reqId = 1000;
   const ib: IbConnection = {
     get api() {
       return connected ? api : null;
     },
-    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: 'h', port: 1, clientId, accounts: ['DU1'], account: 'DU1', isPaper: true, farms: {} }),
+    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: 'h', port: 1, clientId, session, accounts: [account], account, isPaper: account.startsWith('D'), farms: {} }),
     connect: async () => undefined,
     disconnect: async () => undefined,
     isConnected: () => connected,
@@ -48,7 +51,13 @@ function fakeIb() {
     },
     onReady: (l) => (ready.add(l), () => ready.delete(l)),
     onClosed: (l) => (closed.add(l), () => closed.delete(l)),
+    onSessionChange: (l) => (sessionChanged.add(l), () => sessionChanged.delete(l)),
     onRequestError: (l) => (reqErrors.add(l), () => reqErrors.delete(l)),
+  };
+  /** The socket closes (the services' onClosed). */
+  const close = () => {
+    connected = false;
+    closed.forEach((l) => l());
   };
   return {
     ib,
@@ -60,6 +69,21 @@ function fakeIb() {
     setClientId: (v: number) => void (clientId = v),
     /** A new IBApi instance, as after a host / port / client id change. */
     replaceApi: () => void (api = newApi()),
+    close,
+    /** A new session epoch without its event (another login on the same instance, mid-request). */
+    setSession: (v: number) => void (session = v),
+    /**
+     * Tape moves to another account or Gateway, as connection.ts does it: the socket closes, the
+     * session changes (epoch, event), then a new instance connects (ready() is up to the test).
+     */
+    switchSession: (to: string, reason: SessionChangeReason = 'params') => {
+      if (connected) close();
+      account = to;
+      session++;
+      sessionChanged.forEach((l) => l(reason));
+      api = newApi();
+      connected = true;
+    },
   };
 }
 
@@ -673,6 +697,205 @@ describe('OrderService', () => {
       t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { orderType: 'MOC' as never, lmtPrice: 0, totalQuantity: 3 }), { status: 'PreSubmitted' });
       await m2;
       expect(t.calls.at(-1)?.[0]).toBe('placeOrder');
+    });
+  });
+
+  describe('when Tape moves to another account or Gateway', () => {
+    const exec = (id: string, reqId: number, extra: object = {}) => ({
+      execId: id,
+      orderId: 40,
+      permId: 9040,
+      acctNumber: 'DU1',
+      side: 'BOT',
+      shares: 10,
+      price: 226.95,
+      avgPrice: 226.95,
+      time: '20261004 10:31:44 US/Eastern',
+      ...extra,
+    });
+    /** An order IBKR Mobile / TWS placed (order id 0, client 0) on the live account. */
+    const mobileGtc = (permId: number): Order => ({ ...lmt(0, 0, { account: 'U1', tif: 'GTC' as never }), orderId: 0, permId });
+    const listed = (t: ReturnType<typeof setup>) => t.svc.getOrders().map((o) => [o.clientId, o.orderId, o.account]);
+
+    /** The new session's handshake and first load (snapshot ends included). */
+    function loadNew(t: ReturnType<typeof setup>, load: () => void = () => undefined) {
+      t.calls.length = 0;
+      t.ready();
+      const execReqId = t.calls.find((c) => c[0] === 'reqExecutions')![1] as number;
+      load();
+      t.emit('openOrderEnd');
+      t.emit('execDetailsEnd', execReqId);
+      return execReqId;
+    }
+
+    it('forgets the previous account’s orders and fills at once, and lists only the new one’s', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { account: 'DU1' }), { status: 'Submitted' });
+      t.emit('execDetails', -1, ibAapl, exec('e.01.01', -1));
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(t.svc.getOrders()).toHaveLength(2);
+      expect(t.svc.getExecutions()).toHaveLength(1);
+      t.events.length = 0;
+      t.switchSession('U1');
+      // Before any timer runs: the renderer drops the paper rows before anything of the new session.
+      expect(t.events).toEqual([
+        { type: 'orders', orders: [] },
+        { type: 'executions', executions: [] },
+      ]);
+      expect(t.svc.getOrders()).toEqual([]);
+      expect(t.svc.getExecutions()).toEqual([]);
+      loadNew(t, () => t.emit('openOrder', 0, ibAapl, mobileGtc(1620569957), { status: 'PreSubmitted' }));
+      expect(listed(t)).toEqual([[0, 0, 'U1']]);
+    });
+
+    it('does not announce the new account’s open orders and fills as new', async () => {
+      const t = await loaded();
+      t.notices.length = 0;
+      t.switchSession('U1');
+      loadNew(t, () => {
+        // As on 10-13 19:08: four GTC orders from IBKR Mobile, and a fill from earlier in the day.
+        for (const permId of [1620569957, 2124812801, 780760062, 780759989]) t.emit('openOrder', 0, ibAapl, mobileGtc(permId), { status: 'PreSubmitted' });
+        t.emit('execDetails', t.calls.find((c) => c[0] === 'reqExecutions')![1], ibAapl, exec('e.09.01', 0, { acctNumber: 'U1' }));
+      });
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(t.notices).toEqual([]);
+      // What happens from now on is news.
+      t.emit('openOrder', 0, ibAapl, mobileGtc(780760062), { status: 'Cancelled' });
+      expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL cancelled']);
+    });
+
+    it('keeps orders and notice state across a plain reconnect, and announces fills found on it', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { account: 'DU1' }), { status: 'Submitted' });
+      t.notices.length = 0;
+      t.events.length = 0;
+      t.close();
+      t.setConnected(true);
+      const execReqId = loadNew(t, () => {
+        t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { account: 'DU1' }), { status: 'Submitted' });
+        // Filled while Tape was offline.
+        t.emit('execDetails', t.calls.find((c) => c[0] === 'reqExecutions')![1], ibAapl, exec('e.02.01', 0));
+      });
+      expect(execReqId).toBeGreaterThan(0);
+      expect(t.events.filter((e) => e.type === 'orders' && e.orders.length === 0)).toEqual([]);
+      expect(t.svc.getOrders().map((o) => o.orderId)).toEqual(expect.arrayContaining([7, 40]));
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(t.notices.map((n) => n.kind)).toEqual(['fill']);
+    });
+
+    it('refuses an order id the previous session sent, without sending anything', async () => {
+      const t = await loaded();
+      const p = t.svc.place(req);
+      await vi.advanceTimersByTimeAsync(2_000); // IB never answered: #50 counts as sent
+      await expect(p).resolves.toMatchObject({ orderId: 50 });
+      t.switchSession('U1');
+      loadNew(t);
+      t.calls.length = 0;
+      // On the new login, #50 is whatever order this client has with that id there.
+      await expect(t.svc.cancel(50)).rejects.toThrow('Order #50 was not found');
+      await expect(t.svc.modify(50, req)).rejects.toThrow('Order #50 was not found');
+      expect(t.calls).toEqual([]);
+    });
+
+    it('announces the rejection of an order whose id the previous account used, with its own state', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      t.emit('orderStatus', 40, 'Submitted', 30, 70, 226.95, 9040, 0, 226.95, CLIENT_ID, '');
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Inactive' });
+      t.error(40, 201, 'Order rejected - reason: margin');
+      const rejection = (n: NewNotification) => n.title.en.endsWith('rejected');
+      expect(t.notices.filter(rejection)).toHaveLength(1);
+      t.switchSession('U1');
+      loadNew(t);
+      vi.setSystemTime(Date.now() + 60_000);
+      t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { account: 'U1', permId: 777 }), { status: 'Inactive' });
+      t.error(40, 201, 'Order rejected - reason: no permissions');
+      const rejections = t.notices.filter(rejection).map((n) => n.body.en);
+      expect(rejections).toHaveLength(2);
+      expect(rejections[1]).toContain('no permissions');
+      // Nothing of the paper #40 carries over (its fills, its first-seen time).
+      expect(t.svc.getOrders().find((o) => o.orderId === 40)).toMatchObject({ account: 'U1', filled: 0, createdAt: Date.now() });
+    });
+
+    it('does not let a request the switch failed silence the new account’s notices for its ids', async () => {
+      const t = await loaded();
+      const p = t.svc.place(req);
+      const failed = expect(p).rejects.toThrow('Connection to TWS / IB Gateway closed');
+      await tick();
+      t.switchSession('U1');
+      await failed;
+      t.notices.length = 0;
+      loadNew(t);
+      t.emit('openOrder', 50, ibAapl, lmt(50, CLIENT_ID, { account: 'U1' }), { status: 'Inactive' });
+      t.error(50, 201, 'Order rejected - reason: margin');
+      expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL rejected']);
+    });
+
+    it('does not reuse the previous account’s preview', async () => {
+      const t = await loaded();
+      const a = t.svc.preview(req);
+      await tick();
+      const id = t.calls[0][1] as number;
+      t.emit('openOrder', id, ibAapl, { ...lmt(id), whatIf: true }, { status: 'PreSubmitted', initMarginChange: 4000, commission: 1 });
+      await expect(a).resolves.toMatchObject({ initMargin: { change: 4000 } });
+      t.switchSession('U1');
+      loadNew(t);
+      t.calls.length = 0;
+      const b = t.svc.preview(req);
+      await tick();
+      const sent = t.calls.filter((c) => c[0] === 'placeOrder');
+      expect(sent).toHaveLength(1);
+      expect(sent[0][3]).toMatchObject({ whatIf: true, account: 'U1' });
+      t.emit('openOrder', sent[0][1], ibAapl, { ...lmt(sent[0][1] as number), whatIf: true }, { status: 'PreSubmitted', initMarginChange: 15000, commission: 1 });
+      await expect(b).resolves.toMatchObject({ initMargin: { change: 15000 } });
+    });
+
+    it('gives the previous session’s pending fill notice before forgetting it', async () => {
+      const t = await loaded();
+      t.emit('execDetails', -1, ibAapl, exec('e.03.01', -1));
+      expect(t.notices).toEqual([]);
+      t.switchSession('U1');
+      // Within the 3 s wait for its commission: announced now, as the fill it is.
+      expect(t.notices.map((n) => [n.kind, n.title.en, n.body.en])).toEqual([['fill', 'AAPL: bought 10 shares', 'Avg 226.95 · Commission — · Order #40']]);
+      await vi.advanceTimersByTimeAsync(3_100);
+      expect(t.notices).toHaveLength(1);
+    });
+
+    it('refuses requests made for another session before sending anything', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+      t.setSession(2);
+      await expect(t.svc.place(req, 1)).rejects.toThrow(SESSION_CHANGED_MESSAGE);
+      await expect(t.svc.modify(40, req, 1)).rejects.toThrow(SESSION_CHANGED_MESSAGE);
+      await expect(t.svc.cancel(40, 1)).rejects.toThrow(SESSION_CHANGED_MESSAGE);
+      await expect(t.svc.preview(req, 1)).rejects.toThrow(SESSION_CHANGED_MESSAGE);
+      await expect(t.svc.cancelAll(1)).rejects.toThrow(SESSION_CHANGED_MESSAGE);
+      expect(t.calls).toEqual([]);
+      // The current session's requests go out.
+      const c = t.svc.cancel(40, 2);
+      expect(t.calls).toEqual([['cancelOrder', 40]]);
+      t.emit('orderStatus', 40, 'Cancelled', 0, 100, 0, 9040, 0, 0, CLIENT_ID, '');
+      await expect(c).resolves.toBeUndefined();
+    });
+
+    it('does not send an order when the login changes on the same instance while its contract is resolved', async () => {
+      const t = await loaded();
+      const release = t.holdLookups();
+      const p = t.svc.place({ ...req, contract: stock('AAPL') });
+      await tick();
+      t.setSession(1); // same IBApi instance and client id, another account
+      release();
+      await expect(p).rejects.toThrow(CONNECTION_CHANGED_MESSAGE);
+      expect(t.calls).toEqual([]);
+    });
+
+    it('never cancels or modifies an order of an account the login does not manage', async () => {
+      const t = await loaded();
+      t.emit('openOrder', 41, ibAapl, lmt(41, CLIENT_ID, { account: 'U9' }), { status: 'Submitted' });
+      const refused = 'Order #41 belongs to account U9, which is not connected; nothing was sent';
+      await expect(t.svc.cancel(41)).rejects.toThrow(refused);
+      await expect(t.svc.modify(41, req)).rejects.toThrow(refused);
+      expect(t.calls).toEqual([]);
     });
   });
 

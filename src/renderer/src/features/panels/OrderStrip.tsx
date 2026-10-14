@@ -2,9 +2,9 @@
 // IB's live status (stripModel.ts), with inline Modify / Cancel while it works and a × to dismiss
 // it. A rejection turns it red with IB's reason; the form keeps every value.
 
-import { contractKey } from '@shared/contract';
 import { f0 } from '@shared/format';
 import { useCommon } from '../../i18n/common';
+import { useConnectedExecutions, useConnectedOrders } from '../../state/connectedLists';
 import { useOrderFeedback } from '../../state/orderFeedback';
 import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
@@ -12,7 +12,7 @@ import { canModifyInTicket } from '../orders/model';
 import { modifyOrderInTicket } from './actions';
 import { usePanelMessages } from './messages';
 import type { PanelId } from './model';
-import { stripView, type StripTone, type StripView } from './stripModel';
+import { sentPosition, stripView, type StripTone, type StripView } from './stripModel';
 
 const TONE: Record<StripTone, string> = { busy: 'var(--dm)', working: 'var(--ac)', filled: 'var(--ac)', muted: 'var(--dm)', error: 'var(--r)' };
 
@@ -21,9 +21,9 @@ export function useStripView(id: PanelId): StripView | null {
   const sent = useOrderFeedback((s) => s.sent[id]);
   const m = usePanelMessages();
   const c = useCommon();
-  const orders = useStore((s) => s.orders);
-  const executions = useStore((s) => s.executions);
-  const position = useStore((s) => (sent ? (s.positions.find((p) => contractKey(p.contract) === sent.contractKey)?.quantity ?? 0) : 0));
+  const orders = useConnectedOrders();
+  const executions = useConnectedExecutions();
+  const position = useStore((s) => (sent ? sentPosition(sent, s.positions, s.connection.account) : 0));
   if (!sent) return null;
   return stripView(sent, { orders, executions, position }, m, (side) => (side === 'BUY' ? c.buyShort : c.sellShort));
 }

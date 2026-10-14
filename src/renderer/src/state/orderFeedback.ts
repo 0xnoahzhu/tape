@@ -1,6 +1,8 @@
 // The latest order sent from each floating panel (features/panels): its status strip and its
 // collapsed bar follow it from "Submitting…" to IB's live status. Orders sent from anywhere else
 // keep their toasts. Written by orderActions.ts; the live status comes from the store's orders.
+// The strips belong to the connection session they were sent on: they go when Tape moves to
+// another account or Gateway (state/sessionReset.ts).
 
 import { create } from 'zustand';
 import type { PanelId } from '../features/panels/model';
@@ -22,6 +24,8 @@ export interface SentOrder {
   positionBefore: number;
   orderId?: number;
   clientId?: number;
+  /** The account the order was sent to (the connected one then): an order of another account with the same ids is not this one. */
+  account?: string;
   error?: string;
   /** When IB accepted it (ms; the new order's highlight in the Trade page's activity panel: chart/activityModel.ts). */
   acceptedAt?: number;
@@ -35,6 +39,8 @@ interface FeedbackState {
   /** Updates the order `seq` of panel `id` (nothing when a newer one replaced it). */
   update(id: PanelId, seq: number, patch: Partial<SentOrder>): void;
   dismiss(id: PanelId): void;
+  /** Drops every panel's strip (Tape moved to another account or Gateway). */
+  clear(): void;
 }
 
 let seq = 0;
@@ -59,6 +65,7 @@ export const useOrderFeedback = create<FeedbackState>()((set) => ({
       delete sent[id];
       return { sent };
     }),
+  clear: () => set((s) => (Object.keys(s.sent).length ? { sent: {} } : s)),
 }));
 
 /** Whether a floating panel waits for IB's answer to its order (its submit button is disabled). */

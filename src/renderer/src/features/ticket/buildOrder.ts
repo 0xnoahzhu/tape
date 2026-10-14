@@ -468,14 +468,14 @@ export function reviewRows(req: OrderRequest, model: TicketModel, labels: Review
   return rows;
 }
 
-/** The review dialog payload handed to submitOrder(). */
+/** The review dialog payload handed to submitOrder() (which binds it to the connection session). */
 export function pendingOrder(
   req: OrderRequest,
   model: TicketModel,
   labels: ReviewLabels,
   market: Pick<TicketMarket, 'minTick' | 'refMinTick'>,
   modifyOrderId?: number | null,
-): PendingOrder {
+): Omit<PendingOrder, 'session'> {
   const side = req.action === 'BUY' ? labels.buy : labels.sell;
   return {
     request: req,

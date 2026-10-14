@@ -182,6 +182,8 @@ export const useM = createMessages({
     aLoss: (p: string) => `Down ${p} of the premium`,
     noAlerts: 'No risk alerts',
     notifTitle: (c: string) => `Option risk · ${c}`,
+    /** The account a risk notification is about: paper or live, and its id unless hidden. */
+    notifAccount: (paper: boolean, account: string) => `${paper ? 'PAPER' : 'LIVE'}${account ? ` ${account}` : ''}`,
     // States
     loadingChain: 'Loading option chain…',
     noChain: (sym: string) => `IB returned no option chain for ${sym}`,
@@ -292,6 +294,7 @@ export const useM = createMessages({
     aLoss: (p: string) => `亏损已达权利金的 ${p}`,
     noAlerts: '没有风险提醒',
     notifTitle: (c: string) => `期权风险 · ${c}`,
+    notifAccount: (paper: boolean, account: string) => `${paper ? '模拟' : '实盘'}${account ? ` ${account}` : ''}`,
     loadingChain: '正在加载期权链…',
     noChain: (sym: string) => `IB 未返回 ${sym} 的期权链`,
     chainError: (msg: string) => `期权链不可用：${msg}`,

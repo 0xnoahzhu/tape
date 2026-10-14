@@ -12,10 +12,20 @@
 // from then on, although the status says 'connected' until the socket's close event. Overlapping
 // closes of one socket all finish on that event, and a connect() made meanwhile starts after it
 // (and after the settings change), so it never reuses the instance being closed.
+//
+// Moving to another Gateway, client id or account starts a new session (ConnectionState.session,
+// onSessionChange): a host / port / client id change once the old socket has closed (also while
+// disconnected; the account is unknown until the new login names it), or managedAccounts listing
+// other accounts on unchanged parameters (the Gateway logged in to another user, e.g. its Live /
+// Paper switch), before anything of that login is requested. Services forget the previous
+// session's orders, fills and account values then; a plain reconnect keeps them. The connection
+// is never ready before managedAccounts has named the login's accounts: orders, account updates
+// and P&L requests name the account. Without it, Tape asks again (reqManagedAccts), and the
+// handshake timeout ends an attempt that never gets it.
 
 import { EventName, IBApi } from './tws';
 import type { ConnectionState } from '@shared/types';
-import type { IbConnection, IbListener, MainContext } from '../context';
+import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
 import {
   connectionNotices,
   connectionParams,
@@ -32,7 +42,10 @@ import { cleanIbMessage, farmUpdate, isErrorCode, isInfoCode } from './errorCode
 const RETRY_MS = 5_000;
 const MAX_RETRIES = 10;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
-/** nextValidId may arrive before managedAccounts; wait this long for the account list. */
+/**
+ * nextValidId may arrive before managedAccounts: after this long without the account list it is
+ * asked for again (the connection never becomes ready without it).
+ */
 const ACCOUNTS_WAIT_MS = 2_000;
 const HEARTBEAT_MS = 30_000;
 const CLOSE_WAIT_MS = 1_000;
@@ -66,6 +79,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   const registry = new Map<string, Set<IbListener>>();
   const readyListeners = new Set<(api: IBApi) => void>();
   const closedListeners = new Set<() => void>();
+  const sessionListeners = new Set<(reason: SessionChangeReason) => void>();
   const requestErrorListeners = new Set<(e: RequestError) => void>();
 
   const settings = () => ctx.store.getSettings().connection;
@@ -78,10 +92,16 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     host: params.host,
     port: params.port,
     clientId: params.clientId,
+    session: 0,
     accounts: [],
     isPaper: false,
     farms: {},
   };
+  /**
+   * The current session's accounts as managedAccounts listed them (sorted, comma-joined); null
+   * until the login of a session is known. Other accounts on the same parameters start a new session.
+   */
+  let sessionAccounts: string | null = null;
 
   /** The user wants to be connected (set by connect(), cleared by disconnect() or giving up). */
   let wanted = false;
@@ -118,6 +138,23 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   function setState(patch: Partial<ConnectionState>): void {
     state = { ...state, ...patch };
     ctx.emit({ type: 'connection', state });
+  }
+
+  /**
+   * Tape moves to another Gateway, client id or account: a new session. Its state (with `patch`)
+   * reaches the renderer before anything the services send for it, and the services forget the
+   * previous session's orders, fills and account values (onSessionChange) before the new one is
+   * ready. On new parameters the account is unknown until the new login lists its accounts.
+   */
+  function beginSession(reason: SessionChangeReason, patch: Partial<ConnectionState>): void {
+    const session = state.session + 1;
+    if (reason === 'params') sessionAccounts = null;
+    setState({ ...patch, session, ...(reason === 'params' ? { accounts: [], account: undefined, isPaper: false } : {}) });
+    ctx.apiLog.note('out', 'new session', [
+      ['reason', reason === 'params' ? 'host, port or client id changed' : 'other accounts'],
+      ['session', String(session)],
+    ]);
+    for (const l of [...sessionListeners]) safely(() => l(reason), 'session');
   }
 
   function notify(n: NoticeText): void {
@@ -244,10 +281,19 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   }
 
   function onManagedAccounts(api: IBApi, list: string): void {
+    // A late answer on a socket being closed belongs to the session that ends.
+    if (api !== inst || closing?.api === api) return;
     const accounts = parseAccounts(list);
-    const account = state.account && accounts.includes(state.account) ? state.account : accounts[0];
+    // Other accounts than the session's on unchanged parameters: the Gateway is logged in to
+    // another user now. A new session starts here, before nextValidId makes it ready.
+    const key = [...accounts].sort().join(',');
+    const other = key !== '' && sessionAccounts !== null && key !== sessionAccounts;
+    if (key) sessionAccounts = key;
+    const account = !other && state.account && accounts.includes(state.account) ? state.account : accounts[0];
     accountsKnown = true;
-    setState({ accounts, account, isPaper: isPaperAccount(account) });
+    const patch = { accounts, account, isPaper: isPaperAccount(account) };
+    if (other) beginSession('accounts', patch);
+    else setState(patch);
     if (gotValidId && !ready) becomeReady(api);
   }
 
@@ -256,7 +302,18 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     if (ready || api !== inst) return;
     gotValidId = true;
     if (accountsKnown) becomeReady(api);
-    else if (!accountsTimer) accountsTimer = setTimeout(() => becomeReady(api), ACCOUNTS_WAIT_MS);
+    // Never ready without the login's accounts (see the header): ask for them again.
+    else if (!accountsTimer) accountsTimer = setTimeout(() => askAccounts(api), ACCOUNTS_WAIT_MS);
+  }
+
+  function askAccounts(api: IBApi): void {
+    accountsTimer = null;
+    if (ready || accountsKnown || api !== inst || !socketOpen || closing?.api === api) return;
+    try {
+      api.reqManagedAccts();
+    } catch (err) {
+      console.error('[ib] reqManagedAccts failed:', err);
+    }
   }
 
   function becomeReady(api: IBApi): void {
@@ -552,7 +609,9 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     reconnectAfterChange = false;
     params = p;
     dropInstance();
-    setState({ host: p.host, port: p.port, clientId: p.clientId });
+    // Another Gateway or client id, maybe another login: a new session, also while disconnected
+    // (the old socket has closed and its onClosed listeners have run; no frame of it arrives now).
+    beginSession('params', { host: p.host, port: p.port, clientId: p.clientId });
     if (!reconnect) return;
     if (pending) {
       // A connect() made while the socket was closing went to the dropped instance.
@@ -629,6 +688,10 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     onClosed(listener) {
       closedListeners.add(listener);
       return () => void closedListeners.delete(listener);
+    },
+    onSessionChange(listener) {
+      sessionListeners.add(listener);
+      return () => void sessionListeners.delete(listener);
     },
     onRequestError(listener) {
       requestErrorListeners.add(listener);

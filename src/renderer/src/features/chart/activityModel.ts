@@ -39,6 +39,7 @@ export function isFreshOrder(o: WorkingOrder, sent: SentOrder | undefined, now: 
     sent.kind === 'place' &&
     sent.orderId === o.orderId &&
     sent.clientId === o.clientId &&
+    (sent.account == null || o.account == null || sent.account === o.account) &&
     sent.acceptedAt != null &&
     now - sent.acceptedAt < FRESH_MS
   );

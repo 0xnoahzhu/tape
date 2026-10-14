@@ -61,8 +61,10 @@ const LATE_REJECTION_MS = 5_000;
  * such a rejection replaces the success feedback with the failure and IB's reason.
  */
 function watchLateRejection(orderIds: number[], onReject: (reason: string) => void): void {
-  const clientId = useStore.getState().connection.clientId;
+  const { clientId, session } = useStore.getState().connection;
   const unsubscribe = useStore.subscribe((s, prev) => {
+    // Another account or Gateway: these ids name its orders now.
+    if (s.connection.session !== session) return stop();
     if (s.orders === prev.orders) return;
     const o = s.orders.find((x) => x.clientId === clientId && orderIds.includes(x.orderId) && x.status === 'Inactive');
     if (!o) return;
@@ -76,12 +78,17 @@ function watchLateRejection(orderIds: number[], onReject: (reason: string) => vo
   }
 }
 
+/** An order as the UI builds it: submitOrder binds it to the connection session it is submitted on. */
+export type OrderSubmission = Omit<PendingOrder, 'session'> & Partial<Pick<PendingOrder, 'session'>>;
+
 /**
  * Entry point for every order the UI sends. Shows the review dialog when
- * Settings › Trade › "Confirm before sending" is on, otherwise sends immediately.
+ * Settings › Trade › "Confirm before sending" is on, otherwise sends immediately. The order is
+ * bound to the current connection session: it is never sent to another account or Gateway.
  */
-export function submitOrder(p: PendingOrder): void {
+export function submitOrder(order: OrderSubmission): void {
   const s = useStore.getState();
+  const p: PendingOrder = { ...order, session: order.session ?? s.connection.session };
   if (s.settings.trading.confirmOrders) {
     s.setPendingOrder(p);
     return;
@@ -126,6 +133,7 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
         quantity: p.request.quantity,
         contractKey: key,
         positionBefore: s.positions.find((x) => contractKey(x.contract) === key)?.quantity ?? 0,
+        ...(s.connection.account ? { account: s.connection.account } : {}),
         ...(p.modifyOrderId != null ? { orderId: p.modifyOrderId, clientId: s.connection.clientId } : {}),
       })
     : 0;
@@ -163,14 +171,20 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
     if (toast()) s.showToast(m.notConnected, 'error');
     return false;
   }
+  // Reviewed on another account or Gateway: never sent to this one (main refuses it too).
+  if (p.session !== s.connection.session) {
+    if (panel) useOrderFeedback.getState().update(panel, seq, { phase: 'failed', error: m.sessionChanged });
+    if (toast()) s.showToast(m.sessionChanged, 'error');
+    return false;
+  }
   try {
     if (p.modifyOrderId != null) {
-      await window.tape.modifyOrder(p.modifyOrderId, p.request);
+      await window.tape.modifyOrder(p.modifyOrderId, p.request, p.session);
       s.patchTicket({ modifyingOrderId: null });
       accepted(p.modifyOrderId, m.orderModified(p.modifyOrderId));
       watchLateRejection([p.modifyOrderId], rejectedLater);
     } else {
-      const placed = await window.tape.placeOrder(p.request);
+      const placed = await window.tape.placeOrder(p.request, p.session);
       accepted(placed.orderId, m.orderSubmitted(p.summary));
       watchLateRejection([placed.orderId, ...placed.childOrderIds], rejectedLater);
     }
@@ -181,9 +195,14 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
   }
 }
 
-/** Asks for confirmation, then cancels a working order. */
+/**
+ * Asks for confirmation, then cancels a working order. The dialog belongs to the connection
+ * session it was opened on: it closes when Tape moves to another account or Gateway, and main
+ * refuses the cancel on any other session.
+ */
 export function confirmCancel(o: WorkingOrder): void {
   const s = useStore.getState();
+  const session = s.connection.session;
   const m = useCommon.now();
   const om = useOrdersMessages.now();
   const clock = currentClock();
@@ -200,9 +219,10 @@ export function confirmCancel(o: WorkingOrder): void {
     ],
     label: m.cancelOrderLabel,
     danger: true,
+    session,
     run: async () => {
       try {
-        await window.tape.cancelOrder(o.orderId);
+        await window.tape.cancelOrder(o.orderId, session);
       } catch (err) {
         useStore.getState().showToast(orderErrorText(err), 'error');
       }

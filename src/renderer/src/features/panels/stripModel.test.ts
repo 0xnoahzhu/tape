@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { stock } from '@shared/contract';
-import type { Execution, WorkingOrder } from '@shared/types';
+import type { Execution, Position, WorkingOrder } from '@shared/types';
 import type { SentOrder } from '../../state/orderFeedback';
 import { usePanelMessages } from './messages';
-import { orderCommission, stripView } from './stripModel';
+import { orderCommission, sentPosition, stripView } from './stripModel';
 
 const m = usePanelMessages.now();
 const side = (s: 'BUY' | 'SELL') => (s === 'BUY' ? 'Buy' : 'Sell');
@@ -97,6 +97,24 @@ describe('status strip', () => {
 
   it('matches only this client’s order of that id', () => {
     expect(stripView(sent(), live([order({ clientId: 0 })]), m, side).status).toBe('Sent');
+  });
+
+  it('never adopts another account’s order with the same client and order id', () => {
+    const paper = sent({ account: 'DUP899854' });
+    const v = stripView(paper, live([order({ account: 'U18630011' })]), m, side);
+    expect(v).toMatchObject({ status: 'Sent' });
+    expect(v.working).toBeUndefined();
+    expect(stripView(paper, live([order({ account: 'DUP899854' })]), m, side).working).toBeDefined();
+  });
+
+  it('compares positions only within the account the order went to', () => {
+    const pos = (account: string, quantity: number) => ({ account, key: 'STK:AAPL', contract: stock('AAPL'), quantity, avgPrice: 1, multiplier: 1, updatedAt: 0 }) as Position;
+    const paper = sent({ account: 'DUP899854' });
+    expect(sentPosition(paper, [pos('DUP899854', 300)], 'DUP899854')).toBe(300);
+    // Live connected now: its 40 shares are not the paper account's; no change is shown.
+    expect(sentPosition(paper, [pos('U18630011', 40)], 'U18630011')).toBe(200);
+    expect(sentPosition(sent(), [pos('DUP899854', 300)], 'DUP899854')).toBe(300);
+    expect(sentPosition(paper, [], 'DUP899854')).toBe(0);
   });
 
   it('adds commissions by permId (orderId when IB sent none)', () => {

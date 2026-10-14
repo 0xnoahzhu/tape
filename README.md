@@ -179,6 +179,13 @@ orders* under *API › Precautions* to send them. Overnight + day orders are SMA
 default; change it in *Settings › Connection › Advanced*, or set `TAPE_CLIENT_ID` for a development run). Orders
 belong to the client id that placed them; client id 0 also sees orders entered manually in TWS.
 
+**Switching accounts.** Changing the host, port or client id, or IB Gateway / TWS logging in to another user
+on the same port (paper ↔ live), starts afresh: the previous account's orders, trades, positions and account
+values are cleared at once, so one account's orders never show (or can be cancelled) under another. An order
+review or cancel confirmation opened before the switch closes without sending anything, and the new account's
+existing orders and today's fills are not announced as new. A plain reconnect to the same account keeps
+everything. Option risk notifications name the account they are about (paper or live).
+
 **Market data sharing and error 10197.** IBKR delivers real-time market data to one session per username.
 A paper account receives data only when *Share real-time market data subscriptions with paper trading
 account* is enabled for it (Client Portal › Settings › Account Settings › Paper Trading Account), and only

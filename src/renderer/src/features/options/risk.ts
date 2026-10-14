@@ -28,7 +28,10 @@ export type RiskRule = 'exp' | 'asg' | 'move' | 'loss';
 export type RiskSeverity = 'high' | 'warn' | 'info';
 
 export interface RiskAlert {
-  /** Stable id: rule + contract key (used for de-duplicating notifications). */
+  /**
+   * Stable id: rule + account + contract key (used for de-duplicating notifications, so one
+   * account's notice never silences the same alert for a position in another account).
+   */
   id: string;
   rule: RiskRule;
   severity: RiskSeverity;
@@ -67,25 +70,26 @@ export function computeRiskAlerts(
     const c = p.contract;
     if ((c.secType !== 'OPT' && c.secType !== 'FOP') || !p.quantity || !c.lastTradeDate || c.strike == null) continue;
     const key = contractKey(c);
+    const id = `${p.account}:${key}`;
     const q = quotes[key];
     const uq = underlyingQuote(p);
     const spot = lastOf(uq) ?? (q?.undPrice && q.undPrice > 0 ? q.undPrice : undefined);
     const short = p.quantity < 0;
 
     const days = daysToExpiry(c.lastTradeDate, now);
-    if (days >= 0 && days <= EXPIRY_WINDOW_DAYS) out.push({ id: `exp:${key}`, rule: 'exp', severity: 'warn', position: p, days });
+    if (days >= 0 && days <= EXPIRY_WINDOW_DAYS) out.push({ id: `exp:${id}`, rule: 'exp', severity: 'warn', position: p, days });
 
     if (short) {
       const delta = q?.delta;
       const itm = spot != null ? (c.right === 'C' ? spot > c.strike : spot < c.strike) : delta != null && Math.abs(delta) >= 0.5;
       const near = delta != null ? Math.abs(delta) >= ASSIGNMENT_DELTA : spot != null && (itm || Math.abs(spot / c.strike - 1) * 100 <= NEAR_MONEY_PCT);
-      if (near) out.push({ id: `asg:${key}`, rule: 'asg', severity: 'high', position: p, itm });
+      if (near) out.push({ id: `asg:${id}`, rule: 'asg', severity: 'high', position: p, itm });
     }
 
     const chg = uq && uq.close ? ((lastOf(uq) ?? uq.close) / uq.close - 1) * 100 : undefined;
     if (chg != null && Math.abs(chg) >= BIG_MOVE_PCT && !movedSymbols.has(c.symbol)) {
       movedSymbols.add(c.symbol);
-      out.push({ id: `move:${c.symbol}`, rule: 'move', severity: 'info', position: p, movePct: chg });
+      out.push({ id: `move:${p.account}:${c.symbol}`, rule: 'move', severity: 'info', position: p, movePct: chg });
     }
 
     // The positions table's P&L: the live mark (IB's mark, else the midpoint), else IB's portfolio
@@ -94,7 +98,7 @@ export function computeRiskAlerts(
     // unrealizedPct is in percent of |cost| (quantity × average price × multiplier).
     if (row.unrealized != null && row.unrealized < 0 && row.unrealizedPct != null) {
       const lossPct = -row.unrealizedPct;
-      if (lossPct >= (short ? 100 : 50)) out.push({ id: `loss:${key}`, rule: 'loss', severity: short ? 'warn' : 'info', position: p, lossPct });
+      if (lossPct >= (short ? 100 : 50)) out.push({ id: `loss:${id}`, rule: 'loss', severity: short ? 'warn' : 'info', position: p, lossPct });
     }
   }
   return out.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || (a.days ?? 99) - (b.days ?? 99));

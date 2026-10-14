@@ -1,9 +1,10 @@
 // Connects the store to the main process: loads the snapshot and applies push events.
 
 import type { TapeEvent } from '@shared/ipc';
-import type { ApiLogEntry, Quote } from '@shared/types';
+import type { ApiLogEntry, ConnectionState, Quote } from '@shared/types';
 import { openNotificationTarget } from '../features/orders/navigation';
 import { applyLockState } from './lockActions';
+import { resetSessionState } from './sessionReset';
 import { initialTicket, isCovered, useStore } from './store';
 
 const MAX_LOG = 5000;
@@ -128,6 +129,13 @@ export function withLoadedLog(held: ApiLogEntry[], loaded: ApiLogEntry[], max = 
   return appendLog(capped(loaded, max), held, max);
 }
 
+/** A new connection state; another session (account or Gateway) drops the previous one's (sessionReset.ts). */
+export function applyConnection(state: ConnectionState): void {
+  const prev = useStore.getState().connection.session;
+  useStore.setState({ connection: state });
+  if (state.session !== prev) resetSessionState();
+}
+
 function apply(e: TapeEvent): void {
   const set = useStore.setState;
   switch (e.type) {
@@ -135,7 +143,7 @@ function apply(e: TapeEvent): void {
       set({ settings: e.settings });
       break;
     case 'connection':
-      set({ connection: e.state });
+      applyConnection(e.state);
       break;
     case 'account':
       set({ account: e.summary });

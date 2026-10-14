@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import type { Position, Quote } from '@shared/types';
+import { useM } from './messages';
 import { computeRiskAlerts } from './risk';
+import { riskNotifTitle } from './riskWatcher';
 
 const now = new Date(2026, 9, 5);
 
@@ -60,5 +62,22 @@ describe('computeRiskAlerts', () => {
     const s = pos('20261120', 230, 'P', -1);
     const alerts = computeRiskAlerts([stk, e, s], { [s.key]: quote({ delta: -0.6 }) }, () => undefined, now);
     expect(alerts.map((x) => x.rule)).toEqual(['asg', 'exp']);
+  });
+});
+
+describe('risk alerts per account', () => {
+  it('gives the same contract in two accounts its own alert ids, so one account’s notice never silences the other’s', () => {
+    const paper = pos('20261009', 230, 'C', -1, 2, { account: 'DUP899854' });
+    const live = pos('20261009', 230, 'C', -1, 2, { account: 'U18630011' });
+    const ids = (p: Position) => computeRiskAlerts([p], {}, () => quote({ last: 235 }), now).map((a) => a.id);
+    expect(ids(paper)).toEqual([`asg:DUP899854:${paper.key}`, `exp:DUP899854:${paper.key}`]);
+    expect(ids(live).filter((id) => ids(paper).includes(id))).toEqual([]);
+  });
+
+  it('names the account in the notification, paper or live, without its id when ids are hidden', () => {
+    const [a] = computeRiskAlerts([pos('20261009', 250, 'C', 1, 2, { account: 'U18630011' })], {}, () => undefined, now);
+    expect(riskNotifTitle(a, useM.for('en'), false, true)).toBe('Option risk · AAPL 10/09 250 Call · LIVE U18630011');
+    expect(riskNotifTitle(a, useM.for('en'), true, false)).toBe('Option risk · AAPL 10/09 250 Call · PAPER');
+    expect(riskNotifTitle(a, useM.for('zh'), false, true)).toBe('期权风险 · AAPL 10/09 250 Call · 实盘 U18630011');
   });
 });

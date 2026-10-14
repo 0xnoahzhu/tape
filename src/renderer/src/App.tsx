@@ -56,7 +56,7 @@ function runCommand(command: AppCommand, dark: boolean): void {
       s.focusSearch();
       break;
     case 'cancel-last-order': {
-      const last = lastCancellableOrder(s.orders, s.connection.clientId);
+      const last = lastCancellableOrder(s.orders, s.connection.clientId, s.connection.accounts);
       if (last) confirmCancel(last);
       else s.showToast(useCommon.now().noWorkingOrders);
       break;

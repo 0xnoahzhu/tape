@@ -8,6 +8,7 @@ import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
 import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
+import { useConnectedExecutions, useConnectedOrders } from '../../state/connectedLists';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
 import { newestExecutions, workingOrders } from '../orders/model';
@@ -164,8 +165,9 @@ export function PortfolioPage() {
   const tab = usePortfolioUi((s) => s.tab);
   const account = useStore((s) => s.account);
   const rows = usePositionRows();
-  const orders = useStore((s) => s.orders);
-  const executions = useStore((s) => s.executions);
+  // Only the connected login's: another account's never show as this one's (connectedLists.ts).
+  const orders = useConnectedOrders();
+  const executions = useConnectedExecutions();
   const dayStart = useNyDayStart();
   const totals = useMemo(() => accountTotals(account, rows, todaysExecutions(executions, dayStart)), [account, rows, executions, dayStart]);
   const working = useMemo(() => workingOrders(orders), [orders]);

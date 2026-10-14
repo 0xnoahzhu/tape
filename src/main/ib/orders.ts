@@ -9,6 +9,15 @@
 // an order id and act only on orders of the connected client id; other clients' orders (TWS is
 // client 0) can only be cancelled with cancelAll (reqGlobalCancel).
 //
+// Orders, fills and notices belong to one session (ConnectionState.session). A plain reconnect
+// keeps them: nothing is announced twice, and fills found on reconnect are announced. Another
+// Gateway, client id or account (onSessionChange) starts empty at once, and its first load is not
+// announced: ids and permIds name that login's orders, so the previous session's would list
+// another account's orders as this one's, let a cancel or modify hit this login's order with the
+// same id, and silence or repeat its notices. The renderer passes the session the user reviewed a
+// request on: place / modify / cancel / preview / cancelAll refuse it on any other, before
+// anything is sent, and an order of an account the login does not manage is never acted on.
+//
 // Tape has no read-only switch of its own: with "Read-Only API" on in TWS / IB Gateway, IB rejects
 // orders with error 321, which reaches the caller (and the rejection notification) as IB's message.
 //
@@ -32,8 +41,9 @@
 // IB answers with openOrders flagged whatIf, which never become working orders: often one with the
 // commission and IB's notice, then one with the margin; the parts are merged, and the answer is
 // complete once the margin arrives or a moment after the last part. Previews run
-// one at a time, and an identical request within 10 s gets the same answer (IB asks for few
-// what-if requests).
+// one at a time, and an identical request for the same account within 10 s gets the same answer
+// (IB asks for few what-if requests); answers are not kept past the socket's close (the next
+// session may be another account).
 
 import { EventName, type CommissionReport, type Contract, type ContractDetails, type Execution as IbExecution, type IBApi, type Order, type OrderState } from './tws';
 import { contractLabel } from '@shared/contract';
@@ -74,14 +84,17 @@ const EMIT_MS = 100;
 const CONTRACT_LOOKUP_TIMEOUT_MS = 10_000;
 /** How long a what-if preview waits for IB's answer. */
 const PREVIEW_TIMEOUT_MS = 8_000;
-/** An identical preview request within this time gets the previous answer. */
+/** An identical preview request (same account, same socket) within this time gets the previous answer. */
 const PREVIEW_REUSE_MS = 10_000;
 /** How long a what-if answer without margin waits for IB's next part (the margin follows within ms). */
 const PREVIEW_SETTLE_MS = 400;
 
 export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
 export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
+/** A request reviewed on another session (account or Gateway) than the current one. */
+export const SESSION_CHANGED_MESSAGE = 'The connection switched to another account or Gateway; nothing was sent';
 export const PREVIEW_TIMEOUT_MESSAGE = 'IB did not answer the margin and commission preview in time';
+const CLOSED_MESSAGE = 'Connection to TWS / IB Gateway closed';
 
 interface Waiter {
   ids: Set<number>;
@@ -172,7 +185,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   let previewChain: Promise<unknown> = Promise.resolve();
   const previewCache = new Map<string, { at: number; result: Promise<OrderPreview> }>();
 
-  /** Notifications start after the first complete load (openOrderEnd / execDetailsEnd). */
+  /** Notifications start after the session's first complete load (openOrderEnd / execDetailsEnd). */
   let ordersLoaded = false;
   let executionsLoaded = false;
   let execReqId = -1;
@@ -182,6 +195,7 @@ export function createOrderService(ctx: MainContext): OrderService {
   let dirtyExecutions = false;
 
   const myClientId = () => ctx.ib.getState().clientId;
+  const sessionNow = () => ctx.ib.getState().session;
 
   // ---------------------------------------------------------------------------
   // Lists and emitting
@@ -519,14 +533,23 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   /**
+   * A request made for session `session` (the one the user reviewed it on) is refused on any
+   * other, before anything is sent: an order reviewed on paper never reaches live.
+   */
+  function requireSession(session: number | undefined): void {
+    if (session != null && session !== sessionNow()) throw new Error(SESSION_CHANGED_MESSAGE);
+  }
+
+  /**
    * The API instance to send an order on, after an `await`: still the session the order was
    * checked against. Another client id or Gateway (a new instance) would take the order id for
-   * a different order, so nothing is sent then.
+   * a different order, and another login on the same instance (a new session epoch) is another
+   * account, so nothing is sent then.
    */
-  function sameSession(api: IBApi, clientId: number): IBApi {
+  function sameSession(api: IBApi, clientId: number, session: number): IBApi {
     requireUnlocked();
     const now = requireApi();
-    if (now !== api || myClientId() !== clientId) throw new Error(CONNECTION_CHANGED_MESSAGE);
+    if (now !== api || myClientId() !== clientId || sessionNow() !== session) throw new Error(CONNECTION_CHANGED_MESSAGE);
     return now;
   }
 
@@ -599,13 +622,17 @@ export function createOrderService(ctx: MainContext): OrderService {
   /**
    * Announces a request IB refused, unless IB reported one of its orders as rejected (announce
    * does that one, with the same reason). Its orders IB has not reported are not announced again.
+   * `session`: the session the request was sent on. After a switch its ids name the new login's
+   * orders, whose notices must not be marked as given.
    */
-  function rejected(req: OrderRequest, orderIds: number[], reason: string): void {
-    const keys = orderIds.map((id) => orderKey(myClientId(), id, undefined));
-    if (keys.some((k) => rejectionNoticed.has(k))) return;
-    for (const k of keys) {
-      rejectionNoticed.add(k);
-      if (!orders.has(k)) notified.set(k, 'rejected');
+  function rejected(req: OrderRequest, orderIds: number[], reason: string, session: number): void {
+    if (session === sessionNow()) {
+      const keys = orderIds.map((id) => orderKey(myClientId(), id, undefined));
+      if (keys.some((k) => rejectionNoticed.has(k))) return;
+      for (const k of keys) {
+        rejectionNoticed.add(k);
+        if (!orders.has(k)) notified.set(k, 'rejected');
+      }
     }
     const o: NoticeOrder = {
       contract: req.contract,
@@ -627,13 +654,15 @@ export function createOrderService(ctx: MainContext): OrderService {
     notify(orderNotice(o, 'rejected', reason), req.contract, 'order', true);
   }
 
-  async function place(input: OrderRequest): Promise<PlaceOrderResult> {
+  async function place(input: OrderRequest, reviewed?: number): Promise<PlaceOrderResult> {
     requireUnlocked();
+    requireSession(reviewed);
     const checked = requireApi();
     const clientId = myClientId();
+    const session = sessionNow();
     const { req, conditionConIds, rules } = await prepare(input);
-    // A Gateway or client id switched to meanwhile (perhaps another account) does not get it.
-    const api = sameSession(checked, clientId);
+    // A Gateway, client id or account switched to meanwhile does not get it.
+    const api = sameSession(checked, clientId, session);
     const orderId = ctx.ib.nextOrderId();
     const built = buildOrders(req, {
       orderId,
@@ -654,7 +683,7 @@ export function createOrderService(ctx: MainContext): OrderService {
       await ack;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      rejected(req, ids, reason);
+      rejected(req, ids, reason, session);
       throw err;
     }
     return { orderId, childOrderIds: built.slice(1).map((b) => b.orderId) };
@@ -672,6 +701,10 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (!Number.isSafeInteger(orderId) || orderId === 0) throw new Error(`Order #${orderId} cannot be ${verb === 'modify' ? 'modified' : 'cancelled'} from Tape`);
     const key = orderKey(myClientId(), orderId, undefined);
     const own = orders.get(key);
+    // Backstop: the lists are emptied when the session changes, so an order of an account this
+    // login does not manage can only be a leftover; IB would apply the id to this login's order.
+    const { accounts } = ctx.ib.getState();
+    if (own?.account && !accounts.includes(own.account)) throw new Error(`Order #${orderId} belongs to account ${own.account}, which is not connected; nothing was sent`);
     if (own) return own;
     if (sentKeys.has(key)) return null;
     const other = [...orders.values()].find((o) => o.orderId === orderId);
@@ -713,10 +746,12 @@ export function createOrderService(ctx: MainContext): OrderService {
     if (problem) throw new Error(`Order #${existing.orderId} ${MODIFY_PROBLEM_TEXT[problem]} (IB refuses it); cancel it and place a new order`);
   }
 
-  async function modify(orderId: number, input: OrderRequest): Promise<void> {
+  async function modify(orderId: number, input: OrderRequest, reviewed?: number): Promise<void> {
     requireUnlocked();
+    requireSession(reviewed);
     const checked = requireApi();
     const clientId = myClientId();
+    const session = sessionNow();
     const current = modifiable(orderId);
     // IB replaces the whole order: attributes the request leaves out keep the order's own.
     const full = withOrderAttributes({ ...input, bracket: undefined }, current);
@@ -725,8 +760,8 @@ export function createOrderService(ctx: MainContext): OrderService {
     checkChanges(current, full);
     const { req, conditionConIds, rules } = await prepare(full);
     // While the contract was resolved, the connection may have changed (the order id would name
-    // another client's order, or a new one) and the order may have been filled or cancelled.
-    const api = sameSession(checked, clientId);
+    // another client's or account's order, or a new one) and the order may have been filled or cancelled.
+    const api = sameSession(checked, clientId, session);
     const existing = modifiable(orderId);
     const [main] = buildOrders(req, {
       orderId,
@@ -767,28 +802,37 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   /** IB's margin and commission estimate of a request (whatIf); see the header. */
-  async function preview(input: OrderRequest): Promise<OrderPreview> {
+  async function preview(input: OrderRequest, reviewed?: number): Promise<OrderPreview> {
     requireUnlocked();
+    requireSession(reviewed);
     requireApi();
-    const key = `${myClientId()}|${JSON.stringify({ ...input, bracket: undefined })}`;
+    // Margin is the account's: another account's answer is never reused (the cache is also
+    // emptied when the socket closes, see onClosed).
+    const session = sessionNow();
+    const key = `${myClientId()}|${ctx.ib.getState().account ?? ''}|${JSON.stringify({ ...input, bracket: undefined })}`;
     const now = Date.now();
     for (const [k, v] of previewCache) if (now - v.at > PREVIEW_REUSE_MS) previewCache.delete(k);
     const cached = previewCache.get(key);
     if (cached) return cached.result;
-    const result = previewChain.then(() => sendPreview(input));
+    const result = previewChain.then(() => sendPreview(input, session));
     previewChain = result.catch(() => undefined);
     previewCache.set(key, { at: now, result });
-    // A failed preview is not reused.
-    result.catch(() => previewCache.delete(key));
+    // A failed preview is not reused; a newer entry under the same key (the cache was emptied
+    // meanwhile) stays.
+    result.catch(() => {
+      if (previewCache.get(key)?.result === result) previewCache.delete(key);
+    });
     return result;
   }
 
-  async function sendPreview(input: OrderRequest): Promise<OrderPreview> {
+  async function sendPreview(input: OrderRequest, session: number): Promise<OrderPreview> {
     requireUnlocked();
+    // Queued behind other previews: the session it was asked on may have ended meanwhile.
+    requireSession(session);
     const checked = requireApi();
     const clientId = myClientId();
     const { req, conditionConIds, rules } = await prepare({ ...input, bracket: undefined });
-    const api = sameSession(checked, clientId);
+    const api = sameSession(checked, clientId, session);
     const orderId = ctx.ib.nextOrderId();
     const built = buildPreviewOrder(req, { orderId, account: ctx.ib.getState().account, conditionConIds, rules });
     return new Promise<OrderPreview>((resolve, reject) => {
@@ -816,8 +860,9 @@ export function createOrderService(ctx: MainContext): OrderService {
     });
   }
 
-  async function cancel(orderId: number): Promise<void> {
+  async function cancel(orderId: number, reviewed?: number): Promise<void> {
     requireUnlocked();
+    requireSession(reviewed);
     const api = requireApi();
     const existing = ownOrder(orderId, 'cancel');
     if (existing && !isOrderActive(existing.status)) throw new Error(`Order #${orderId} is already ${existing.status}`);
@@ -826,8 +871,9 @@ export function createOrderService(ctx: MainContext): OrderService {
     await ack;
   }
 
-  async function cancelAll(): Promise<void> {
+  async function cancelAll(reviewed?: number): Promise<void> {
     requireUnlocked();
+    requireSession(reviewed);
     requireApi().reqGlobalCancel();
   }
 
@@ -849,17 +895,48 @@ export function createOrderService(ctx: MainContext): OrderService {
     api.reqExecutions(execReqId, {});
   }
 
+  /** Requests still waiting for IB get no answer on a socket that has closed. */
+  function failWaiting(): void {
+    for (const w of [...waiters]) w.reject(new Error(CLOSED_MESSAGE));
+    for (const p of [...previews.values()]) p.reject(new Error(CLOSED_MESSAGE));
+  }
+
   function onClosed(): void {
-    for (const w of [...waiters]) w.reject(new Error('Connection to TWS / IB Gateway closed'));
-    for (const p of [...previews.values()]) p.reject(new Error('Connection to TWS / IB Gateway closed'));
+    failWaiting();
+    // The next session may be another account (a port change): its margin is not this one's.
+    previewCache.clear();
     symbolLookups.clear();
     symbolsRequested.clear();
+  }
+
+  /**
+   * Tape moved to another Gateway, client id or account (see the header): the previous session's
+   * orders, fills and notice state go at once, and the renderer gets the empty lists before
+   * anything of the new session. Instrument facts (symbols, SMART routing) stay.
+   */
+  function resetSession(): void {
+    // Notices still owed for the previous session (a fill waiting for its commission, a rejection
+    // for IB's reason) describe real events on that account: given now, not dropped.
+    for (const base of [...pendingFills.keys()]) announceFill(base);
+    for (const key of [...pendingRejections.keys()]) announceRejection(key);
+    // onClosed has failed them already; nothing of that session may answer them now.
+    failWaiting();
+    for (const m of [orders, keyByPermId, earlyStatus, executions, execAvgPrice, commissions, notified, orderErrors, echoes, previewCache]) m.clear();
+    sentKeys.clear();
+    rejectionNoticed.clear();
+    // The new account's open orders and today's fills are its first load, not news.
+    ordersLoaded = executionsLoaded = false;
+    execReqId = -1;
+    if (emitTimer) clearTimeout(emitTimer);
+    dirtyOrders = dirtyExecutions = true;
+    flush();
   }
 
   setImmediate(() => {
     const ib = ctx.ib;
     ib.onReady(onReady);
     ib.onClosed(onClosed);
+    ib.onSessionChange(resetSession);
     ib.onRequestError(onRequestError);
     ib.on(EventName.openOrder, onOpenOrder);
     ib.on(EventName.orderStatus, onOrderStatus);

@@ -16,13 +16,16 @@ type PreviewState = { status: 'loading' } | { status: 'done'; preview: OrderPrev
 /**
  * IBKR's what-if for the order as it stands (as in the review dialog), asked again a moment after
  * the user changes the ticket; prices that follow the market do not ask again (main also answers an
- * identical request from its last answer). The previous order's answer is dropped at once.
+ * identical request from its last answer). The previous order's answer is dropped at once, also
+ * when Tape moves to another account or Gateway (the margin is the account's).
  */
 function useWhatIf(T: TicketCtl, enabled: boolean): PreviewState | null {
   const [state, setState] = useState<PreviewState | null>(null);
   const request = useRef(T.composed);
   request.current = T.composed;
-  const key = enabled ? JSON.stringify([contractKey(T.symbol), T.t, T.session]) : null;
+  // T.session is the trading session; this is the connection's (another account or Gateway).
+  const connectionSession = useStore((s) => s.connection.session);
+  const key = enabled ? JSON.stringify([contractKey(T.symbol), T.t, T.session, connectionSession]) : null;
   useEffect(() => {
     if (!key) {
       setState(null);
@@ -31,7 +34,7 @@ function useWhatIf(T: TicketCtl, enabled: boolean): PreviewState | null {
     setState({ status: 'loading' });
     let alive = true;
     const timer = setTimeout(() => {
-      window.tape.previewOrder(request.current).then(
+      window.tape.previewOrder(request.current, connectionSession).then(
         (preview) => alive && setState({ status: 'done', preview }),
         (err: unknown) => alive && setState({ status: 'error', message: errorText(err) }),
       );

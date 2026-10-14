@@ -3,7 +3,9 @@
 // On every handshake: reqAccountSummary (headline values), reqAccountUpdates (portfolio with
 // market prices and P&L, exchange rates), reqPositions (cross-check), reqPnL (account P&L) and one
 // reqPnLSingle per position (daily, unrealized and realized P&L). Values are kept when the
-// connection drops.
+// connection drops and comes back to the same account. Another account or Gateway (a new session,
+// onSessionChange) starts empty at once: the renderer gets a null summary and no positions before
+// anything of the new session, so the previous account's values never show under it.
 
 import { EventName, type Contract, type IBApi } from './tws';
 import { contractKey, multiplierOf } from '@shared/contract';
@@ -211,13 +213,33 @@ export function createAccountService(ctx: MainContext): AccountService {
   // ---------------------------------------------------------------------------
   // IB events
 
+  /** Drops every value and tells the renderer at once (flush never sends a null summary). */
+  function clearValues(): void {
+    summary = null;
+    positions.clear();
+    if (emitTimer) clearTimeout(emitTimer);
+    emitTimer = null;
+    dirtySummary = dirtyPositions = false;
+    ctx.emit({ type: 'account', summary: null });
+    ctx.emit({ type: 'positions', positions: [] });
+  }
+
+  /**
+   * Tape moved to another Gateway, client id or account: the previous account's values go. Its
+   * subscriptions ended with the previous socket; contract details stay (they are the instrument's).
+   */
+  function resetSession(): void {
+    clearValues();
+    positionsSeen = null;
+    pnlSingleByConId.clear();
+    conIdByPnlReq.clear();
+    summaryReqId = pnlReqId = -1;
+  }
+
   function onReady(api: IBApi): void {
     const account = activeAccount();
-    if (summary && summary.account !== account) {
-      summary = null;
-      positions.clear();
-      markDirty(true, true);
-    }
+    // Values of another account (a session change has normally dropped them already).
+    if ((summary && summary.account !== account) || [...positions.values()].some((p) => p.account && p.account !== account)) clearValues();
     summaryReqId = ctx.ib.nextReqId();
     api.reqAccountSummary(summaryReqId, 'All', Object.keys(SUMMARY_TAGS).join(','));
     if (account) api.reqAccountUpdates(true, account);
@@ -243,6 +265,7 @@ export function createAccountService(ctx: MainContext): AccountService {
     const ib = ctx.ib;
     ib.onReady(onReady);
     ib.onClosed(onClosed);
+    ib.onSessionChange(resetSession);
 
     ib.on(EventName.accountSummary, (reqId: number, account: string, tag: string, value: string, currency: string) => {
       if (reqId !== summaryReqId || !isActive(account)) return;

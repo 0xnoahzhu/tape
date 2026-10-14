@@ -65,11 +65,32 @@ through the shared `MainContext` (never inside their factory).
 ### Connection
 
 `connect()` → `connecting` → server version, `managedAccounts`, `nextValidId` → `connected`, then
-every `onReady` listener (re)issues its requests; they run again after IB's 1101 (data lost). With
+every `onReady` listener (re)issues its requests; they run again after IB's 1101 (data lost). The
+connection is never ready before `managedAccounts` has named the login's accounts (orders, account
+updates and P&L name the account): without it 2 s after `nextValidId`, Tape asks again
+(`reqManagedAccts`), and the 15 s handshake timeout ends an attempt that never gets it. With
 auto-reconnect on, an unexpected close retries every 5 s, at most 10 times (`reconnecting`); so does
 a failed first attempt of the reconnect that a host / port / client id change starts. A failed
 manual connect is reported and not retried; `disconnect()` never reconnects. A `reqCurrentTime`
 heartbeat every 30 s measures latency.
+
+**Sessions.** Moving to another Gateway, client id or account starts a new session:
+`ConnectionState.session` increments and `onSessionChange(reason)` runs, between the previous
+session's `onClosed` and the next one's `onReady`. `'params'`: host, port or client id changed, once
+the old socket has closed (also while disconnected, e.g. a port changed after Tape gave up);
+`accounts`, `account` and `isPaper` are cleared in the same state, since the new login is unknown
+until its `managedAccounts`. `'accounts'`: `managedAccounts` on unchanged parameters lists other
+accounts than the session's (the Gateway logged in to another user, e.g. IB Gateway's Live / Paper
+switch on one port), before `nextValidId` makes it ready. The new session's `connection` event
+reaches the renderer before anything the services send for it. A plain reconnect (same parameters,
+same accounts) keeps the session, the account and paper / live, also through its retries: services
+keep their state, so nothing is announced twice. On a new session the services forget everything of
+the previous one at once: `orders.ts` its orders, fills and notice state, `account.ts` the summary
+(a null `account` event) and positions; the renderer drops its mirrors and what was opened on that
+session (`state/sessionReset.ts`: the order review, a cancel confirmation, the ticket's Modify, the
+panels' order strips) and lists orders and fills only of the login's accounts
+(`state/connectedLists.ts`, `lib/orders.ts → ofConnectedAccounts`; all of an advisor login's
+accounts). The API log notes each new session.
 
 ### Orders
 
@@ -83,6 +104,19 @@ and count as its own. Tape has no read-only mode of its own: with *Read-Only API
 Gateway, IB rejects orders with error 321, and the renderer's toast adds where to turn it off
 (`state/orderActions.ts → orderErrorText`). Saved settings that still have Tape's former read-only
 switch on get a one-time notice in the notification list saying so (`store.ts`).
+
+Orders, fills and notices belong to one session (see *Connection*). A plain reconnect keeps them:
+known orders are not announced again, and fills found on reconnect are. A new session starts empty,
+with the previous session's owed notices (a fill waiting for its commission, a rejection waiting for
+its reason) given first, and its first load (open orders, today's fills) is not announced: order ids
+and permIds name that login's orders, so keeping the previous ones would list another account's
+orders as this one's and let a cancel or modify hit this login's order with the same id. The
+renderer passes the session the user reviewed a request on (`PendingOrder.session`, a cancel
+dialog's `ConfirmRequest.session`, the what-if estimates): `placeOrder` / `modifyOrder` /
+`cancelOrder` / `previewOrder` / `cancelAllOrders` refuse it on any other session before sending
+anything, and so does the renderer itself; a login change during a request's contract lookup
+(`sameSession`) sends nothing either. `ownOrder` refuses an order of an account the login does not
+manage. What-if answers are reused per account and never past the socket's close.
 
 Time in force and trading session (`shared/orderTiming.ts`) are checked by the same rules in the
 order ticket, which disables choices that do not combine and says why, and in `orderBuilder.ts`,
@@ -834,7 +868,9 @@ delete open files):
 ## Renderer
 
 * `src/renderer/src/state/store.ts` — mirrored main state + cross-feature UI state (page, current
-  instrument, order ticket, dialogs). Feature-local UI state stays in the feature.
+  instrument, order ticket, dialogs). Feature-local UI state stays in the feature. A new connection
+  session (`ConnectionState.session`, see *Connection*) empties the mirrors and closes what was
+  opened on the previous one (`state/sessionReset.ts`, called by `bridge.ts`).
 * `src/renderer/src/features/<feature>/` — one folder per feature. Each feature declares its own
   strings with `createMessages({ en, zh })` (see `src/renderer/src/i18n/index.ts`).
 * `src/renderer/src/ui/primitives.tsx` — controls that reproduce the design (Toggle, Segmented,
@@ -1027,7 +1063,10 @@ disabled until IB answers; the review dialog (when enabled) works as before. The
 live status: pre-submitted / working → partially filled with progress → filled with the average price,
 the position change and the commission; cancelled; or IB's rejection in red (also the late Inactive /
 201 case) with "Fix and resubmit" — the form keeps its values. Inline Modify / Cancel while it works;
-× dismisses it; the next order replaces it. The new order flashes in the Trade page's activity panel
+× dismisses it; the next order replaces it. The strip remembers the account the order went to: it
+never adopts another account's order with the same ids, compares positions only within that account
+(`stripModel.ts → sentPosition`), and is dropped when Tape moves to another account or Gateway. The
+new order flashes in the Trade page's activity panel
 (`chart/activityModel.ts → isFreshOrder`, 15 s from IB's acceptance). An
 accepted order (placed or modified) always collapses the panel to its bar; a rejection keeps it
 expanded, and a late rejection expands a panel its order collapsed. The docked panels keep their
@@ -1089,7 +1128,9 @@ instrument (Strike on a stock) and "—" when it applies but IB has not sent the
 carried over from an older one. The default Price, Value, Unrl. P&L and Day P&L are calculations (the
 one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L group next to them.
 The bell's option risk alerts (`options/risk.ts`) measure a loss against the premium with the same row
-P&L (`positionRow`).
+P&L (`positionRow`). Their ids carry the position's account, so a notice given for one account never
+silences the same alert in another, and the notification names the account (paper or live, with its
+id unless account ids are hidden; `options/riskWatcher.ts`).
 
 | Group | Columns | Source |
 | --- | --- | --- |

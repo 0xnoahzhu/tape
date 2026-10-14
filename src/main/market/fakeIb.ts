@@ -4,7 +4,7 @@ import { OUT_MSG_ID, type IBApi, type ScannerSubscription, type TagValue } from 
 import type { TapeEvent } from '@shared/ipc';
 import { defaultSettings } from '@shared/defaults';
 import type { DeepPartial, PriceAlert, Settings } from '@shared/types';
-import type { IbConnection, IbListener, MainContext } from '../context';
+import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
 import { createMemoryDatabase } from '../db/memory';
 import { applySettingsPatch } from '../storeSchema';
 
@@ -40,6 +40,7 @@ export function createFakeIb(): FakeIb {
   const events = new Map<string, Set<IbListener>>();
   const readyListeners = new Set<(api: IBApi) => void>();
   const closedListeners = new Set<() => void>();
+  const sessionListeners = new Set<(reason: SessionChangeReason) => void>();
   const errorListeners = new Set<(e: { reqId: number; code: number; message: string }) => void>();
   let connected = false;
   let reqId = 1000;
@@ -86,7 +87,7 @@ export function createFakeIb(): FakeIb {
     get api() {
       return connected ? api : null;
     },
-    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: '127.0.0.1', port: 4002, clientId: 111, accounts: [], isPaper: true, farms: {} }),
+    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: '127.0.0.1', port: 4002, clientId: 111, session: 0, accounts: [], isPaper: true, farms: {} }),
     connect: async () => fake.ready(),
     disconnect: async () => fake.close(),
     isConnected: () => connected,
@@ -99,6 +100,7 @@ export function createFakeIb(): FakeIb {
     },
     onReady: (l) => add(readyListeners, l),
     onClosed: (l) => add(closedListeners, l),
+    onSessionChange: (l) => add(sessionListeners, l),
     onRequestError: (l) => add(errorListeners, l),
   };
   return fake;

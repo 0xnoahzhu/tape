@@ -23,7 +23,7 @@ describe('lock state in the renderer', () => {
     const request = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false } as const;
     useStore.setState({
       bellOpen: true,
-      pendingOrder: { request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL' },
+      pendingOrder: { request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 0 },
       confirm: { title: 'x', rows: [], label: 'y', run: () => undefined },
       alertForm: { contract: stock('AAPL'), condition: 'above', price: '1', repeat: false },
       pinDialog: { mode: 'change' },

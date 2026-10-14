@@ -43,6 +43,11 @@ import type { Database } from './db/types';
 import type { LockService } from './lock/service';
 
 export type Unsubscribe = () => void;
+/**
+ * Why a new session started (ConnectionState.session): 'params' when host, port or client id
+ * changed, 'accounts' when the Gateway on unchanged parameters reports other accounts (another login).
+ */
+export type SessionChangeReason = 'params' | 'accounts';
 // IB callbacks have heterogeneous signatures; listeners annotate their own parameters.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type IbListener = (...args: any[]) => void;
@@ -83,13 +88,21 @@ export interface IbConnection {
    */
   on(event: string, listener: IbListener): Unsubscribe;
   /**
-   * Called after every successful handshake (nextValidId received) and when IB drops the market data
-   * subscriptions (1101). Re-issue subscriptions here. A listener added while connected is also called
-   * for the running session (in a microtask) unless `current` is false: then only later ones count.
+   * Called after every successful handshake (managedAccounts and nextValidId received, so the
+   * login's accounts are known) and when IB drops the market data subscriptions (1101). Re-issue
+   * subscriptions here. A listener added while connected is also called for the running session
+   * (in a microtask) unless `current` is false: then only later ones count.
    */
   onReady(listener: (api: IBApi) => void, opts?: { current?: boolean }): Unsubscribe;
   /** Called when the socket closes for any reason. */
   onClosed(listener: () => void): Unsubscribe;
+  /**
+   * Called when Tape moves to another Gateway, client id or account (ConnectionState.session has
+   * just incremented): services forget everything of the previous session here. The order is
+   * onClosed (old session) → onSessionChange → onReady (new session); a host / port / client id
+   * change made while disconnected calls it too. A plain reconnect does not.
+   */
+  onSessionChange(listener: (reason: SessionChangeReason) => void): Unsubscribe;
   /** Errors that carry a request/order id (reqId >= 0). Info codes (2104 etc.) are not routed here. */
   onRequestError(listener: (e: { reqId: number; code: number; message: string; advancedOrderReject?: string }) => void): Unsubscribe;
 }
@@ -232,15 +245,20 @@ export interface AccountService {
   getPositions(): Position[];
 }
 
+/**
+ * The order and fill state of the current session. `session` on a request is the session
+ * (ConnectionState.session) the user reviewed it on: on any other the request is refused before
+ * anything is sent.
+ */
 export interface OrderService {
   getOrders(): WorkingOrder[];
   getExecutions(): Execution[];
-  place(req: OrderRequest): Promise<PlaceOrderResult>;
-  modify(orderId: number, req: OrderRequest): Promise<void>;
+  place(req: OrderRequest, session?: number): Promise<PlaceOrderResult>;
+  modify(orderId: number, req: OrderRequest, session?: number): Promise<void>;
   /** IB's margin and commission estimate of an order (whatIf); nothing is placed. */
-  preview(req: OrderRequest): Promise<OrderPreview>;
-  cancel(orderId: number): Promise<void>;
-  cancelAll(): Promise<void>;
+  preview(req: OrderRequest, session?: number): Promise<OrderPreview>;
+  cancel(orderId: number, session?: number): Promise<void>;
+  cancelAll(session?: number): Promise<void>;
   refreshExecutions(): Promise<void>;
 }
 

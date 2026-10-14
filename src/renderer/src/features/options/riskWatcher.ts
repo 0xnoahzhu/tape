@@ -1,6 +1,7 @@
 // Background evaluation of option risk alerts while connected: keeps greeks subscribed for
 // option positions and raises an in-app / OS notification (kind "opt") the first time an
-// alert appears — once per contract for expiries, once per day for the other rules.
+// alert appears — once per account and contract for expiries, once per day for the other rules.
+// The notification names the account (paper or live, and its id unless account ids are hidden).
 // Informational alerts (underlying moves, long-option losses) stay in the bell panel only.
 
 import { contractKey, contractLabel } from '@shared/contract';
@@ -8,7 +9,7 @@ import { ymd } from '@shared/format';
 import type { QuoteSubscription } from '@shared/types';
 import { setQuoteSubscriptions } from '../../state/quoteSubscriptions';
 import { useStore } from '../../state/store';
-import { useM } from './messages';
+import { useM, type DeskMessages } from './messages';
 import { computeRiskAlerts, isOptionPosition, quotableContract, underlyingFor, type RiskAlert } from './risk';
 import { riskMessage } from './RiskAlerts';
 
@@ -36,26 +37,35 @@ function remember(map: Record<string, string>): void {
   }
 }
 
+/** The notification title: the contract and the account the position is in. */
+export function riskNotifTitle(a: RiskAlert, m: DeskMessages, paper: boolean, showAccountId: boolean): string {
+  const account = m.notifAccount(paper, showAccountId ? a.position.account : '');
+  return m.notifTitle(`${contractLabel(a.position.contract)} · ${account}`);
+}
+
 function notifyNew(alerts: RiskAlert[]): void {
   const due = alerts.filter((a) => a.severity !== 'info');
   if (!due.length) return;
   const map = remembered();
   const today = ymd(Date.now());
+  const s = useStore.getState();
+  // The positions are the connected login's: paper or live is the login's.
+  const paper = s.connection.isPaper;
+  const showId = s.settings.appearance.showAccountId;
   let changed = false;
   for (const a of due) {
     const stamp = a.rule === 'exp' ? 'once' : today;
     if (map[a.id] === stamp) continue;
     map[a.id] = stamp;
     changed = true;
-    const label = contractLabel(a.position.contract);
     const en = useM.for('en');
     const zh = useM.for('zh');
     void window.tape
       .notify({
         kind: 'opt',
-        title: { en: en.notifTitle(label), zh: zh.notifTitle(label) },
+        title: { en: riskNotifTitle(a, en, paper, showId), zh: riskNotifTitle(a, zh, paper, showId) },
         body: { en: riskMessage(a, en), zh: riskMessage(a, zh) },
-        contract: underlyingFor(a.position.contract.symbol, useStore.getState().watchlists),
+        contract: underlyingFor(a.position.contract.symbol, s.watchlists),
       })
       .catch(() => undefined);
   }

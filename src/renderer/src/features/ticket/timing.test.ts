@@ -134,7 +134,7 @@ describe('withModifiedTiming', () => {
     createdAt: 0,
     updatedAt: 0,
   };
-  const state = { orders: [gtd, { ...gtd, orderId: 34, tif: 'DAY', goodTillDate: undefined, session: 'overnightDay', outsideRth: true }], connection: { clientId: 7 } } as Pick<
+  const state = { orders: [gtd, { ...gtd, orderId: 34, tif: 'DAY', goodTillDate: undefined, session: 'overnightDay', outsideRth: true }], connection: { clientId: 7, accounts: ['DU1'] } } as Pick<
     StoreState,
     'orders' | 'connection'
   >;
@@ -155,7 +155,9 @@ describe('withModifiedTiming', () => {
     expect(withModifiedTiming({ tif: 'GTC' }, state)).toEqual({ tif: 'GTC' });
     expect(withModifiedTiming({ modifyingOrderId: null }, state)).toEqual({ modifyingOrderId: null });
     // Another client's order with that id is not the one being modified.
-    expect(withModifiedTiming({ modifyingOrderId: 33, tif: 'DAY' }, { ...state, connection: { clientId: 8 } } as typeof state)).toEqual({ modifyingOrderId: 33, tif: 'DAY' });
+    expect(withModifiedTiming({ modifyingOrderId: 33, tif: 'DAY' }, { ...state, connection: { clientId: 8, accounts: ['DU1'] } } as typeof state)).toEqual({ modifyingOrderId: 33, tif: 'DAY' });
+    // Nor is an order of an account the login does not manage (left from another login).
+    expect(withModifiedTiming({ modifyingOrderId: 33, tif: 'DAY' }, { ...state, orders: [{ ...gtd, account: 'U1' }] })).toEqual({ modifyingOrderId: 33, tif: 'DAY' });
   });
 });
 

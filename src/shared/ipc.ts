@@ -161,17 +161,19 @@ export interface TapeApi {
   clearMarketDataCache(): Promise<void>;
 
   // Orders -----------------------------------------------------------------
-  placeOrder(req: OrderRequest): Promise<PlaceOrderResult>;
-  modifyOrder(orderId: number, req: OrderRequest): Promise<void>;
+  // `session`: the connection session (ConnectionState.session) the user reviewed the request
+  // on. Main refuses the call, sending nothing, once Tape has moved to another account or Gateway.
+  placeOrder(req: OrderRequest, session?: number): Promise<PlaceOrderResult>;
+  modifyOrder(orderId: number, req: OrderRequest, session?: number): Promise<void>;
   /**
    * IB's margin and commission estimate of an order (whatIf, the order without its bracket);
-   * nothing is placed. IB asks for few of these: an identical request within 10 s gets the
-   * previous answer.
+   * nothing is placed. IB asks for few of these: an identical request for the same account within
+   * 10 s gets the previous answer.
    */
-  previewOrder(req: OrderRequest): Promise<OrderPreview>;
-  cancelOrder(orderId: number): Promise<void>;
+  previewOrder(req: OrderRequest, session?: number): Promise<OrderPreview>;
+  cancelOrder(orderId: number, session?: number): Promise<void>;
   /** reqGlobalCancel: cancels every working order in the account. */
-  cancelAllOrders(): Promise<void>;
+  cancelAllOrders(session?: number): Promise<void>;
   /** Re-requests today's executions (reqExecutions). */
   refreshExecutions(): Promise<void>;
 

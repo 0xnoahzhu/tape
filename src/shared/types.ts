@@ -877,6 +877,13 @@ export interface ConnectionState {
   serverVersion?: number;
   /** Server connection time string as sent by TWS. */
   connTime?: string;
+  /**
+   * The session epoch: increments when Tape moves to another Gateway, client id or account (host,
+   * port or client id changed, or the Gateway reports other accounts). Everything of the previous
+   * session is gone then: its orders, fills and account values, and whatever was opened on them (an
+   * order review, a cancel confirmation). A plain reconnect to the same Gateway and account keeps it.
+   */
+  session: number;
   accounts: string[];
   account?: string;
   /** Paper accounts start with "D" (DU…, DF…). */

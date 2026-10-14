@@ -88,20 +88,21 @@ export function marginText(t: OrderPreview['initMargin']): { value: string; sub?
  * the review opens. IB answers like it would for the real order, so a refusal here is shown as
  * such; sending is never blocked by the estimate.
  */
-function OrderEstimate({ request }: { request: OrderRequest }) {
+function OrderEstimate({ request, session }: { request: OrderRequest; session: number }) {
   const m = useCommon().preview;
   const [state, setState] = useState<PreviewState>({ status: 'loading' });
   useEffect(() => {
     let alive = true;
     setState({ status: 'loading' });
-    window.tape.previewOrder(request).then(
+    // For the account the order was reviewed on only (main refuses another session).
+    window.tape.previewOrder(request, session).then(
       (preview) => alive && setState({ status: 'done', preview }),
       (err: unknown) => alive && setState({ status: 'error', message: errorText(err) }),
     );
     return () => {
       alive = false;
     };
-  }, [request]);
+  }, [request, session]);
   const rows: Array<{ label: string; value: string; sub?: string }> = [];
   if (state.status === 'done') {
     const p = state.preview;
@@ -184,7 +185,7 @@ export function OrderConfirmDialog() {
           right padding, so the rows keep the buttons' width (scrollGutter.ts). */}
       <div style={{ minHeight: 0, overflowY: 'auto', ...stableGutter, marginRight: 'calc(0px - var(--sbw, 0px))', display: 'grid', alignContent: 'start', gap: 18 }}>
         <KeyValueRows rows={p.rows} />
-        {estimate && <OrderEstimate request={p.request} />}
+        {estimate && <OrderEstimate request={p.request} session={p.session} />}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8, flexShrink: 0 }}>
         <Button kind="secondary" onClick={() => setPending(null)}>

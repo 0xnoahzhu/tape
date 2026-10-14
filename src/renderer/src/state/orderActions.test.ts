@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { TimeFormat } from '@shared/timeFormat';
 import type { Lang, OrderRequest, WorkingOrder } from '@shared/types';
-import { confirmCancel, orderErrorText, orderLine, sendOrder } from './orderActions';
+import { confirmCancel, orderErrorText, orderLine, sendOrder, submitOrder } from './orderActions';
 import { usePanels } from '../features/panels/panelStore';
 import { isPanelSending, useOrderFeedback } from './orderFeedback';
 import { useStore } from './store';
@@ -95,7 +95,7 @@ describe('order toasts', () => {
 
   it('a rejected order says where to turn off Read-Only API', async () => {
     placeOrder.mockRejectedValue(ipcError('placeOrder', IB_321));
-    await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL' })).resolves.toBe(false);
+    await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 0 })).resolves.toBe(false);
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `Order failed: ${IB_321} ${GATEWAY_HINT}` });
   });
 
@@ -103,7 +103,7 @@ describe('order toasts', () => {
     vi.useFakeTimers();
     try {
       placeOrder.mockResolvedValue({ orderId: 9, childOrderIds: [] });
-      await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL' })).resolves.toBe(true);
+      await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL', session: 0 })).resolves.toBe(true);
       expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 200 AAPL' });
       const order = (status: WorkingOrder['status'], message?: string): WorkingOrder => ({
         orderId: 9,
@@ -131,7 +131,7 @@ describe('order toasts', () => {
       expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'Order failed: Order rejected - reason:Display size should be a multiple of lot size.' });
 
       // Later rejections are left to the notification.
-      await sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL' });
+      await sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 200 AAPL', session: 0 });
       useStore.setState({ orders: [] });
       vi.advanceTimersByTime(5_000);
       useStore.setState({ orders: [order('Inactive')] });
@@ -164,8 +164,10 @@ describe('order toasts', () => {
     };
     confirmCancel(order);
     expect(useStore.getState().confirm!.rows.at(-1)).toEqual({ label: 'Type', value: 'Limit · DAY' });
+    // Bound to the session it was opened on: main refuses the cancel on another.
+    expect(useStore.getState().confirm!.session).toBe(0);
     await useStore.getState().confirm!.run();
-    expect(cancelOrder).toHaveBeenCalledWith(12);
+    expect(cancelOrder).toHaveBeenCalledWith(12, 0);
     expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: `${IB_321} ${GATEWAY_HINT}` });
 
     confirmCancel({ ...order, tif: 'GTD', goodTillDate: '20261009 16:00:00 US/Eastern', session: 'extended', outsideRth: true });
@@ -184,7 +186,7 @@ describe('order toasts', () => {
 
 describe('orders sent from a floating panel', () => {
   const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.56, tif: 'DAY', outsideRth: false };
-  const pending = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', origin: 'ticket' as const };
+  const pending = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', origin: 'ticket' as const, session: 0 };
   const working = (status: WorkingOrder['status'], message?: string): WorkingOrder => ({
     orderId: 31,
     clientId: 7,
@@ -336,5 +338,82 @@ describe('orders sent from a floating panel', () => {
     useStore.setState({ positions: [{ key: 'p', contract: stock('AAPL'), quantity: 200, avgPrice: 200 } as never] });
     await sendOrder(pending);
     expect(useOrderFeedback.getState().sent.ticket?.positionBefore).toBe(200);
+  });
+});
+
+describe('orders bound to the connection session', () => {
+  const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false };
+  const setSession = (session: number) => useStore.setState((s) => ({ connection: { ...s.connection, session } }));
+  const working = (status: WorkingOrder['status']): WorkingOrder => ({
+    orderId: 9,
+    clientId: 7,
+    key: '7:9',
+    contract: stock('AAPL'),
+    action: 'BUY',
+    orderType: 'LMT',
+    totalQuantity: 1,
+    limitPrice: 1,
+    tif: 'DAY',
+    outsideRth: false,
+    status,
+    filled: 0,
+    remaining: 1,
+    avgFillPrice: 0,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  beforeEach(() => {
+    setUp(4002);
+    useStore.setState((s) => ({ connection: { ...s.connection, clientId: 7 }, orders: [] }));
+    setSession(3);
+    for (const f of [placeOrder, modifyOrder, cancelOrder]) f.mockReset();
+  });
+  afterEach(() => setSession(0));
+
+  it('binds an order to the session it is submitted on and sends that session with it', async () => {
+    placeOrder.mockResolvedValue({ orderId: 9, childOrderIds: [] });
+    modifyOrder.mockResolvedValue(undefined);
+    submitOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL' });
+    // With a review it waits for the confirmation, bound to session 3.
+    const review = useStore.getState().pendingOrder;
+    if (review) {
+      expect(review.session).toBe(3);
+      await sendOrder(review);
+    }
+    expect(placeOrder).toHaveBeenCalledWith(request, 3);
+    await sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', modifyOrderId: 40, session: 3 });
+    expect(modifyOrder).toHaveBeenCalledWith(40, request, 3);
+  });
+
+  it('refuses an order reviewed on another session, without asking main', async () => {
+    await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 2 })).resolves.toBe(false);
+    await expect(sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', modifyOrderId: 40, session: 2 })).resolves.toBe(false);
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(modifyOrder).not.toHaveBeenCalled();
+    expect(useStore.getState().toast).toMatchObject({ tone: 'error', text: 'The connection switched to another account; the order was not sent' });
+  });
+
+  it('sends a cancel with the session its dialog was opened on', async () => {
+    cancelOrder.mockResolvedValue(undefined);
+    confirmCancel(working('Submitted'));
+    expect(useStore.getState().confirm?.session).toBe(3);
+    await useStore.getState().confirm!.run();
+    expect(cancelOrder).toHaveBeenCalledWith(9, 3);
+  });
+
+  it('stops watching for a late rejection once the session changes (the id names another account’s order)', async () => {
+    vi.useFakeTimers();
+    try {
+      placeOrder.mockResolvedValue({ orderId: 9, childOrderIds: [] });
+      await sendOrder({ request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 3 });
+      expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 1 AAPL' });
+      setSession(4);
+      useStore.setState({ orders: [working('Inactive')] });
+      expect(useStore.getState().toast).toMatchObject({ text: 'Submitted: Buy 1 AAPL' });
+    } finally {
+      vi.useRealTimers();
+      useStore.setState({ orders: [] });
+    }
   });
 });

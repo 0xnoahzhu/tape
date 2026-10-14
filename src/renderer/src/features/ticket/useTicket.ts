@@ -11,6 +11,7 @@ import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/t
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
+import { useConnectedOrders } from '../../state/connectedLists';
 import { submitOrder } from '../../state/orderActions';
 import { isPanelSending } from '../../state/orderFeedback';
 import { useStore, type TicketState } from '../../state/store';
@@ -49,14 +50,16 @@ export function useTicket(origin?: PanelId) {
   const patch = useStore((s) => s.patchTicket);
   const connected = useStore((s) => s.connection.status === 'connected');
   const feedIssue = useStore((s) => s.connection.marketDataIssue);
+  const myClientId = useStore((s) => s.connection.clientId);
+  const orders = useConnectedOrders();
   // The order being modified keeps its session (IB refuses to move it); the ticket shows that one.
   // Its TIF can only change between DAY and GTC, or to IOC (tifChangeAllowed).
-  const modifiedOrder = useStore((s) =>
-    s.ticket.modifyingOrderId == null ? undefined : s.orders.find((o) => o.orderId === s.ticket.modifyingOrderId && o.clientId === s.connection.clientId),
+  const modifyingOrderId = useStore((s) => s.ticket.modifyingOrderId);
+  const modifiedOrder = useMemo(
+    () => (modifyingOrderId == null ? undefined : orders.find((o) => o.orderId === modifyingOrderId && o.clientId === myClientId)),
+    [orders, modifyingOrderId, myClientId],
   );
   // OCA groups of this client's working orders, offered when an order joins a group.
-  const myClientId = useStore((s) => s.connection.clientId);
-  const orders = useStore((s) => s.orders);
   const ocaGroups = useMemo(() => [...new Set(orders.filter((o) => o.clientId === myClientId && o.oca?.group).map((o) => o.oca!.group))], [orders, myClientId]);
 
   const refContract = useMemo(() => conditionContract(symbol), [symbol]);

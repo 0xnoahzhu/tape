@@ -56,6 +56,8 @@ export const useCommon = createMessages({
     cancelOrderLabel: 'Cancel order',
     noWorkingOrders: 'No open orders',
     notConnected: 'Not connected to TWS / IB Gateway',
+    /** An order reviewed before Tape moved to another account or Gateway (ConnectionState.session). */
+    sessionChanged: 'The connection switched to another account; the order was not sent',
     readOnlyApiHint: (path: string) => `Turn off “Read-Only API” in ${path} to trade.`,
     /** IB's 10329: the API precautions block directly routed orders (the overnight-only session). */
     directRouteHint: (path: string) => `Overnight-only orders go directly to IBKR's OVERNIGHT venue: turn on “Bypass Redirect Order warning for Stock API orders” in ${path} to send them.`,
@@ -115,6 +117,7 @@ export const useCommon = createMessages({
     cancelOrderLabel: '撤单',
     noWorkingOrders: '没有挂单',
     notConnected: '未连接 TWS / IB Gateway',
+    sessionChanged: '连接已切换到其他账户，订单未发送',
     readOnlyApiHint: (path: string) => `如需交易，请在 ${path} 中关闭 “Read-Only API”。`,
     directRouteHint: (path: string) => `仅夜盘订单会直接发往 IBKR 的 OVERNIGHT 场所：如需发送，请在 ${path} 中勾选 “Bypass Redirect Order warning for Stock API orders”。`,
     sessions: { regular: '常规时段', extended: '盘前盘后', overnight: '夜盘', overnightDay: '夜盘 + 日盘' } as Record<TradingSession, string>,

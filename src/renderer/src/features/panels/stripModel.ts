@@ -3,8 +3,9 @@
 // filled with the average price, the position change and the commission; cancelled), or the
 // rejection with IB's reason. Pure: the order, executions and position come in as arguments.
 
+import { contractKey } from '@shared/contract';
 import { f0, MINUS, px, usd } from '@shared/format';
-import type { Execution, WorkingOrder } from '@shared/types';
+import type { Execution, Position, WorkingOrder } from '@shared/types';
 import type { SentOrder } from '../../state/orderFeedback';
 import type { PanelMessages } from './messages';
 
@@ -34,10 +35,28 @@ export interface StripView {
 
 const signedQty = (n: number) => (n < 0 ? MINUS : '') + f0(Math.abs(n));
 
-/** The order IB reports for the sent one (this client's id), if it has reported it. */
+/**
+ * The order IB reports for the sent one (this client's id, the account it went to), if it has
+ * reported it. Another account's order with the same client and order id is never adopted.
+ */
 export function sentWorkingOrder(sent: SentOrder, orders: readonly WorkingOrder[]): WorkingOrder | undefined {
   if (sent.orderId == null) return undefined;
-  return orders.find((o) => o.orderId === sent.orderId && (sent.clientId == null || o.clientId === sent.clientId));
+  return orders.find(
+    (o) =>
+      o.orderId === sent.orderId &&
+      (sent.clientId == null || o.clientId === sent.clientId) &&
+      (sent.account == null || o.account == null || o.account === sent.account),
+  );
+}
+
+/**
+ * The position the strip compares with the one before the order ("200 → 300"): the instrument's
+ * in the account the order went to. While another account is connected (`account`) that position
+ * is not known, and the one before is returned (no change is shown).
+ */
+export function sentPosition(sent: SentOrder, positions: readonly Position[], account: string | undefined): number {
+  if (sent.account != null && account !== sent.account) return sent.positionBefore;
+  return positions.find((p) => contractKey(p.contract) === sent.contractKey && (sent.account == null || !p.account || p.account === sent.account))?.quantity ?? 0;
 }
 
 /** Commission of the order's executions so far (undefined until IB has reported one). */
