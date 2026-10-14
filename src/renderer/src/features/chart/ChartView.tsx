@@ -22,7 +22,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
 import { change, compact, f2, signColor } from '@shared/format';
-import { nyClock, usEquitySession } from '@shared/session';
+import { sessionOpenSec } from '@shared/liveBars';
+import { usEquitySession } from '@shared/session';
+import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
 import { barSeconds, isSecondsTimeframe } from '@shared/timeframes';
 import type { Bar } from '@shared/types';
 import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../hooks/useQuotes';
@@ -38,14 +40,11 @@ import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
 import { PRICE_AXIS_W, PriceChart } from './PriceChart';
 import { missingBars, rangeLoaded, rangeStartSec } from './ranges';
-import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from './sessionQuote';
 import { TimeframeBar } from './TimeframeBar';
 import { useNow } from './useNow';
 import { useSize } from './useSize';
 
 const REFRESH_MS = 60_000;
-/** Extended hours open at 04:00 New York (the partial first bar of 2 to 4-hour bars). */
-const EXT_OPEN_MIN = 240;
 /** Header spacing from the design (px): view side padding, gap between price, bell and timeframes. */
 const PAD_X = 28;
 const HEADER_GAP = 24;
@@ -446,10 +445,4 @@ export function ChartView() {
       />
     </div>
   );
-}
-
-/** Unix seconds of today's 04:00 New York (extended hours open) at `now`. */
-function sessionOpenSec(now: Date): number {
-  const sec = Math.floor(now.getTime() / 1000);
-  return sec - (sec % 60) - (nyClock(now).minutes - EXT_OPEN_MIN) * 60;
 }

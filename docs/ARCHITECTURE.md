@@ -559,7 +559,8 @@ is too narrow for 1.25 px a bar; YTD takes a finer interval in the first weeks o
 its span with pages sized to what is missing (Max until IB's head timestamp; a refused page is
 asked again after its wait) and fits the view to it (up to 1,200 bars per screen) until the user
 pans or zooms. Between reloads a real-time last price extends the forming bar and starts the next
-ones on the interval's grid (`chartMath.ts → advanceLiveBars`); the live bars are kept between
+ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`; `chartMath.ts` re-exports it,
+and the moving averages come from `shared/indicators.ts → sma`); the live bars are kept between
 quotes until a reload reaches them, nothing is filled across the overnight break (the first bar
 starts at the 04:00 open), and delayed quotes (the account's market data type 3 / 4) never touch
 intraday bars, and seconds charts show a note. A reload of a seconds window, which slides with
@@ -1738,7 +1739,7 @@ formatter, pure and used by both processes:
   thinning ticks; zh and seconds labels thin out to coarser steps. Only clock steps get the wider
   gap: calendar steps (days and longer, and every step of 2 to 4-hour bars) label dates only and keep
   `TIME_TICK_GAP`, so a zoomed-out intraday axis shows the same dates in both formats. The header's
-  last-trade time (`sessionQuote.ts → etTime`), the symbol activity panel's order times
+  last-trade time (`shared/sessionQuote.ts → etTime`), the symbol activity panel's order times
   (`timeColumn(clock)`) and its status texts (`orderModel.ts → orderStatusText(o, labels, clock)`:
   "After 09:35 AM ET", "GTD 10/09 04:00 PM ET") use the clock as well. The good-after time is read by
   Portfolio › Orders' `parseGoodAfter`, so IB's UTC form ("20261005-13:35:00") and other zones

@@ -2,12 +2,12 @@
 
 import type { Timeframe } from '@shared/types';
 import type { MarketSession } from '@shared/session';
+import type { RefKind } from '@shared/sessionQuote';
 import type { ChartRange } from './ranges';
 import type { PickerSectionId } from './timeframePicker';
 import { createMessages } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useAttrM } from '../orders/attributeMessages';
-import type { RefKind } from './sessionQuote';
 import type { StatusLabels } from './orderModel';
 
 const statusEn: StatusLabels = {

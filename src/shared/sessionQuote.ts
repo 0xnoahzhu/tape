@@ -10,9 +10,9 @@
 // data; the caller then passes the latest daily bar's close. Without either, post and closed
 // fall back to the last trade vs the previous close.
 
-import { nyClock, usEquitySession, type MarketSession } from '@shared/session';
-import { CLOCK_24H, NEW_YORK_ZONE, wallClockAt, type Clock } from '@shared/timeFormat';
-import type { ContractRef, Quote } from '@shared/types';
+import { nyClock, usEquitySession, type MarketSession } from './session';
+import { CLOCK_24H, NEW_YORK_ZONE, wallClockAt, type Clock } from './timeFormat';
+import type { ContractRef, Quote } from './types';
 
 export type RefKind = 'close' | 'prev' | 'ext';
 

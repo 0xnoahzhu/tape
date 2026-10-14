@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { index, option, stock } from '@shared/contract';
-import { createClock } from '@shared/timeFormat';
-import type { Quote } from '@shared/types';
+import { index, option, stock } from './contract';
+import { createClock } from './timeFormat';
+import type { Quote } from './types';
 import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from './sessionQuote';
 
 const q = (fields: Partial<Quote>): Quote => ({ key: 'STK:AAPL', updatedAt: 0, ...fields });

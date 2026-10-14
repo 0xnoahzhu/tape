@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 import { create } from 'zustand';
 import { contractKey } from '@shared/contract';
 import type { ContractInfo, ContractRef } from '@shared/types';
-import { useStore } from '../../state/store';
 
 interface InfoState {
   /** null = IB does not know the contract. Missing = not loaded (yet). */
