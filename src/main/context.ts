@@ -27,6 +27,7 @@ import type {
   MarketDataCheckState,
   MarketDataType,
   ModifyOrderResult,
+  NewsProviders,
   Execution,
   HistoryPage,
   HistoryRequest,
@@ -248,6 +249,75 @@ export interface CorporateEventsService {
   getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
 }
 
+/** A headline IB listed for an instrument (reqHistoricalNews). */
+export interface NewsHeadline {
+  articleId: string;
+  /** Provider code ("BRFUPDN"). */
+  provider: string;
+  /** As IB writes it ("2026-10-14 13:30:00.0"); IB does not document its time zone. */
+  time: string;
+  /** IB's text without its metadata prefix ("{A:800015:L:en:K:n/a:C:0.97}"). */
+  text: string;
+}
+
+/** An instrument news alerts watch, and the provider codes they want (market/news.ts). */
+export interface NewsWatch {
+  key: string;
+  contract: ContractRef;
+  codes: string[];
+}
+
+/** One answered headline check of an instrument (NewsService.onPoll). */
+export interface NewsPoll {
+  key: string;
+  /** The provider codes asked. */
+  codes: string[];
+  /**
+   * The check's number (checks are numbered in the order they are sent, NewsService.sequence), and
+   * the previous answered check's of this instrument (undefined: the first of this app run).
+   */
+  seq: number;
+  prevSeq?: number;
+  /** When this check's request was sent. */
+  sentAt: number;
+  /** Headlines no earlier answer listed, oldest first (none for a provider's first answer). */
+  fresh: NewsHeadline[];
+  /** Every headline IB listed, newest first. */
+  listed: NewsHeadline[];
+}
+
+/** The last headline check of an instrument (NewsService.check). */
+export interface NewsCheck {
+  /** The last answered check's number (NewsPoll.seq) and when IB answered it (epoch ms). */
+  seq?: number;
+  checkedAt?: number;
+  /** What IB listed then, newest first. */
+  listed: NewsHeadline[];
+  /** IB's refusal or the timeout of the last check (cleared by an answer), English as given. */
+  error?: string;
+}
+
+/**
+ * News for alerts (market/news.ts): the login's API news providers, asked once per session, and
+ * background headline checks of the instruments news alerts watch.
+ */
+export interface NewsService {
+  /** The login's API news providers now. */
+  providers(): NewsProviders;
+  /** Same, after the answer IB owes (IPC getNewsProviders). */
+  loadProviders(): Promise<NewsProviders>;
+  /** The instruments to check and the codes each; replaces the previous set. */
+  watch(list: NewsWatch[]): void;
+  /** Checks an instrument next (an alert on it was just armed: its first answer marks where it starts). */
+  pollSoon(key: string): void;
+  /** The number the next check sent will carry: one numbered at or above it is sent after now. */
+  sequence(): number;
+  check(key: string): NewsCheck | undefined;
+  onPoll(listener: (poll: NewsPoll) => void): Unsubscribe;
+  /** The providers, or a check's error, changed. */
+  onChange(listener: () => void): Unsubscribe;
+}
+
 /**
  * The alerts engine (market/alerts.ts): keeps the list, evaluates it against quotes, price windows
  * and bars, and keeps the instruments of active alerts subscribed. Main is the only writer of
@@ -330,6 +400,7 @@ export interface MainContext {
   options: OptionsService;
   corporateEvents: CorporateEventsService;
   marketCheck: MarketCheckService;
+  news: NewsService;
   alerts: AlertService;
   account: AccountService;
   orders: OrderService;

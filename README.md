@@ -162,24 +162,29 @@ right-click menu or *Add for …* in the bell. The dialog shows the instrument a
   crosses 0), KDJ (golden / dead cross, K, D or J crosses a level), RSI (crosses a level, golden / dead
   cross) and BOLL (crosses a band), with Futu's default parameters, an interval (1m 5m 15m 30m 1h D W),
   *On bar close* or *Real time*, and a preview of the values the alert tests now;
-- *Events*: trading halted / resumed.
+- *Events*: trading halted / resumed, and *New headline* (stocks): headlines about the stock from the IB
+  login's API news feeds, picked as toggles. IBKR includes Briefing.com General Market Columns,
+  Briefing.com Analyst Actions and Dow Jones Newsletters by default (a new alert starts with those the login
+  has); others are paid API news subscriptions. These are analyst actions, market columns and newsletters, not company
+  filings or SEC announcements. The type is offered once Tape knows the login's news providers (connected).
 
 Types an instrument cannot have are greyed out with the reason (no volume for FX, indices and combos,
 turnover for stocks only, no bid / ask on indices). Values come with presets (−5 / −2 / +2 / +5 % of the
 last price, 1–10 %, multiples of the average volume, 1K / 5K / 10K) and amounts may be typed as *10M*,
 *1.5B*, *1000万* or *2亿*; the dialog says how far the market is ("From last +3.31%", "Now +1.24%") and
 whether the alert would fire at once. *Frequency*: *Only once* (it then turns itself off), *Once a day*
-or *Always on* (every time the condition is met again). US stocks choose their *sessions*.
-*Remarks* (up to 20 characters) show in the list and
+or *Always on* (every time the condition is met again). US stocks choose their *sessions* (not for news
+alerts: a headline is announced whenever it comes). *Remarks* (up to 20 characters) show in the list and
 the notification. ⏎ creates or saves, Esc cancels. Mistakes are
 shown under their field, and a full limit on the disabled button: 10 alerts of one type per instrument,
 200 in all, indicator alerts on at most 20 instrument + interval pairs.
 
 **Managing alerts** — Bell › Alerts lists them by instrument: what each watches, the value now, its
-frequency and remarks, and its status: *Paused*,
-*Triggered 10:31*, *Delayed 15 min*, *Waiting for 5 min of data*, *Outside selected sessions*,
-or in red when an alert that is on is not being watched (*Not monitored: market data line limit*,
-IB's error on the line, delayed data an alert that needs live data waits on);
+frequency and remarks (a news alert: its providers and the latest headline), and its status: *Paused*,
+*Triggered 10:31*, *Delayed 15 min*, *Waiting for 5 min of data*, *Outside selected sessions*, *Checking for
+headlines*, or in red when an alert that is on is not being watched (*Not monitored: market data line limit*,
+IB's error on the line, delayed data an alert that needs live data waits on, none of a news alert's providers
+on this IB login, IB refusing its headline check);
 the bell in the top bar then shows a red dot. A click edits an alert (one that is off can be turned on as
 it is saved), its switch pauses or resumes it and × deletes it after a confirmation; right-click also
 duplicates it or opens its chart. *Delete triggered* removes the one-time alerts that have fired. With more
@@ -200,7 +205,13 @@ session optional). *Once a day* means once per New York trading day, which begin
 when it is created or turned on. Indicator alerts read the chart's bars (formulas in
 `docs/ARCHITECTURE.md`, *Alerts*); *On bar close* fires when a bar closes (a daily bar at the regular
 close, a weekly bar at the regular close of its week's last trading day) and counts in the bar's own
-session, so an alert limited to regular hours still fires on the bar that closes at 16:00. At most 20 alert notifications go
+session, so an alert limited to regular hours still fires on the bar that closes at 16:00. News alerts hold no market data line: Tape asks IB for the stock's
+latest headlines about every 5 minutes, in the background, and announces those that came after the alert's
+first check (*NVDA: new headline — …*, the provider in the text); with several new ones the notification
+names the newest and counts the rest. That check is made when the alert is created or turned on, or, while
+Tape is disconnected or not yet connected, about 5 s after it connects. Headlines published while Tape is
+not running, or before an alert's first check (also during a disconnect), are not announced; those that
+come during a later disconnect are, at the next check. At most 20 alert notifications go
 out a minute; the rest are folded into one. An alert whose instrument gets none of Tape's 95 market data
 lines is reported once.
 
@@ -349,6 +360,11 @@ connected from a different IP address"). Log out of the other session, or use a 
 access. Account data, positions, orders and contract search keep working in the meantime, and Tape shows the
 reason next to the affected quotes and charts.
 
+**News for alerts.** *New headline* alerts read IBKR's API news, which is set per username and is separate
+from the news shown in TWS: Tape lists what IB Gateway / TWS reports for the login (asked once per
+connection to an account). When the login has no API news feed, the alert type is greyed out; when IBKR
+refuses a feed (for example error **10276** "News feed is not allowed"), the alert shows it in red.
+
 IBKR's own guide: [TWS configuration for API use](https://www.interactivebrokers.com/docs/tws-api/doc/tws-settings/tws-configuration-for-api-use/introduction)
 (also under *Help › API settings help*).
 
@@ -387,7 +403,7 @@ builds).
 | `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
 | `TAPE_FAKE_BIOMETRICS=[touchId:\|windowsHello:]ok\|fail\|cancel\|unavailable` | Development builds only: a fake Touch ID / Windows Hello that never shows a system prompt (ignored when packaged) |
-| `TAPE_LIVE_IB=<host:port>` | Enables `src/main/ib/live.test.ts`, which connects to a logged-in **paper** TWS / IB Gateway (set `TAPE_CLIENT_ID` to an unused id); it places a BUY 1 AAPL limit order at 1.00 and cancels it |
+| `TAPE_LIVE_IB=<host:port>` | Enables `src/main/ib/live.test.ts`, which connects to a logged-in **paper** TWS / IB Gateway (set `TAPE_CLIENT_ID` to an unused id); it reads the login's API news providers and AAPL's latest headlines, places a BUY 1 AAPL limit order at 1.00 and cancels it |
 
 `scripts/capture.ts` wraps the capture variables for a built app:
 `node scripts/capture.ts --out out --dir /tmp/shots --steps steps.json [--demo] [--connect --client-id <n>]`.
@@ -469,7 +485,7 @@ src/
     db/              tape.db: SQLite (node:sqlite) in a worker thread, in-memory fallback
     ib/              connection, account, orders, API log
       tws/           dependency-free TWS API client: socket, encoder / decoder, send queue, pacing
-    market/          contracts, quotes, history, depth, options, alerts engine, demo simulator
+    market/          contracts, quotes, history, depth, options, alerts engine, news for alerts, demo simulator
     notifications.ts in-app list + OS notifications
     appearance.ts    theme and theme-matched icons
     finderIcon.ts    macOS: the bundle's Finder icon follows the theme

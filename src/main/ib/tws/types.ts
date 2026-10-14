@@ -422,6 +422,15 @@ export interface WshEventData {
 }
 
 /**
+ * An API news provider of the login (the newsProviders event; EClient's NewsProvider), e.g.
+ * { providerCode: 'BRFUPDN', providerName: 'Briefing.com Analyst Actions' }.
+ */
+export interface NewsProvider {
+  providerCode: string;
+  providerName: string;
+}
+
+/**
  * Market scanner request (reqScannerSubscription; EClient's ScannerSubscription). Unset fields
  * are sent as empty ones; `instrument`, `locationCode` and `scanCode` are names from IB's scanner
  * parameters (e.g. 'STK', 'STK.US.MAJOR', 'TOP_PERC_GAIN'). Market caps are in millions of USD.

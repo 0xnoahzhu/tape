@@ -479,6 +479,12 @@ describe('sanitizeAlerts', () => {
     expect(ok({ type: 'askBelow', value: Infinity })).toBe(false);
     expect(ok({ type: 'halt', dir: 'resumed' })).toBe(true);
     expect(ok({ type: 'halt', dir: 'paused' })).toBe(false);
+    expect(ok({ type: 'news', providers: ['BRFG', 'DJNL'] })).toBe(true);
+    expect(ok({ type: 'news', providers: ['BRFG; DROP'] })).toBe(false);
+    // Dow Jones codes carry a hyphen; "+" joins codes in the request, so it is never part of one.
+    expect(ok({ type: 'news', providers: ['DJ-N', 'DJ-RTA'] })).toBe(true);
+    expect(ok({ type: 'news', providers: ['BRFG+DJNL'] })).toBe(false);
+    expect(ok({ type: 'news', providers: [] })).toBe(false);
     const ind = (signal: unknown, extra: Record<string, unknown> = {}) => ok({ type: 'indicator', timeframe: '1h', on: 'live', signal, ...extra });
     expect(ind({ ind: 'ma', kind: 'price', period: 20, cross: 'up' })).toBe(true);
     expect(ind({ ind: 'ma', kind: 'price', period: 20, cross: 'up' }, { timeframe: '3m' })).toBe(false);

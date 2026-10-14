@@ -1,7 +1,9 @@
 // Encoder regression tests. The snapshots of the server version 176 / 193 outputs were recorded
 // while every request was also encoded by @stoqey/ib (token arrays identical at 176..193); they
 // keep guarding the wire format now that @stoqey/ib is no longer a dependency. When it is
-// installed (e.g. temporarily, to re-verify), the full differential comparison runs again.
+// installed (e.g. temporarily, to re-verify), the full differential comparison runs again. The news
+// requests (reqNewsProviders, reqHistoricalNews) came later: their snapshots follow EClient's field
+// order, checked by hand in news.test.ts, not against @stoqey/ib.
 
 import { describe, expect, it } from 'vitest';
 import * as conditions from './conditions.ts';
@@ -266,6 +268,13 @@ function requestCases(): Case[] {
     { name: 'cancelOrder CME tagging', method: 'cancelOrder', args: [11, { extOperator: 'op', manualOrderIndicator: 1 }] },
     { name: 'reqGlobalCancel default', method: 'reqGlobalCancel', args: [{ manualOrderCancelTime: undefined, extOperator: '', manualOrderIndicator: undefined }] },
     { name: 'reqGlobalCancel CME tagging', method: 'reqGlobalCancel', args: [{ extOperator: 'op', manualOrderIndicator: 0 }] },
+    { name: 'reqNewsProviders', method: 'reqNewsProviders', args: [] },
+    { name: 'reqHistoricalNews latest', method: 'reqHistoricalNews', args: [9030, 265598, 'BRFG+BRFUPDN+DJNL', '', '', 10, undefined] },
+    {
+      name: 'reqHistoricalNews range and options',
+      method: 'reqHistoricalNews',
+      args: [9031, 4815747, 'DJ-N', '2026-10-13 00:00:00.0', '2026-10-14 00:00:00.0', 300, [{ tag: 'a', value: '1' }]],
+    },
   ];
   for (const [label, c] of Object.entries(contracts)) {
     cases.push({ name: `reqMktData ${label}`, method: 'reqMktData', args: [9020, c, '', false, false] });

@@ -4,8 +4,9 @@
 //   TAPE_LIVE_IB=127.0.0.1:4002 TAPE_CLIENT_ID=165 pnpm vitest run src/main/ib/live.test.ts
 //
 // It connects, loads account / positions / orders / executions, checks the API log and its
-// on-demand streaming, tries to place a GTC limit order far below the market (rejected when the
-// API is read-only; otherwise cancelled right away and checked to be gone), and lets a settings
+// on-demand streaming, lists the login's API news providers and AAPL's latest headlines, tries to
+// place a GTC limit order far below the market (rejected when the API is read-only; otherwise
+// cancelled right away and checked to be gone), and lets a settings
 // change fail its first attempt (closed port) to check that it retries. Use a client id no other
 // program uses.
 //
@@ -203,6 +204,46 @@ describe.skipIf(!live)('live IB Gateway', async () => {
     console.log('entries', entries.length, 'with unnamed fields:', [...new Set(unnamed.map((e) => e.name))].join(', ') || 'none');
     for (const e of entries.slice(0, 12)) console.log(e.dir, e.name, e.reqId ?? '-', e.fields.map(([k, v]) => `${k}=${v}`).join('  ').slice(0, 160));
     console.log('farms', JSON.stringify(ctx.ib.getState().farms), 'latency', ctx.ib.getState().latencyMs, 'lastError', JSON.stringify(ctx.ib.getState().lastError));
+  });
+
+  it("lists the login's news providers and a stock's latest headlines (read-only)", async () => {
+    const api = ctx.ib.api;
+    if (!api) throw new Error('Not connected');
+    const providers = await new Promise<Array<{ providerCode: string; providerName: string }>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('No newsProviders within 10 s')), 10_000);
+      const off = ctx.ib.on('newsProviders', (list: Array<{ providerCode: string; providerName: string }>) => {
+        clearTimeout(timer);
+        off();
+        resolve(list);
+      });
+      api.reqNewsProviders();
+    });
+    console.log('news providers', JSON.stringify(providers));
+    expect(Array.isArray(providers)).toBe(true);
+    if (!providers.length) return;
+    const reqId = ctx.ib.nextReqId();
+    const rows: unknown[][] = [];
+    const outcome = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => done('no answer within 20 s'), 20_000);
+      const offs = [
+        ctx.ib.on('historicalNews', (id: number, ...rest: unknown[]) => void (id === reqId && rows.push(rest))),
+        ctx.ib.on('historicalNewsEnd', (id: number, hasMore: boolean) => id === reqId && done(`end, hasMore=${hasMore}`)),
+        ctx.ib.onRequestError((e) => e.reqId === reqId && done(`error ${e.code} ${e.message}`)),
+      ];
+      function done(what: string) {
+        clearTimeout(timer);
+        for (const off of offs) off();
+        resolve(what);
+      }
+      // AAPL's conId; the latest 5 headlines of every provider of the login.
+      api.reqHistoricalNews(reqId, 265598, providers.map((p) => p.providerCode).join('+'), '', '', 5);
+    });
+    console.log('AAPL headlines:', outcome);
+    for (const r of rows) console.log('  ', JSON.stringify(r));
+    // Each row: time, provider code, article id, headline.
+    for (const r of rows) expect(r).toHaveLength(4);
+    const named = ctx.apiLog.getEntries().filter((e) => e.name === 'historicalNews' || e.name === 'newsProviders');
+    expect(named.every((e) => !e.fields.some(([k]) => /^f\d+$/.test(k)))).toBe(true);
   });
 
   it('streams the API log only while a view asks for it', async () => {

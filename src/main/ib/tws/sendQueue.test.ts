@@ -260,6 +260,7 @@ describe('SendQueue lanes', () => {
       M.REQ_MANAGED_ACCTS,
       M.REQ_CONTRACT_DATA,
       M.REQ_SEC_DEF_OPT_PARAMS,
+      M.REQ_NEWS_PROVIDERS,
     ])
       expect(laneOf(id)).toBe(Lane.Control);
     for (const id of [
@@ -274,6 +275,7 @@ describe('SendQueue lanes', () => {
       M.REQ_MATCHING_SYMBOLS,
       M.REQ_SCANNER_SUBSCRIPTION,
       M.CANCEL_SCANNER_SUBSCRIPTION,
+      M.REQ_HISTORICAL_NEWS,
     ])
       expect(laneOf(id)).toBe(Lane.MarketData);
   });

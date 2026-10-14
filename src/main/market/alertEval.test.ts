@@ -5,11 +5,13 @@ import {
   alertSignature,
   alertSubscriptions,
   alertTexts,
+  cooldownMs,
   COOLDOWN_MS,
   gate,
   initialGate,
   isTriggered,
   measure,
+  newsTexts,
   REARM_BAND,
   type GateState,
   type Measure,
@@ -215,6 +217,7 @@ describe('alertSubscriptions', () => {
       alert({ id: 'c', contract: stock('AAPL'), active: false }),
       alert({ id: 'd', contract: stock('MSFT'), unsupported: true, active: false }),
       alert({ id: 'e', contract: option('NVDA', '20261016', 120, 'C'), rule: { type: 'volumeAbove', shares: 100 } }),
+      alert({ id: 'f', contract: stock('TSLA'), rule: { type: 'news', providers: ['BRFG'] } }),
     ]);
     expect(subs.map((s) => [s.contract.symbol, s.contract.secType, s.profile])).toEqual([
       ['NVDA', 'STK', 'vwap'],
@@ -300,5 +303,35 @@ describe('alertTexts', () => {
     expect(ind({ ind: 'rsi', kind: 'level', period: 6, level: 80, cross: 'up' }, '1h')).toEqual({ en: 'NVDA RSI(6) rose above 80 · 1h', zh: 'NVDA RSI(6) 升破 80 · 1小时' });
     expect(ind({ ind: 'boll', kind: 'band', period: 20, k: 2, band: 'upper', cross: 'up' }, '1D')).toEqual({ en: 'NVDA broke above the upper Bollinger band · D', zh: 'NVDA 突破布林上轨 · 日K' });
     expect(ind({ ind: 'kdj', kind: 'cross', n: 9, m1: 3, m2: 3, cross: 'down' }, '1h').en).toBe('NVDA KDJ dead cross · 1h');
+  });
+});
+
+describe('news alerts', () => {
+  const newsAlert = (over: Partial<PriceAlert> = {}) => alert({ rule: { type: 'news', providers: ['BRFUPDN', 'DJNL'] }, frequency: 'always', ...over });
+  const names: Record<string, string> = { BRFUPDN: 'Briefing.com Analyst Actions' };
+  const name = (code: string) => names[code] ?? code;
+
+  it('names the newest headline, its provider and how many more came with it', () => {
+    expect(newsTexts(newsAlert(), [{ provider: 'BRFUPDN', text: 'NVIDIA target raised to $150' }], name)).toEqual({
+      title: { en: 'NVDA: new headline — NVIDIA target raised to $150', zh: 'NVDA 新闻：NVIDIA target raised to $150' },
+      body: { en: 'Source: Briefing.com Analyst Actions', zh: '来源：Briefing.com Analyst Actions' },
+    });
+    const three = newsTexts(newsAlert({ note: '财报周' }), [
+      { provider: 'BRFUPDN', text: 'Older' },
+      { provider: 'BRFUPDN', text: 'Old' },
+      { provider: 'DJNL', text: 'Newest' },
+    ], name);
+    expect(three.title.en).toBe('NVDA: new headline — Newest');
+    expect(three.body).toEqual({ en: 'Source: DJNL · 2 more new headlines · Note: 财报周', zh: '来源：DJNL · 另有 2 条新标题 · 备注：财报周' });
+  });
+
+  it('has no cooldown: every check with new headlines is an event of its own', () => {
+    expect(cooldownMs(newsAlert().rule)).toBe(0);
+    const s0 = initialGate(newsAlert(), false);
+    const hit: Measure = { value: 1, met: true, rearm: true };
+    const first = gate(newsAlert(), hit, s0, 1_000);
+    const second = gate(newsAlert(), hit, first.state, 2_000);
+    expect([first.fire, second.fire]).toEqual([true, true]);
+    expect(gate(newsAlert(), { value: 0, met: false, rearm: true }, second.state, 3_000).fire).toBe(false);
   });
 });

@@ -1085,7 +1085,12 @@ export type AlertRule =
   /** `on`: 'close' tests closed bars when a new bar starts; 'live' tests the forming bar (at most one fire per bar). */
   | { type: 'indicator'; timeframe: AlertTimeframe; on: 'close' | 'live'; signal: IndicatorSignal }
   // Events
-  | { type: 'halt'; dir: 'halted' | 'resumed' };
+  | { type: 'halt'; dir: 'halted' | 'resumed' }
+  /**
+   * New headlines about the stock from IB's API news providers (provider codes, at least one), polled
+   * about every 5 minutes outside the quote path (main/market/news.ts).
+   */
+  | { type: 'news'; providers: string[] };
 
 export type AlertRuleType = AlertRule['type'];
 
@@ -1139,14 +1144,16 @@ export interface PriceAlert {
  * - unsupported: written by a newer Tape (see PriceAlert.unsupported);
  * - offline: Tape is not connected to IB;
  * - noLine: no market data line was free (Tape's 95-line limit);
- * - noData: IB sent an error for the line (permissions, a competing session, …), or the indicator's
- *   bars could not be loaded or are too few (`reason`, `message`);
+ * - noData: IB sent an error for the line (permissions, a competing session, …), the indicator's
+ *   bars could not be loaded or are too few, or a news alert has no provider on this login or IB
+ *   refused its headline request (`reason`, `message`);
  * - outOfSession: a US stock outside the alert's sessions (nothing fires; re-arming goes on);
  * - frozen: the quote is frozen (IB market data type 2 / 4): nothing fires;
  * - delayed: delayed data (type 3): price and day-change rules fire, marked "Delayed 15 min";
  *   the others (`needsLive`) wait for live data;
- * - waiting: no quote yet, the 3 / 5-minute window is filling, the bars are loading, or the quote
- *   lacks what the rule measures (`reason`).
+ * - waiting: no quote yet, the 3 / 5-minute window is filling, the bars are loading, the quote
+ *   lacks what the rule measures, or a news alert waits for the providers or its first headline
+ *   check (`reason`).
  */
 export type AlertState =
   | 'ok'
@@ -1172,7 +1179,12 @@ export type AlertState =
  * - barsError: the bars could not be loaded (noData, `message`);
  * - tooFewBars: the interval's bars are fewer than the indicator's period needs (noData);
  * - seriesLimit: more indicator series than MAX_INDICATOR_SERIES are active (noData);
- * - newerVersion: a rule written by a newer Tape (unsupported).
+ * - newerVersion: a rule written by a newer Tape (unsupported);
+ * - newsProviders: the login's news providers are being asked for (news; waiting);
+ * - news: the first headline check since the alert was armed has not answered yet; headlines from
+ *   before it are never announced (news; waiting);
+ * - noProviders: none of the alert's news providers is available to this IB login (news; noData);
+ * - newsError: IB refused or did not answer the headline request (news; noData, `message`).
  */
 export type AlertStatusReason =
   | 'noQuote'
@@ -1183,7 +1195,11 @@ export type AlertStatusReason =
   | 'barsError'
   | 'tooFewBars'
   | 'seriesLimit'
-  | 'newerVersion';
+  | 'newerVersion'
+  | 'newsProviders'
+  | 'news'
+  | 'noProviders'
+  | 'newsError';
 
 export interface AlertStatus {
   id: string;
@@ -1199,7 +1215,30 @@ export interface AlertStatus {
   needsLive?: true;
   /** Waiting for a 3 / 5-minute window: milliseconds until it covers the rule's minutes. */
   readyIn?: number;
-  /** IB's error text (noLine, noData lineError) or the load's (barsError), English as given. */
+  /** IB's error text (noLine, noData lineError, newsError) or the load's (barsError), English as given. */
+  message?: string;
+  /** News alerts: when IB last answered the alert's headline check (epoch ms). */
+  checkedAt?: number;
+  /** News alerts: the newest headline IB listed for the alert's providers (without IB's metadata prefix). */
+  headline?: string;
+}
+
+/** An API news provider of the IB login (reqNewsProviders), e.g. { code: 'BRFUPDN', name: 'Briefing.com Analyst Actions' }. */
+export interface NewsProvider {
+  code: string;
+  name: string;
+}
+
+/**
+ * The IB login's API news providers (IPC getNewsProviders; main asks once per session):
+ * - ok: IB's answer for this session (empty: the login has no API news subscription);
+ * - loading: asked, no answer yet;
+ * - offline: not connected, and not known for this session yet;
+ * - error: IB did not answer (`message`).
+ */
+export interface NewsProviders {
+  status: 'ok' | 'loading' | 'offline' | 'error';
+  providers: NewsProvider[];
   message?: string;
 }
 

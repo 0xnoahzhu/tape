@@ -321,6 +321,42 @@ export function cancelWshEventData(_sv: number, reqId: number): Token[] {
 }
 
 // ---------------------------------------------------------------------------
+// News (needs the login's API news subscriptions; answers come only for subscribed providers)
+
+/** The login's API news providers (answered by newsProviders, which carries no request id). */
+export function reqNewsProviders(_sv: number): Token[] {
+  return toTokens([OUT_MSG_ID.REQ_NEWS_PROVIDERS]);
+}
+
+/**
+ * Headlines of one instrument: `providerCodes` joined by "+" ("BRFG+BRFUPDN"), the date range as
+ * "yyyy-MM-dd HH:mm:ss.0" (both empty: the latest), at most `totalResults` (IB caps it at 300).
+ * Every supported server version (176+) has the request (117+) and its options list (128+, sent
+ * as tag-values like the other lists), so it is always sent. There is no cancel message.
+ */
+export function reqHistoricalNews(
+  _sv: number,
+  reqId: number,
+  conId: number,
+  providerCodes: string,
+  startDateTime: string,
+  endDateTime: string,
+  totalResults: number,
+  historicalNewsOptions?: readonly TagValue[],
+): Token[] {
+  return toTokens([
+    OUT_MSG_ID.REQ_HISTORICAL_NEWS,
+    reqId,
+    conId,
+    providerCodes,
+    startDateTime,
+    endDateTime,
+    totalResults,
+    encodeTagValues(historicalNewsOptions),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
 // Market scanner
 
 /**
@@ -814,6 +850,20 @@ export class Encoder {
   }
   cancelWshEventData(reqId: number): void {
     this.send((sv) => cancelWshEventData(sv, reqId));
+  }
+  reqNewsProviders(): void {
+    this.send((sv) => reqNewsProviders(sv));
+  }
+  reqHistoricalNews(
+    reqId: number,
+    conId: number,
+    providerCodes: string,
+    startDateTime: string,
+    endDateTime: string,
+    totalResults: number,
+    historicalNewsOptions?: readonly TagValue[],
+  ): void {
+    this.send((sv) => reqHistoricalNews(sv, reqId, conId, providerCodes, startDateTime, endDateTime, totalResults, historicalNewsOptions));
   }
   reqScannerSubscription(reqId: number, subscription: ScannerSubscription, options?: readonly TagValue[], filterOptions?: readonly TagValue[]): void {
     this.send((sv) => reqScannerSubscription(sv, reqId, subscription, options, filterOptions));

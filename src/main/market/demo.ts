@@ -281,6 +281,22 @@ export interface DemoBook {
   asks: DepthLevel[];
 }
 
+/** The API news providers of the demo feed (the free ones IB gives every login). */
+export const DEMO_NEWS_PROVIDERS: ReadonlyArray<{ code: string; name: string }> = [
+  { code: 'BRFG', name: 'Briefing.com General Market Columns' },
+  { code: 'BRFUPDN', name: 'Briefing.com Analyst Actions' },
+  { code: 'DJNL', name: 'Dow Jones Newsletters' },
+];
+/** A simulated headline per symbol this often. */
+export const DEMO_NEWS_EVERY_MS = 10 * 60_000;
+const DEMO_HEADLINES: ReadonlyArray<(s: string) => string> = [
+  (s) => `${s} price target raised at Demo Securities`,
+  (s) => `${s} upgraded to Outperform at Example Research`,
+  (s) => `${s} downgraded to Neutral at Sample Capital`,
+  (s) => `Market column: ${s} among the session's most active names`,
+  (s) => `${s} moves ahead of its sector peers`,
+];
+
 export class DemoMarket {
   private readonly instruments = new Map<string, Instrument>();
   /** One object per symbol, so a republished quote does not resend an unchanged summary. */
@@ -486,6 +502,27 @@ export class DemoMarket {
     const time = r.next() < 0.6 ? 'amc' : 'bmo';
     if (time === 'bmo' && r.next() < 0.3) return { date: yyyymmdd(day), time, minutes: [420, 450, 480, 510, 540][Math.floor(r.next() * 5)] };
     return { date: yyyymmdd(day), time };
+  }
+
+  /**
+   * Simulated headlines of a stock from `providers`, newest first, at most `n`: one every
+   * DEMO_NEWS_EVERY_MS per symbol (offset by the symbol), each from one of the demo providers and
+   * marked "[Demo]". The demo feed's answer to a news alert's headline check (market/news.ts).
+   */
+  headlines(symbol: string, providers: readonly string[], n: number): Array<{ time: string; provider: string; articleId: string; headline: string }> {
+    const sym = symbol.toUpperCase();
+    const offset = hashString(sym + ':news') % DEMO_NEWS_EVERY_MS;
+    const out: Array<{ time: string; provider: string; articleId: string; headline: string }> = [];
+    let slot = Math.floor((this.clock() - offset) / DEMO_NEWS_EVERY_MS);
+    for (let tries = 0; out.length < n && tries < n * 8; tries++, slot--) {
+      const r = new Rng(hashString(`${sym}:news:${slot}`));
+      const provider = DEMO_NEWS_PROVIDERS[Math.floor(r.next() * DEMO_NEWS_PROVIDERS.length)].code;
+      if (!providers.includes(provider)) continue;
+      const text = DEMO_HEADLINES[Math.floor(r.next() * DEMO_HEADLINES.length)](sym);
+      const time = new Date(slot * DEMO_NEWS_EVERY_MS + offset).toISOString().replace('T', ' ').slice(0, 19) + '.0';
+      out.push({ time, provider, articleId: `${provider}$demo-${sym}-${slot}`, headline: `[Demo] ${text}` });
+    }
+    return out;
   }
 
   private optionModel(c: ContractRef, underlyingPrice?: number, extraDays = 0) {

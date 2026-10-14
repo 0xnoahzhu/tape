@@ -1,6 +1,7 @@
 // Alerts in the renderer (pure): the New / Edit alert dialog's kinds and form (built into a
 // PriceAlert, with the checks main runs again: storeSchema.ts → sanitizeRule, shared/alerts.ts),
-// the bell list's rule summaries and statuses, and the dialog's live hints.
+// the bell list's rule summaries and statuses, and the dialog's live hints. News alerts depend on
+// the IB login's API news providers (NewsProviders, IPC getNewsProviders).
 
 import {
   ALERT_FIT_MESSAGES,
@@ -10,12 +11,14 @@ import {
   clipNote,
   dataAllows,
   DEFAULT_ALERT_SESSIONS,
+  FREE_NEWS_PROVIDERS,
   INVALID_ALERT_MESSAGE,
   MAX_INDICATOR_PERIOD,
   NOTE_MAX,
   noteLength,
   priceLevel,
   ruleFitProblem,
+  ruleUsesSessions,
   UNSUPPORTED_EDIT_MESSAGE,
   usesAlertSessions,
   type AlertFitProblem,
@@ -38,6 +41,7 @@ import type {
   ContractRef,
   IndicatorSignal,
   Lang,
+  NewsProviders,
   PriceAlert,
   Quote,
 } from '@shared/types';
@@ -68,7 +72,8 @@ export type AlertKind =
   | 'bidSizeAbove'
   | 'askSizeAbove'
   | IndicatorName
-  | 'halt';
+  | 'halt'
+  | 'news';
 
 export type AlertGroup = 'up' | 'down' | 'market' | 'indicators' | 'events';
 export type IndicatorName = IndicatorSignal['ind'];
@@ -81,13 +86,13 @@ export const ALERT_KIND_GROUPS: ReadonlyArray<{ group: AlertGroup; kinds: readon
   { group: 'down', kinds: ['priceBelow', 'dayFall', 'windowFall3', 'windowFall5'] },
   { group: 'market', kinds: ['volumeAbove', 'turnoverAbove', 'turnoverRatio', 'bidAbove', 'askBelow', 'bidSizeAbove', 'askSizeAbove'] },
   { group: 'indicators', kinds: INDICATORS },
-  { group: 'events', kinds: ['halt'] },
+  { group: 'events', kinds: ['halt', 'news'] },
 ];
 
 const isIndicator = (k: AlertKind): k is IndicatorName => (INDICATORS as readonly string[]).includes(k);
 
 /** The input a kind's value block shows. */
-export type ValueBlock = 'price' | 'percent' | 'quantity' | 'size' | 'indicator' | 'halt' | 'none';
+export type ValueBlock = 'price' | 'percent' | 'quantity' | 'size' | 'indicator' | 'halt' | 'news' | 'none';
 
 export function valueBlock(kind: AlertKind): ValueBlock {
   switch (kind) {
@@ -111,6 +116,8 @@ export function valueBlock(kind: AlertKind): ValueBlock {
       return 'size';
     case 'halt':
       return 'halt';
+    case 'news':
+      return 'news';
     case 'turnoverRatio':
       return 'none';
     default:
@@ -155,15 +162,57 @@ export function kindOfRule(rule: AlertRule): AlertKind {
 
 /**
  * Why a kind cannot be picked for an instrument: the rule does not fit it (shared/alerts.ts →
- * ruleFitProblem, which main enforces), or there are no shares outstanding to divide by (turnover
- * ratio).
+ * ruleFitProblem, which main enforces), there are no shares outstanding to divide by (turnover
+ * ratio), or the IB login's news providers are not available (newsProblem).
  */
-export type KindProblem = AlertFitProblem | 'noShares';
+export type KindProblem = AlertFitProblem | 'noShares' | NewsProblem;
 
-export function kindProblem(kind: AlertKind, contract: Pick<ContractRef, 'secType'>): KindProblem | null {
+export function kindProblem(kind: AlertKind, contract: Pick<ContractRef, 'secType'>, news?: NewsProviders): KindProblem | null {
   if (kind === 'turnoverRatio') return 'noShares';
   const type = ruleTypeOf(kind);
-  return type ? ruleFitProblem(type, contract) : null;
+  const fit = type ? ruleFitProblem(type, contract) : null;
+  return fit ?? (kind === 'news' ? newsProblem(news) : null);
+}
+
+/**
+ * Why *New headline* cannot be picked now: Tape is not connected (the login's providers are not
+ * known), main is still asking IB, IB did not list them, or the login has no API news provider.
+ */
+export type NewsProblem = 'newsOffline' | 'newsLoading' | 'newsUnlisted' | 'noNewsProviders';
+
+export function newsProblem(news: NewsProviders | undefined): NewsProblem | null {
+  switch (news?.status) {
+    case 'ok':
+      return news.providers.length ? null : 'noNewsProviders';
+    case 'error':
+      return 'newsUnlisted';
+    case 'offline':
+      return 'newsOffline';
+    default:
+      return 'newsLoading';
+  }
+}
+
+/**
+ * The providers a new news alert starts with: the free ones (FREE_NEWS_PROVIDERS) the login has,
+ * else every one it has; none while the list is not known.
+ */
+export function defaultNewsProviders(news: NewsProviders | undefined): string[] {
+  if (news?.status !== 'ok') return [];
+  const have = news.providers.map((p) => p.code);
+  const free = have.filter((c) => FREE_NEWS_PROVIDERS.includes(c));
+  return free.length ? free : have;
+}
+
+/**
+ * The providers the dialog lists: the login's, then the alert's that the login does not have
+ * (`missing`, kept so an edit does not drop them silently).
+ */
+export function newsChoices(news: NewsProviders | undefined, selected: readonly string[]): Array<{ code: string; name: string; missing: boolean }> {
+  const listed = news?.status === 'ok' ? news.providers : [];
+  const known = new Set(listed.map((p) => p.code));
+  const extra = selected.filter((c) => !known.has(c));
+  return [...listed.map((p) => ({ code: p.code, name: p.name || p.code, missing: false })), ...extra.map((c) => ({ code: c, name: c, missing: news?.status === 'ok' }))];
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +397,8 @@ export interface AlertFormState {
   indicator: IndicatorForm;
   frequency: AlertFrequency;
   sessions: AlertSession[];
+  /** News alerts: the provider codes picked. */
+  newsProviders: string[];
   note: string;
   /** Editing an alert that is off: turn it on once saved (an edit alone keeps it off). */
   turnOn?: boolean;
@@ -424,6 +475,7 @@ export function newAlertForm(contract: ContractRef, q: Quote | undefined, lang: 
     indicator: indicatorForm('macd'),
     frequency: 'once',
     sessions: [...DEFAULT_ALERT_SESSIONS],
+    newsProviders: [],
     note: '',
   };
 }
@@ -431,14 +483,16 @@ export function newAlertForm(contract: ContractRef, q: Quote | undefined, lang: 
 /**
  * Picks another kind. The value stays when the input is the same kind of number (a price typed for
  * "Rises above" still fits "Falls below"); otherwise the new kind's default. Another indicator
- * starts from its defaults on the same interval.
+ * starts from its defaults on the same interval; news starts with the login's free providers
+ * (defaultNewsProviders) unless some are picked already.
  */
-export function withKind(f: AlertFormState, kind: AlertKind, q: Quote | undefined, lang: Lang): AlertFormState {
+export function withKind(f: AlertFormState, kind: AlertKind, q: Quote | undefined, lang: Lang, news?: NewsProviders): AlertFormState {
   if (kind === f.kind) return f;
   const next: AlertFormState = { ...f, kind };
   // Volume and turnover share the input but not the unit (shares, money).
   if (valueBlock(kind) !== valueBlock(f.kind) || valueBlock(kind) === 'quantity') next.value = defaultValue(kind, q, lang);
   if (isIndicator(kind)) next.indicator = indicatorForm(kind, f.indicator.timeframe);
+  if (kind === 'news' && !f.newsProviders.length) next.newsProviders = defaultNewsProviders(news);
   return next;
 }
 
@@ -454,6 +508,7 @@ export function formFromAlert(a: PriceAlert, lang: Lang): AlertFormState {
     indicator: indicatorForm('macd'),
     frequency: a.frequency,
     sessions: a.sessions?.length ? [...a.sessions] : [...DEFAULT_ALERT_SESSIONS],
+    newsProviders: [],
     note: a.note ?? '',
   };
   switch (r.type) {
@@ -482,6 +537,9 @@ export function formFromAlert(a: PriceAlert, lang: Lang): AlertFormState {
       break;
     case 'indicator':
       f.indicator = indicatorFormOf(r);
+      break;
+    case 'news':
+      f.newsProviders = [...r.providers];
       break;
   }
   // An edit keeps the alert off: a spent one is offered to be turned on again, a paused one not.
@@ -522,9 +580,9 @@ export function dialogKey(e: Pick<KeyboardEvent, 'key' | 'isComposing' | 'repeat
 }
 
 /** What is wrong with a field (messages.ts → errors). */
-export type AlertFormError = 'price' | 'percent' | 'quantity' | 'period' | 'bollPeriod' | 'fastSlow' | 'level' | 'levelJ' | 'k' | 'sessions';
-/** The field an error is shown under: the value input, an indicator parameter or the sessions. */
-export type AlertFormField = 'value' | ParamKey | 'sessions';
+export type AlertFormError = 'price' | 'percent' | 'quantity' | 'period' | 'bollPeriod' | 'fastSlow' | 'level' | 'levelJ' | 'k' | 'sessions' | 'providers';
+/** The field an error is shown under: the value input, an indicator parameter, the sessions or the news providers. */
+export type AlertFormField = 'value' | ParamKey | 'sessions' | 'providers';
 export type AlertFormErrors = Partial<Record<AlertFormField, AlertFormError>>;
 
 const isPeriod = (n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_INDICATOR_PERIOD;
@@ -611,6 +669,10 @@ export function buildRule(f: AlertFormState): { rule: AlertRule } | { errors: Al
     }
     case 'halt':
       return { rule: { type: 'halt', dir: f.haltDir } };
+    case 'news': {
+      const providers = [...new Set(f.newsProviders.filter(Boolean))].sort();
+      return providers.length ? { rule: { type: 'news', providers } } : { errors: { providers: 'providers' } };
+    }
     case 'indicator': {
       const built = buildSignal(f.indicator);
       if ('errors' in built) return built;
@@ -621,9 +683,10 @@ export function buildRule(f: AlertFormState): { rule: AlertRule } | { errors: Al
   }
 }
 
-/** Whether the form shows the sessions: a US stock's alert (shared/alerts.ts → usesAlertSessions). */
-export function formUsesSessions(f: Pick<AlertFormState, 'contract'>): boolean {
-  return usesAlertSessions(f.contract);
+/** Whether the form shows the sessions: a US stock's alert, except news (shared/alerts.ts → ruleUsesSessions). */
+export function formUsesSessions(f: Pick<AlertFormState, 'kind' | 'contract'>): boolean {
+  const type = ruleTypeOf(f.kind);
+  return type ? ruleUsesSessions(type, f.contract) : usesAlertSessions(f.contract);
 }
 
 /** Form errors to show under the fields: the rule's, and no session chosen. */
@@ -636,7 +699,8 @@ export function formErrors(f: AlertFormState): AlertFormErrors {
 
 /**
  * The alert the form describes, as upsertPriceAlert takes it. Sessions are written for US stocks
- * only and left out when they are the default; `active` is main's (it keeps an edited alert's).
+ * only (not for news) and left out when they are the default; `active` is main's (it keeps an edited
+ * alert's).
  */
 export function alertFromForm(f: AlertFormState, rule: AlertRule, id: string, now: number, existing?: PriceAlert): PriceAlert {
   const alert: PriceAlert = {
@@ -647,7 +711,7 @@ export function alertFromForm(f: AlertFormState, rule: AlertRule, id: string, no
     active: existing?.active ?? true,
     createdAt: existing?.createdAt ?? now,
   };
-  if (usesAlertSessions(f.contract)) {
+  if (ruleUsesSessions(rule.type, f.contract)) {
     const sessions = ALERT_SESSIONS.filter((s) => f.sessions.includes(s));
     const isDefault = sessions.length === DEFAULT_ALERT_SESSIONS.length && DEFAULT_ALERT_SESSIONS.every((s) => sessions.includes(s));
     if (sessions.length && !isDefault) alert.sessions = sessions;
@@ -673,7 +737,7 @@ export function formLimitProblem(alerts: readonly PriceAlert[], f: AlertFormStat
 
 /** Instruments with alerts on, counting `contract` too (each holds a market data line). */
 export function alertLineCount(alerts: readonly PriceAlert[], contract: ContractRef): number {
-  const keys = new Set(alerts.filter((a) => a.active && !a.unsupported).map((a) => contractKey(a.contract)));
+  const keys = new Set(alerts.filter((a) => a.active && !a.unsupported && a.rule.type !== 'news').map((a) => contractKey(a.contract)));
   keys.add(contractKey(contract));
   return keys.size;
 }
@@ -855,6 +919,8 @@ export function ruleSummary(a: Pick<PriceAlert, 'rule' | 'contract' | 'unsupport
       return `${signalSummary(r.signal, m)} · ${t.timeframe[r.timeframe]}${r.on === 'live' ? ` · ${t.onLive}` : ''}`;
     case 'halt':
       return r.dir === 'halted' ? t.halted : t.resumed;
+    case 'news':
+      return `${t.news} · ${r.providers.join(', ')}`;
   }
 }
 
@@ -866,7 +932,7 @@ export function alertDescription(a: Pick<PriceAlert, 'rule' | 'contract' | 'unsu
 /**
  * The value main measured, as the list shows it after "Now": a price, a signed percent ("+0.80%",
  * after hours so marked), a count, ≈ an amount, or an indicator's two operands. Undefined when
- * there is none.
+ * there is none (news alerts: see nowText).
  */
 export function measuredText(a: PriceAlert, s: AlertStatus | undefined, m: AlertMessages): string | undefined {
   if (!s || a.unsupported) return undefined;
@@ -902,8 +968,15 @@ export function measuredText(a: PriceAlert, s: AlertStatus | undefined, m: Alert
   }
 }
 
-/** The list's "Now …" text, with after-hours day changes worded so. */
+/**
+ * The list's "Now …" text, with after-hours day changes worded so; for a news alert the newest
+ * headline of its providers ("Latest: …"), or that IB listed none yet.
+ */
 export function nowText(a: PriceAlert, s: AlertStatus | undefined, m: AlertMessages): string | undefined {
+  if (a.rule.type === 'news' && !a.unsupported) {
+    if (s?.headline) return m.latestHeadline(s.headline);
+    return s?.checkedAt !== undefined ? m.noHeadlines : undefined;
+  }
   if (s?.afterHours && (a.rule.type === 'dayRise' || a.rule.type === 'dayFall') && s.value !== undefined) return m.nowAfterHours(pct(s.value));
   const text = measuredText(a, s, m);
   return text === undefined ? undefined : m.now(text);
@@ -969,6 +1042,10 @@ export function statusText(a: PriceAlert, s: AlertStatus | undefined, m: AlertMe
           return { text: t.tooFewBars, tone: 'danger' };
         case 'seriesLimit':
           return { text: t.seriesLimit, tone: 'danger' };
+        case 'noProviders':
+          return { text: t.noProviders, tone: 'danger' };
+        case 'newsError':
+          return { text: t.newsError(s.message ?? ''), tone: 'danger' };
         default:
           return { text: t.lineError(s?.message ?? ''), tone: 'danger' };
       }
@@ -982,6 +1059,8 @@ export function statusText(a: PriceAlert, s: AlertStatus | undefined, m: AlertMe
       const r = a.rule;
       if (s?.reason === 'window' && (r.type === 'windowRise' || r.type === 'windowFall'))
         return { text: s.readyIn != null ? t.windowLeft(r.minutes, mmss(s.readyIn)) : t.window(r.minutes), tone: 'warn' };
+      if (s?.reason === 'news') return { text: t.news, tone: 'warn' };
+      if (s?.reason === 'newsProviders') return { text: t.newsProviders, tone: 'warn' };
       return { text: s?.reason === 'bars' ? t.bars : t.waiting, tone: 'warn' };
     }
   }

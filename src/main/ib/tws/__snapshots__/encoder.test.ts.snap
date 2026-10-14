@@ -6051,6 +6051,38 @@ exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 1
 }
 `;
 
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 176 > reqHistoricalNews latest 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    86,
+    9030,
+    265598,
+    "BRFG+BRFUPDN+DJNL",
+    "",
+    "",
+    10,
+    "",
+  ],
+}
+`;
+
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 176 > reqHistoricalNews range and options 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    86,
+    9031,
+    4815747,
+    "DJ-N",
+    "2026-10-13 00:00:00.0",
+    "2026-10-14 00:00:00.0",
+    300,
+    "a=1;",
+  ],
+}
+`;
+
 exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 176 > reqIds 0 1`] = `
 {
   "errors": [],
@@ -6609,6 +6641,15 @@ exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 1
     10,
     1,
     "",
+  ],
+}
+`;
+
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 176 > reqNewsProviders 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    85,
   ],
 }
 `;
@@ -13313,6 +13354,38 @@ exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 1
 }
 `;
 
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 193 > reqHistoricalNews latest 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    86,
+    9030,
+    265598,
+    "BRFG+BRFUPDN+DJNL",
+    "",
+    "",
+    10,
+    "",
+  ],
+}
+`;
+
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 193 > reqHistoricalNews range and options 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    86,
+    9031,
+    4815747,
+    "DJ-N",
+    "2026-10-13 00:00:00.0",
+    "2026-10-14 00:00:00.0",
+    300,
+    "a=1;",
+  ],
+}
+`;
+
 exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 193 > reqIds 0 1`] = `
 {
   "errors": [],
@@ -13871,6 +13944,15 @@ exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 1
     10,
     1,
     "",
+  ],
+}
+`;
+
+exports[`encoder vs @stoqey/ib (all server versions 176..193) > server version 193 > reqNewsProviders 1`] = `
+{
+  "errors": [],
+  "tokens": [
+    85,
   ],
 }
 `;

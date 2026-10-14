@@ -52,6 +52,8 @@ const MARKET_DATA_MSGS = [
   M.CANCEL_HISTOGRAM_DATA,
   M.REQ_SCANNER_SUBSCRIPTION,
   M.CANCEL_SCANNER_SUBSCRIPTION,
+  // Headline polls of news alerts: background data, behind orders and control.
+  M.REQ_HISTORICAL_NEWS,
 ];
 const LANE_OF = new Map<number, Lane>([...ORDER_MSGS.map((id) => [id, Lane.Order] as const), ...MARKET_DATA_MSGS.map((id) => [id, Lane.MarketData] as const)]);
 

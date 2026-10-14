@@ -1,7 +1,8 @@
 // The value part of the alert dialog, by the type picked (alerts/model.ts → valueBlock): a price with
 // −5 / −2 / +2 / +5 % presets, a percent, a volume or turnover (10M, 1.5B, 1000万, 2亿), a bid / ask
 // size, an indicator's signal, parameters, interval and trigger with a live preview of the values the
-// alert will test, or a halt / resume choice. Each says where the market is now ("From last +3.31%", "Now +1.24%") and whether the alert would fire at once.
+// alert will test, a halt / resume choice, or the news providers of a headline alert. Each says where
+// the market is now ("From last +3.31%", "Now +1.24%") and whether the alert would fire at once.
 
 import { useEffect, useMemo, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { ALERT_TIMEFRAMES } from '@shared/alerts';
@@ -10,10 +11,10 @@ import { barsNeeded, readIndicator } from '@shared/indicatorSignal';
 import { alertBarForming, mergeLivePrice, sessionOpenSec } from '@shared/liveBars';
 import { usEquitySession, usWeekClosed, type MarketSession } from '@shared/session';
 import { usesUsEquitySession } from '@shared/sessionQuote';
-import type { AlertRule, AlertStatus, ContractInfo, Quote } from '@shared/types';
+import type { AlertRule, AlertStatus, ContractInfo, NewsProviders, Quote } from '@shared/types';
 import { useMarketDataAvailable } from '../../hooks/useQuotes';
 import { useLang } from '../../i18n';
-import { Segmented, TextInput } from '../../ui/primitives';
+import { Chip, Segmented, TextInput } from '../../ui/primitives';
 import { Select } from '../../ui/select';
 import { barsKey, loadBars, useBarsStore } from '../chart/barsStore';
 import { useNow } from '../chart/useNow';
@@ -27,6 +28,7 @@ import {
   distancePct,
   LEVEL_PRESETS,
   livePrice,
+  newsChoices,
   niceQuantity,
   PERCENT_PRESETS,
   presetPrice,
@@ -66,6 +68,8 @@ export interface ValueBlockProps {
   session: MarketSession | 'overnight';
   /** Main's status of the alert being edited (its measured value). */
   status?: AlertStatus;
+  /** The IB login's API news providers (news alerts); undefined until main answered. */
+  news?: NewsProviders;
   errors: AlertFormErrors;
   inputRef: RefObject<HTMLInputElement | null>;
 }
@@ -146,7 +150,8 @@ const FieldError = ({ text }: { text?: string }) => (text ? <div style={error11}
  */
 function DataNotes({ form, quote, m }: { form: AlertFormState; quote: Quote | undefined; m: AlertMessages }) {
   const type = ruleTypeOf(form.kind);
-  if (!type || !quote) return null;
+  // News alerts read no quotes.
+  if (!type || type === 'news' || !quote) return null;
   const lines: Array<{ text: string; color: string }> = [];
   const note = dataNote(type, quote.marketDataType);
   if (note) lines.push({ text: m[note], color: note === 'needsLiveDelayed' ? 'var(--r)' : 'var(--dm)' });
@@ -184,6 +189,9 @@ export function AlertValueBlock(props: ValueBlockProps) {
       break;
     case 'halt':
       body = <HaltBlock {...props} m={m} />;
+      break;
+    case 'news':
+      body = <NewsBlock {...props} m={m} />;
       break;
     case 'none':
       return null;
@@ -329,6 +337,52 @@ function HaltBlock({ form, patch, m }: BlockProps) {
         itemStyle={{ height: 32, padding: 0 }}
       />
       <div style={hint11}>{m.haltHints[form.haltDir]}</div>
+    </>
+  );
+}
+
+/**
+ * The news providers of a headline alert as toggles (the last one on stays on): the login's, and an
+ * edited alert's that the login does not have (marked, so they are not dropped unnoticed). Then what
+ * the feeds are and how often Tape checks, and when editing, the newest headline main saw.
+ */
+function NewsBlock({ form, patch, news, status, errors, m }: BlockProps) {
+  const choices = newsChoices(news, form.newsProviders);
+  const missing = choices.filter((c) => c.missing && form.newsProviders.includes(c.code)).map((c) => c.code);
+  const toggle = (code: string) =>
+    patch({ newsProviders: form.newsProviders.includes(code) ? form.newsProviders.filter((c) => c !== code) : [...form.newsProviders, code] });
+  return (
+    <>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={label12}>{m.newsProviders}</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {choices.map((c) => {
+            const on = form.newsProviders.includes(c.code);
+            const last = on && form.newsProviders.length === 1;
+            return (
+              <Chip
+                key={c.code}
+                active={on}
+                title={last ? m.lastProvider : c.code}
+                onClick={last ? undefined : () => toggle(c.code)}
+                style={{ cursor: last ? 'not-allowed' : 'pointer', whiteSpace: 'normal', ...(c.missing ? { color: 'var(--r)' } : null) }}
+              >
+                {c.name}
+              </Chip>
+            );
+          })}
+        </div>
+      </div>
+      {missing.length > 0 && <div style={error11}>{m.newsMissing(missing.join(', '))}</div>}
+      <FieldError text={errors.providers ? m.errors[errors.providers] : undefined} />
+      <div style={hint11}>{m.newsHint}</div>
+      {status?.headline ? (
+        <div className="ellipsis" title={status.headline} style={{ fontSize: 12, color: 'var(--mu)' }}>
+          {m.latestHeadline(status.headline)}
+        </div>
+      ) : status?.checkedAt !== undefined ? (
+        <div style={{ fontSize: 12, color: 'var(--mu)' }}>{m.noHeadlines}</div>
+      ) : null}
     </>
   );
 }

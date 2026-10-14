@@ -20,6 +20,7 @@ import { createOptionsService } from './market/options';
 import { createCorporateEventsService } from './market/corporateEvents';
 import { createMarketCheckService } from './market/marketCheck';
 import { createAlertService } from './market/alerts';
+import { createNewsService } from './market/news';
 import { createAccountService } from './ib/account';
 import { createOrderService } from './ib/orders';
 import { createAppearance, titleBarOverlay } from './appearance';
@@ -108,6 +109,7 @@ ctx.depth = createDepthService(ctx);
 ctx.options = createOptionsService(ctx);
 ctx.corporateEvents = createCorporateEventsService(ctx);
 ctx.marketCheck = createMarketCheckService(ctx);
+ctx.news = createNewsService(ctx);
 ctx.alerts = createAlertService(ctx);
 ctx.account = createAccountService(ctx);
 ctx.orders = createOrderService(ctx);
@@ -226,6 +228,7 @@ const handlers: TapeHandlers = {
   setPriceAlertsActive: async (ids, active) => ctx.alerts.setActive(ids, active),
   deletePriceAlerts: async (ids) => ctx.alerts.remove(ids),
   getAlertStatuses: async () => ctx.alerts.statuses(),
+  getNewsProviders: () => ctx.news.loadProviders(),
   notify: async (n) => void ctx.notifier.notify(n),
   markNotificationsRead: async (ids) => ctx.notifier.markRead(ids),
   testNotification: async (category) => ctx.notifier.test(category),

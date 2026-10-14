@@ -55,6 +55,7 @@ through the shared `MainContext` (never inside their factory).
 | `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |
 | `market/alerts.ts` | The alerts engine: the alert list (main is its only writer), the alert lines, evaluation, notifications (see *Alerts*) |
+| `market/news.ts` | `ctx.news`: the login's API news providers (once per session) and the background headline checks of news alerts (see *Alerts › News*) |
 | `market/alertEval.ts`, `alertWindow.ts`, `alertBars.ts` | Pure alert rules, re-arming, frequency and texts; the 3 / 5-minute price windows; the bars of indicator alerts (see *Alerts*) |
 | `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
@@ -434,6 +435,15 @@ names and listener arguments), built on `node:net` and `node:events` only.
 * Wall Street Horizon: `reqWshMetaData` / `reqWshEventData` (conId or JSON filter, fill flags,
   date range and limit, always sent: every supported server version has them) and their
   cancels; the answers are `wshMetaData` / `wshEventData` (104 / 105) with IB's JSON as text.
+* News: `reqNewsProviders` (85, the message id alone) is answered by `newsProviders` (85: a count,
+  then code and name per provider, no request id); `reqHistoricalNews` (86: reqId, conId, provider
+  codes joined by "+", start and end "yyyy-MM-dd HH:mm:ss.0" or empty for the latest, total results,
+  the options as tag-values) by one `historicalNews` per headline (86: reqId, time, provider code,
+  article id, text, newest first) and `historicalNewsEnd` (87: reqId, hasMore). Every supported server
+  version has them (115 / 117, the options 128), so nothing is gated; neither message has a version
+  field, and IB has no cancel for a headline request. The headline request goes in the market data
+  lane. The frames follow EClient / EDecoder (`news.test.ts`); none was recorded from a Gateway (the
+  paper account has no API news). `tickNews` (84) and `reqNewsArticle` are not implemented.
 * Market scanner: `reqScannerSubscription` (22) sends all 25 fields, every supported server
   version has them, with the filter tag-values (`scannerSubscriptionFilterOptions`) before the
   options; it goes in the market data lane and pairs with `cancelScannerSubscription`
@@ -924,9 +934,10 @@ change of the trigger or of on / off; a note-only edit does not count), `lastTri
 | `bidSizeAbove` / `askSizeAbove` | bid / ask size | ≥ shares | live |
 | `indicator` | MA, EMA, MACD, KDJ, RSI or BOLL signal on an interval (below) | a cross | live |
 | `halt` | IB's halt code (tick 49 / 90) | halted (1 or 2) / back to 0 after a halt | live |
+| `news` | headlines of the stock from IB's API news (`providers`: codes, at least one; see *News* below) | a headline no earlier check listed | — |
 
 `shared/alerts.ts → ruleFitProblem` says which rules an instrument cannot have (no volume for FX,
-indices and combos; turnover for stocks only; halts for stocks, options and warrants; no bid /
+indices and combos; turnover and news for stocks only; halts for stocks, options and warrants; no bid /
 ask on indices; no sizes on indices and combos; no indicator bars for combos); main refuses them.
 
 `storeSchema.ts → sanitizeAlerts` reads both shapes and writes the current one. A Tape 0.12 alert
@@ -946,7 +957,8 @@ which goes back as a `priceAlerts` event. Main is the only writer of `active`, `
 neither turn a spent alert back on nor undo a trigger); changing the rule, frequency or sessions, a
 resume or a new alert arms it again, and a condition already met then fires at once. Upserts are checked
 (`sanitizeAlertInput`: a valid alert of a known type only), and refused when the rule does not fit or a
-limit is reached (English messages; the dialog says it first). The three changes are
+limit is reached (English messages; the dialog says it first). A news alert is not refused for
+providers the login lacks (it may be edited offline); its status says so. The three changes are
 refused while locked; `getAlertStatuses` is not.
 
 **Evaluation.** Price, day-change, volume, turnover, bid / ask, size and halt rules are evaluated on
@@ -962,7 +974,7 @@ fire:
   (type 1) only (a 15-minute-old window, size or bar means nothing); price and day-change rules on
   delayed data (3) too, their notifications marked "Delayed 15 min"; nothing on frozen data (2, 4) or
   before IB reported the type.
-* Sessions: a US stock's alert (`usesAlertSessions`: STK in USD) fires only within its `sessions`
+* Sessions: a US stock's alert (`usesAlertSessions`: STK in USD; not a news alert, `ruleUsesSessions`) fires only within its `sessions`
   (`pre`, `regular`, `post`, `overnight`; default the first three, as moomoo), from
   `shared/session.ts → usStockSession` (`usEquitySession` plus IB's overnight session, 20:00–03:50 New
   York, Sunday to Thursday nights; holidays and half days from the contract's liquid hours). Outside them
@@ -984,6 +996,39 @@ fire:
   at least `COOLDOWN_MS` (60 s; a window rule: its 3 or 5 minutes) after the last fire. After a restart
   an always-on alert that fired waits for its condition to go back, and a daily one that fired on this
   trading day stays quiet (unless the user changed it since: `updatedAt`).
+
+**News** (`market/news.ts`, `ctx.news`). The login's API news providers are asked once per session
+(`reqNewsProviders` when the connection is ready; a plain reconnect keeps them, a new session asks again;
+IB answers without a request id, so one request is outstanding, with a 10 s timeout and a retry a minute
+later); `getNewsProviders()` (allowed while locked: read-only) gives them to the dialog. IB includes
+Briefing.com General Market Columns (BRFG), Briefing.com Analyst Actions (BRFUPDN) and Dow Jones
+Newsletters (DJNL) with every login by default (`FREE_NEWS_PROVIDERS`); others are paid API subscriptions. These are
+analyst actions, market columns and newsletters, not company filings, hence *New headline* rather than
+moomoo's *Announcement*. News alerts need no quote line: `alerts.ts` hands `ctx.news.watch()` each stock
+with the union of its alerts' codes, and the service checks each one with `reqHistoricalNews(conId,
+codes the login has, '', '', 10)`: one check at a time, at least 2 s apart, each stock every
+`NEWS_POLL_MS` (5 minutes) after its last check (so they spread out), 5 s after a (re)connect, in the
+send queue's market data lane; a stock that is new, wants a new provider, or whose alert was just armed is
+checked first (`pollSoon`). A headline is new when its article id was not in an earlier answer of this
+app run; a provider's first answer only records what it lists, and one more than an hour older than the
+newest seen from its provider is not new (an old one back in the latest). IB does not document the time
+zone of headline times, so they are only compared with each other; IB's metadata prefix
+("{A:800015:L:en:K:n/a:C:0.97}") is dropped. Checks are numbered as they are sent
+(`NewsService.sequence`); an alert records the number of the first check after it was armed (created,
+edited, resumed, loaded at launch) and only fires on answers whose previous check was at or after it, so
+the first answer after arming only marks where it starts and nothing from before is announced (arming
+asks for that check at once). Nothing is persisted: headlines published while Tape was not running are
+not announced; those published during a disconnect are, at the next check, for an alert whose first
+check was answered before the disconnect. An alert armed while offline (or loaded at launch before Tape
+first connects) starts at the first check after the connection is ready, so earlier headlines are not
+announced: headline times cannot be compared with the arming time, because IB does not document their
+time zone. Frequency as for other rules,
+with every check that finds headlines of the alert's providers an event: no cooldown, always re-armed.
+Sessions do not apply. Statuses: `offline`; `waiting` with reason `newsProviders` (being asked) or `news`
+(its first check); `noData` with `noProviders` (none of its providers on this login) or `newsError` (IB's
+refusal or the timeout of the last check, `message`, e.g. 10276 "News feed is not allowed"); then `ok` /
+`triggered` with `checkedAt` and the newest `headline` of its providers. The demo feed has the three free
+providers and a simulated "[Demo]" headline per stock every 10 minutes.
 
 Windows (`alertWindow.ts`): one per instrument with a window alert, a sample per second (that second's
 last live price) kept for 6 minutes. The change over N minutes is against the newest sample at or before
@@ -1028,10 +1073,10 @@ whose window holds fewer bars (1h: 20 days) gives "too few bars".
 **Statuses** (`AlertStatus`, not persisted): `ok`, `triggered` (a spent `once`, a `daily` that fired
 this trading day), `paused`, `unsupported` (`reason` newerVersion), `offline`, `noLine`
 (the line limit), `noData` (IB's error on the line, the bars could not be loaded, too few bars, over the
-series limit), `outOfSession`, `frozen`, `delayed`
+series limit; a news alert without providers or refused by IB), `outOfSession`, `frozen`, `delayed`
 (`needsLive`: a rule that waits for live data), and `waiting` (no quote yet, the window filling with
-`readyIn`, the bars loading, nothing to measure yet: no previous close, no VWAP).
-Each carries the measured `value` (and an indicator's lines in `detail`,
+`readyIn`, the bars loading, nothing to measure yet: no previous close, no VWAP; a news alert's providers
+or first check). Each carries the measured `value` (and an indicator's lines in `detail`,
 `afterHours` for a day change after the close). An `alertStatuses` event is sent (at most every 200 ms)
 when a state, reason or message changes; `getAlertStatuses()` recomputes them with the current values,
 for views that show those (poll while open).
@@ -1041,8 +1086,9 @@ apply; a click opens the chart). Title what happened ("NVDA fell below 120.00", 
 5% today (+5.32%)", "NVDA MACD golden cross · 15m"), body the price and its change on the day, "Delayed
 15 min" when delayed and the note, in both languages (`alertTexts`; zh counts in 万 / 亿,
 `format.ts → compactMyriad`; thresholds the user set are written exactly, `format.ts → exactCompact`:
-"volume above 1.25M", never a rounded 1.3M; dollar amounts carry $ in zh too). At most
-`STORM_MAX` (20) alert notifications a minute: the rest are folded
+"volume above 1.25M", never a rounded 1.3M; dollar amounts carry $ in zh too). A news alert's (`newsTexts`): "NVDA: new headline — <the newest>" / "NVDA
+新闻：<…>", body its provider ("Source: Briefing.com Analyst Actions" / "来源：…"), how many more came
+with it in that check ("2 more new headlines") and the note. At most `STORM_MAX` (20) alert notifications a minute: the rest are folded
 into one ("5 more alerts triggered", the first titles) when the minute is over. An alert whose
 instrument gets no market data line (alert lines are background, the first to go when the 95 run out)
 shows `noLine`, and the first time in an app run a `sys` notice says so ("Alert on NVDA is not being
@@ -1870,7 +1916,9 @@ Its *Alert type* is an `AlertKind`: a rule type, except that the 3- and 5-minute
 each, every indicator is one (its signal is picked below it) and *Turnover ratio* is listed but never
 available. The menu groups them (`ALERT_KIND_GROUPS`: Uptrend, Downtrend, Market data, Indicators,
 Events) with a hint each; `kindProblem` greys out what the instrument cannot have, with the reason
-(`ruleFitProblem`, no shares outstanding). `withKind` keeps a typed value
+(`ruleFitProblem`, no shares outstanding; *New headline* while the login's news providers are not
+known, not listed, or none: `newsProblem`, from `useNewsProviders`, which asks `getNewsProviders()` on
+open, on each connection or session change, and every 2 s while main is still asking IB). `withKind` keeps a typed value
 across kinds of the same input (a price for "Falls below" and "Bid rises above") and starts the others
 from a default: ±2 % of the last price (the bid / ask for theirs), 3 % for a day's change, 1 % for a
 window, the average daily volume rounded to three digits (the `range` line profile, stocks), 5K for
@@ -1890,9 +1938,16 @@ sizes. The value blocks (`valueBlock`):
   slot `alert-form`) with the live price on the forming bar (`mergeLivePrice`, as main extends its
   feeds) through `shared/indicatorSignal.ts → readIndicator`, the function main tests the alert with:
   "Now: DIF 1.21 below DEA 1.31" ('live') or "Last closed bar: …" ('close');
-* halt: Halted / Resumed.
+* halt: Halted / Resumed;
+* news: the login's providers as toggles (`newsChoices`; the last one on stays on), starting with the free
+  ones it has (`defaultNewsProviders`, else all it has); an edited alert's providers the login lacks are
+  listed in red with a line naming them, and while the list is not known its own codes are offered. A
+  hint says these are IB's API news headlines (analyst actions, market columns, newsletters), not
+  company filings, checked about every 5 minutes, and nothing from before the alert is announced; when
+  editing, the newest headline main saw. No sessions (`formUsesSessions`), no line warning, and its own
+  frequency hints (`freqHintNews`).
 
-Under them, red or muted lines about the quote (`dataNote`, from main's
+Under them, red or muted lines about the quote (not for news; `dataNote`, from main's
 `shared/alerts.ts → dataAllows`): delayed data (3) a live-only rule waits on, delayed data a price rule
 fires on (marked), frozen data (2, and delayed frozen 4) nothing fires on, bid / ask of one exchange
 only (`Quote.source`). Then the frequency, the sessions (US stocks, `usesAlertSessions`; the last one on
@@ -1910,12 +1965,13 @@ pinyin: `dialogKey`). Alerts do not trade, so there is no arming delay.
 
 **The list** (Bell › Alerts). Alerts grouped by instrument in main's order (`groupByInstrument`), each
 with `ruleSummary` ("5-min rise ≥ 2%", "MACD golden cross · 15m", "Price ≥ 125.00", "Volume ≥ 1.25M":
-thresholds exactly, `qtyExact` / `moneyExact`), then "Now …" (`nowText`:
-main's measured value, rounded, an indicator's two operands), the frequency and the remarks, and
+thresholds exactly, `qtyExact` / `moneyExact`; "New headline · BRFUPDN, DJNL"), then "Now …" (`nowText`:
+main's measured value, rounded, an indicator's two operands; for news
+"Latest: <headline>"), the frequency and the remarks, and
 the status (`statusText`), whose room comes first: *Paused*, *Triggered 10:31*, *Delayed 15 min*,
-*Waiting for 5 min of data (2:10 left)*, *Outside selected sessions*, *Not
+*Waiting for 5 min of data (2:10 left)*, *Outside selected sessions*, *Checking for headlines*, *Not
 supported in this version*, and in red *Not monitored: market data line limit*, IB's error, too few bars,
-*Delayed data: waits for live data*. Statuses come from `useAlertStatuses`: the store's `alertStatuses` (main's event when a
+*Delayed data: waits for live data*, no news provider on this login, IB's refusal of the headline check. Statuses come from `useAlertStatuses`: the store's `alertStatuses` (main's event when a
 state changes) and, while the list or an edit is open, `getAlertStatuses` every 2 s for current
 values, the newer of the two. A row's click edits it (not a newer Tape's alert: `isEditable`), its
 switch pauses or resumes it, × deletes it after a danger confirmation listing the

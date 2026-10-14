@@ -36,6 +36,7 @@ describe('IPC dispatch while locked', () => {
         'refreshOrders',
         'refreshExecutions',
         'getAlertStatuses',
+        'getNewsProviders',
         'notify',
         'setApiLogStreaming',
         'getLockState',

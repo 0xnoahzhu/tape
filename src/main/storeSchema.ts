@@ -339,6 +339,9 @@ const isPositive = (v: unknown): v is number => isFiniteNumber(v) && v > 0;
 const isPeriod = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= MAX_INDICATOR_PERIOD;
 const isLevel = (v: unknown, lo = 0, hi = 100): v is number => isFiniteNumber(v) && v >= lo && v <= hi;
 const isCross = (v: unknown): v is AlertCross => v === 'up' || v === 'down';
+/** IB's news provider codes ("BRFG", "DJ-N"); never "+", which joins them in a request. */
+const NEWS_PROVIDER = /^[A-Za-z0-9_.-]{1,16}$/;
+const MAX_NEWS_PROVIDERS = 20;
 
 function sanitizeSignal(raw: unknown): IndicatorSignal | null {
   if (!isObject(raw) || !isCross(raw.cross)) return null;
@@ -404,6 +407,11 @@ export function sanitizeRule(raw: unknown): AlertRule | null {
     }
     case 'halt':
       return raw.dir === 'halted' || raw.dir === 'resumed' ? { type: 'halt', dir: raw.dir } : null;
+    case 'news': {
+      if (!Array.isArray(raw.providers) || !raw.providers.length || raw.providers.length > MAX_NEWS_PROVIDERS) return null;
+      if (!raw.providers.every((p) => typeof p === 'string' && NEWS_PROVIDER.test(p))) return null;
+      return { type: 'news', providers: [...new Set(raw.providers as string[])] };
+    }
     default:
       return null;
   }

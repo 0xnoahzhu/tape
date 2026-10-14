@@ -344,6 +344,15 @@ function scannerData(r: FieldReader): void {
   r.add('symbols', summarize(items));
 }
 
+/** newsProviders: the count and each provider as "CODE Name". */
+function newsProviders(r: FieldReader): void {
+  const n = r.int();
+  r.add('count', String(n));
+  const items: string[] = [];
+  for (let i = 0; i < n && !r.done; i++) items.push(`${r.str()} ${r.str()}`.trim());
+  r.add('providers', summarize(items));
+}
+
 function secDefOptParams(r: FieldReader): void {
   r.fs('reqId', 'exchange', 'underlyingConId', 'tradingClass', 'multiplier');
   const expirations: string[] = [];
@@ -461,6 +470,9 @@ const IN_SCHEMAS: Record<string, Schema> = {
   wshMetaData: withId('reqId', 'reqId', 'dataJson'),
   wshEventData: withId('reqId', 'reqId', 'dataJson'),
   scannerData: { id: 'reqId', compact: true, read: scannerData },
+  newsProviders: { compact: true, read: newsProviders },
+  historicalNews: withId('reqId', 'reqId', 'time', 'providerCode', 'articleId', 'headline'),
+  historicalNewsEnd: withId('reqId', 'reqId', 'hasMore'),
 };
 
 // ---------------------------------------------------------------------------
@@ -689,6 +701,8 @@ const OUT_SCHEMAS: Record<string, Schema> = {
     ),
   },
   cancelScannerSubscription: withId('reqId', 'version', 'reqId'),
+  reqNewsProviders: plain(),
+  reqHistoricalNews: withId('reqId', 'reqId', 'conId', 'providerCodes', 'startDateTime', 'endDateTime', 'totalResults', 'options'),
 };
 
 // ---------------------------------------------------------------------------

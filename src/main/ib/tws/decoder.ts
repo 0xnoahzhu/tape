@@ -25,6 +25,7 @@ import type {
   ContractDetails,
   DepthMktDataDescription,
   Execution,
+  NewsProvider,
   Order,
   OrderCondition,
   OrderState,
@@ -1215,6 +1216,34 @@ const wshEventData: Decode = (r, emit) => {
 };
 
 // ---------------------------------------------------------------------------
+// News
+
+/** The login's API news providers: a count, then code and name per provider (no version, no request id). */
+const newsProviders: Decode = (r, emit) => {
+  const n = r.int();
+  const list: NewsProvider[] = [];
+  for (let i = 0; i < n; i++) list.push({ providerCode: r.str(), providerName: r.str() });
+  emit(EventName.newsProviders, list);
+};
+
+/** One headline of reqHistoricalNews: its time as IB writes it ("2026-10-14 13:30:00.0"), provider, article id, text. */
+const historicalNews: Decode = (r, emit) => {
+  const reqId = r.int();
+  const time = r.str();
+  const providerCode = r.str();
+  const articleId = r.str();
+  const headline = r.str();
+  emit(EventName.historicalNews, reqId, time, providerCode, articleId, headline);
+};
+
+/** The end of a reqHistoricalNews answer; `hasMore`: IB has older headlines than it sent. */
+const historicalNewsEnd: Decode = (r, emit) => {
+  const reqId = r.int();
+  const hasMore = r.bool();
+  emit(EventName.historicalNewsEnd, reqId, hasMore);
+};
+
+// ---------------------------------------------------------------------------
 // Market scanner
 
 /**
@@ -1301,6 +1330,9 @@ const DECODERS: ReadonlyMap<number, Decode> = new Map<number, Decode>([
   [IN_MSG_ID.COMPLETED_ORDERS_END, completedOrdersEnd],
   [IN_MSG_ID.WSH_META_DATA, wshMetaData],
   [IN_MSG_ID.WSH_EVENT_DATA, wshEventData],
+  [IN_MSG_ID.NEWS_PROVIDERS, newsProviders],
+  [IN_MSG_ID.HISTORICAL_NEWS, historicalNews],
+  [IN_MSG_ID.HISTORICAL_NEWS_END, historicalNewsEnd],
   [IN_MSG_ID.SCANNER_DATA, scannerData],
 ]);
 

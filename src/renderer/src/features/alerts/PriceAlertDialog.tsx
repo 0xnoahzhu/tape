@@ -1,7 +1,8 @@
 // The New / Edit alert dialog (moomoo's alert dialog in Tape's design): the instrument and its
 // session price, the alert type (grouped Uptrend / Downtrend / Market data / Indicators / Events;
-// types that do not fit the instrument are listed with the reason), the value block of the type
-// (AlertValueBlock.tsx), frequency, US stock sessions and remarks. Alerts are evaluated in the main process: Create / Save sends
+// types that do not fit the instrument, or New headline without the login's news providers, are
+// listed with the reason), the value block of the type (AlertValueBlock.tsx), frequency, US stock
+// sessions (not for news) and remarks. Alerts are evaluated in the main process: Create / Save sends
 // one alert (upsertPriceAlert), and main checks it again. ⏎ saves, Esc cancels (neither while an IME
 // composition is open: Esc then drops its pinyin). Alerts do not trade, so the button needs no
 // arming delay.
@@ -45,6 +46,7 @@ import {
   type AlertKind,
 } from './model';
 import { useAlertStatuses } from './useAlertStatuses';
+import { useNewsProviders } from './useNewsProviders';
 
 export function PriceAlertDialog() {
   const form = useStore((s) => s.alertForm);
@@ -77,6 +79,7 @@ function AlertForm({ form }: { form: AlertFormState }) {
   const editing = form.editId ? alerts.find((a) => a.id === form.editId) : undefined;
   const statuses = useAlertStatuses(!!form.editId);
   const status = editing && kindOfRule(editing.rule) === form.kind ? statuses.get(editing.id) : undefined;
+  const news = useNewsProviders();
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -93,7 +96,8 @@ function AlertForm({ form }: { form: AlertFormState }) {
   const errors = useMemo(() => formErrors(form), [form]);
   const limit = formLimitProblem(alerts, form, rule);
   const blocked = !rule || Object.keys(errors).length > 0 || !!limit;
-  const lines = alertLineCount(alerts, contract);
+  // A news alert holds no market data line.
+  const lines = form.kind === 'news' ? 0 : alertLineCount(alerts, contract);
 
   // The value input's text is selected whenever another type brings a new one, so typing replaces it.
   useEffect(() => {
@@ -124,20 +128,20 @@ function AlertForm({ form }: { form: AlertFormState }) {
           <Select<AlertKind>
             options={ALERT_KIND_GROUPS.flatMap(({ group, kinds }) =>
               kinds.map((k) => {
-                const problem = kindProblem(k, contract);
+                const problem = kindProblem(k, contract, news);
                 return { key: k, label: m.kinds[k], hint: m.hints[k], group: m.groups[group], why: problem ? m.problems[problem] : null };
               }),
             )}
             value={form.kind}
             onChange={(kind) => {
               const cur = useStore.getState().alertForm;
-              if (cur) setForm(withKind(cur, kind, useStore.getState().quotes[contractKey(cur.contract)], lang));
+              if (cur) setForm(withKind(cur, kind, useStore.getState().quotes[contractKey(cur.contract)], lang, news));
             }}
             zIndex={MENU_Z}
             showWhy
           />
         </div>
-        <AlertValueBlock form={form} patch={patch} quote={quote} info={info} session={session} status={status} errors={errors} inputRef={inputRef} />
+        <AlertValueBlock form={form} patch={patch} quote={quote} info={info} session={session} status={status} news={news} errors={errors} inputRef={inputRef} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={label12}>{m.frequency}</div>
           <Segmented
@@ -147,7 +151,7 @@ function AlertForm({ form }: { form: AlertFormState }) {
             style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}
             itemStyle={{ height: 30, padding: 0 }}
           />
-          <div style={{ fontSize: 11, color: 'var(--dm)' }}>{m.freqHint[form.frequency]}</div>
+          <div style={{ fontSize: 11, color: 'var(--dm)' }}>{(form.kind === 'news' ? m.freqHintNews : m.freqHint)[form.frequency]}</div>
         </div>
         {formUsesSessions(form) && <Sessions sessions={form.sessions} onChange={(sessions) => patch({ sessions })} />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

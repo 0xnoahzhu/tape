@@ -39,6 +39,7 @@ import type {
   Execution,
   ExecutionFilter,
   IBApiCreationOptions,
+  NewsProvider,
   Order,
   OrderCancel,
   OrderState,
@@ -163,6 +164,12 @@ export interface IBApiEventMap {
   wshMetaData: (reqId: number, dataJson: string) => void;
   /** Wall Street Horizon: the JSON of the events. */
   wshEventData: (reqId: number, dataJson: string) => void;
+  /** The login's API news providers (the answer to reqNewsProviders, which has no request id). */
+  newsProviders: (newsProviders: NewsProvider[]) => void;
+  /** One headline of reqHistoricalNews (newest first); `time` as IB writes it, "2026-10-14 13:30:00.0". */
+  historicalNews: (reqId: number, time: string, providerCode: string, articleId: string, headline: string) => void;
+  /** The headlines of reqHistoricalNews are complete; `hasMore`: IB has older ones than it sent. */
+  historicalNewsEnd: (reqId: number, hasMore: boolean) => void;
   /** Market scanner: one row of a snapshot, in rank order (`contractDetails` holds the contract and its market name). */
   scannerData: (
     reqId: number,
@@ -598,6 +605,31 @@ export class IBApi extends EventEmitter {
 
   cancelWshEventData(reqId: number): this {
     return this.request((sv) => encoder.cancelWshEventData(sv, reqId), reqId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // News
+
+  /** The API news providers of the login (newsProviders; IB answers without a request id). */
+  reqNewsProviders(): this {
+    return this.request((sv) => encoder.reqNewsProviders(sv));
+  }
+
+  /**
+   * Headlines of one instrument (historicalNews per headline, newest first, then historicalNewsEnd).
+   * `providerCodes` joined by "+"; start and end "yyyy-MM-dd HH:mm:ss.0", both empty for the latest;
+   * at most `totalResults` (IB caps it at 300). IB has no cancel for it.
+   */
+  reqHistoricalNews(
+    reqId: number,
+    conId: number,
+    providerCodes: string,
+    startDateTime: string,
+    endDateTime: string,
+    totalResults: number,
+    historicalNewsOptions: TagValue[] = [],
+  ): this {
+    return this.request((sv) => encoder.reqHistoricalNews(sv, reqId, conId, providerCodes, startDateTime, endDateTime, totalResults, historicalNewsOptions));
   }
 
   // ---------------------------------------------------------------------------

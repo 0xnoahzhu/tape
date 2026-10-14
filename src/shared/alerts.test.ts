@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   alertLimitProblem,
   alertSessions,
+  availableNewsCodes,
   clipNote,
   dataAllows,
   MAX_ALERTS,
@@ -9,6 +10,7 @@ import {
   noteLength,
   priceLevel,
   ruleFitProblem,
+  ruleUsesSessions,
   usesAlertSessions,
 } from './alerts';
 import { index, option, stock } from './contract';
@@ -41,6 +43,21 @@ describe('sessions', () => {
     expect(usesAlertSessions({ ...stock('700'), currency: 'HKD' })).toBe(false);
     expect(alertSessions({})).toEqual(['pre', 'regular', 'post']);
     expect(alertSessions({ sessions: ['overnight'] })).toEqual(['overnight']);
+  });
+});
+
+describe('news alerts', () => {
+  it('use the codes the login has, or all of them while its list is not known', () => {
+    const login = { status: 'ok' as const, providers: [{ code: 'BRFG', name: 'Briefing.com General Market Columns' }, { code: 'DJNL', name: 'Dow Jones Newsletters' }] };
+    expect(availableNewsCodes(['DJNL', 'BZ', 'BRFG'], login)).toEqual(['DJNL', 'BRFG']);
+    expect(availableNewsCodes(['BZ'], login)).toEqual([]);
+    expect(availableNewsCodes(['BZ'], { status: 'error', providers: [], message: 'x' })).toEqual(['BZ']);
+  });
+
+  it('do not follow sessions', () => {
+    expect(ruleUsesSessions('news', stock('AAPL'))).toBe(false);
+    expect(ruleUsesSessions('priceAbove', stock('AAPL'))).toBe(true);
+    expect(ruleFitProblem('news', index('SPX', 'CBOE'))).toBe('stocksOnly');
   });
 });
 

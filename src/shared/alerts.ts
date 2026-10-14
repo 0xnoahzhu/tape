@@ -3,7 +3,7 @@
 // alert dialog, which offers only what fits and mirrors the limits with a reason.
 
 import { contractKey } from './contract';
-import type { AlertFrequency, AlertRule, AlertRuleType, AlertSession, AlertTimeframe, ContractRef, PriceAlert, Quote } from './types';
+import type { AlertFrequency, AlertRule, AlertRuleType, AlertSession, AlertTimeframe, ContractRef, NewsProviders, PriceAlert, Quote } from './types';
 
 export const ALERT_FREQUENCIES: readonly AlertFrequency[] = ['once', 'daily', 'always'];
 
@@ -46,6 +46,26 @@ export function clipNote(raw: unknown): string | undefined {
   return s || undefined;
 }
 
+/**
+ * News alerts: the API news providers IB includes with every login, on by default for API use since
+ * TWS 966 (Briefing.com General Market Columns, Briefing.com Analyst Actions, Dow Jones
+ * Newsletters). A new news alert starts with those the login has. They are analyst actions,
+ * market columns and newsletters, not company filings or press releases.
+ */
+export const FREE_NEWS_PROVIDERS: readonly string[] = ['BRFG', 'BRFUPDN', 'DJNL'];
+/** News alerts: how often their instrument is checked for new headlines (market/news.ts). */
+export const NEWS_POLL_MS = 5 * 60_000;
+
+/**
+ * The provider codes a news alert can use: those of `wanted` the login has, or all of `wanted`
+ * while the login's list is not known (IB then refuses the ones it lacks), in `wanted`'s order.
+ */
+export function availableNewsCodes(wanted: readonly string[], news: NewsProviders): string[] {
+  if (news.status !== 'ok') return [...wanted];
+  const have = new Set(news.providers.map((p) => p.code));
+  return wanted.filter((c) => have.has(c));
+}
+
 /** The sessions an alert is evaluated in (US stocks only, see usesAlertSessions). */
 export function alertSessions(a: Pick<PriceAlert, 'sessions'>): readonly AlertSession[] {
   return a.sessions?.length ? a.sessions : DEFAULT_ALERT_SESSIONS;
@@ -61,6 +81,14 @@ export function usesAlertSessions(c: Pick<ContractRef, 'secType' | 'currency'>):
 }
 
 /**
+ * Whether an alert of this rule type follows the chosen sessions: a US stock's, except a news
+ * alert (a headline is announced whenever it comes, as moomoo's announcement alerts).
+ */
+export function ruleUsesSessions(type: AlertRuleType, c: Pick<ContractRef, 'secType' | 'currency'>): boolean {
+  return type !== 'news' && usesAlertSessions(c);
+}
+
+/**
  * Rules evaluated on live data only (IB market data type 1): a 15-minute-old window, size, bid /
  * ask, volume, bar or halt means nothing (or worse, reads as now). Price and day-change rules also
  * fire on delayed data, marked as delayed; nothing fires on frozen data.
@@ -71,6 +99,7 @@ export function needsLiveData(rule: AlertRule): boolean {
     case 'priceBelow':
     case 'dayRise':
     case 'dayFall':
+    case 'news':
       return false;
     default:
       return true;
@@ -107,7 +136,8 @@ export function priceLevel(rule: AlertRule): { value: number; side: 'above' | 'b
 /**
  * Why a rule type does not fit an instrument (null: it fits):
  * - noVolume: FX pairs, indices and combos have no volume IB reports;
- * - stocksOnly: turnover (needs the stock's VWAP, generic tick 233);
+ * - stocksOnly: turnover (needs the stock's VWAP, generic tick 233), news (IB's API news is
+ *   about companies);
  * - noHalts: halts are reported for stocks, options and warrants;
  * - noBidAsk: indices have no bid or ask;
  * - noSizes: indices and combos have no bid / ask sizes;
@@ -121,6 +151,7 @@ export function ruleFitProblem(type: AlertRuleType, c: Pick<ContractRef, 'secTyp
     case 'volumeAbove':
       return t === 'CASH' || t === 'IND' || t === 'BAG' ? 'noVolume' : null;
     case 'turnoverAbove':
+    case 'news':
       return t === 'STK' ? null : 'stocksOnly';
     case 'halt':
       return t === 'STK' || t === 'OPT' || t === 'WAR' ? null : 'noHalts';

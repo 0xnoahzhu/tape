@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ALERT_FIT_MESSAGES, ALERT_LIMIT_MESSAGES, INVALID_ALERT_MESSAGE, MAX_ALERTS_PER_TYPE, MAX_INDICATOR_SERIES } from '@shared/alerts';
 import { option, stock } from '@shared/contract';
 import { createClock } from '@shared/timeFormat';
-import type { AlertRule, AlertStatus, ContractRef, PriceAlert, Quote } from '@shared/types';
+import type { AlertRule, AlertStatus, ContractRef, NewsProviders, PriceAlert, Quote } from '@shared/types';
 import { useAlertMessages } from './messages';
 import {
   ALERT_KIND_GROUPS,
@@ -14,10 +14,12 @@ import {
   dataNote,
   dayChange,
   dialogKey,
+  defaultNewsProviders,
   duplicateForm,
   formErrors,
   formFromAlert,
   formLimitProblem,
+  formUsesSessions,
   groupByInstrument,
   indicatorForm,
   isEditable,
@@ -27,6 +29,8 @@ import {
   kindProblem,
   limitNote,
   newAlertForm,
+  newsChoices,
+  newsProblem,
   niceQuantity,
   nowText,
   presetPrice,
@@ -64,6 +68,16 @@ const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
 
 const form = (over: Partial<AlertFormState> = {}): AlertFormState => ({ ...newAlertForm(AAPL, undefined, 'en'), ...over });
 
+const LOGIN: NewsProviders = {
+  status: 'ok',
+  providers: [
+    { code: 'BRFG', name: 'Briefing.com General Market Columns' },
+    { code: 'BRFUPDN', name: 'Briefing.com Analyst Actions' },
+    { code: 'DJNL', name: 'Dow Jones Newsletters' },
+    { code: 'BZ', name: 'Benzinga Pro' },
+  ],
+};
+
 /** The rule a form builds, or a failure. */
 const rule = (f: AlertFormState): AlertRule => {
   const built = buildRule(f);
@@ -99,6 +113,8 @@ describe('alert kinds', () => {
     expect(kindProblem('halt', EURUSD)).toBe('noHalts');
     expect(kindProblem('macd', { secType: 'BAG' })).toBe('noBars');
     expect(kindProblem('turnoverRatio', AAPL)).toBe('noShares');
+    expect(kindProblem('news', AAPL, LOGIN)).toBeNull();
+    expect(kindProblem('news', SPX, LOGIN)).toBe('stocksOnly');
     expect(kindProblem('priceAbove', SPX)).toBeNull();
     expect(kindProblem('turnoverAbove', AAPL)).toBeNull();
   });
@@ -112,6 +128,78 @@ describe('alert kinds', () => {
     }
     expect(zh.kinds.dayRise).toBe('日内涨幅超过');
     expect(zh.problems.noShares).toBe('IB 不提供流通股本数据');
+  });
+});
+
+describe('news alerts in the dialog', () => {
+  it('offers New headline only once the login’s providers are known and there are some', () => {
+    expect(newsProblem(undefined)).toBe('newsLoading');
+    expect(newsProblem({ status: 'loading', providers: [] })).toBe('newsLoading');
+    expect(newsProblem({ status: 'offline', providers: [] })).toBe('newsOffline');
+    expect(newsProblem({ status: 'error', providers: [], message: 'x' })).toBe('newsUnlisted');
+    expect(newsProblem({ status: 'ok', providers: [] })).toBe('noNewsProviders');
+    expect(newsProblem(LOGIN)).toBeNull();
+    expect(kindProblem('news', AAPL, { status: 'offline', providers: [] })).toBe('newsOffline');
+    for (const k of ['newsOffline', 'newsLoading', 'newsUnlisted', 'noNewsProviders'] as const) expect(zh.problems[k]).toBeTruthy();
+  });
+
+  it('starts with the free providers the login has, else all it has', () => {
+    expect(defaultNewsProviders(LOGIN)).toEqual(['BRFG', 'BRFUPDN', 'DJNL']);
+    expect(defaultNewsProviders({ status: 'ok', providers: [{ code: 'BZ', name: 'Benzinga Pro' }] })).toEqual(['BZ']);
+    expect(defaultNewsProviders({ status: 'offline', providers: [] })).toEqual([]);
+    const f = withKind(form(), 'news', undefined, 'en', LOGIN);
+    expect(f.newsProviders).toEqual(['BRFG', 'BRFUPDN', 'DJNL']);
+    // Picked ones stay when the kind comes back.
+    expect(withKind(withKind({ ...f, newsProviders: ['BZ'] }, 'halt', undefined, 'en', LOGIN), 'news', undefined, 'en', LOGIN).newsProviders).toEqual(['BZ']);
+  });
+
+  it('builds the rule from the picked providers, without sessions', () => {
+    const f = form({ kind: 'news', newsProviders: ['DJNL', 'BRFUPDN', 'DJNL'], sessions: [] });
+    expect(rule(f)).toEqual({ type: 'news', providers: ['BRFUPDN', 'DJNL'] });
+    expect(formUsesSessions(f)).toBe(false);
+    expect(formErrors(f)).toEqual({});
+    expect(alertFromForm({ ...f, sessions: ['regular'] }, rule(f), 'n1', 42)).toEqual({ id: 'n1', contract: AAPL, rule: { type: 'news', providers: ['BRFUPDN', 'DJNL'] }, frequency: 'once', active: true, createdAt: 42 });
+    expect(formErrors(form({ kind: 'news', newsProviders: [] }))).toEqual({ providers: 'providers' });
+    expect(en.errors.providers).toBe('Pick at least one news provider');
+  });
+
+  it('edits a news alert with its providers, keeping those the login lacks visible', () => {
+    const a = alert({ rule: { type: 'news', providers: ['BRFUPDN', 'FLY'] } });
+    const f = formFromAlert(a, 'en');
+    expect(f).toMatchObject({ kind: 'news', newsProviders: ['BRFUPDN', 'FLY'] });
+    expect(rule(f)).toEqual(a.rule);
+    expect(newsChoices(LOGIN, f.newsProviders).map((c) => [c.code, c.missing])).toEqual([
+      ['BRFG', false],
+      ['BRFUPDN', false],
+      ['DJNL', false],
+      ['BZ', false],
+      ['FLY', true],
+    ]);
+    // While the login's list is not known, the alert's own are offered (not marked missing).
+    expect(newsChoices({ status: 'offline', providers: [] }, f.newsProviders)).toEqual([
+      { code: 'BRFUPDN', name: 'BRFUPDN', missing: false },
+      { code: 'FLY', name: 'FLY', missing: false },
+    ]);
+    expect(valueBlock('news')).toBe('news');
+  });
+
+  it('lists a news alert with its providers, the newest headline and why it is not watched', () => {
+    const clock = createClock('24h', 'en');
+    const a = alert({ rule: { type: 'news', providers: ['BRFUPDN', 'DJNL'] } });
+    expect(ruleSummary(a, en)).toBe('New headline · BRFUPDN, DJNL');
+    expect(ruleSummary(a, zh)).toBe('新闻资讯 · BRFUPDN, DJNL');
+    expect(nowText(a, { id: 'a1', state: 'ok', checkedAt: 1, headline: 'NVIDIA upgraded' }, en)).toBe('Latest: NVIDIA upgraded');
+    expect(nowText(a, { id: 'a1', state: 'ok', checkedAt: 1 }, zh)).toBe('暂无新闻');
+    expect(nowText(a, { id: 'a1', state: 'waiting', reason: 'newsProviders' }, en)).toBeUndefined();
+    const text = (s: AlertStatus) => statusText(a, s, en, clock, 0);
+    expect(text({ id: 'a1', state: 'waiting', reason: 'news' })).toEqual({ text: 'Checking for headlines', tone: 'warn' });
+    expect(text({ id: 'a1', state: 'waiting', reason: 'newsProviders' })).toEqual({ text: 'Loading news providers', tone: 'warn' });
+    expect(text({ id: 'a1', state: 'noData', reason: 'noProviders' })).toEqual({ text: 'Not monitored: none of its news providers is on this IB login', tone: 'danger' });
+    expect(text({ id: 'a1', state: 'noData', reason: 'newsError', message: 'News feed is not allowed (IB 10276)' })!.text).toBe('Not monitored: News feed is not allowed (IB 10276)');
+    expect(isUnwatched(a, { id: 'a1', state: 'noData', reason: 'noProviders' })).toBe(true);
+    expect(isEditable(a)).toBe(true);
+    // A news alert holds no market data line.
+    expect(alertLineCount([a], stock('NVDA'))).toBe(1);
   });
 });
 
@@ -380,6 +468,7 @@ describe('dialog hints', () => {
     expect(valueBlock('askSizeAbove')).toBe('size');
     expect(valueBlock('boll')).toBe('indicator');
     expect(valueBlock('halt')).toBe('halt');
+    expect(valueBlock('news')).toBe('news');
     expect(valueBlock('turnoverRatio')).toBe('none');
   });
 });
@@ -475,6 +564,7 @@ describe('the alert list', () => {
     expect(isSpent(alert({ active: false, lastTriggeredAt: 5, updatedAt: 9 }))).toBe(false);
     expect(isSpent(alert({ active: false, lastTriggeredAt: 5, frequency: 'daily' }))).toBe(false);
     expect(isEditable(alert({ unsupported: true }))).toBe(false);
+    expect(isEditable(alert({ rule: { type: 'news', providers: ['BRFG'] } }))).toBe(true);
     expect(isEditable(alert())).toBe(true);
   });
 

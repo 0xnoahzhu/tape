@@ -28,6 +28,7 @@ import type {
   MarketDataCheck,
   MarketDataCheckState,
   ModifyOrderResult,
+  NewsProviders,
   NotificationKind,
   OptionChainParams,
   OrderPreview,
@@ -238,6 +239,11 @@ export interface TapeApi {
   deletePriceAlerts(ids: string[]): Promise<void>;
   /** Whether main is watching each alert now, with the measured values (poll while they are shown). */
   getAlertStatuses(): Promise<AlertStatus[]>;
+  /**
+   * The IB login's API news providers (the alert dialog's *New headline*): main asks IB once per
+   * session; `loading` until IB answered.
+   */
+  getNewsProviders(): Promise<NewsProviders>;
 
   // Notifications ----------------------------------------------------------
   /** For notifications raised by the renderer (e.g. option risk alerts). */
@@ -329,6 +335,8 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   deletePriceAlerts: 'deny',
   // Read-only, like the list the snapshot holds.
   getAlertStatuses: 'allow',
+  // Read-only: main's list of the session (it asks IB once per session on its own).
+  getNewsProviders: 'allow',
   notify: 'allow',
   markNotificationsRead: 'deny',
   testNotification: 'deny',

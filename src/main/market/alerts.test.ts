@@ -4,7 +4,8 @@ import type { AlertStatus, Bar, ContractInfo, ContractRef, HistoryRequest, Price
 import type { MainContext, QuoteService } from '../context';
 import { sanitizeAlerts } from '../storeSchema';
 import { createAlertService, SETTLE_MS, STORM_MAX } from './alerts';
-import { createFakeContext, createFakeIb, settle } from './fakeIb';
+import { createFakeContext, createFakeIb, fakeNews, settle } from './fakeIb';
+import { createNewsService } from './news';
 import { LINE_LIMIT_ERROR } from './subscriptions';
 
 /** Tuesday 2026-10-13, 11:00 New York (regular session). */
@@ -35,7 +36,7 @@ const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
  */
 async function setup(
   initial: unknown[] = [],
-  opts: { offline?: boolean; history?: (req: HistoryRequest) => Promise<Bar[]>; info?: Partial<ContractInfo> } = {},
+  opts: { offline?: boolean; history?: (req: HistoryRequest) => Promise<Bar[]>; info?: Partial<ContractInfo>; news?: boolean } = {},
 ) {
   const fake = createFakeIb();
   const f = createFakeContext(fake.ib);
@@ -65,6 +66,7 @@ async function setup(
     },
   } as unknown as MainContext['history'];
   if (!opts.offline) fake.ready();
+  if (opts.news) f.ctx.news = createNewsService(f.ctx);
   const svc = createAlertService(f.ctx);
   await settle();
 
@@ -111,6 +113,8 @@ describe('AlertService: the list', () => {
     expect(() => svc.upsert({ ...alert(), rule: { type: 'priceBelow', value: -1 } })).toThrow('The alert is not valid');
     expect(() => svc.upsert({ id: 'x', contract: stock('NVDA'), condition: 'above', price: 1, createdAt: 1 } as unknown as PriceAlert)).toThrow('not valid');
     expect(() => svc.upsert(alert({ contract: { symbol: 'EUR', secType: 'CASH', exchange: 'IDEALPRO', currency: 'USD' }, rule: { type: 'volumeAbove', shares: 1e6 } }))).toThrow('IB reports no volume');
+    expect(() => svc.upsert(alert({ contract: { symbol: 'SPX', secType: 'IND', exchange: 'CBOE', currency: 'USD' }, rule: { type: 'news', providers: ['BRFG'] } }))).toThrow('for stocks only');
+    expect(() => svc.upsert(alert({ rule: { type: 'news', providers: [] } }))).toThrow('not valid');
     for (let i = 0; i < 10; i++) svc.upsert(alert({ id: `p${i}`, rule: { type: 'priceBelow', value: 100 + i } }));
     expect(() => svc.upsert(alert({ id: 'p10', rule: { type: 'priceBelow', value: 90 } }))).toThrow('At most 10 alerts of one type');
     // Editing one of the ten is fine.
@@ -496,5 +500,152 @@ describe('AlertService: indicators', () => {
     expect(() => t.svc.upsert(alert({ id: 'n', contract: stock('S0'), rule: { type: 'indicator', timeframe: '1h', on: 'close', signal: { ind: 'rsi', kind: 'level', period: 6, level: 80, cross: 'up' } } }))).toThrow('at most 20');
     t.svc.upsert(alert({ id: 'same', contract: stock('S0'), rule: { type: 'indicator', timeframe: '1D', on: 'close', signal: { ind: 'kdj', kind: 'cross', n: 9, m1: 3, m2: 3, cross: 'up' } } }));
     expect(t.history.filter((r) => r.contract.symbol === 'S0')).toHaveLength(1);
+  });
+});
+
+describe('AlertService: news', () => {
+  const NVDA_ID = 4815747;
+  const LOGIN = [
+    { code: 'BRFG', name: 'Briefing.com General Market Columns' },
+    { code: 'BRFUPDN', name: 'Briefing.com Analyst Actions' },
+    { code: 'DJNL', name: 'Dow Jones Newsletters' },
+  ];
+  const FIVE_MIN = 5 * 60_000;
+  const news = (over: Partial<PriceAlert> = {}): PriceAlert => alert({ id: 'n1', rule: { type: 'news', providers: ['BRFUPDN'] }, frequency: 'always', ...over });
+
+  /** The alert service with the real news service over a fake IB with the free providers. */
+  async function setupNews(initial: unknown[], providers = LOGIN) {
+    const fake = createFakeIb();
+    const ibNews = fakeNews(fake, providers);
+    // setup() makes its own IB double: hand it this one through a context it builds on.
+    const t = await setupWith(fake, initial);
+    const publish = (articleId: string, time: string, text = `Headline ${articleId}`, provider = 'BRFUPDN') =>
+      ibNews.headlines.push({ conId: NVDA_ID, time, provider, articleId, text });
+    return { ...t, ibNews, publish };
+  }
+
+  async function setupWith(fake: ReturnType<typeof createFakeIb>, initial: unknown[]) {
+    const f = createFakeContext(fake.ib);
+    let stored = sanitizeAlerts(initial) ?? [];
+    f.ctx.store.getPriceAlerts = () => stored;
+    f.ctx.store.setPriceAlerts = (list: PriceAlert[]) => void (stored = sanitizeAlerts(list) ?? stored);
+    const subs = new Map<string, QuoteSubscription[]>();
+    f.ctx.quotes = { setSubscriptions: (owner: string, s: QuoteSubscription[]) => void subs.set(owner, s), getQuote: () => undefined, onQuote: () => () => undefined } as unknown as QuoteService;
+    f.ctx.contracts = { getInfo: async () => null, resolve: async (c: ContractRef) => ({ ...c, conId: NVDA_ID }) } as unknown as MainContext['contracts'];
+    fake.ready();
+    f.ctx.news = createNewsService(f.ctx);
+    const svc = createAlertService(f.ctx);
+    await settle();
+    await vi.advanceTimersByTimeAsync(0);
+    const statusOf = (id: string): AlertStatus | undefined => svc.statuses().find((s) => s.id === id);
+    return { ...f, fake, svc, subs, statusOf, stored: () => stored };
+  }
+
+  it('announces a headline that comes after the alert, never one from before it, and holds no market data line', async () => {
+    const t = await setupNews([]);
+    t.publish('old', '2026-10-13 14:30:00.0');
+    t.svc.upsert(news({ note: 'Earnings week' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.statusOf('n1')).toMatchObject({ state: 'ok', checkedAt: T0, headline: 'Headline old' });
+    expect(t.subs.get('alerts')).toEqual([]);
+    t.publish('a1', '2026-10-13 15:03:00.0', '{A:800015:L:en:K:n/a:C:0.97}NVIDIA target raised to $150 at Example Securities');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications).toEqual([
+      {
+        kind: 'price',
+        title: { en: 'NVDA: new headline — NVIDIA target raised to $150 at Example Securities', zh: 'NVDA 新闻：NVIDIA target raised to $150 at Example Securities' },
+        body: { en: 'Source: Briefing.com Analyst Actions · Note: Earnings week', zh: '来源：Briefing.com Analyst Actions · 备注：Earnings week' },
+        contract: stock('NVDA'),
+      },
+    ]);
+    expect(t.stored()[0]).toMatchObject({ active: true, lastTriggeredAt: T0 + FIVE_MIN, lastValue: 1 });
+    // The same headline is not announced again.
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications).toHaveLength(1);
+  });
+
+  it("fires on the alert's providers only, once for several headlines, and turns a one-time alert off", async () => {
+    const t = await setupNews([news({ frequency: 'once' })]);
+    t.publish('d1', '2026-10-13 15:01:00.0', 'Newsletter', 'DJNL');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications).toHaveLength(0);
+    t.publish('a1', '2026-10-13 15:06:00.0', 'First');
+    t.publish('a2', '2026-10-13 15:07:00.0', 'Second');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications.map((n) => [n.title.en, n.body.en])).toEqual([['NVDA: new headline — Second', 'Source: Briefing.com Analyst Actions · 1 more new headline']]);
+    expect(t.stored()[0].active).toBe(false);
+    expect(t.statusOf('n1')?.state).toBe('triggered');
+    expect(t.ibNews.requests).toHaveLength(3);
+    // Off: its stock is not checked any more.
+    await vi.advanceTimersByTimeAsync(2 * FIVE_MIN);
+    expect(t.ibNews.requests).toHaveLength(3);
+  });
+
+  it('fires a daily news alert once per New York trading day', async () => {
+    const t = await setupNews([news({ frequency: 'daily' })]);
+    t.publish('a1', '2026-10-13 15:03:00.0');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    t.publish('a2', '2026-10-13 15:08:00.0');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications).toHaveLength(1);
+    expect(t.statusOf('n1')?.state).toBe('triggered');
+    // 20:00 New York starts the next trading day.
+    vi.setSystemTime(Date.parse('2026-10-13T20:01:00-04:00'));
+    t.publish('a3', '2026-10-14 00:01:00.0');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications.map((n) => n.title.en)).toEqual(['NVDA: new headline — Headline a1', 'NVDA: new headline — Headline a3']);
+  });
+
+  it('starts an alert added later from the check made when it is created', async () => {
+    const t = await setupNews([news()]);
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    // Published before the second alert exists; the first alert has not seen it yet.
+    t.publish('a1', '2026-10-13 15:01:00.0');
+    t.svc.upsert(news({ id: 'n2' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.notifications).toHaveLength(1);
+    expect(t.statusOf('n2')).toMatchObject({ state: 'ok', headline: 'Headline a1' });
+    t.publish('a2', '2026-10-13 15:06:00.0');
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.notifications).toHaveLength(3);
+    // A resumed alert starts again from the check made when it is turned on (2 s after the last
+    // check): the first alert announces what that check finds, the resumed one does not.
+    t.svc.setActive(['n2'], false);
+    t.publish('a3', '2026-10-13 15:12:00.0');
+    t.svc.setActive(['n2'], true);
+    expect(t.statusOf('n2')).toMatchObject({ state: 'waiting', reason: 'news' });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(t.notifications.map((n) => n.title.en).slice(3)).toEqual(['NVDA: new headline — Headline a3']);
+    expect(t.statusOf('n2')).toMatchObject({ state: 'ok', headline: 'Headline a3' });
+  });
+
+  it('says why a news alert is not watched', async () => {
+    const t = await setupNews([news({ rule: { type: 'news', providers: ['BZ'] } }), news({ id: 'n2' })], [LOGIN[1]]);
+    expect(t.statusOf('n1')).toEqual({ id: 'n1', state: 'noData', reason: 'noProviders' });
+    expect(t.statusOf('n2')).toMatchObject({ state: 'ok' });
+    t.ibNews.refuse = { code: 10276, message: 'News feed is not allowed' };
+    await vi.advanceTimersByTimeAsync(FIVE_MIN);
+    expect(t.statusOf('n2')).toEqual({ id: 'n2', state: 'noData', reason: 'newsError', message: 'News feed is not allowed (IB 10276)' });
+    expect(t.events.filter((e) => e.type === 'alertStatuses').length).toBeGreaterThan(0);
+    t.fake.close();
+    expect(t.statusOf('n2')).toEqual({ id: 'n2', state: 'offline' });
+    // Another login: its providers are asked for before anything is checked.
+    t.ibNews.answerProviders = false;
+    t.fake.newSession('params');
+    t.fake.ready();
+    expect(t.statusOf('n2')).toEqual({ id: 'n2', state: 'waiting', reason: 'newsProviders' });
+  });
+
+  it('waits for its first check after a restart, and announces nothing from before it', async () => {
+    const fake = createFakeIb();
+    const ibNews = fakeNews(fake, LOGIN);
+    ibNews.headlines.push({ conId: NVDA_ID, time: '2026-10-13 14:00:00.0', provider: 'BRFUPDN', articleId: 'a0', text: 'Before' });
+    ibNews.answerProviders = false;
+    const t = await setupWith(fake, [news()]);
+    expect(t.statusOf('n1')).toEqual({ id: 'n1', state: 'waiting', reason: 'newsProviders' });
+    ibNews.answerProviders = true;
+    await vi.advanceTimersByTimeAsync(60_000 + 10_000);
+    expect(t.statusOf('n1')).toMatchObject({ state: 'ok', headline: 'Before' });
+    expect(t.notifications).toHaveLength(0);
   });
 });

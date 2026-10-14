@@ -12,7 +12,8 @@
 // max(0.2, 10 % of the threshold) points, sizes 20 %, volume and turnover only with IB's day roll
 // (they only grow within a day), RSI levels 2 and KDJ levels 5 points, line crosses the opposite
 // relation. Always-on alerts also wait COOLDOWN_MS between two fires (a window's length for the
-// 3 / 5-minute rules).
+// 3 / 5-minute rules). News alerts are measured by market/alerts.ts from headline checks (each new
+// headline is an event, so they always re-arm and have no cooldown); newsTexts are their texts.
 
 import { contractKey, contractLabel } from '@shared/contract';
 import { compact, compactMyriad, exactCompact, f0, f2, pct } from '@shared/format';
@@ -161,7 +162,7 @@ export function measure(rule: AlertRule, q: Quote, ctx: MeasureContext): Measure
       return { value: code, met: !halted && (ctx.prevHalt === 1 || ctx.prevHalt === 2), rearm: halted };
     }
     default:
-      // Rules this version does not know are never evaluated.
+      // News is evaluated outside the quote path; unknown rules never.
       return NONE;
   }
 }
@@ -180,6 +181,7 @@ export interface GateState {
 }
 
 export function cooldownMs(rule: AlertRule): number {
+  if (rule.type === 'news') return 0;
   return rule.type === 'windowRise' || rule.type === 'windowFall' ? rule.minutes * 60_000 : COOLDOWN_MS;
 }
 
@@ -256,12 +258,13 @@ export function alertSignature(alert: PriceAlert): string {
 
 /**
  * The quote lines the active alerts need, one per instrument: 'vwap' (RTVolume's VWAP) for a stock
- * with a turnover alert, else 'basic'. Paused, spent and unsupported alerts hold no line.
+ * with a turnover alert, else 'basic'. Paused, spent and unsupported alerts hold no line; news
+ * alerts need none.
  */
 export function alertSubscriptions(alerts: readonly PriceAlert[]): QuoteSubscription[] {
   const out = new Map<string, QuoteSubscription>();
   for (const a of alerts) {
-    if (!a.active || a.unsupported) continue;
+    if (!a.active || a.unsupported || a.rule.type === 'news') continue;
     const key = contractKey(a.contract);
     const vwap = a.rule.type === 'turnoverAbove' && a.contract.secType === 'STK';
     const prev = out.get(key);
@@ -321,6 +324,9 @@ const m = createMessages({
     lastAfterHours: (p: string, c: string) => `Last ${p} (after hours ${c})`,
     delayed: 'Delayed 15 min',
     note: (n: string) => `Note: ${n}`,
+    newsTitle: (s: string, headline: string) => `${s}: new headline — ${headline}`,
+    newsSource: (provider: string) => `Source: ${provider}`,
+    newsMore: (n: number) => (n === 1 ? '1 more new headline' : `${n} more new headlines`),
     sep: ' · ',
     /** The day's volume now (rounded). */
     volume: (n: number) => shortCompact(n),
@@ -372,6 +378,9 @@ const m = createMessages({
     lastAfterHours: (p: string, c: string) => `现价 ${p}（盘后 ${c}）`,
     delayed: '延时 15 分钟',
     note: (n: string) => `备注：${n}`,
+    newsTitle: (s: string, headline: string) => `${s} 新闻：${headline}`,
+    newsSource: (provider: string) => `来源：${provider}`,
+    newsMore: (n: number) => `另有 ${n} 条新标题`,
     sep: ' · ',
     volume: (n: number) => compactMyriad(n, MYRIAD),
     shares: (n: number) => exactCompact(n, MYRIAD),
@@ -484,5 +493,25 @@ export function alertTexts(alert: PriceAlert, measured: Measure, q: Quote, opts:
   return {
     title: { en: titleText(m('en'), alert, measured, q), zh: titleText(m('zh'), alert, measured, q) },
     body: { en: bodyText(m('en'), alert, q, opts), zh: bodyText(m('zh'), alert, q, opts) },
+  };
+}
+
+/**
+ * The notification of a news alert that found new headlines (oldest first): the newest one as the
+ * title ("NVDA: new headline — …", zh "NVDA 新闻：…"), its provider in the body, how many more came
+ * with it, and the alert's note. `providerName` names a provider code (IB's name, else the code).
+ */
+export function newsTexts(alert: PriceAlert, fresh: ReadonlyArray<{ provider: string; text: string }>, providerName: (code: string) => string): { title: LocalizedText; body: LocalizedText } {
+  const s = contractLabel(alert.contract);
+  const newest = fresh[fresh.length - 1];
+  const text = (t: AlertMessages) => {
+    const parts = [t.newsSource(providerName(newest.provider))];
+    if (fresh.length > 1) parts.push(t.newsMore(fresh.length - 1));
+    if (alert.note) parts.push(t.note(alert.note));
+    return parts.join(t.sep);
+  };
+  return {
+    title: { en: m('en').newsTitle(s, newest.text), zh: m('zh').newsTitle(s, newest.text) },
+    body: { en: text(m('en')), zh: text(m('zh')) },
   };
 }

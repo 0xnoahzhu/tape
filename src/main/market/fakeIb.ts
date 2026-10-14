@@ -4,7 +4,7 @@ import { OUT_MSG_ID, type IBApi, type ScannerSubscription, type TagValue } from 
 import type { TapeEvent } from '@shared/ipc';
 import { defaultSettings } from '@shared/defaults';
 import type { DeepPartial, PriceAlert, Settings } from '@shared/types';
-import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
+import type { IbConnection, IbListener, MainContext, NewsService, SessionChangeReason } from '../context';
 import { createMemoryDatabase } from '../db/memory';
 import { applySettingsPatch } from '../storeSchema';
 
@@ -18,6 +18,8 @@ export interface FakeIb {
   /** Simulates a completed handshake. */
   ready(): void;
   close(): void;
+  /** Starts a new session (another Gateway or login): ConnectionState.session increments, onSessionChange listeners run. */
+  newSession(reason?: SessionChangeReason): void;
   error(reqId: number, code: number, message: string): void;
   /** Called synchronously for every IBApi call; lets tests answer requests. */
   onCall?: (name: string, args: unknown[]) => void;
@@ -43,6 +45,7 @@ export function createFakeIb(): FakeIb {
   const sessionListeners = new Set<(reason: SessionChangeReason) => void>();
   const errorListeners = new Set<(e: { reqId: number; code: number; message: string }) => void>();
   let connected = false;
+  let session = 0;
   let reqId = 1000;
   const fake: FakeIb = {
     calls: [],
@@ -57,6 +60,10 @@ export function createFakeIb(): FakeIb {
     close() {
       connected = false;
       for (const l of [...closedListeners]) l();
+    },
+    newSession(reason = 'accounts') {
+      session++;
+      for (const l of [...sessionListeners]) l(reason);
     },
     error(id, code, message) {
       for (const l of [...errorListeners]) l({ reqId: id, code, message });
@@ -87,7 +94,7 @@ export function createFakeIb(): FakeIb {
     get api() {
       return connected ? api : null;
     },
-    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: '127.0.0.1', port: 4002, clientId: 111, session: 0, accounts: [], isPaper: true, farms: {} }),
+    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: '127.0.0.1', port: 4002, clientId: 111, session, accounts: [], isPaper: true, farms: {} }),
     connect: async () => fake.ready(),
     disconnect: async () => fake.close(),
     isConnected: () => connected,
@@ -194,6 +201,69 @@ export interface FakeContext {
   stored: { alerts: PriceAlert[]; settings: Settings };
 }
 
+/** A headline the fake IB has for an instrument. */
+export interface FakeHeadline {
+  conId: number;
+  /** As IB writes it, "2026-10-13 15:00:00.0". */
+  time: string;
+  provider: string;
+  articleId: string;
+  text: string;
+}
+
+export interface FakeNews {
+  /** The login's API news providers (the answer to reqNewsProviders). */
+  providers: Array<{ code: string; name: string }>;
+  /** Answer reqNewsProviders (off: IB stays silent). */
+  answerProviders: boolean;
+  /** IB's headlines; a request gets those of its conId and codes, newest first, at most its totalResults. */
+  headlines: FakeHeadline[];
+  requests: Array<{ reqId: number; conId: number; codes: string[] }>;
+  /** IB's error for headline requests while set. */
+  refuse: { code: number; message: string } | null;
+}
+
+/** IB's API news over `fake`: answers reqNewsProviders and reqHistoricalNews (in a microtask, as IB answers later). */
+export function fakeNews(fake: FakeIb, providers: FakeNews['providers']): FakeNews {
+  const news: FakeNews = { providers, answerProviders: true, headlines: [], requests: [], refuse: null };
+  const prev = fake.onCall;
+  fake.onCall = (name, args) => {
+    prev?.(name, args);
+    if (name === 'reqNewsProviders' && news.answerProviders) {
+      const list = news.providers.map((p) => ({ providerCode: p.code, providerName: p.name }));
+      queueMicrotask(() => fake.emit('newsProviders', list));
+    }
+    if (name !== 'reqHistoricalNews') return;
+    const [reqId, conId, codes, , , total] = args as [number, number, string, string, string, number];
+    const list = codes.split('+');
+    news.requests.push({ reqId, conId, codes: list });
+    queueMicrotask(() => {
+      if (news.refuse) return fake.error(reqId, news.refuse.code, news.refuse.message);
+      const rows = news.headlines
+        .filter((h) => h.conId === conId && list.includes(h.provider))
+        .sort((a, b) => b.time.localeCompare(a.time))
+        .slice(0, total);
+      for (const h of rows) fake.emit('historicalNews', reqId, h.time, h.provider, h.articleId, h.text);
+      fake.emit('historicalNewsEnd', reqId, false);
+    });
+  };
+  return news;
+}
+
+/** A news service with nothing to offer (no providers, no checks), for tests that do not use news. */
+export function idleNewsService(): NewsService {
+  return {
+    providers: () => ({ status: 'offline', providers: [] }),
+    loadProviders: async () => ({ status: 'offline', providers: [] }),
+    watch: () => undefined,
+    pollSoon: () => undefined,
+    sequence: () => 1,
+    check: () => undefined,
+    onPoll: () => () => undefined,
+    onChange: () => () => undefined,
+  };
+}
+
 /** A MainContext with an in-memory store and database, a recording notifier and the given IB double. */
 export function createFakeContext(ib: IbConnection, demo = false): FakeContext {
   const events: TapeEvent[] = [];
@@ -206,6 +276,7 @@ export function createFakeContext(ib: IbConnection, demo = false): FakeContext {
     getMainWindow: () => null,
     showMainWindow: () => undefined,
     ib,
+    news: idleNewsService(),
     db: createMemoryDatabase(),
     store: {
       getPriceAlerts: () => stored.alerts,

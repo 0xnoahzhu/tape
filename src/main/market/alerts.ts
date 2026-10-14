@@ -12,7 +12,11 @@
 // - 3 / 5-minute rules on every quote and every second (their reference slides without ticks),
 //   from a rolling window of live prices (alertWindow.ts);
 // - indicator rules every second, from bars loaded like the chart's and extended by live quotes
-//   (alertBars.ts).
+//   (alertBars.ts);
+// - news rules on each answered headline check of their stock (news.ts, about every 5 minutes):
+//   the headlines no earlier check listed, from the alert's providers. The first check answered
+//   after an alert was armed (created, edited, resumed, loaded) only marks where it starts, so a
+//   headline from before is never announced; arming asks for that check at once.
 // The 1 s timer runs only while window or indicator alerts are on.
 //
 // What may fire (the statuses say why not, AlertStatus):
@@ -23,7 +27,8 @@
 //   data only; price and day-change rules on delayed data too, their notifications marked "Delayed
 //   15 min"; nothing on frozen data;
 // - US stocks only within the alert's sessions (pre, regular, post, overnight; re-arming goes on
-//   outside them), an on-close indicator cross in the session of the bar it closes.
+//   outside them), an on-close indicator cross in the session of the bar it closes; news alerts at
+//   any time.
 // An alert whose condition is already met fires when it is created or resumed.
 //
 // Notifications: at most STORM_MAX alert notifications a minute; the rest are folded into one. An
@@ -35,6 +40,7 @@ import {
   ALERT_LIMIT_MESSAGES,
   alertLimitProblem,
   alertSessions,
+  availableNewsCodes,
   dataAllows,
   indicatorSeries,
   INVALID_ALERT_MESSAGE,
@@ -51,7 +57,7 @@ import { usStockSession } from '@shared/session';
 import { usesUsEquitySession } from '@shared/sessionQuote';
 import { barEndSec, barSeconds } from '@shared/timeframes';
 import type { AlertSession, AlertState, AlertStatus, AlertTimeframe, ContractRef, LocalizedText, PriceAlert, Quote } from '@shared/types';
-import type { AlertService, MainContext } from '../context';
+import type { AlertService, MainContext, NewsHeadline, NewsPoll, NewsWatch } from '../context';
 import { createMessages } from '../i18n';
 import { sanitizeAlertInput } from '../storeSchema';
 import { createAlertBars, feedKey, type FeedView } from './alertBars';
@@ -63,6 +69,7 @@ import {
   initialGate,
   isTriggered,
   measure,
+  newsTexts,
   type ChangeSession,
   type GateState,
   type Measure,
@@ -140,7 +147,10 @@ interface Assessment {
   session?: ChangeSession;
 }
 
-type Fired = { alert: PriceAlert; measured: Measure; quote: Quote; delayed: boolean; session: ChangeSession };
+type Fired =
+  | { alert: PriceAlert; measured: Measure; quote: Quote; delayed: boolean; session: ChangeSession }
+  /** A news alert: the new headlines of its providers, oldest first. */
+  | { alert: PriceAlert; measured: Measure; news: NewsHeadline[] };
 
 const isLineLimit = (e: Quote['error']) => !!e && e.code === LINE_LIMIT_ERROR.code && e.message === LINE_LIMIT_ERROR.message;
 
@@ -150,8 +160,12 @@ const shapeOf = (s: AlertStatus | undefined) => (s ? `${s.id}|${s.state}|${s.rea
 export function createAlertService(ctx: MainContext): AlertService {
   let alerts: PriceAlert[] = [];
   let started = false;
-  /** Gate state per evaluated alert, kept while its trigger (alertSignature) is unchanged. */
-  const gates = new Map<string, { sig: string; state: GateState }>();
+  /**
+   * Gate state per evaluated alert, kept while its trigger (alertSignature) is unchanged. `newsFrom`:
+   * the number of the first headline check sent after it was armed (NewsService.sequence), the check
+   * a news alert starts from.
+   */
+  const gates = new Map<string, { sig: string; state: GateState; newsFrom: number }>();
   const watched = new Map<string, Watched>();
   /** First quote per contract key since Tape last (re)connected (SETTLE_MS). */
   const firstQuoteAt = new Map<string, number>();
@@ -209,11 +223,33 @@ export function createAlertService(ctx: MainContext): AlertService {
     return reading;
   };
 
+  /**
+   * A news alert's status: offline, the providers loading, none of its providers on this login, IB's
+   * refusal of the last check, waiting for the check that marks where it starts, then ok (or
+   * triggered), with when IB last answered and the newest headline of its providers.
+   */
+  const assessNews = (a: PriceAlert & { rule: { type: 'news' } }, now: number): Assessment => {
+    const idle = (state: AlertState, extra: Partial<AlertStatus> = {}): Assessment => ({ status: { id: a.id, state, ...extra } });
+    if (!online()) return idle('offline');
+    const providers = ctx.news.providers();
+    if (providers.status === 'loading') return idle('waiting', { reason: 'newsProviders' });
+    if (!availableNewsCodes(a.rule.providers, providers).length) return idle('noData', { reason: 'noProviders' });
+    const check = ctx.news.check(contractKey(a.contract));
+    if (check?.error) return idle('noData', { reason: 'newsError', message: check.error });
+    const latest = check?.listed.find((h) => a.rule.providers.includes(h.provider));
+    const seen: Partial<AlertStatus> = { ...(check?.checkedAt !== undefined ? { checkedAt: check.checkedAt } : {}), ...(latest ? { headline: latest.text } : {}) };
+    if (isTriggered(a, now)) return idle('triggered', seen);
+    const from = gates.get(a.id)?.newsFrom;
+    if (from === undefined || check?.seq === undefined || check.seq < from) return idle('waiting', { reason: 'news', ...seen });
+    return idle('ok', seen);
+  };
+
   /** Looks at one alert now (no side effects): its status and, when it can be evaluated, the measure. */
   const assess = (a: PriceAlert, now: number): Assessment => {
     const idle = (state: AlertState, extra: Partial<AlertStatus> = {}): Assessment => ({ status: { id: a.id, state, ...extra } });
     if (a.unsupported) return idle('unsupported', { reason: 'newerVersion' });
     if (!a.active) return idle(isTriggered(a, now) ? 'triggered' : 'paused');
+    if (a.rule.type === 'news') return assessNews(a as PriceAlert & { rule: { type: 'news' } }, now);
     const live: Partial<AlertStatus> = needsLiveData(a.rule) ? { needsLive: true } : {};
     if (!online()) return idle('offline', live);
     const w = watched.get(contractKey(a.contract));
@@ -297,10 +333,13 @@ export function createAlertService(ctx: MainContext): AlertService {
     );
     reindex();
     for (const f of fired) {
-      const { title, body } = alertTexts(f.alert, f.measured, f.quote, { delayed: f.delayed, session: f.session });
+      const { title, body } = 'news' in f ? newsTexts(f.alert, f.news, providerName) : alertTexts(f.alert, f.measured, f.quote, { delayed: f.delayed, session: f.session });
       deliver(title, body, f.alert.contract, now);
     }
   };
+
+  /** IB's name of a news provider (the login's list), else its code. */
+  const providerName = (code: string) => ctx.news.providers().providers.find((p) => p.code === code)?.name || code;
 
   /** Evaluates the alerts of one instrument that `pick` selects. */
   const evaluate = (w: Watched, now: number, pick: (a: PriceAlert) => boolean) => {
@@ -309,7 +348,7 @@ export function createAlertService(ctx: MainContext): AlertService {
     apply(fired, now);
   };
 
-  const quoteRule = (a: PriceAlert) => a.rule.type !== 'indicator';
+  const quoteRule = (a: PriceAlert) => a.rule.type !== 'indicator' && a.rule.type !== 'news';
   const tickRule = (a: PriceAlert) => isWindowRule(a.rule) || a.rule.type === 'indicator';
 
   // ---------------------------------------------------------------------------
@@ -439,6 +478,8 @@ export function createAlertService(ctx: MainContext): AlertService {
     const evaluated = alerts.filter((a) => a.active && !a.unsupported);
     const groups = new Map<string, PriceAlert[]>();
     for (const a of evaluated) {
+      // News alerts need no quotes: their stock is checked for headlines (news.ts).
+      if (a.rule.type === 'news') continue;
       const key = contractKey(a.contract);
       const list = groups.get(key);
       if (list) list.push(a);
@@ -465,11 +506,14 @@ export function createAlertService(ctx: MainContext): AlertService {
     }
 
     const ids = new Set<string>();
+    /** Stocks of news alerts armed now: checked at once, so their start is now. */
+    const armedNews = new Set<string>();
     for (const a of evaluated) {
       ids.add(a.id);
       const sig = alertSignature(a);
       if (gates.get(a.id)?.sig === sig) continue;
-      gates.set(a.id, { sig, state: initialGate(a, !started) });
+      gates.set(a.id, { sig, state: initialGate(a, !started), newsFrom: ctx.news.sequence() });
+      if (a.rule.type === 'news') armedNews.add(contractKey(a.contract));
     }
     for (const id of [...gates.keys()]) if (!ids.has(id)) gates.delete(id);
     for (const id of [...readings.keys()]) if (!ids.has(id)) readings.delete(id);
@@ -484,6 +528,16 @@ export function createAlertService(ctx: MainContext): AlertService {
     refusedSeries = new Set(bars.want(series));
 
     ctx.quotes.setSubscriptions(OWNER, alertSubscriptions(alerts));
+    const news = new Map<string, NewsWatch>();
+    for (const a of evaluated) {
+      if (a.rule.type !== 'news') continue;
+      const key = contractKey(a.contract);
+      const w = news.get(key);
+      if (w) w.codes = [...new Set([...w.codes, ...a.rule.providers])];
+      else news.set(key, { key, contract: a.contract, codes: [...a.rule.providers] });
+    }
+    ctx.news.watch([...news.values()]);
+    for (const key of armedNews) ctx.news.pollSoon(key);
     const ticking = evaluated.some(tickRule);
     if (ticking && !timer) timer = setInterval(onTick, TICK_MS);
     if (!ticking && timer) {
@@ -525,6 +579,30 @@ export function createAlertService(ctx: MainContext): AlertService {
     noteStatuses();
   };
 
+  /**
+   * A headline check of a stock answered: its news alerts fire on the new headlines of their
+   * providers, unless the check before it was sent before the alert was armed (then this one only
+   * marks where the alert starts: what it lists may be older than the alert).
+   */
+  const onNewsPoll = (poll: NewsPoll) => {
+    const now = Date.now();
+    const fired: Fired[] = [];
+    for (const a of alerts) {
+      if (a.rule.type !== 'news' || !a.active || a.unsupported || contractKey(a.contract) !== poll.key) continue;
+      const g = gates.get(a.id);
+      if (!g || poll.prevSeq === undefined || poll.prevSeq < g.newsFrom) continue;
+      const providers = new Set(a.rule.providers);
+      const fresh = poll.fresh.filter((h) => providers.has(h.provider));
+      // Every new headline is an event of its own: news alerts always re-arm.
+      const measured: Measure = { value: fresh.length, met: fresh.length > 0, rearm: true };
+      const out = gate(a, measured, g.state, now);
+      g.state = out.state;
+      if (out.fire) fired.push({ alert: a, measured, news: fresh });
+    }
+    apply(fired, now);
+    refreshAll();
+  };
+
   /** The socket closed: every quote is stale until IB sends it again, and the windows start over. */
   const onClosed = () => {
     firstQuoteAt.clear();
@@ -551,6 +629,9 @@ export function createAlertService(ctx: MainContext): AlertService {
     ctx.quotes.onQuote(onQuote);
     ctx.ib.onClosed(onClosed);
     ctx.ib.onReady(onReady, { current: false });
+    ctx.news.onPoll(onNewsPoll);
+    // The providers loaded or changed, or a check failed: the news alerts' statuses follow.
+    ctx.news.onChange(refreshAll);
     refreshAll();
   });
 
