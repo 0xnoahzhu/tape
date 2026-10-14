@@ -15,6 +15,7 @@ const servers: FakeTws[] = [];
 const clients: Array<{ disconnect(): unknown; removeAllListeners(): unknown }> = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const c of clients.splice(0)) {
     c.removeAllListeners();
@@ -363,16 +364,16 @@ describe('IBApi send queue', () => {
   });
 
   it('emits queueStats at most once per second while frames wait, and once drained', async () => {
+    // The queue's clock and timers are faked (the socket stays real): which of its write and stats
+    // timers fires first never depends on how busy the machine is.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     const { api, session } = await ready({}, 3);
     const stats: Array<{ at: number; queued: number; held: number }> = [];
-    const drained = new Promise<void>((resolve) =>
-      api.on('queueStats', (s) => {
-        stats.push({ at: performance.now(), queued: s.queued.order + s.queued.control + s.queued.marketData, held: s.held });
-        if (stats.at(-1)?.queued === 0) resolve();
-      }),
-    );
+    api.on('queueStats', (s) => stats.push({ at: performance.now(), queued: s.queued.order + s.queued.control + s.queued.marketData, held: s.held }));
     for (let i = 0; i < 4; i++) api.reqCurrentTime();
-    await drained;
+    await vi.advanceTimersByTimeAsync(999);
+    expect(stats.map((s) => [s.queued, s.held])).toEqual([[3, 0]]);
+    await vi.advanceTimersByTimeAsync(1);
     await session.waitFrames(5);
     expect(stats.map((s) => [s.queued, s.held])).toEqual([
       [3, 0],

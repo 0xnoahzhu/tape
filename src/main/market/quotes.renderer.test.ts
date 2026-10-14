@@ -36,8 +36,13 @@ afterEach(() => {
 
 const alertOn = (symbol: string, i: number): PriceAlert => ({ id: `a${i}`, contract: stock(symbol), condition: 'above', price: 99_999, repeat: false, createdAt: 0, active: true });
 
-/** Tape's main process (quotes and price alerts) and a renderer connected to it. */
+/**
+ * Tape's main process (quotes and price alerts) and a renderer connected to it. Every timer is fake
+ * from the start: a service timer started on real time (the alert lines' reconcile when IB is ready,
+ * a flush) would stay pending under the fake clock and fire whenever the machine gets to it.
+ */
 async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
+  fakeTimers();
   const fake = createFakeIb();
   const { ctx, stored } = createFakeContext(fake.ib);
   stored.alerts = (opts.alerts ?? []).map(alertOn);
@@ -86,14 +91,15 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
 
   /** A page load: fresh renderer modules (the bridge and the owner list are module state). */
   const loadRenderer = async () => {
-    vi.useRealTimers();
     listeners = [];
     (globalThis as { window?: unknown }).window = { tape };
     vi.resetModules();
     const paths = ['state/bridge', 'state/quoteSubscriptions', 'state/store', 'hooks/useQuotes', 'features/options/riskWatcher'];
-    const m = Object.assign({}, ...(await Promise.all(paths.map(rendererModule)))) as RendererModules;
+    // One at a time: modules imported side by side right after resetModules can each get their own
+    // copy of a module they share (the store), and the test would read a store the bridge never fills.
+    const m = {} as RendererModules;
+    for (const path of paths) Object.assign(m, await rendererModule(path));
     await m.startBridge();
-    fakeTimers();
     const quote = (s: string) => m.useStore.getState().quotes[`STK:${s}`];
     return {
       quote,

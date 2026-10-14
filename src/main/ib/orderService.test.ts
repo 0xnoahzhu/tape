@@ -348,6 +348,8 @@ describe('OrderService', () => {
   });
 
   it('changes the TIF of a working order only as IB allows', async () => {
+    // GTD expiries must lie ahead: the test runs on a fixed day (Mon 5 Oct 2026, 10:00 New York).
+    vi.setSystemTime(new Date('2026-10-05T14:00:00Z'));
     const t = await loaded();
     t.emit('openOrder', 40, ibAapl, lmt(40, CLIENT_ID, { tif: 'GTD' as never, goodTillDate: '20261009 16:00:00 US/Eastern' }), { status: 'PreSubmitted' });
     // IB answers 462 "Cannot change to the new Time in Force".
