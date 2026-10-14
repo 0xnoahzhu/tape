@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { defaultSettings } from '@shared/defaults';
 import { index, option, stock } from '@shared/contract';
 import { CLOCK_24H, createClock } from '@shared/timeFormat';
-import type { OrderRequest } from '@shared/types';
+import type { OrderRequest, WorkingOrder } from '@shared/types';
 import { initialTicket, type TicketState } from '../../state/store';
-import { buildOrderRequest, pendingOrder, typePriceText, type BuildResult, type ReviewLabels } from './buildOrder';
+import { ticketPatchFromOrder } from '../orders/model';
+import { buildOrderRequest, composeOrder, modifyChanges, modifyRows, pendingOrder, typePriceText, type BuildResult, type ModifyBase, type ReviewLabels } from './buildOrder';
 import { useTicketM } from './messages';
 import { newCondition } from './ticketConditions';
 import type { TicketMarket } from './ticketModel';
@@ -13,6 +14,27 @@ import { goodAfterCommit } from './timing';
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 const mkt: TicketMarket = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
 const AAPL = stock('AAPL');
+
+/** A working order of this client (the fields a modify's review reads). */
+const working = (orderId: number, patch: Partial<WorkingOrder> = {}): WorkingOrder => ({
+  orderId,
+  clientId: 7,
+  key: `7:${orderId}`,
+  contract: AAPL,
+  action: 'BUY',
+  orderType: 'LMT',
+  totalQuantity: 100,
+  limitPrice: 220,
+  tif: 'DAY',
+  outsideRth: false,
+  status: 'Submitted',
+  filled: 0,
+  remaining: 100,
+  avgFillPrice: 0,
+  createdAt: 0,
+  updatedAt: 0,
+  ...patch,
+});
 
 const labels: ReviewLabels = {
   contract: 'Contract',
@@ -274,16 +296,20 @@ describe('review rows', () => {
   it('lists extras, bracket and trigger rows', () => {
     const r = build({ side: 'SELL', limitPrice: 100, session: 'extended', bracket: true, condition: true, conds: [newCondition('price', { value: '235' })], iceberg: true, iceQty: '10', goodAfter: true, tif: 'GTC', modifyingOrderId: 41 });
     if (!r.ok) throw new Error(r.error);
-    const p = pendingOrder(r.request, r.model, labels, mkt, 41);
+    // A modify of order #41 as it is: no row changes.
+    const same = { order: working(41), request: r.request, model: r.model };
+    const p = pendingOrder(r.request, r.model, labels, mkt, same);
     expect(p.modifyOrderId).toBe(41);
+    expect(p.unchanged).toBe(true);
+    expect(p.rows.some((x) => x.changed)).toBe(false);
     const byLabel = Object.fromEntries(p.rows.map((x) => [x.label, x]));
     expect(byLabel['Side']).toEqual({ label: 'Side', value: 'Sell', color: 'var(--dn)' });
     expect(byLabel['TIF'].value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 ET');
-    const h12 = pendingOrder(r.request, r.model, { ...labels, clock: createClock('12h', 'en') }, mkt, 41);
+    const h12 = pendingOrder(r.request, r.model, { ...labels, clock: createClock('12h', 'en') }, mkt, same);
     expect(h12.rows.find((x) => x.label === 'TIF')?.value).toBe('GTC · Extended hours · conditional · iceberg · GAT 09:35 AM ET');
     expect(byLabel['Take profit / Stop loss']).toBeUndefined();
     // With the attribute labels the conditions get their own row.
-    const full = pendingOrder(r.request, r.model, fullLabels, mkt, 41).rows;
+    const full = pendingOrder(r.request, r.model, fullLabels, mkt, same).rows;
     expect(full.find((x) => x.label === 'Conditions')?.value).toBe('AAPL ≥ 235.00');
     // …and the TIF row no longer repeats them.
     expect(full.find((x) => x.label === 'TIF')?.value).not.toContain('conditional');
@@ -344,5 +370,64 @@ describe('review rows', () => {
     const r = buildOrderRequest({ contract: sap, ticket: ticket({ qty: 200, limitPrice: 231.965 }), market: mkt, timeFormat: '24h' });
     if (!r.ok) throw new Error(r.error);
     expect(pendingOrder(r.request, r.model, labels, mkt).rows.at(-1)?.value).toBe('46,393.00 EUR');
+  });
+});
+
+describe('modify review', () => {
+  const filledOf = (filled: string, total: string, remaining: string) => `${filled} / ${total} · ${remaining} remaining`;
+  const modLabels: ReviewLabels = { ...labels, filled: { label: 'Filled', text: filledOf } };
+  /** Order #12 as "Modify" loads it into the ticket, and the request the same rules make of it. */
+  function loaded(o: WorkingOrder): { t: TicketState; base: ModifyBase } {
+    const t = { ...ticket(), ...ticketPatchFromOrder(o) };
+    const b = composeOrder({ contract: AAPL, ticket: t, market: mkt, timeFormat: '24h' });
+    return { t, base: { order: o, request: b.request, model: b.model } };
+  }
+  const review = (o: WorkingOrder, edit: Partial<TicketState>) => {
+    const { t, base } = loaded(o);
+    const r = buildOrderRequest({ contract: AAPL, ticket: { ...t, ...edit }, market: mkt, timeFormat: '24h' });
+    if (!r.ok) throw new Error(r.error);
+    return pendingOrder(r.request, r.model, modLabels, mkt, base);
+  };
+
+  it('shows what changes, before → after, and leaves the rest as it is', () => {
+    const p = review(working(12), { qty: 50, limitPrice: 219.5 });
+    expect(p.modifyOrderId).toBe(12);
+    expect(p.unchanged).toBeUndefined();
+    const row = (label: string) => p.rows.find((x) => x.label === label);
+    expect(row('Qty')).toEqual({ label: 'Qty', value: '100 → 50', changed: true });
+    expect(row('Type / Price')).toEqual({ label: 'Type / Price', value: 'Limit 220.00 → Limit 219.50', changed: true });
+    expect(row('Est. amount')).toEqual({ label: 'Est. amount', value: '$22,000.00 → $10,975.00', changed: true });
+    expect(row('TIF')).toEqual({ label: 'TIF', value: 'DAY' });
+    expect(row('Contract')).toEqual({ label: 'Contract', value: 'AAPL' });
+    expect(row('Filled')).toBeUndefined();
+  });
+
+  it('marks the TIF and session, and says what has filled', () => {
+    const p = review(working(12, { filled: 30, remaining: 70 }), { tif: 'GTC', session: 'extended' });
+    expect(p.rows.find((x) => x.label === 'TIF')).toEqual({ label: 'TIF', value: 'DAY → GTC · Extended hours', changed: true });
+    // Right after the quantity: what has filled stays filled.
+    const i = p.rows.findIndex((x) => x.label === 'Qty');
+    expect(p.rows[i + 1]).toEqual({ label: 'Filled', value: '30 / 100 · 70 remaining' });
+  });
+
+  it('a modify that changes nothing is unchanged, with no row marked', () => {
+    const p = review(working(12), {});
+    expect(p.unchanged).toBe(true);
+    expect(p.rows.filter((x) => x.changed)).toEqual([]);
+  });
+
+  it('shows rows the order gains or loses', () => {
+    expect(modifyRows([{ label: 'Qty', value: '100' }, { label: 'Note', value: 'hedge' }], [{ label: 'Qty', value: '100' }, { label: 'Route', value: 'ARCA' }])).toEqual([
+      { label: 'Qty', value: '100' },
+      { label: 'Note', value: '— → hedge', changed: true },
+      { label: 'Route', value: 'ARCA → —', changed: true },
+    ]);
+  });
+
+  it('compares requests whatever the order of their keys', () => {
+    const a: OrderRequest = { contract: AAPL, action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false };
+    const b: OrderRequest = { outsideRth: false, tif: 'DAY', limitPrice: 1, quantity: 1, orderType: 'LMT', action: 'BUY', contract: { ...AAPL } };
+    expect(modifyChanges(a, b)).toBe(false);
+    expect(modifyChanges(a, { ...b, limitPrice: 1.01 })).toBe(true);
   });
 });

@@ -9,6 +9,7 @@ import { f0 } from '@shared/format';
 import { NEW_YORK, TIME_IN_FORCES, zonedParts } from '@shared/orderTiming';
 import { MAIN_ORDER_TYPES, ORDER_TYPE_GROUPS } from '@shared/orderRules';
 import type { useCommon } from '../../i18n/common';
+import { useStore } from '../../state/store';
 import { Chip } from '../../ui/primitives';
 import { AdvancedPanel } from './AdvancedPanel';
 import { Dropdown, MenuChoice, MenuHeading, unavailableStyle } from './controls';
@@ -153,10 +154,13 @@ export function NotTradableNote({ T }: { T: TicketCtl }) {
 
 /**
  * Bid × size / ask × size. Docked, a click picks the side (sell at the bid, buy at the ask);
- * `onPick` replaces that (the floating ticket fills the limit price with the clicked quote).
+ * `onPick` replaces that (the floating ticket fills the limit price with the clicked quote). Prices
+ * that are not live (delayed or frozen, whichever line serves them) get a red tag under the boxes:
+ * a price taken from them, and the estimate, may be stale (the review says so too).
  */
 export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketScale; onPick?: (which: 'bid' | 'ask') => void; title?: (which: 'bid' | 'ask') => string | undefined }) {
-  const { m, q, market, minTick, buy, sideLock } = T;
+  const { m, q, market, minTick, buy, sideLock, marketData } = T;
+  const stale = marketData === 'delayed' || marketData === 'frozen' ? marketData : null;
   const via = q?.source?.kind === 'primary' ? m.quoteVia(q.source.exchange, q.marketDataType) : undefined;
   const tip = (which: 'bid' | 'ask') => (title ? title(which) : sideLock && (which === 'bid') === buy ? sideLock : via);
   const pick = (which: 'bid' | 'ask') => (onPick ? () => onPick(which) : sideLock ? undefined : () => T.setSide(which === 'bid' ? 'SELL' : 'BUY'));
@@ -188,6 +192,11 @@ export function QuoteBoxes({ T, S, onPick, title }: { T: TicketCtl; S: TicketSca
           {priceText(market.ask, minTick)}
         </div>
       </div>
+      {stale && (
+        <div data-ticket="data-type" title={m.dataTagHint[stale]} style={{ gridColumn: '1 / -1', display: 'flex' }}>
+          <div style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: 'var(--r)', boxShadow: 'inset 0 0 0 1px var(--r)', whiteSpace: 'nowrap' }}>{m.dataTag[stale]}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -674,13 +683,21 @@ export function submitText(T: TicketCtl): string {
 
 /**
  * The submit button and, while modifying, "Cancel modify" under it. `label` / `busy` replace the
- * text and disable the button (the floating ticket: "Submitting…" until IB answers).
+ * text and disable the button (the floating ticket: "Submitting…" until IB answers). On a live
+ * account a red line above it says so ("LIVE account U…: orders use real money").
  */
 export function SubmitBlock({ T, S, label, busy = false, cancelModify = true }: { T: TicketCtl; S: TicketScale; label?: string; busy?: boolean; cancelModify?: boolean }) {
-  const { tradable, buy, modifying, patch, m } = T;
+  const { tradable, buy, modifying, patch, m, c } = T;
   const enabled = tradable && !busy;
+  const live = useStore((s) => s.connection.status === 'connected' && !s.connection.isPaper && !!s.connection.account);
+  const account = useStore((s) => (s.settings.appearance.showAccountId ? (s.connection.account ?? '') : ''));
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+      {live && (
+        <div data-ticket="live" className="ellipsis" style={{ fontSize: 12, color: 'var(--r)', textAlign: 'center', marginBottom: -2 }}>
+          {c.liveTicket(account)}
+        </div>
+      )}
       <button
         onMouseDown={(e) => e.preventDefault()}
         onClick={enabled ? T.submit : undefined}

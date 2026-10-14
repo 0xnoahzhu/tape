@@ -2,7 +2,7 @@
 // The design is square (no border radius), uses inset box-shadows as borders,
 // and expresses state through color tokens only.
 
-import type { CSSProperties, ReactNode, KeyboardEvent, ChangeEvent, MouseEvent } from 'react';
+import { useState, type CSSProperties, type ReactNode, type KeyboardEvent, type ChangeEvent, type MouseEvent, type Ref } from 'react';
 
 /** 34×18 switch: accent when on, line color when off. */
 export function Toggle({ on, onClick, disabled, title }: { on: boolean; onClick?: (e: MouseEvent) => void; disabled?: boolean; title?: string }) {
@@ -358,6 +358,8 @@ export function Button({
   disabled,
   autoFocus,
   style,
+  buttonRef,
+  title,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -368,10 +370,14 @@ export function Button({
   disabled?: boolean;
   autoFocus?: boolean;
   style?: CSSProperties;
+  buttonRef?: Ref<HTMLButtonElement>;
+  title?: string;
 }) {
   const primary = kind === 'primary';
   return (
     <button
+      ref={buttonRef}
+      title={title}
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       autoFocus={autoFocus}
@@ -393,6 +399,17 @@ export function Button({
   );
 }
 
+/** How long after a dialog opens a double (or triple) click is taken for the rest of the one that opened it. */
+export const CARRIED_CLICK_MS = 500;
+
+/**
+ * A click that only continues a multi-click begun before the dialog opened (the second click of a
+ * double-click on Submit, which opened the review): it must neither close the dialog on its
+ * backdrop nor press a button that has come under the pointer (Confirm over a floating ticket's
+ * Submit). `detail` is the click count; a keyboard click has 0.
+ */
+export const isCarriedOverClick = (detail: number, msSinceOpen: number): boolean => detail > 1 && msSinceOpen < CARRIED_CLICK_MS;
+
 /** Modal overlay with the 400px panel used by every dialog in the design. */
 export function Modal({
   onClose,
@@ -405,8 +422,15 @@ export function Modal({
   width?: number;
   zIndex?: number;
 }) {
+  const [openedAt] = useState(() => performance.now());
   return (
     <div
+      // Capture phase: before the backdrop or any button inside sees the click.
+      onClickCapture={(e) => {
+        if (!isCarriedOverClick(e.detail, performance.now() - openedAt)) return;
+        e.stopPropagation();
+        e.preventDefault();
+      }}
       onClick={onClose}
       className="no-drag"
       style={{ position: 'absolute', inset: 0, zIndex, background: 'var(--ov)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -433,14 +457,28 @@ export function Modal({
   );
 }
 
-/** Key/value rows inside dialogs. A `prose` value (a warning sentence) is set in the text font. */
-export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string; parts?: boolean; prose?: boolean }> }) {
+/**
+ * Key/value rows inside dialogs. A `changed` row (a modify's "100 → 200") is marked with an accent
+ * bar at its left edge and a semibold value; a `prose` value (a warning sentence) is set in the text
+ * font.
+ */
+export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string; parts?: boolean; changed?: boolean; prose?: boolean }> }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {rows.map((r, i) => (
         <div
           key={i}
-          style={{ minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', fontSize: 13 }}
+          data-changed={r.changed || undefined}
+          style={{
+            minHeight: 36,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            boxShadow: r.changed ? 'inset 2px 0 0 var(--ac), inset 0 -1px 0 var(--ln2)' : 'inset 0 -1px 0 var(--ln2)',
+            ...(r.changed ? { paddingLeft: 10 } : null),
+            fontSize: 13,
+          }}
         >
           <div style={{ color: 'var(--mu)', flexShrink: 0, whiteSpace: 'nowrap' }}>{r.label}</div>
           <div
@@ -449,6 +487,7 @@ export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: 
               color: r.color ?? 'var(--tx)',
               textAlign: 'right',
               minWidth: 0,
+              ...(r.changed ? { fontWeight: 600 } : null),
               ...(r.prose ? { lineHeight: 1.45, padding: '8px 0', textWrap: 'pretty' } : null),
             }}
           >
@@ -463,6 +502,36 @@ export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: 
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The account an order goes to, as an outlined mono tag: LIVE in red, PAPER muted; `text` replaces
+ * the word (an id after it, OFFLINE). Paper or live is never masked, only the id (lib/account.ts).
+ */
+export function AccountTag({ paper, text, title, muted, onClick, style }: { paper: boolean; text: string; title?: string; muted?: boolean; onClick?: () => void; style?: CSSProperties }) {
+  const live = !paper && !muted;
+  return (
+    <div
+      data-account-tag={muted ? 'offline' : paper ? 'paper' : 'live'}
+      title={title}
+      onClick={onClick}
+      style={{
+        height: 22,
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 7px',
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
+        font: '600 11px/1 var(--mono)',
+        color: live ? 'var(--r)' : 'var(--dm)',
+        boxShadow: `inset 0 0 0 1px ${live ? 'var(--r)' : 'var(--ln)'}`,
+        cursor: onClick ? 'pointer' : undefined,
+        ...style,
+      }}
+    >
+      {text}
     </div>
   );
 }

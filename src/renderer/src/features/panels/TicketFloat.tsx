@@ -177,11 +177,13 @@ function TicketTitleBar({ T, compact = false }: { T: TicketCtl; compact?: boolea
 
 /**
  * A price from the quote into the ticket (quickActions.ts → priceTarget): the bid / ask boxes fill
- * the limit; the chips under the price box fill that box.
+ * the limit; the chips under the price box fill that box. A limit filled this way is marked as the
+ * quote's (`limitFromQuote`): on prices that are not live the review asks to check it.
  */
 export function fillPrice(T: TicketCtl, price: number, source: 'quote' | 'chip' = 'quote'): void {
   const target = priceTarget(T.type, T.main.key, T.modifying != null, source);
-  if (target === 'toLimit') T.patch({ orderType: 'LMT', limitPrice: price });
+  if (target === 'toLimit') T.patch({ orderType: 'LMT', limitPrice: price, limitFromQuote: true });
+  else if (target === 'limitPrice') T.patch({ limitPrice: price, limitFromQuote: true });
   else if (target) T.setPrice(target, price);
 }
 

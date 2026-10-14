@@ -63,6 +63,8 @@ const m = createMessages({
     competingTitle: 'No market data: your IB login is in use elsewhere',
     competingBody:
       'Your IB username is logged in to a live session in TWS, IBKR Mobile or Client Portal, so IB sends no quotes to this connection (10197). Log out there and quotes resume by themselves; orders and positions are not affected.',
+    liveTitle: (account: string) => `Connected to LIVE account${account ? ` ${account}` : ''}`,
+    liveBody: (app: string) => `Orders sent from Tape through ${app} now use real money. The top bar shows LIVE while connected.`,
   },
   zh: {
     tws: 'TWS',
@@ -91,6 +93,8 @@ const m = createMessages({
     clientIdInUse: (id: number) => `Client ID ${id} 已被占用`,
     competingTitle: '行情暂停：IB 账号正在别处登录',
     competingBody: '你的 IB 用户名正在 TWS、IBKR Mobile 或 Client Portal 中登录实盘会话，IB 不向本连接推送行情（10197）。在那边退出登录后行情会自动恢复；订单和持仓不受影响。',
+    liveTitle: (account: string) => `已连接实盘账户${account ? ` ${account}` : ''}`,
+    liveBody: (app: string) => `此后通过 ${app} 从 Tape 发出的订单将使用真实资金。连接期间顶栏显示“实盘”。`,
   },
 });
 
@@ -158,6 +162,14 @@ export const connectionNotices = {
   restored: (mode: Mode, dataLost: boolean): NoticeText => ({
     title: m.both((t) => t.restoredTitle(appName(t, mode))),
     body: m.both((t) => (dataLost ? t.restoredLost : t.restoredKept)),
+  }),
+  /**
+   * A session (a new Gateway, port or login, or the first of the run) is ready on a live account:
+   * orders are real from now on. `account` is '' while Settings › Privacy hides account IDs.
+   */
+  liveAccount: (mode: Mode, account: string): NoticeText => ({
+    title: m.both((t) => t.liveTitle(account)),
+    body: m.both((t) => t.liveBody(appName(t, mode))),
   }),
   /** 10197: IB serves market data to one session per username. */
   competingSession: (): NoticeText => ({

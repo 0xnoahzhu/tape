@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { onCommand } from './state/bridge';
 import { confirmCancel } from './state/orderActions';
-import { isCovered, useStore } from './state/store';
+import { isCovered, isDialogOpen, useStore } from './state/store';
 import type { AppCommand } from '@shared/ipc';
 import { useCommon } from './i18n/common';
 import { lastCancellableOrder, otherAppsOrders } from './lib/orders';
@@ -32,8 +32,15 @@ export function useDark(): boolean {
   return theme === 'system' ? systemDark : theme === 'dark';
 }
 
+/**
+ * Runs a shortcut or menu command. Locking always works (it closes the review, lockActions.ts);
+ * everything else does nothing while a dialog is open (isDialogOpen), so nothing opens or changes
+ * under it: a cancel confirmation hidden behind the order review, a page switched under a
+ * confirmation.
+ */
 function runCommand(command: AppCommand, dark: boolean): void {
   const s = useStore.getState();
+  if (command !== 'set-pin-and-lock' && isDialogOpen(s)) return;
   switch (command) {
     case 'open-settings':
       s.openSettings();
@@ -103,11 +110,13 @@ export function App() {
 
   // Global shortcuts. Trade-specific keys (B / S / ↑ / ↓ / ⏎) live in the order ticket (and, on
   // the floating ticket's bar, B / S in features/panels/shortcuts.ts).
-  // None of them works while the lock screen is up.
+  // None of them works while the lock screen is up, nor (but ⌘L) while a dialog is open: a key
+  // left unhandled goes nowhere (the menu ignores accelerators, menuTemplate.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod || isCovered(useStore.getState())) return;
+      const s = useStore.getState();
+      if (!mod || isCovered(s)) return;
       const k = e.key.toLowerCase();
       let cmd: AppCommand | null = null;
       if (k === 'l' && !e.shiftKey && !e.altKey) cmd = 'set-pin-and-lock';
@@ -118,7 +127,7 @@ export function App() {
       else if (k === '2') cmd = 'page-trade';
       else if (k === '3') cmd = 'page-orders';
       else if (k === 'backspace' && !isEditable(e.target)) cmd = 'cancel-last-order';
-      if (!cmd) return;
+      if (!cmd || (cmd !== 'set-pin-and-lock' && isDialogOpen(s))) return;
       e.preventDefault();
       runCommand(cmd, dark);
     };

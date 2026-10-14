@@ -55,16 +55,17 @@ describe('a click on a level', () => {
   const fresh = { type: 'STP' as const, mainKey: 'stopPrice' as const, modifying: false };
 
   it('loads a limit order at its price: buy at an ask, sell at a bid', () => {
-    expect(levelPatch({ side: 'ask', price: 10.02 }, fresh)).toEqual({ orderType: 'LMT', limitPrice: 10.02, side: 'BUY', stopPrice: null, limitOffset: null });
+    expect(levelPatch({ side: 'ask', price: 10.02 }, fresh)).toEqual({ orderType: 'LMT', limitPrice: 10.02, limitFromQuote: true, side: 'BUY', stopPrice: null, limitOffset: null });
     expect(levelPatch({ side: 'bid', price: 9.99 }, { type: 'MKT', mainKey: null, modifying: false })).toMatchObject({ orderType: 'LMT', limitPrice: 9.99, side: 'SELL' });
   });
 
   it('moves only the price of an order being modified (its side and type stay)', () => {
     const level = { side: 'ask' as const, price: 10.02 };
-    expect(levelPatch(level, { type: 'LMT', mainKey: 'limitPrice', modifying: true })).toEqual({ limitPrice: 10.02 });
+    // A limit from a level is the quote's (the review asks to check it on prices that are not live).
+    expect(levelPatch(level, { type: 'LMT', mainKey: 'limitPrice', modifying: true })).toEqual({ limitPrice: 10.02, limitFromQuote: true });
     expect(levelPatch(level, { type: 'STP', mainKey: 'stopPrice', modifying: true })).toEqual({ stopPrice: 10.02 });
     // A stop limit's level goes to its limit, as a quote does.
-    expect(levelPatch(level, { type: 'STP LMT', mainKey: 'stopPrice', modifying: true })).toEqual({ limitPrice: 10.02 });
+    expect(levelPatch(level, { type: 'STP LMT', mainKey: 'stopPrice', modifying: true })).toEqual({ limitPrice: 10.02, limitFromQuote: true });
     expect(levelPatch(level, { type: 'MKT', mainKey: null, modifying: true })).toBeNull();
   });
 

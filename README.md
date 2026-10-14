@@ -83,11 +83,14 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   (Adaptive, VWAP, TWAP, Arrival price, Close price, % of volume and its variants, Dark ice, Accumulate /
   distribute, and for options Minimise impact and Balance impact and risk) with their parameters; **OCA
   groups**; directed routing; **good-after** time; a note. Choices IBKR does not combine are disabled with
-  the reason. The totals show IBKR's **what-if** (initial margin change and commission) as you edit,
-  and optional confirmation before every order repeats IBKR's margin and commission estimate; keyboard
-  entry (B / S, ↑ / ↓ for quantity, ⏎ to submit). With Level 2 on, a 5-level book sits between the bid /
-  ask and the entry fields; a click loads a limit order at that level, buying at an ask and selling at a
-  bid (while you modify an order, only its price moves).
+  the reason. The totals show IBKR's **what-if** (initial margin change and commission) as you edit, and
+  every order, modify and strategy goes through the **order review** (see *Order review* below; it cannot
+  be turned off); keyboard entry (B / S, ↑ / ↓ for quantity, ⏎ to submit, ⏎ again to confirm once the
+  review's Confirm has armed). A red **Delayed 15 min** or **Frozen** tag
+  under the bid / ask says when IBKR's prices for the instrument are not live, and on a live account a red
+  line above the submit button says orders use real money. With Level 2 on, a 5-level book sits between the
+  bid / ask and the entry fields; a click loads a limit order at that level, buying at an ask and selling at
+  a bid (while you modify an order, only its price moves).
 - **Floating order ticket and strategy builder**: the pop-out icon at the top right of the order ticket
   or the strategy builder turns it into a panel floating over the page inside Tape's window; the chart or
   option chain then uses the full width. Drag it by its header, resize it from any edge or corner. It is
@@ -181,7 +184,7 @@ In IB Gateway open *Configure › Settings › API › Settings*; in TWS open *G
 | --- | --- |
 | Enable ActiveX and Socket Clients | On (TWS only; IB Gateway always listens). |
 | Socket port | IB Gateway: **4002** paper / **4001** live. TWS: **7497** paper / **7496** live. Must match *Settings › Connection* in Tape (default 127.0.0.1:4002). |
-| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order and cancel (error 321, shown with where to turn it off), and Tape shows a red **Read-Only API** chip in the top bar and a warning in the cancel dialogs; quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
+| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order and cancel (error 321, shown with where to turn it off), and Tape shows a red **Read-Only API** chip in the top bar and a warning in the order and cancel dialogs; quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
 | Download open orders on connection | On, so working orders show up as soon as Tape connects. |
 | Allow connections from localhost only | Recommended. To connect from another machine, turn it off and add that machine under *Trusted IPs*. |
 
@@ -204,10 +207,39 @@ the entry has filled) and says so.
 **Connection health.** A connected Gateway can still be unable to pass orders on. When IB Gateway / TWS loses
 its own connection to IBKR (IBKR's 1100; 2110 when Tape connects while that is already the case), or stops answering Tape's heartbeat for 10 s (it hangs with its
 socket open), the top bar shows a red **IBKR link lost (1100)** or **IB Gateway not responding** chip and
-Settings › Connection says the same. Until it is back, orders and modifies are held back (nothing is sent),
-while cancels still go out with a warning that they may not arrive. A
+Settings › Connection says the same. Until it is back, orders and modifies are held back (the review cannot
+be confirmed, and nothing is sent), while cancels still go out with a warning that they may not arrive. A
 Gateway that stays silent for about 40 s is disconnected and, with *Settings › Connection › Auto-reconnect*
 on (the default), reconnected automatically (notification *IB Gateway stopped responding*).
+
+**Order review.** Nothing is sent without it, and no setting skips it (Settings › Trade only says so). Its
+title carries a **LIVE** (red) or **PAPER** tag and its first row is the account the order goes to (for a
+modify, the order's own account; the id hidden with *Settings › Privacy › Account ID: Hide*; LIVE / PAPER
+never is). It lists every attribute, IBKR's
+margin and commission estimate for new orders, and in red: prices that are not live (delayed, frozen or none),
+IBKR's Read-Only API refusal, and what the pre-trade checks find — a sell that opens or adds to a short
+position, a position that turns from long to short (or back), an order worth more than 25% of net
+liquidation or more than the buying power it needs (a future's and a written option's margin is left to
+IBKR's estimate), a limit more than 5% through the bid / ask (20% for options), and a market order or a
+price taken from the bid / ask (followed, or filled from the bid / ask boxes, chips or the Book) while
+prices are not live — and what they could not check: positions IBKR has not listed yet (right after
+connecting or switching accounts), no account values yet, or no exchange rate from the order's currency
+to the account's. Any of those has to be ticked off (*I have checked these warnings*) before Confirm works. A strategy lists every leg as
+built ("Sell 1 × AAPL 10/16 230 Put") with the net debit or credit, and a combo at market repeats the
+market warning. A modify is titled *Modify order #58*: the rows it changes read before → after and are
+marked, what has filled is shown, a modify that changes nothing says so and cannot be confirmed, and an
+order that stopped working meanwhile is not reviewed at all. Confirm keeps the focus but arms 0.6 s after
+the review opens (or after the tick), so ⏎⏎ or a double-click cannot send an order unread; a cancel,
+disconnect or delete confirmation arms the same way, and the rest of a double-click that opened a dialog is
+ignored. It opens only while Tape is connected; one open while the connection drops stays (a reconnect to
+the same account keeps it) but cannot be confirmed until Tape is connected again. While a dialog is open,
+⌘ shortcuts other than ⌘L do nothing.
+
+**Paper or live, always in view.** The top bar shows **LIVE** (red) or **PAPER** with the account Tape
+trades (**OFFLINE** while not connected; a click opens Settings › Connection). The first time a connection
+lands on a live account (at launch or after a switch, not on a plain reconnect) a notification says
+*Connected to LIVE account U…*. Settings › Connection lists every account of a login that manages several
+and marks the one orders go to (IBKR's first; Tape does not pick another).
 
 **Switching accounts.** Changing the host, port or client id, or IB Gateway / TWS logging in to another user
 on the same port (paper ↔ live), starts afresh: the previous account's orders, trades, positions and account

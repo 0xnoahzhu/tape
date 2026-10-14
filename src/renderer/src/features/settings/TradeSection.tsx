@@ -1,10 +1,11 @@
-// Settings › Trade: order confirmation, default order size, outside-RTH default (the ticket's
-// default trading session: extended hours when on, regular hours when off).
+// Settings › Trade: default order size, outside-RTH default (the ticket's default trading session:
+// extended hours when on, regular hours when off). The order review is not a setting: every order,
+// modify and cancel is confirmed in a dialog (state/orderActions.ts), and the row here only says so.
 
 import { defaultSession, useStore } from '../../state/store';
 import { Chip } from '../../ui/primitives';
 import { useSettingsMessages } from './messages';
-import { SectionHeader, SettingToggle, saveSettings } from './parts';
+import { LabelBlock, SectionHeader, SettingToggle, saveSettings } from './parts';
 
 const DEFAULT_QTYS = [1, 10, 100, 500];
 
@@ -29,12 +30,10 @@ export function TradeSection() {
     <>
       <SectionHeader title={m.nav.trade} />
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <SettingToggle
-          label={m.confirmOrders}
-          desc={m.confirmOrdersD}
-          on={trading.confirmOrders}
-          onToggle={() => saveSettings({ trading: { confirmOrders: !trading.confirmOrders } })}
-        />
+        <div style={{ height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+          <LabelBlock label={m.orderReview} desc={m.orderReviewD} />
+          <div style={{ fontSize: 12, color: 'var(--dm)', flexShrink: 0 }}>{m.alwaysOn}</div>
+        </div>
         <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
           <div>{m.defaultQty}</div>
           <div style={{ display: 'flex', gap: 4 }}>

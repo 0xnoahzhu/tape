@@ -50,7 +50,8 @@ export type TapeEvent =
   | { type: 'settings'; settings: Settings; dark: boolean }
   | { type: 'connection'; state: ConnectionState }
   | { type: 'account'; summary: AccountSummary | null }
-  | { type: 'positions'; positions: Position[] }
+  /** The account's positions; `loaded`: IB has listed them since the last handshake (positionEnd). */
+  | { type: 'positions'; positions: Position[]; loaded: boolean }
   | { type: 'orders'; orders: WorkingOrder[] }
   | { type: 'executions'; executions: Execution[] }
   /**

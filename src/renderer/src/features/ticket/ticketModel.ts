@@ -280,3 +280,12 @@ const nonNegative = (n: number): number | undefined => (Number.isFinite(n) && n 
 
 /** Trailing order types (the trail row and its initial stop). */
 export const isTrailing = (t: TicketState['orderType']): boolean => TRAILING_ORDER_TYPES.includes(t);
+
+/**
+ * The limit price is the quote's, not the user's: it follows the bid / ask (nothing typed), or was
+ * filled from the quote (a bid / ask box or chip, a Book level; `limitFromQuote`). On prices that
+ * are not live the review then asks to check it (orderRisk.ts → `priceFromQuote`).
+ */
+export function limitFromQuote(t: Pick<TicketState, 'orderType' | 'limitPrice' | 'limitFromQuote'>): boolean {
+  return (t.orderType === 'LMT' || t.orderType === 'LOC') && (!positive(t.limitPrice) || t.limitFromQuote);
+}

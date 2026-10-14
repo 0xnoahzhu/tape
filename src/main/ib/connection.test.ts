@@ -759,6 +759,34 @@ describe('IbConnection', () => {
       expect(later().every((st) => st.session === 0 && st.account === 'DUP899854' && st.isPaper)).toBe(true);
     });
 
+    it('says when a session lands on a LIVE account, once: not for paper, not again on a plain reconnect', async () => {
+      const { t } = await connected();
+      // The paper session of the launch said nothing.
+      expect(t.notices).toEqual([]);
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      t.api().handshake(1, 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.notices).toHaveLength(1);
+      expect(t.notices[0]).toMatchObject({ kind: 'conn', title: { en: 'Connected to LIVE account U18630011', zh: '已连接实盘账户 U18630011' } });
+      expect(t.notices[0].body.en).toBe('Orders sent from Tape through IB Gateway now use real money. The top bar shows LIVE while connected.');
+      // The same session back after a drop: "Reconnected" only.
+      t.api().emit('disconnected');
+      await vi.advanceTimersByTimeAsync(5_000);
+      t.api().handshake(2, 'U18630011');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.notices.map((n) => n.title.en)).toEqual(['Connected to LIVE account U18630011', 'Disconnected from IB Gateway', 'Reconnected to IB Gateway']);
+    });
+
+    it('leaves the account id out of the live notice while account IDs are hidden', async () => {
+      const t = setup({ port: 4001 });
+      t.ctx.store.getSettings().appearance.showAccountId = false;
+      const p = t.ib.connect();
+      t.api().handshake(1, 'U18630011');
+      await p;
+      expect(t.notices.map((n) => n.title.en)).toEqual(['Connected to LIVE account']);
+    });
+
     it('starts a new session on a port change made while disconnected', async () => {
       const { t, log } = await connected();
       t.api().emit('disconnected');

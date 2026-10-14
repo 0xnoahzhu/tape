@@ -100,7 +100,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     autoConnect: bool,
     autoReconnect: bool,
   },
-  trading: { confirmOrders: bool, defaultQty: int(1, 10_000_000), outsideRthDefault: bool },
+  trading: { defaultQty: int(1, 10_000_000), outsideRthDefault: bool },
   appearance: {
     theme: oneOf(['system', 'dark', 'light']),
     language: oneOf(['en', 'zh']),

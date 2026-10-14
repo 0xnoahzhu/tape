@@ -3,7 +3,8 @@ import { defaultSettings } from '@shared/defaults';
 import { index, option, stock } from '@shared/contract';
 import { initialTicket, type TicketState } from '../../state/store';
 import { newCondition } from './ticketConditions';
-import { conditionContract, money, priceInput, resolveTicket, stepQty, tickDecimals, trailStop, type TicketMarket } from './ticketModel';
+import { useStore } from '../../state/store';
+import { conditionContract, limitFromQuote, money, priceInput, resolveTicket, stepQty, tickDecimals, trailStop, type TicketMarket } from './ticketModel';
 
 const ticket = (patch: Partial<TicketState> = {}): TicketState => ({ ...initialTicket(defaultSettings()), ...patch });
 const mkt: TicketMarket = { bid: 227.48, ask: 227.49, last: 227.5, refLast: 227.5, minTick: 0.01, multiplier: 1 };
@@ -131,5 +132,37 @@ describe('money', () => {
     expect(money(46393, 'EUR')).toBe('46,393.00 EUR');
     expect(money(undefined, 'EUR')).toBe('—');
     expect(money(12.5, '')).toBe('$12.50');
+  });
+});
+
+describe('a limit price from the quote', () => {
+  it('follows the bid / ask while nothing is typed, and stays the quote’s when filled from it', () => {
+    expect(limitFromQuote(ticket())).toBe(true);
+    expect(limitFromQuote(ticket({ limitPrice: 158.11 }))).toBe(false);
+    expect(limitFromQuote(ticket({ limitPrice: 158.11, limitFromQuote: true }))).toBe(true);
+    // Only a limit order's (or limit on close's) price is the quote's.
+    expect(limitFromQuote(ticket({ orderType: 'MKT' }))).toBe(false);
+    expect(limitFromQuote(ticket({ orderType: 'STP', limitPrice: null }))).toBe(false);
+  });
+
+  it('is cleared by any other change of the limit price (typed, a tick step, a side change, another instrument)', () => {
+    useStore.setState({ ticket: ticket() });
+    const s = () => useStore.getState();
+    // The floating ticket's Ask chip or a Book level.
+    s().patchTicket({ limitPrice: 158.11, limitFromQuote: true });
+    expect(s().ticket).toMatchObject({ limitPrice: 158.11, limitFromQuote: true });
+    expect(limitFromQuote(s().ticket)).toBe(true);
+    // Typed, or stepped a tick: the user's price now.
+    s().patchTicket({ limitPrice: 158.12 });
+    expect(s().ticket.limitFromQuote).toBe(false);
+    s().patchTicket({ limitPrice: 158.11, limitFromQuote: true });
+    s().patchTicket({ side: 'SELL', limitPrice: null, stopPrice: null, limitOffset: null });
+    expect(s().ticket.limitFromQuote).toBe(false);
+    // Other fields leave it.
+    s().patchTicket({ limitPrice: 158.11, limitFromQuote: true });
+    s().patchTicket({ qty: 300 });
+    expect(s().ticket.limitFromQuote).toBe(true);
+    s().selectSymbol(s().symbol);
+    expect(s().ticket).toMatchObject({ limitPrice: null, limitFromQuote: false });
   });
 });

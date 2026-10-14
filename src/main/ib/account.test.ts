@@ -131,7 +131,7 @@ describe('account service', () => {
       // At once, not with the next batch: the renderer never shows DU1's values under U1.
       expect(t.events).toEqual([
         { type: 'account', summary: null },
-        { type: 'positions', positions: [] },
+        { type: 'positions', positions: [], loaded: false },
       ]);
       expect(t.svc.getSummary()).toBeNull();
       expect(t.svc.getPositions()).toEqual([]);
@@ -160,7 +160,7 @@ describe('account service', () => {
       t.ready();
       expect(t.events).toEqual([
         { type: 'account', summary: null },
-        { type: 'positions', positions: [] },
+        { type: 'positions', positions: [], loaded: false },
       ]);
       expect(t.svc.getPositions()).toEqual([]);
     });
@@ -175,8 +175,41 @@ describe('account service', () => {
       t.setAccount('U1');
       t.ready();
       expect(t.svc.getPositions()).toEqual([]);
-      expect(t.events).toContainEqual({ type: 'positions', positions: [] });
+      expect(t.events).toContainEqual({ type: 'positions', positions: [], loaded: false });
     });
+  });
+
+  it('says when IB has listed the positions: at positionEnd, again after each handshake', async () => {
+    const t = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    t.ready();
+    expect(t.svc.positionsLoaded()).toBe(false);
+    t.emit('position', 'DU1', aapl, 100, 200.5);
+    await vi.advanceTimersByTimeAsync(300);
+    // Listed so far, not complete: an instrument missing from the list may still be held.
+    expect(t.events.at(-1)).toMatchObject({ type: 'positions', loaded: false });
+    t.emit('positionEnd');
+    expect(t.svc.positionsLoaded()).toBe(true);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(t.events.at(-1)).toMatchObject({ type: 'positions', loaded: true, positions: [{ account: 'DU1', quantity: 100 }] });
+    // An account with no positions at all is complete too: positionEnd is sent although nothing changed.
+    const empty = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    empty.ready();
+    empty.emit('positionEnd');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(empty.events).toContainEqual({ type: 'positions', positions: [], loaded: true });
+    // A reconnect lists them again (they may have changed meanwhile); a new session starts unlisted.
+    t.close();
+    t.ready();
+    expect(t.svc.positionsLoaded()).toBe(false);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(t.events.at(-1)).toMatchObject({ type: 'positions', loaded: false });
+    t.emit('positionEnd');
+    expect(t.svc.positionsLoaded()).toBe(true);
+    t.switchSession('U1');
+    expect(t.svc.positionsLoaded()).toBe(false);
+    expect(t.events.at(-1)).toEqual({ type: 'positions', positions: [], loaded: false });
   });
 
   it('keeps IB’s exchange rates by currency', async () => {

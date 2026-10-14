@@ -42,6 +42,11 @@ const en = {
   connectedTo: (app: string, addr: string) => `Connected ${app} ${addr}`,
   paperAccount: 'paper account',
   liveAccount: 'live account',
+  /** A login that manages several accounts (connection.accounts): each, the one orders go to marked. */
+  accounts: 'Accounts',
+  ordersGoHere: 'orders',
+  ordersGoHereTip: 'Tape’s orders go to this account',
+  accountsNote: 'This login manages several accounts. Tape’s orders go to the marked one, the first IBKR lists; Tape cannot pick another one.',
   serverVersion: (v: number) => `server v${v}`,
   /** The status line while connected but unable to carry orders (orders and modifies are held back). */
   ibLinkLost: (app: string) => `${app} lost IBKR (1100): orders held back`,
@@ -190,8 +195,9 @@ const en = {
   cacheCleared: 'Local cache cleared',
 
   // Trade
-  confirmOrders: 'Confirm before sending',
-  confirmOrdersD: 'Review contract, quantity and price in a dialog',
+  orderReview: 'Order review',
+  orderReviewD: 'Every order, modify and cancel is reviewed in a dialog before it is sent',
+  alwaysOn: 'Always on',
   defaultQty: 'Default order size',
   outsideRth: 'Allow outside RTH by default',
   outsideRthD: 'New orders start in Extended hours (pre-market and after-hours) instead of Regular hours',
@@ -366,6 +372,10 @@ const zh: typeof en = {
   connectedTo: (app: string, addr: string) => `已连接 ${app} ${addr}`,
   paperAccount: '模拟账户',
   liveAccount: '实盘账户',
+  accounts: '账户',
+  ordersGoHere: '下单',
+  ordersGoHereTip: 'Tape 的订单发往此账户',
+  accountsNote: '此登录管理多个账户。Tape 的订单发往标记的账户，即 IBKR 列出的第一个；Tape 不能选择其他账户。',
   serverVersion: (v: number) => `服务器版本 ${v}`,
   ibLinkLost: (app: string) => `${app} 与 IBKR 断开（1100）：暂停下单`,
   notResponding: (app: string) => `${app} 无响应：暂停下单`,
@@ -498,8 +508,9 @@ const zh: typeof en = {
   cacheClearNote: '图表会重新从 IB 加载K线，较长的历史需要一些时间。',
   cacheCleared: '本地缓存已清除',
 
-  confirmOrders: '下单前确认',
-  confirmOrdersD: '弹窗核对合约、数量、价格',
+  orderReview: '下单确认',
+  orderReviewD: '所有下单、改单、撤单都需在弹窗中确认后发送',
+  alwaysOn: '始终开启',
   defaultQty: '默认下单数量',
   outsideRth: '默认允许盘前盘后',
   outsideRthD: '新订单的交易时段默认为盘前盘后，而不是常规时段',

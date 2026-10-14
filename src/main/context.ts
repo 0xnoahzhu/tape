@@ -253,6 +253,8 @@ export interface AlertService {
 export interface AccountService {
   getSummary(): AccountSummary | null;
   getPositions(): Position[];
+  /** IB has listed the positions since the last handshake (positionEnd). */
+  positionsLoaded(): boolean;
 }
 
 /**

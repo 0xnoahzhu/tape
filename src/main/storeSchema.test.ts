@@ -98,7 +98,7 @@ describe('loadSettings', () => {
     const s = loadSettings(
       {
         connection: { port: '4001', clientId: 12.6, autoConnect: 'false', autoReconnect: 0, host: '  localhost ', mode: 'nope' },
-        trading: { confirmOrders: 'yes', defaultQty: 'abc' },
+        trading: { defaultQty: 'abc' },
         appearance: { theme: 'blue', language: 'fr', upColor: 'us' },
       },
       defaults,
@@ -109,11 +109,19 @@ describe('loadSettings', () => {
     expect(s.connection.autoReconnect).toBe(false);
     expect(s.connection.host).toBe('localhost');
     expect(s.connection.mode).toBe(defaults.connection.mode);
-    expect(s.trading.confirmOrders).toBe(defaults.trading.confirmOrders);
     expect(s.trading.defaultQty).toBe(defaults.trading.defaultQty);
     expect(s.appearance.theme).toBe('system');
     expect(s.appearance.language).toBe('en');
     expect(s.appearance.upColor).toBe('us');
+  });
+
+  it('drops the removed "Confirm before sending" switch: every order is reviewed', () => {
+    // Files from before the review became mandatory: a saved `false` must not survive.
+    const s = loadSettings({ trading: { confirmOrders: false, defaultQty: 500, outsideRthDefault: true } }, defaults);
+    expect(s.trading).toEqual({ defaultQty: 500, outsideRthDefault: true });
+    expect('confirmOrders' in s.trading).toBe(false);
+    // An IPC patch carrying it changes nothing either.
+    expect('confirmOrders' in applySettingsPatch(defaults, { trading: { confirmOrders: false } }).trading).toBe(false);
   });
 
   it('clamps numbers into range', () => {

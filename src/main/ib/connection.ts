@@ -23,6 +23,10 @@
 // and P&L requests name the account. Without it, Tape asks again (reqManagedAccts), and the
 // handshake timeout ends an attempt that never gets it.
 //
+// The first time a session is ready on a live account (the first of the run, or one a switch
+// started), a 'conn' notice says so: "Connected to LIVE account U…". A plain reconnect of the
+// same session says nothing new.
+//
 // IB's 321 "The API interface is currently in Read-Only mode" (Read-Only API on in TWS / IB
 // Gateway; at the handshake it refuses reqCompletedOrders, reqId -1) sets readOnlyApi: IB then
 // refuses orders and cancels. The next handshake clears it, and so does IB accepting an order
@@ -141,6 +145,8 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   let retryFirstAttempt = false;
   /** When a ready connection dropped (for the "reconnected after …" notice). */
   let droppedAt = 0;
+  /** The last session that has been ready (its live account announced); -1 before the first. */
+  let announcedSession = -1;
 
   let reqId = FIRST_REQ_ID;
   let orderId = 0;
@@ -377,6 +383,11 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     startHeartbeat(api);
     fireReady(api);
     if (wasRetry) notify(connectionNotices.reconnected(mode(), downtime));
+    if (state.session !== announcedSession) {
+      announcedSession = state.session;
+      // The id is left out while Settings › Privacy hides account IDs; LIVE never is.
+      if (!state.isPaper && state.account) notify(connectionNotices.liveAccount(mode(), ctx.store.getSettings().appearance.showAccountId ? state.account : ''));
+    }
   }
 
   function fireReady(api: IBApi): void {

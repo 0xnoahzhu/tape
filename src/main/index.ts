@@ -170,6 +170,7 @@ function snapshot(): AppSnapshot {
     connection: ctx.ib.getState(),
     account: ctx.account.getSummary(),
     positions: ctx.account.getPositions(),
+    positionsLoaded: ctx.account.positionsLoaded(),
     orders: ctx.orders.getOrders(),
     executions: ctx.orders.getExecutions(),
     watchlists: ctx.store.getWatchlists(),

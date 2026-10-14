@@ -46,7 +46,7 @@ function setup(demo = false) {
     },
     onQuote: () => () => undefined,
   } as unknown as typeof f.ctx.quotes;
-  f.ctx.account = { getPositions: () => [], getSummary: () => null };
+  f.ctx.account = { getPositions: () => [], getSummary: () => null, positionsLoaded: () => true };
   const scanner = fakeScanner(
     fake,
     Object.entries(MARKET).map(([symbol, m]) => ({ symbol, ...m })),

@@ -22,6 +22,7 @@ import type {
   OrderType,
   SecType,
   TradingSession,
+  WorkingOrder,
 } from '@shared/types';
 import type { ConfirmRow, PendingOrder, TicketCondition, TicketState } from '../../state/store';
 import { adjustText, algoText, conditionsText, fillFlags, type AttributeLabels } from '../orders/attributes';
@@ -151,7 +152,10 @@ export function composeOrder({ contract, ticket: t, market, now = Date.now(), ho
   const timing = timingProblem(ticketTiming(t, contract, t.session, goodTill), now);
   if (timing) fail(timing);
 
-  const model = resolveTicket(t, market);
+  // A forex order sized by an amount (cashQty, in the order's currency) is worth that amount; the
+  // share quantity it replaces in the ticket is not sent.
+  const cash = cashSized ? parseNum(t.cashQty) : undefined;
+  const model = cashSized ? { ...resolveTicket(t, market), est: positive(cash) ? cash : undefined } : resolveTicket(t, market);
   const tick = market.minTick;
   const buy = model.buy;
   // A modify sends every attribute, switched-off ones as false / 0 / '': IB replaces the whole order.
@@ -259,7 +263,7 @@ export function composeOrder({ contract, ticket: t, market, now = Date.now(), ho
   if (t.sweep || explicit) req.sweepToFill = t.sweep;
   if (t.disc) req.discretionaryAmt = parseNum(t.discAmt);
   else if (explicit) req.discretionaryAmt = 0;
-  if (cashSized) req.cashQty = parseNum(t.cashQty);
+  if (cashSized) req.cashQty = cash;
   // The trigger method belongs to stops and touched orders; it is not sent with the others.
   if (TRIGGER_ORDER_TYPES.includes(t.orderType) && (t.triggerMethod || explicit)) req.triggerMethod = t.triggerMethod;
 
@@ -354,6 +358,8 @@ export interface ReviewLabels {
   };
   stopTypes?: Record<string, string>;
   attr?: AttributeLabels;
+  /** A modify's Filled row ("30 / 100 · 70 remaining"). */
+  filled?: { label: string; text: (filled: string, total: string, remaining: string) => string };
 }
 
 const withUnits = (req: OrderRequest, labels: ReviewLabels) => (labels.units ? labels.units(f0(req.quantity), req.contract.secType) : f0(req.quantity));
@@ -468,20 +474,73 @@ export function reviewRows(req: OrderRequest, model: TicketModel, labels: Review
   return rows;
 }
 
-/** The review dialog payload handed to submitOrder() (which binds it to the connection session). */
+/**
+ * A modify's starting point: the working order and the ticket as "Modify" loaded it
+ * (ticketPatchFromOrder), composed by the same rules as the ticket now. Comparing the two shows
+ * what the modify changes in the same words.
+ */
+export interface ModifyBase {
+  order: WorkingOrder;
+  request: OrderRequest;
+  model: TicketModel;
+}
+
+/** JSON with sorted keys: two requests built the same way compare equal when they ask the same. */
+function canonical(v: unknown): string {
+  return JSON.stringify(v, (_k, x: unknown) =>
+    x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))) : x,
+  );
+}
+
+/** Whether a modify asks IB for anything the working order does not already have. */
+export const modifyChanges = (before: OrderRequest, after: OrderRequest): boolean => canonical(before) !== canonical(after);
+
+/**
+ * The modify's rows: each row of the new order whose value differs from the order as it is reads
+ * "before → after" and is `changed`; a row the order loses reads "before → —", one it gains
+ * "— → after". The unchanged rows stay as they are.
+ */
+export function modifyRows(after: ConfirmRow[], before: ConfirmRow[]): ConfirmRow[] {
+  const left = [...before];
+  const rows = after.map((r): ConfirmRow => {
+    const i = left.findIndex((b) => b.label === r.label);
+    if (i < 0) return { ...r, value: `— → ${r.value}`, changed: true };
+    const [b] = left.splice(i, 1);
+    return b.value === r.value ? r : { ...r, value: `${b.value} → ${r.value}`, changed: true };
+  });
+  return [...rows, ...left.map((b): ConfirmRow => ({ ...b, value: `${b.value} → —`, changed: true }))];
+}
+
+/**
+ * The review dialog payload handed to submitOrder() (which binds it to the connection session and
+ * the account). A modify (`modify`) shows what changes, before → after, and what has filled; a
+ * modify that changes nothing is `unchanged`.
+ */
 export function pendingOrder(
   req: OrderRequest,
   model: TicketModel,
   labels: ReviewLabels,
   market: Pick<TicketMarket, 'minTick' | 'refMinTick'>,
-  modifyOrderId?: number | null,
-): Omit<PendingOrder, 'session'> {
+  modify?: ModifyBase | null,
+): Omit<PendingOrder, 'session' | 'isPaper'> {
   const side = req.action === 'BUY' ? labels.buy : labels.sell;
+  const now = reviewRows(req, model, labels, market);
+  let rows = now;
+  if (modify) {
+    rows = modifyRows(now, reviewRows(modify.request, modify.model, labels, market));
+    const o = modify.order;
+    // What has filled stays filled: the new quantity is the order's total.
+    if (o.filled > 0 && labels.filled) {
+      const at = rows.findIndex((r) => r.label === labels.qty) + 1;
+      rows.splice(at, 0, { label: labels.filled.label, value: labels.filled.text(f0(o.filled), f0(o.totalQuantity), f0(o.remaining)) });
+    }
+  }
   return {
     request: req,
-    rows: reviewRows(req, model, labels, market),
+    rows,
     label: side,
-    ...(modifyOrderId != null ? { modifyOrderId } : {}),
+    ...(modify ? { modifyOrderId: modify.order.orderId } : {}),
+    ...(modify && !modifyChanges(modify.request, req) ? { unchanged: true } : {}),
     summary: `${side} ${req.quantity === 0 && req.cashQty != null ? `${f0(req.cashQty)} ${req.contract.currency}` : withUnits(req, labels)} ${contractLabel(req.contract)}`,
   };
 }

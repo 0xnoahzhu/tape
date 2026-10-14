@@ -51,6 +51,7 @@ export async function startBridge(): Promise<void> {
     connection: snap.connection,
     account: snap.account,
     positions: snap.positions,
+    positionsLoaded: snap.positionsLoaded,
     orders: snap.orders,
     executions: snap.executions,
     watchlists: snap.watchlists,
@@ -149,7 +150,7 @@ function apply(e: TapeEvent): void {
       set({ account: e.summary });
       break;
     case 'positions':
-      set({ positions: e.positions });
+      set({ positions: e.positions, positionsLoaded: e.loaded });
       break;
     case 'orders':
       set({ orders: e.orders });

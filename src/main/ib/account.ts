@@ -6,6 +6,10 @@
 // connection drops and comes back to the same account. Another account or Gateway (a new session,
 // onSessionChange) starts empty at once: the renderer gets a null summary and no positions before
 // anything of the new session, so the previous account's values never show under it.
+//
+// The positions event says whether IB has listed the positions since the last handshake
+// (`loaded`, set at positionEnd): until then an instrument missing from the list may still be held,
+// and the order review says its position was not checked (renderer ticket/orderRisk.ts).
 
 import { EventName, type Contract, type IBApi } from './tws';
 import { contractKey, multiplierOf } from '@shared/contract';
@@ -85,6 +89,8 @@ export function createAccountService(ctx: MainContext): AccountService {
   const conIdByPnlReq = new Map<number, number>();
   /** Positions reported during the current reqPositions round (stale ones are removed at positionEnd). */
   let positionsSeen: Set<string> | null = null;
+  /** IB has listed the positions since the last handshake (positionEnd). */
+  let positionsLoaded = false;
 
   let emitTimer: ReturnType<typeof setTimeout> | null = null;
   let dirtySummary = false;
@@ -106,7 +112,7 @@ export function createAccountService(ctx: MainContext): AccountService {
     emitTimer = null;
     if (dirtySummary && summary) ctx.emit({ type: 'account', summary });
     if (dirtyPositions) {
-      ctx.emit({ type: 'positions', positions: [...positions.values()] });
+      ctx.emit({ type: 'positions', positions: [...positions.values()], loaded: positionsLoaded });
       syncPnlSingles();
     }
     dirtySummary = dirtyPositions = false;
@@ -217,11 +223,12 @@ export function createAccountService(ctx: MainContext): AccountService {
   function clearValues(): void {
     summary = null;
     positions.clear();
+    positionsLoaded = false;
     if (emitTimer) clearTimeout(emitTimer);
     emitTimer = null;
     dirtySummary = dirtyPositions = false;
     ctx.emit({ type: 'account', summary: null });
-    ctx.emit({ type: 'positions', positions: [] });
+    ctx.emit({ type: 'positions', positions: [], loaded: false });
   }
 
   /**
@@ -240,6 +247,11 @@ export function createAccountService(ctx: MainContext): AccountService {
     const account = activeAccount();
     // Values of another account (a session change has normally dropped them already).
     if ((summary && summary.account !== account) || [...positions.values()].some((p) => p.account && p.account !== account)) clearValues();
+    // The positions kept across a reconnect may have changed meanwhile: listed again from here.
+    if (positionsLoaded) {
+      positionsLoaded = false;
+      markDirty(false, true);
+    }
     summaryReqId = ctx.ib.nextReqId();
     api.reqAccountSummary(summaryReqId, 'All', Object.keys(SUMMARY_TAGS).join(','));
     if (account) api.reqAccountUpdates(true, account);
@@ -311,11 +323,12 @@ export function createAccountService(ctx: MainContext): AccountService {
       const seen = positionsSeen;
       positionsSeen = null;
       if (!seen) return;
-      let removed = false;
       for (const id of [...positions.keys()]) {
-        if (!seen.has(id)) removed = positions.delete(id) || removed;
+        if (!seen.has(id)) positions.delete(id);
       }
-      if (removed) markDirty(false, true);
+      // Sent also when nothing changed: the renderer learns the list is complete.
+      positionsLoaded = true;
+      markDirty(false, true);
     });
 
     ib.on(EventName.pnl, (reqId: number, dailyPnL: number, unrealizedPnL?: number, realizedPnL?: number) => {
@@ -354,6 +367,7 @@ export function createAccountService(ctx: MainContext): AccountService {
   return {
     getSummary: () => summary,
     getPositions: () => [...positions.values()],
+    positionsLoaded: () => positionsLoaded,
   };
 }
 

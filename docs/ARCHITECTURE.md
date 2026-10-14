@@ -44,7 +44,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary, positions/portfolio (IB's average cost kept as sent), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates from the account updates |
+| `ib/account.ts` | Account summary, positions/portfolio (IB's average cost kept as sent; the `positions` event's `loaded` says IB has listed them since the last handshake, `positionEnd`), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates from the account updates |
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, Cancel all (IB's global cancel), reconciliation with IB's lists, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
@@ -89,8 +89,9 @@ purpose (`beginClose`): `api` is null and `isConnected()` false from then on, so
 moment is refused instead of being held by the TWS client for the next socket, which may carry
 another login. Any answer clears it. The next handshake and a new session clear both flags. Meanwhile
 `orders.ts` refuses `place()` / `modify()` before sending anything (`requireIbLink`, also after the
-contract lookup), and the renderer first: `sendOrder` fails with the reason, a cancel and Cancel all
-are still sent with a warning in their dialogs that they may not reach IBKR, and the top bar shows a red chip ("IBKR link lost (1100)", "IB
+contract lookup), and the renderer first: `sendOrder` fails with the reason, the review's Confirm does
+not arm and says why (it arms once the connection is back), a cancel and Cancel all are still sent
+with a warning in their dialogs that they may not reach IBKR, and the top bar shows a red chip ("IBKR link lost (1100)", "IB
 Gateway not responding"; its tooltip says what is held back, a click opens Settings › Connection, whose
 status line and red dot say the same; `orderActions.ts → connectionHealthText`).
 
@@ -100,7 +101,8 @@ refuses orders and cancels. The next handshake (and a new session) clears it, an
 an order request of this client (`noteOrderAccepted`: the user turned the setting off meanwhile).
 Nothing is refused on it, since it can be stale for a moment; the renderer warns: a red "Read-Only
 API: IBKR refuses orders" chip in the top bar while connected (its tooltip and a click say where to turn it off,
-`orderActions.ts → readOnlyWarning`), and a red line in the cancel dialog and Cancel all.
+`orderActions.ts → readOnlyWarning`), and a red line in the order review, the cancel dialog and Cancel
+all.
 
 **Sessions.** Moving to another Gateway, client id or account starts a new session:
 `ConnectionState.session` increments and `onSessionChange(reason)` runs, between the previous
@@ -118,7 +120,10 @@ the previous one at once: `orders.ts` its orders, fills and notice state, `accou
 session (`state/sessionReset.ts`: the order review, a cancel confirmation, Cancel all, the cancels
 waiting for IB, the ticket's Modify, the panels' order strips) and lists orders and fills only of the login's accounts
 (`state/connectedLists.ts`, `lib/orders.ts → ofConnectedAccounts`; all of an advisor login's
-accounts). The API log notes each new session.
+accounts). The API log notes each new session. The first time a session is ready on a live account
+(the first of the run, or one a switch started; never again on a plain reconnect) `becomeReady` posts a
+'conn' notice "Connected to LIVE account U…" (`connectionModel.ts → connectionNotices.liveAccount`; the
+id left out while Settings › Privacy hides account IDs).
 
 ### Orders
 
@@ -990,8 +995,13 @@ delete open files):
 * `src/renderer/src/features/<feature>/` — one folder per feature. Each feature declares its own
   strings with `createMessages({ en, zh })` (see `src/renderer/src/i18n/index.ts`).
 * `src/renderer/src/ui/primitives.tsx` — controls that reproduce the design (Toggle, Segmented,
-  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, Popover, MenuItem). Segmented and TabItems
-  items carry `data-key` (and `data-active` on the selected one) for UI tests.
+  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, AccountTag, Popover, MenuItem). Segmented and
+  TabItems items carry `data-key` (and `data-active` on the selected one) for UI tests. `Modal` swallows
+  the rest of a double-click that began before it opened (`isCarriedOverClick`: a click with `detail` > 1
+  within 500 ms), so the second click of a double-click on Submit neither closes the review on its
+  backdrop nor presses a button that came under the pointer. `KeyValueRows` marks a `changed` row (a
+  modify's before → after) with an accent bar. `AccountTag` is the outlined PAPER / LIVE tag (live in
+  red) of the top bar and the review.
 * Design tokens are CSS variables in `styles/tokens.css`. The root element carries
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
@@ -1016,6 +1026,16 @@ notices only, through the store too): Portfolio › Orders lists working orders 
 goes where any other notification does.
 Both end in `orders/navigation.ts → openNotificationTarget`: `trades` / `orders` select the instrument
 and open Portfolio › Trades / Orders, `opt` opens the option chain of the underlying, `chart` the chart.
+While a dialog holds the screen (`store.ts → isDialogOpen`: the order review, a confirmation, Cancel
+all, the alert dialog, the PIN dialog) the ⌘ shortcuts and menu commands (`App.tsx → runCommand`)
+do nothing but lock, and the ticket's and the floating panels' keys wait.
+
+**Top bar** (`layout/TopBar.tsx`). Before the bell, the account badge: "LIVE · U18630011" outlined in
+red or "PAPER · DUP899854" muted while connected (the id only while Settings › Privacy shows account IDs;
+the word never hides), else OFFLINE / CONNECTING; a click opens Settings › Connection. Beside it the
+Read-Only API chip and, while TWS / IB Gateway lost IB or does not answer, the health chip (see
+*Connection*). Settings › Connection lists every account of a login that manages several and marks the
+one orders go to (the connection's `account`, IB's first; there is no picker).
 
 ### Trade page (`pages/TradePage.tsx`)
 
@@ -1106,13 +1126,74 @@ method, sweep to fill, a relative order's offset mode, switching off a discretio
 good-after time the order has, and session / TIF as before; orders sized by cash are not offered for
 "Modify".
 
-The review (`layout/Dialogs.tsx`) lists every chosen attribute (`orders/attributes.ts`, shared with
-the lists and the cancel dialog) and, for new single-instrument orders while connected,
-IB's estimate from `previewOrder`: asking, then commission, initial and maintenance margin change
-(before → after), equity with loan and IB's notice, or IB's refusal in red. Sending never waits for
-it.
+**The review** (`layout/Dialogs.tsx → OrderConfirmDialog`, its pure parts in `layout/orderReview.ts`)
+is the only way an order is sent: `orderActions.ts → submitOrder` (the ticket, its ⏎, Modify, the
+strategy builder) always opens it (while connected; otherwise a "Not connected" toast, since nothing could
+be sent and the account is unknown) and only its Confirm calls `sendOrder`; there is no setting (the
+former Settings › Trade › "Confirm before sending" is gone, and `storeSchema.ts` drops a saved
+`trading.confirmOrders`). `submitOrder` stamps the order with the session, the account and paper / live
+as connected (`PendingOrder.account`, `isPaper`), or, for a modify, the modified order's own account (a
+login that manages several accounts may have Tape's orders in one that is not the connected one; main
+modifies it there, and the floating ticket's strip follows the order in it); the title carries their PAPER / LIVE tag and the first
+row is the account (`lib/account.ts → accountRow`: live in red, the id masked per Settings › Privacy,
+the word never). Then every chosen attribute (`orders/attributes.ts`, shared with the lists and the
+cancel dialog) and, for new single-instrument orders while connected, IB's estimate from
+`previewOrder`: asking, then commission, initial and maintenance margin change (before → after),
+equity with loan and IB's notice, or IB's refusal in red. Sending never waits for it. Red rows follow
+(`orderReview.ts → warningRows`): prices that are not live (`PendingOrder.marketData`, from the quote's
+market data type, `ticket/orderRisk.ts → marketDataOf`: delayed 3 / 4, frozen 2, none without a bid,
+ask, last or mark), and the pre-trade checks (`orderRisk.ts → orderRisks`, computed at submit from the
+position, net liquidation and buying power of the account the order goes to, `accountRiskContext`; of
+another account than the connected one Tape lists neither, so they count as not known): `opensShort` (a
+sell that opens or adds to a short), `flips` (long ↔ short), `largeNotional` (over 25% of net
+liquidation, converted with IB's exchange rates), `overBuyingPower` (what the order opens beyond the
+buying power; a written option's or a future's margin is left to IB's what-if, and a forex order sized
+by an amount opens all of it), `farThroughMarket` (an LMT / LOC limit
+more than 5% through the ask / bid, 20% for options, else the last price) and `marketOnStaleData` (a
+market order, or a limit that follows the bid / ask or was filled from the quote, on prices that are
+not live: `TicketState.limitFromQuote`, set by the floating ticket's bid / ask boxes and chips and a
+Book level, cleared by any other change of the limit; `ticketModel.ts → limitFromQuote`). A check that
+cannot run is a risk of its own, `unchecked`, one "Not checked" row per missing input: positions IB has
+not listed yet (`StoreState.positionsLoaded`, false after each handshake and on a session change until
+main's `positions` event says `loaded`), no account summary yet, or no IB rate from the order's
+currency to the account's; a review never looks clean for want of data. A modify counts the
+position only when its quantity grows. Any risk needs the tick "I have checked these warnings" (Space
+toggles it) before Confirm can arm. While IB refuses requests in Read-Only API mode, a red line says so.
+While Tape is not connected (a plain reconnect keeps the review) or TWS / IB Gateway lost IB or does not
+answer (*Connection › Health*), a red line says so and Confirm does not arm (`mayArm`'s `held`); it arms
+once the connection can carry the order again.
 
-The totals (`parts.tsx → Totals`) show the estimated amount and IBKR's what-if for the order as it
+**Arming.** Confirm keeps the focus (`autoFocus`; never `disabled`, which would leave ⏎ on a button
+behind the dialog) and arms `CONFIRM_ARM_MS` (600 ms) after the order arrives, or after the tick: until
+then a capture-phase keydown handler holds ⏎ back (`orderReview.ts → enterAction`: a held ⏎ never
+acts, ⏎ on Cancel after Tab closes at once, ⏎ with nothing focused confirms once armed), its click does
+nothing, and it fades in. Escape and Cancel always work. A danger `ConfirmDialog` (cancel an order,
+disconnect, delete) arms its button the same way, and Cancel all its red button after the check box.
+
+**Modify review.** `useTicket.submit` refuses a modify whose order is no longer working or that IB's
+last list left out (`notReported`; a toast, no review; main's `modify()` refuses it too), and otherwise composes the order as "Modify" loaded it (`ticketPatchFromOrder` over the ticket,
+`buildOrder.ts → ModifyBase`) by the same rules: `pendingOrder` compares the two sets of rows
+(`modifyRows`: a differing row reads "before → after" and is `changed`, a lost one "before → —", a new one
+"— → after"), adds a Filled row after the quantity when part has filled, and marks a modify that asks
+for nothing new `unchanged` (`modifyChanges`, the requests compared with sorted keys): the review says
+"Nothing changed" and its Confirm never arms. The title is "Modify order #58", the button "Confirm
+modify #58".
+
+**Strategies** (`options/sendStrategy.ts`): a single leg is sent as a limit order on its contract
+(a stock leg as the shares it stands for: it counts 100-share lots, as its description, the combo
+ratios and the order's cost do); one row per leg as built ("Sell 1 × AAPL 10/16 230 Put",
+in the side's colour; a credit combo is sent as SELL with the leg actions reversed, which would
+mislead), the price and the amount as net debit or credit, a red row repeating the market warning for a
+combo at market, and the checks that apply: a single leg like a ticket order (its price comes from the
+leg's bid / ask), a combo by its size against the account and the legs' data (`strategyRisks`).
+
+The quote boxes (`parts.tsx → QuoteBoxes`) show a red "Delayed 15 min" / "Frozen" tag under the bid / ask
+for any quote that is not live (`useTicket → marketData`), and `SubmitBlock` a red line above the button
+on a live account ("LIVE account U…: orders use real money").
+
+The totals (`parts.tsx → Totals`) show the estimated amount (as composed, `buildOrder.ts →
+composeOrder`: a forex order sized by an amount is worth that amount, not the share quantity it hides;
+the review's Est. amount and the checks use the same) and IBKR's what-if for the order as it
 stands (`ticket/WhatIf.tsx → useWhatIf`): the initial margin change (before → after in its tooltip)
 and the commission, or IB's refusal in red. It asks 600 ms after the ticket changes (the symbol, the
 ticket state or the session; a price that follows the market is not in the ticket state, so quote
@@ -1178,7 +1259,7 @@ dropped when the legs change; type, TIF, condition, estimated cost, strip, send)
 
 **After a submit.** An order sent from a floating panel carries its `origin` (`PendingOrder.origin`)
 and reports through `state/orderFeedback.ts` instead of toasts: the button reads "Submitting…" and is
-disabled until IB answers; the review dialog (when enabled) works as before. The status strip
+disabled until IB answers; the review dialog works as before. The status strip
 (`OrderStrip.tsx`, `stripModel.ts`) shows "Submitted #1234" / "Modified #1234", the order line and IB's
 live status: pre-submitted / working → partially filled with progress → filled with the average price,
 the position change and the commission; cancelled; or IB's rejection in red (also the late Inactive /
@@ -1224,7 +1305,8 @@ Tape can cancel, "Cancelling…" while a cancel sent from here waits for IB (`St
 so a second click sends nothing), and for the others who placed them ("Other app" for client 0,
 "Client 12", "Other account") with a "Why?" (`orderActions.ts → explainCancelBlock`) that says where
 the order can be cancelled and offers Cancel all for another app's or client's order. The cancel
-dialog (`confirmCancel`) names the order and its account (PAPER / LIVE, live in red, the id hidden
+dialog (`confirmCancel`; a danger confirmation, so its button arms like the review's, see *Order
+ticket*) names the order and its account (PAPER / LIVE, live in red, the id hidden
 per Settings › Privacy, `lib/account.ts → accountRow`), what has filled, and for a bracket the exits cancelled with a parent or what
 cancelling one exit leaves (a stop-loss: the position without stop protection, now or once the entry
 fills, in red). After it: a toast
@@ -1238,8 +1320,8 @@ it cannot be undone, then two steps no setting skips: a check box naming the cou
 ("Cancel last order", `lib/orders.ts → lastCancellableOrder`) takes the newest order Tape can cancel
 (never a bracket exit while its entry works, has filled, or is not listed: IB cancels the exits of an
 entry that did not fill, so a working exit without its entry protects a position, and the cancel
-dialog then warns about a stop-loss as for a filled entry), and says so when only other apps' orders
-work. Portfolio › Orders asks IB for its lists when it opens
+dialog then warns about a stop-loss as for a filled entry), says so when only other apps' orders work,
+and does nothing while a dialog is open. Portfolio › Orders asks IB for its lists when it opens
 (`refreshOrders`, as Trades does `refreshExecutions`).
 
 | Figure | Source |

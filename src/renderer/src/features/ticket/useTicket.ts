@@ -1,13 +1,16 @@
 // The order ticket's state, rules and actions in one place: the docked ticket (OrderTicket) and
 // the floating ticket (features/panels/TicketFloat) lay out the same parts (parts.tsx) on
 // top of this controller, so validation, keyboard handling and the submit flow stay single-sourced.
+// Submitting opens the review (state/orderActions.ts → submitOrder) with what the review needs
+// beyond the order: how current the prices are, the pre-trade risks (orderRisk.ts) and, for a
+// modify, the order as it works now (before → after).
 
 import { useMemo } from 'react';
 import { contractLabel, isTradable, multiplierOf } from '@shared/contract';
 import { roundToTick } from '@shared/format';
 import { isTimingProblem, sessionOf, tifChangeAllowed, timingProblem, unavailableReason, type TimingField, type TimingInput } from '@shared/orderTiming';
 import { algoInfo, algoParamProblem, isOrderProblem, MAIN_ORDER_TYPES, orderProblems, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
-import type { ContractRef, OrderAction, OrderType, TimeInForce } from '@shared/types';
+import { isOrderActive, type ContractRef, type OrderAction, type OrderType, type TimeInForce } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
@@ -16,11 +19,13 @@ import { submitOrder } from '../../state/orderActions';
 import { isPanelSending } from '../../state/orderFeedback';
 import { useStore, type TicketState } from '../../state/store';
 import { attributeFlags } from '../orders/attributes';
+import { ticketPatchFromOrder } from '../orders/model';
 import type { PanelId } from '../panels/model';
-import { buildOrderRequest, choiceProblem, combinationProblem, composeOrder, pendingOrder, type OrderInput, type ReviewLabels, type TicketError } from './buildOrder';
+import { buildOrderRequest, choiceProblem, combinationProblem, composeOrder, pendingOrder, type ModifyBase, type OrderInput, type ReviewLabels, type TicketError } from './buildOrder';
 import type { Choices } from './controls';
 import { useTicketM } from './messages';
-import { conditionContract, positive, resolveTicket, type TicketMarket } from './ticketModel';
+import { accountRiskContext, marketDataOf, orderRisks } from './orderRisk';
+import { conditionContract, limitFromQuote, positive, resolveTicket, type TicketMarket } from './ticketModel';
 import { goodTillTime, ticketTiming } from './timing';
 import { useContractInfo } from './useContractInfo';
 import { useTicketKeys } from './useTicketKeys';
@@ -82,6 +87,8 @@ export function useTicket(origin?: PanelId) {
     multiplier: info?.contract.multiplier ?? multiplierOf(symbol),
   };
   const model = resolveTicket(t, market);
+  /** How current the instrument's prices are: the quote boxes tag anything but live, the review warns. */
+  const marketData = marketDataOf(q);
 
   const now = Date.now();
   const session = modifiedOrder ? sessionOf(modifiedOrder) : t.session;
@@ -141,6 +148,7 @@ export function useTicket(origin?: PanelId) {
     review: m.review,
     stopTypes: m.stopTypes,
     attr: m.attr,
+    filled: { label: c.filled, text: c.filledOf },
   };
 
   const errorText = (e: TicketError, contract: ContractRef, ticket: TicketState): string => {
@@ -166,17 +174,46 @@ export function useTicket(origin?: PanelId) {
     // A floating panel's order still waiting for IB: its button is disabled, ⏎ must not send again.
     if (isPanelSending(origin)) return;
     const s = useStore.getState();
+    // A modify needs the order still working: one that has filled, been cancelled or gone meanwhile,
+    // or that IB's last list left out (not reported: it has ended), has nothing left to modify (and
+    // the review would compare with nothing).
+    const modifyId = s.ticket.modifyingOrderId;
+    if (modifyId != null && (!modifiedOrder || !isOrderActive(modifiedOrder.status) || modifiedOrder.notReported)) {
+      s.showToast(c.orderNotWorking(modifyId), 'error');
+      return;
+    }
     const locked = tifLock(s.ticket.tif);
     if (locked) {
       s.showToast(locked, 'error');
       return;
     }
-    const res = buildOrderRequest({ contract: s.symbol, ticket: { ...s.ticket, session }, market, hours: info, timeFormat: clock.format, rules });
+    const base = { contract: s.symbol, market, hours: info, timeFormat: clock.format, rules };
+    const res = buildOrderRequest({ ...base, ticket: { ...s.ticket, session } });
     if (!res.ok) {
       s.showToast(errorText(res.error, s.symbol, { ...s.ticket, session }), 'error');
       return;
     }
-    submitOrder({ ...pendingOrder(res.request, res.model, labels, market, s.ticket.modifyingOrderId), origin });
+    // The order as "Modify" loaded it, through the same rules: what the review compares with.
+    let modify: ModifyBase | null = null;
+    if (modifyId != null && modifiedOrder) {
+      const before = composeOrder({ ...base, ticket: { ...s.ticket, ...ticketPatchFromOrder(modifiedOrder), session } });
+      modify = { order: modifiedOrder, request: before.request, model: before.model };
+    }
+    // A modify goes to the order's own account (another of the login's may be the connected one):
+    // the review names it, and the checks use its position and values.
+    const account = modifiedOrder?.account;
+    // The pre-trade checks against this account's position and values, and whether the limit is the
+    // quote's (followed or filled from it) rather than typed.
+    const risks = orderRisks(res.request, res.model.est, {
+      ...accountRiskContext(s, s.symbol, account ?? s.connection.account),
+      bid: market.bid,
+      ask: market.ask,
+      last: market.last,
+      marketData,
+      priceFromQuote: limitFromQuote(s.ticket),
+      ...(modifiedOrder ? { modified: { quantity: modifiedOrder.totalQuantity, filled: modifiedOrder.filled } } : {}),
+    });
+    submitOrder({ ...pendingOrder(res.request, res.model, labels, market, modify), marketData, ...(risks.length ? { risks } : {}), ...(account ? { account } : {}), origin });
   };
   useTicketKeys(submit);
 
@@ -213,11 +250,12 @@ export function useTicket(origin?: PanelId) {
   const problem = tradable ? timingProblem(timing, now) : null;
   const timingIssue = tradable ? (tifLock(t.tif) ?? (problem ? m.problems[problem] : null)) : null;
   const combo = tradable && !timingIssue ? combinationProblem(input) : null;
-  const est = tradable ? model.est : undefined;
   const cashSized = t.cashQtyOn && symbol.secType === 'CASH';
 
   // What the Advanced section holds when something in it is on.
-  const { request: composed, error: composeError } = composeOrder(input);
+  const { request: composed, model: composedModel, error: composeError } = composeOrder(input);
+  // The amount as the order is sent (a forex order sized by an amount is worth that amount).
+  const est = tradable ? composedModel.est : undefined;
   // Nothing left to type and no rule broken (what `submit` checks): only then is IB's what-if asked.
   const complete = composeError == null && orderProblems(composed, input.rules).length === 0;
   const advancedItems = [
@@ -243,6 +281,7 @@ export function useTicket(origin?: PanelId) {
     refContract,
     market,
     model,
+    marketData,
     minTick,
     now,
     session,

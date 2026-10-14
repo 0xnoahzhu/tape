@@ -1,6 +1,12 @@
 // App-level dialogs: generic confirmation ("act"), order review, Cancel all, and toasts.
+//
+// A confirming button arms CONFIRM_ARM_MS after it becomes available (the order review's Confirm,
+// a danger confirmation's button, Cancel all's): until then its click does nothing and ⏎ is held
+// back in the capture phase, so a double-click or ⏎⏎ that opened the dialog never confirms it.
+// The button keeps the focus meanwhile (never `disabled`, which would leave ⏎ on a button behind
+// the dialog), and fades in as it arms. Escape and Cancel / Back always work.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { contractLabel } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
 import { cancelBlock, isSourceBlock } from '@shared/orderOwnership';
@@ -11,14 +17,35 @@ import { useCommon } from '../i18n/common';
 import { cancelAllExpect, cancelAllOrders } from '../lib/orders';
 import { connectionHealthText, orderErrorText, readOnlyWarning, sendCancelAll, sendOrder } from '../state/orderActions';
 import { useStore } from '../state/store';
-import { Button, KeyValueRows, Modal } from '../ui/primitives';
+import { AccountTag, Button, KeyValueRows, Modal } from '../ui/primitives';
 import { stableGutter } from '../ui/scrollGutter';
+import { CONFIRM_ARM_MS, confirmLabel, enterAction, mayArm, needsAcknowledgement, reviewRows, reviewTitle, warningRows } from './orderReview';
+
+export { CONFIRM_ARM_MS } from './orderReview';
 
 /**
- * How long Cancel all's button stays inert once its box is ticked, so a click or ⏎ meant for
- * something before it does not confirm.
+ * Arms a confirming button CONFIRM_ARM_MS after `ready` turns true (and again for every new `key`,
+ * e.g. the next order under review): `armed` for drawing, `ref` for the key and click handlers,
+ * which must see the current value at once.
  */
-const CONFIRM_ARM_MS = 600;
+function useArming(ready: boolean, key: unknown): { armed: boolean; ref: { readonly current: boolean } } {
+  const ref = useRef(false);
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    ref.current = false;
+    setArmed(false);
+    if (!ready) return;
+    const t = setTimeout(() => {
+      ref.current = true;
+      setArmed(true);
+    }, CONFIRM_ARM_MS);
+    return () => clearTimeout(t);
+  }, [ready, key]);
+  return { armed, ref };
+}
+
+/** The look of a confirming button while it arms: faded, then full as it becomes usable. */
+const armingStyle = (armed: boolean) => ({ opacity: armed ? 1 : 0.55, transition: `opacity ${CONFIRM_ARM_MS}ms ease-in` });
 
 /** Red lines in a dialog: what an action costs, or why it may fail. */
 function Warnings({ lines }: { lines: readonly string[] }) {
@@ -34,11 +61,18 @@ function Warnings({ lines }: { lines: readonly string[] }) {
   );
 }
 
+/**
+ * The generic confirmation. A danger one (cancel an order, disconnect, delete) arms its button like
+ * the order review: focused on open, inert for CONFIRM_ARM_MS.
+ */
 export function ConfirmDialog() {
   const m = useCommon();
   const req = useStore((s) => s.confirm);
   const close = useStore((s) => s.closeConfirm);
   const [busy, setBusy] = useState(false);
+  const danger = !!req?.danger && !!req.run;
+  const arming = useArming(danger, req);
+  const actionRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!req) return;
     const onKey = (e: KeyboardEvent) => {
@@ -47,9 +81,20 @@ export function ConfirmDialog() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [req, close]);
+  useEffect(() => {
+    if (!danger) return;
+    // Capture phase: a ⏎ on the focused button before it arms (or held) never presses it.
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target === actionRef.current ? 'confirm' : handlesEnter(e.target) ? 'other' : 'none';
+      if (enterAction(e, arming.ref.current, target) === 'block') e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [danger, arming.ref]);
   if (!req) return null;
   const { run } = req;
   const ok = async () => {
+    if (danger && !arming.ref.current) return;
     setBusy(true);
     close();
     try {
@@ -69,7 +114,14 @@ export function ConfirmDialog() {
           <Button kind="secondary" onClick={close}>
             {m.back}
           </Button>
-          <Button bg={req.danger ? 'var(--r)' : undefined} onClick={ok} disabled={busy}>
+          <Button
+            bg={req.danger ? 'var(--r)' : undefined}
+            onClick={ok}
+            disabled={busy}
+            buttonRef={actionRef}
+            autoFocus={danger}
+            style={danger ? armingStyle(arming.armed) : undefined}
+          >
             {req.label}
           </Button>
         </div>
@@ -184,50 +236,109 @@ function OrderEstimate({ request, session }: { request: OrderRequest; session: n
   );
 }
 
+/**
+ * The order review: every order, modify and strategy is sent from here only (state/orderActions.ts
+ * → submitOrder; no setting skips it). The title names the order ("Modify order #58") beside the
+ * PAPER / LIVE tag of the account it was submitted for, and the first row is that account. Red rows
+ * follow for prices that are not live and for the pre-trade checks' risks, which "I have checked
+ * these warnings" acknowledges before Confirm can arm. Confirm keeps the focus and arms
+ * CONFIRM_ARM_MS after the order (or the tick) arrives; a modify that changes nothing says so and
+ * never arms, nor does any order while Tape is not connected or TWS / IB Gateway lost IB or does
+ * not answer (a red line says so; it arms once that is over).
+ */
 export function OrderConfirmDialog() {
   const m = useCommon();
   const p = useStore((s) => s.pendingOrder);
   const setPending = useStore((s) => s.setPendingOrder);
   const connected = useStore((s) => s.connection.status === 'connected');
+  const showId = useStore((s) => s.settings.appearance.showAccountId);
+  // IB answered with its Read-Only refusal on this connection: it will refuse this order too.
+  const readOnly = useStore((s) => (s.connection.readOnlyApi ? readOnlyWarning() : undefined));
+  // Not connected (a plain reconnect keeps the review), or TWS / IB Gateway lost IB (1100) or hangs:
+  // Confirm does not arm until the connection can carry the order again.
+  const held = useStore((s) =>
+    s.connection.status !== 'connected' ? m.reviewOffline : s.connection.ibLinkLost || s.connection.unresponsive ? connectionHealthText('review') : undefined,
+  );
+  const [acknowledged, setAcknowledged] = useState(false);
+  // Every order under review is acknowledged anew.
+  useEffect(() => setAcknowledged(false), [p]);
+  const arming = useArming(!!p && mayArm(p, acknowledged, !!held), p);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!p) return;
     // Capture phase: runs before the order ticket's own Enter shortcut.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPending(null);
-      if (e.key !== 'Enter' || e.isComposing) return;
-      // A held Enter must not confirm the order its first keystroke submitted for review.
-      if (e.repeat) {
-        e.preventDefault();
+      if (e.key === 'Escape') {
+        setPending(null);
         return;
       }
-      // The focused button (confirm is focused on open, Cancel after Tab) activates natively.
-      if (handlesEnter(e.target)) return;
-      e.preventDefault();
-      void sendOrder(p);
+      const target = e.target === confirmRef.current ? 'confirm' : handlesEnter(e.target) ? 'other' : 'none';
+      const action = enterAction(e, arming.ref.current, target);
+      if (action === 'block') e.preventDefault();
+      else if (action === 'confirm') {
+        e.preventDefault();
+        void sendOrder(p);
+      }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [p, setPending]);
+  }, [p, setPending, arming.ref]);
   if (!p) return null;
   const buy = p.request.action === 'BUY';
   // IB estimates new single-instrument orders (a modify would be estimated as an extra order).
   const estimate = connected && p.modifyOrderId == null && p.request.contract.secType !== 'BAG';
+  const ack = needsAcknowledgement(p);
+  const toggleAck = () => setAcknowledged((a) => !a);
   return (
     <Modal onClose={() => setPending(null)} zIndex={21}>
-      <div style={{ font: '600 18px/1.2 var(--sans)', flexShrink: 0 }}>{p.modifyOrderId != null ? m.modifyOrder : m.confirmOrder}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
+        <div style={{ font: '600 18px/1.2 var(--sans)', minWidth: 0 }}>{reviewTitle(p)}</div>
+        <AccountTag paper={p.isPaper} text={p.isPaper ? m.paperTag : m.liveTag} title={p.isPaper ? m.paperTip : m.liveTip} />
+      </div>
       {/* The rows and IB's estimate scroll when they do not fit; the title and buttons stay. The
           estimate arriving can start the scroll: room for the scrollbar is kept in the dialog's
           right padding, so the rows keep the buttons' width (scrollGutter.ts). */}
       <div style={{ minHeight: 0, overflowY: 'auto', ...stableGutter, marginRight: 'calc(0px - var(--sbw, 0px))', display: 'grid', alignContent: 'start', gap: 18 }}>
-        <KeyValueRows rows={p.rows} />
+        <KeyValueRows rows={[...reviewRows(p, showId), ...warningRows(p)]} />
+        {p.unchanged && <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)' }}>{m.nothingChanged}</div>}
+        <Warnings lines={[held, readOnly].filter((w): w is string => !!w)} />
         {estimate && <OrderEstimate request={p.request} session={p.session} />}
       </div>
+      {ack && (
+        // Space ticks it; ⏎ stays the dialog's (Confirm, once armed).
+        <div
+          role="checkbox"
+          aria-checked={acknowledged}
+          tabIndex={0}
+          data-testid="review-acknowledge"
+          onClick={toggleAck}
+          onKeyDown={(e) => {
+            if (e.key === ' ') {
+              e.preventDefault();
+              toggleAck();
+            }
+          }}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer', flexShrink: 0 }}
+        >
+          <div style={{ width: 14, height: 14, flexShrink: 0, boxShadow: `inset 0 0 0 ${acknowledged ? 7 : 1}px ${acknowledged ? 'var(--r)' : 'var(--mu)'}` }} />
+          <div>{m.risk.acknowledge}</div>
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8, flexShrink: 0 }}>
         <Button kind="secondary" onClick={() => setPending(null)}>
           {m.cancel}
         </Button>
-        <Button bg={buy ? 'var(--up)' : 'var(--dn)'} onClick={() => void sendOrder(p)} autoFocus>
-          {m.confirm} {p.label}
+        <Button
+          bg={buy ? 'var(--up)' : 'var(--dn)'}
+          buttonRef={confirmRef}
+          autoFocus
+          onClick={() => {
+            if (arming.ref.current) void sendOrder(p);
+          }}
+          title={p.unchanged ? m.nothingChanged : undefined}
+          style={armingStyle(arming.armed)}
+        >
+          {confirmLabel(p)}
         </Button>
       </div>
     </Modal>

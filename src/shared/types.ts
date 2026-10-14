@@ -1077,7 +1077,6 @@ export interface Settings {
     autoReconnect: boolean;
   };
   trading: {
-    confirmOrders: boolean;
     defaultQty: number;
     outsideRthDefault: boolean;
   };
@@ -1137,6 +1136,8 @@ export interface AppSnapshot {
   connection: ConnectionState;
   account: AccountSummary | null;
   positions: Position[];
+  /** IB has listed the positions since the last handshake (the `positions` event's `loaded`). */
+  positionsLoaded: boolean;
   orders: WorkingOrder[];
   executions: Execution[];
   watchlists: Watchlist[];

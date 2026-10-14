@@ -65,6 +65,7 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
     connection: fake.ib.getState(),
     account: null,
     positions: opts.positions ?? [],
+    positionsLoaded: true,
     orders: [],
     executions: [],
     watchlists: defaultWatchlists(),

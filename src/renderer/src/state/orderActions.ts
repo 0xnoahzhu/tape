@@ -1,6 +1,7 @@
-// Sending orders: review dialog (optional), placement, cancellation (one order, why another app's
-// order cannot be cancelled, Cancel all) and user feedback. IB's silence is never reported as
-// success: an order or modify IB has not confirmed, or a cancel it has not, says so.
+// Sending orders: the review dialog (every order, modify and strategy; no setting skips it),
+// placement, cancellation (one order, why another app's order cannot be cancelled, Cancel all) and
+// user feedback. IB's silence is never reported as success: an order or modify IB has not
+// confirmed, or a cancel it has not, says so.
 
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, px } from '@shared/format';
@@ -122,13 +123,13 @@ export function readOnlyWarning(): string | undefined {
 }
 
 /** What a text about TWS / IB Gateway's health is for (connectionHealthText). */
-export type HealthUse = 'chip' | 'tip' | 'order' | 'cancel';
+export type HealthUse = 'chip' | 'tip' | 'order' | 'review' | 'cancel';
 
 /**
  * While TWS / IB Gateway cannot carry an order (ConnectionState.ibLinkLost: it lost its link to IB,
  * 1100; `unresponsive`: it does not answer the heartbeat), what that means for `use`: the top bar's
- * chip and its tooltip, an order refused before it is sent, or the cancel dialog's warning (a
- * cancel is still sent). Undefined while it can.
+ * chip and its tooltip, an order refused before it is sent, the review's red line (its Confirm does
+ * not arm meanwhile), the cancel dialog's warning (a cancel is still sent). Undefined while it can.
  */
 export function connectionHealthText(use: HealthUse): string | undefined {
   const { connection, settings } = useStore.getState();
@@ -143,6 +144,8 @@ export function connectionHealthText(use: HealthUse): string | undefined {
       return (lost ? h.linkLostTip : h.unresponsiveTip)(app);
     case 'order':
       return (lost ? h.linkLostOrder : h.unresponsiveOrder)(app);
+    case 'review':
+      return (lost ? h.linkLostReview : h.unresponsiveReview)(app);
     case 'cancel':
       return (lost ? h.linkLostCancel : h.unresponsiveCancel)(app);
   }
@@ -174,22 +177,28 @@ function watchLateRejection(orderIds: number[], onReject: (reason: string) => vo
   }
 }
 
-/** An order as the UI builds it: submitOrder binds it to the connection session it is submitted on. */
-export type OrderSubmission = Omit<PendingOrder, 'session'> & Partial<Pick<PendingOrder, 'session'>>;
+/**
+ * An order as the UI builds it: submitOrder binds it to the connection session it is submitted on
+ * and names the account (paper or live) it goes to.
+ */
+export type OrderSubmission = Omit<PendingOrder, 'session' | 'account' | 'isPaper'> & Partial<Pick<PendingOrder, 'session' | 'account' | 'isPaper'>>;
 
 /**
- * Entry point for every order the UI sends. Shows the review dialog when
- * Settings › Trade › "Confirm before sending" is on, otherwise sends immediately. The order is
- * bound to the current connection session: it is never sent to another account or Gateway.
+ * Entry point for every order the UI sends (the ticket, its ⏎, Modify, the strategy builder): it
+ * always opens the review dialog, whose Confirm alone sends (sendOrder). The order is bound to the
+ * current connection session, so it is never sent to another account or Gateway, and carries the
+ * account and paper / live it was reviewed for. While not connected nothing opens (a toast says
+ * so): nothing could be sent, and the review could not name the account.
  */
 export function submitOrder(order: OrderSubmission): void {
   const s = useStore.getState();
-  const p: PendingOrder = { ...order, session: order.session ?? s.connection.session };
-  if (s.settings.trading.confirmOrders) {
-    s.setPendingOrder(p);
+  const { connection } = s;
+  if (connection.status !== 'connected') {
+    s.showToast(useCommon.now().notConnected, 'error');
     return;
   }
-  void sendOrder(p);
+  const account = order.account ?? connection.account;
+  s.setPendingOrder({ ...order, session: order.session ?? connection.session, ...(account ? { account } : {}), isPaper: order.isPaper ?? connection.isPaper });
 }
 
 /** The status strip's line: "Buy 100 AAPL · Limit 227.56 · DAY" / "买入 100 股 AAPL · 限价 227.56 · DAY". */
@@ -205,7 +214,8 @@ function panelOnScreen(id: PanelId): boolean {
 }
 
 /**
- * Sends an order (after the review, if any). It reports with toasts, or, sent from a floating
+ * Sends an order once the review's Confirm is pressed (OrderConfirmDialog; nothing else calls it).
+ * It reports with toasts, or, sent from a floating
  * panel (`origin`, features/panels), with that panel's status strip and bar
  * (state/orderFeedback.ts): an accepted order collapses the panel to its bar, a rejection keeps it
  * expanded (and a late one expands it again) with the form as it was. When that panel is not on
@@ -229,8 +239,9 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
         side: p.request.action,
         quantity: p.request.quantity,
         contractKey: key,
-        positionBefore: s.positions.find((x) => contractKey(x.contract) === key)?.quantity ?? 0,
-        ...(s.connection.account ? { account: s.connection.account } : {}),
+        // The account the review named (a modified order's own, which may not be the connected one).
+        positionBefore: s.positions.find((x) => contractKey(x.contract) === key && (!p.account || !x.account || x.account === p.account))?.quantity ?? 0,
+        ...(p.account ? { account: p.account } : {}),
         ...(p.modifyOrderId != null ? { orderId: p.modifyOrderId, clientId: s.connection.clientId } : {}),
       })
     : 0;

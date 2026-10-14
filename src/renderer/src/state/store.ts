@@ -13,6 +13,7 @@ import { contractKey, stock } from '@shared/contract';
 import { defaultSettings } from '@shared/defaults';
 import { sessionOutsideRth } from '@shared/orderTiming';
 import type { PanelId } from '../features/panels/model';
+import type { MarketDataQuality, OrderRisk } from '../features/ticket/orderRisk';
 import type {
   AccountSummary,
   AlgoStrategy,
@@ -90,6 +91,12 @@ export interface TicketState {
    * the optional price cap and null means no cap.
    */
   limitPrice: number | null;
+  /**
+   * The limit price was taken from the quote (a bid / ask box or chip, a Book level), not typed: on
+   * prices that are not live the review treats it like one that follows the bid / ask. Any other
+   * change of the limit price clears it (normalizeTicketPatch).
+   */
+  limitFromQuote: boolean;
   /** Stop / trigger price, or the initial stop of trailing orders; null = default offset from last (±1%). */
   stopPrice: number | null;
   /** TRAIL LIMIT / TRAIL LIT limit offset; null = default (0.2% of the stop). */
@@ -172,6 +179,8 @@ export interface ConfirmRow {
   color?: string;
   /** The value is " · "-separated parts that wrap between parts only ("Start 09:45 AM ET" stays whole). */
   parts?: boolean;
+  /** A modify's review: the value changes ("100 → 200"); the row is highlighted. */
+  changed?: boolean;
   /** The value is a sentence (a warning), set in the text font rather than the figures'. */
   prose?: boolean;
 }
@@ -200,7 +209,10 @@ export interface CancelAllRequest {
   session: number;
 }
 
-/** Order review dialog shown before sending when Settings › Trade › Confirm is on. */
+/**
+ * The order review (layout/Dialogs.tsx → OrderConfirmDialog). Every order, modify and strategy goes
+ * through it: only its Confirm sends (state/orderActions.ts).
+ */
 export interface PendingOrder {
   request: OrderRequest;
   rows: ConfirmRow[];
@@ -208,6 +220,8 @@ export interface PendingOrder {
   label: string;
   /** Modify an existing order instead of placing a new one. */
   modifyOrderId?: number;
+  /** A modify that changes nothing: the review says so, and its Confirm never arms. */
+  unchanged?: boolean;
   /** Description used in the success toast, e.g. "Buy 100 AAPL". */
   summary: string;
   /**
@@ -216,6 +230,19 @@ export interface PendingOrder {
    * account or Gateway, and the review closes then.
    */
   session: number;
+  /**
+   * The account the order goes to and whether it is a paper account, as connected when it was
+   * submitted (submitOrder fills them in): the review's first row and its PAPER / LIVE tag.
+   */
+  account?: string;
+  isPaper: boolean;
+  /**
+   * How current the prices behind the order are (features/ticket/orderRisk.ts): anything but live
+   * is a red row of the review. Undefined when the sender does not know.
+   */
+  marketData?: MarketDataQuality;
+  /** The pre-trade checks' findings: red rows, which the user acknowledges before Confirm arms. */
+  risks?: OrderRisk[];
   /**
    * The floating panel the order is sent from (features/panels): its status strip and bar report
    * it instead of toasts. Undefined from anywhere else (the docked ticket too).
@@ -253,6 +280,11 @@ interface DataState {
   connection: ConnectionState;
   account: AccountSummary | null;
   positions: Position[];
+  /**
+   * IB has listed the account's positions since the last handshake (positionEnd): until then an
+   * instrument missing from `positions` may still be held (the order review's checks say so).
+   */
+  positionsLoaded: boolean;
   orders: WorkingOrder[];
   executions: Execution[];
   quotes: Record<string, Quote>;
@@ -338,6 +370,8 @@ export const defaultSession = (settings: Pick<Settings, 'trading'>): TradingSess
 
 /** Keeps `session` and its `outsideRth` mirror consistent (see TicketState.outsideRth). */
 export function normalizeTicketPatch(patch: Partial<TicketState>): Partial<TicketState> {
+  // A limit price set without saying it came from the quote was typed (or cleared).
+  if ('limitPrice' in patch && patch.limitFromQuote == null) patch = { ...patch, limitFromQuote: false };
   if (patch.session) return { ...patch, outsideRth: sessionOutsideRth(patch.session) };
   if (patch.outsideRth != null) return { ...patch, session: patch.outsideRth ? 'extended' : 'regular' };
   return patch;
@@ -360,6 +394,7 @@ export function initialTicket(settings: Settings): TicketState {
     orderType: 'LMT',
     qty: settings.trading.defaultQty,
     limitPrice: null,
+    limitFromQuote: false,
     stopPrice: null,
     tif: 'DAY',
     goodTill: null,
@@ -440,6 +475,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   connection: { status: 'disconnected', host: '127.0.0.1', port: 4002, clientId: 7, session: 0, accounts: [], isPaper: false, farms: {} },
   account: null,
   positions: [],
+  positionsLoaded: false,
   orders: [],
   executions: [],
   quotes: {},
@@ -483,6 +519,7 @@ export const useStore = create<StoreState>()((set, get) => ({
       ticket: {
         ...s.ticket,
         limitPrice: null,
+        limitFromQuote: false,
         stopPrice: null,
         limitOffset: null,
         takeProfit: null,
@@ -544,3 +581,11 @@ export const useStore = create<StoreState>()((set, get) => ({
 
 /** Whether the lock screen covers the app (locked, or still animating the unlock). */
 export const isCovered = (s: Pick<StoreState, 'lock' | 'unlocking'>): boolean => s.lock.locked || s.unlocking;
+
+/**
+ * Whether a dialog holds the screen: the order review, a confirmation, Cancel all, the alert
+ * dialog or the PIN dialog. App commands (App.tsx) and the trading keys (the ticket's, the floating
+ * panels') wait meanwhile: the dialog has the keys.
+ */
+export const isDialogOpen = (s: Pick<StoreState, 'pendingOrder' | 'confirm' | 'cancelAll' | 'alertForm' | 'pinDialog'>): boolean =>
+  !!(s.pendingOrder || s.confirm || s.cancelAll || s.alertForm || s.pinDialog);

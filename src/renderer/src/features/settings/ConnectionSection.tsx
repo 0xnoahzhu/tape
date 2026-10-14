@@ -1,4 +1,5 @@
-// Settings › Connection: host/port, connect/disconnect, status, farms, recent API traffic,
+// Settings › Connection: host/port, connect/disconnect, status (with paper or live and, for a
+// login with several accounts, each of them and the one orders go to), farms, recent API traffic,
 // auto-reconnect, and the client id under Advanced.
 
 import { useApiLogStream } from '../../hooks/useApiLogStream';
@@ -275,6 +276,7 @@ function ConnectionStatus() {
           <div>{maskAccounts(statusText(conn, mode, showAccount, m), showAccount)}</div>
         </div>
       </div>
+      {connected && conn.accounts.length > 1 && <ManagedAccounts conn={conn} showId={showAccount} />}
       {farms.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, color: 'var(--dm)', marginRight: 4 }}>{m.farms}</div>
@@ -298,6 +300,36 @@ function ConnectionStatus() {
         </div>
       )}
       {issue && <IssueNote code={issue.code} message={issue.message} />}
+    </div>
+  );
+}
+
+/**
+ * Every account of a login that manages several (an advisor or linked accounts): the one Tape's
+ * orders go to is marked (red on a live login). Tape has no account picker: IB's first one is used.
+ */
+function ManagedAccounts({ conn, showId }: { conn: ConnectionState; showId: boolean }) {
+  const m = useSettingsMessages();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div data-testid="managed-accounts" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 12, color: 'var(--dm)', marginRight: 4 }}>{m.accounts}</div>
+        {conn.accounts.map((a) => {
+          const active = a === conn.account;
+          const c = active ? (conn.isPaper ? 'var(--ac)' : 'var(--r)') : 'var(--mu)';
+          return (
+            <div
+              key={a}
+              title={active ? m.ordersGoHereTip : undefined}
+              style={{ padding: '3px 7px', font: '600 11px/1 var(--mono)', color: c, boxShadow: `inset 0 0 0 1px ${active ? c : 'var(--ln)'}`, whiteSpace: 'nowrap' }}
+            >
+              {maskAccounts(a, showId)}
+              {active ? ` · ${m.ordersGoHere}` : ''}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)', textWrap: 'pretty' }}>{m.accountsNote}</div>
     </div>
   );
 }

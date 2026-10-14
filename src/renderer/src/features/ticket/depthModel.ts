@@ -57,10 +57,11 @@ export function levelTarget(t: LevelTicket): 'order' | 'limitPrice' | 'stopPrice
  * What a click on a level loads into the ticket. A new order becomes a limit order at the level's
  * price on the side that takes it (buy at an ask, sell at a bid), without the previous trigger or
  * limit offset. A working order being modified keeps its side and type (IB refuses to change them):
- * only its price follows (levelTarget); null when it has none.
+ * only its price follows (levelTarget); null when it has none. A limit taken from a level is the
+ * quote's (`limitFromQuote`): on prices that are not live the review asks to check it.
  */
 export function levelPatch(level: Pick<LadderRow, 'side' | 'price'>, t: LevelTicket): Partial<TicketState> | null {
   const target = levelTarget(t);
-  if (target === 'order') return { orderType: 'LMT', limitPrice: level.price, side: level.side === 'ask' ? 'BUY' : 'SELL', stopPrice: null, limitOffset: null };
-  return target === 'limitPrice' ? { limitPrice: level.price } : target === 'stopPrice' ? { stopPrice: level.price } : null;
+  if (target === 'order') return { orderType: 'LMT', limitPrice: level.price, limitFromQuote: true, side: level.side === 'ask' ? 'BUY' : 'SELL', stopPrice: null, limitOffset: null };
+  return target === 'limitPrice' ? { limitPrice: level.price, limitFromQuote: true } : target === 'stopPrice' ? { stopPrice: level.price } : null;
 }

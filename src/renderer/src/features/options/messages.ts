@@ -150,6 +150,8 @@ export const useM = createMessages({
     nonGuaranteedExtra: ' · non-guaranteed',
     mktHint: 'At market: the legs fill at the prices available, which can be far from the marks',
     comboName: (sym: string, n: number, name: string) => `${sym} ${n}-leg ${name}`,
+    /** A combo's leg in the order review: "Leg 1 · Sell 1 × AAPL 10/16 230 Put". */
+    legN: (i: number) => `Leg ${i}`,
     combo: 'combo',
     noStockOnIndex: 'An index has no stock leg',
     noPrice: (what: string) => `No bid / ask for ${what}`,
@@ -264,6 +266,7 @@ export const useM = createMessages({
     nonGuaranteedExtra: ' · 非保证',
     mktHint: '市价：各腿按当时可成交的价格成交，可能与参考价相差较大',
     comboName: (sym: string, n: number, name: string) => `${sym} ${n} 腿${name}`,
+    legN: (i: number) => `第 ${i} 腿`,
     combo: '组合',
     noStockOnIndex: '指数没有股票腿',
     noPrice: (what: string) => `${what} 没有买卖报价`,

@@ -179,6 +179,17 @@ describe('fill attributes', () => {
     // Only forex: stocks ignore the switch.
     expect(ok(build({ cashQtyOn: true })).cashQty).toBeUndefined();
   });
+
+  it('estimates a forex order sized by amount at that amount, not the share quantity it replaces', () => {
+    // The ticket's quantity (100) is hidden while the amount is on; 500,000 USD is what goes out.
+    const sized = composeOrder(input({ cashQtyOn: true, cashQty: '500000', orderType: 'MKT', qty: 100 }, EURUSD, { bid: 1.0811, ask: 1.0812, last: 1.0812, minTick: 0.00005, multiplier: 1 }));
+    expect(sized.request).toMatchObject({ quantity: 0, cashQty: 500_000 });
+    expect(sized.model.est).toBe(500_000);
+    const p = pendingOrder(sized.request, sized.model, labels, mkt);
+    expect(p.rows.find((x) => x.label === 'Est. amount')?.value).toBe('$500,000.00');
+    // No amount typed: no estimate (not the hidden quantity's).
+    expect(composeOrder(input({ cashQtyOn: true, cashQty: '', orderType: 'MKT' }, EURUSD)).model.est).toBeUndefined();
+  });
 });
 
 describe('trigger method', () => {

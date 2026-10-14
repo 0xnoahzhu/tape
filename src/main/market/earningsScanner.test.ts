@@ -296,7 +296,7 @@ function setupService(opts: { quotes?: boolean } = {}) {
     },
   } as unknown as typeof f.ctx.quotes;
   const positions: Position[] = [];
-  f.ctx.account = { getPositions: () => positions, getSummary: () => null };
+  f.ctx.account = { getPositions: () => positions, getSummary: () => null, positionsLoaded: () => true };
   const svc = createEarningsScanner(f.ctx);
   const publish = (q: Quote) => {
     quotes.set(q.key, q);

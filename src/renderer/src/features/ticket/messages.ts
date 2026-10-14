@@ -337,6 +337,12 @@ export const useTicketM = createMessages({
     /** Bid / ask from the stock's primary exchange (SMART is delayed for it): "Live · NASDAQ: …". */
     quoteVia: (x: string, type: number | undefined) =>
       `${type === 3 || type === 4 ? 'Delayed' : type === 2 ? 'Frozen' : 'Live'} · ${x}: ${x}’s own bid/ask, not the consolidated quote (NBBO)`,
+    /** The quote boxes' tag while IB's data for the instrument is not live (orderRisk.ts → marketDataOf). */
+    dataTag: { delayed: 'Delayed 15 min', frozen: 'Frozen' },
+    dataTagHint: {
+      delayed: 'IBKR sends delayed data for this instrument: bid, ask and the estimate may be 15–20 min old',
+      frozen: 'IBKR sends the last prices of a closed market: bid, ask and the estimate may be stale',
+    },
     /** The Level 2 book between the bid / ask and the entry fields (DepthBlock.tsx). */
     book: 'Book',
     /** What a click on a level does (depthModel.ts → levelTarget): a new order, or the order being modified. */
@@ -698,6 +704,11 @@ export const useTicketM = createMessages({
     noMarketData: (code: number) => `无行情数据（${code}）`,
     quoteVia: (x: string, type: number | undefined) =>
       `${type === 3 || type === 4 ? '延迟' : type === 2 ? '冻结' : '实时'} · ${x}：${x} 自己的买卖价，不是全市场合并报价（NBBO）`,
+    dataTag: { delayed: '延迟 15 分钟', frozen: '冻结' },
+    dataTagHint: {
+      delayed: 'IBKR 为此标的提供的是延迟行情：买卖价和预估金额可能是 15–20 分钟前的',
+      frozen: 'IBKR 提供的是休市前的最后价格：买卖价和预估金额可能已过时',
+    },
     book: '盘口',
     bookHint: {
       order: '点击价位按该价下限价单：点卖盘买入，点买盘卖出',
