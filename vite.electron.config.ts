@@ -1,4 +1,5 @@
 import { builtinModules } from 'node:module';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { InlineConfig } from 'vite';
 import pkg from './package.json' with { type: 'json' };
@@ -14,6 +15,12 @@ const external = [
   ...builtinModules.map((m) => `node:${m}`),
   ...runtimeDeps,
 ].flatMap((id) => [id, new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/`)]);
+
+/**
+ * Where a bundle is built: `out/<bundle>`, or `<TAPE_OUT>/<bundle>` with TAPE_OUT absolute or relative
+ * to the repository (the renderer's vite.config.ts resolves it the same way).
+ */
+export const outDir = (bundle: 'main' | 'preload' | 'renderer'): string => resolve(root, process.env.TAPE_OUT ?? 'out', bundle);
 
 /** Extra entries built next to a bundle's index.js (the database worker runs from its own file). */
 const extraEntries: Record<string, Record<string, string>> = { main: { dbWorker: 'src/main/db/worker.ts' } };
@@ -32,7 +39,7 @@ function nodeConfig(name: 'main' | 'preload', format: 'es' | 'cjs', { mode, watc
     resolve: { alias: { '@shared': shared } },
     define: { 'process.env.NODE_ENV': JSON.stringify(mode) },
     build: {
-      outDir: `${process.env.TAPE_OUT ?? 'out'}/${name}`,
+      outDir: outDir(name),
       emptyOutDir: true,
       target: 'node22',
       minify: false,

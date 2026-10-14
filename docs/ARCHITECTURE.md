@@ -2074,7 +2074,7 @@ Environment variables for development:
 | `TAPE_NO_CONNECT=1` | Do not auto-connect on launch |
 | `TAPE_CLIENT_ID=<n>` | Override the API client id |
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
-| `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` |
+| `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` (absolute, or relative to the repository; `main`, `preload` and `renderer` all go there) |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
 | `TAPE_FAKE_BIOMETRICS=[touchId:\|windowsHello:]ok\|fail\|cancel\|unavailable` | Fake Touch ID / Windows Hello without a system prompt (ignored when packaged) |
 | `TAPE_LIVE_IB=<host:port>` | Runs `src/main/ib/live.test.ts` against a logged-in paper TWS / IB Gateway (with `TAPE_CLIENT_ID`) |
