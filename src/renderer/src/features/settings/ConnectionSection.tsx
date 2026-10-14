@@ -194,8 +194,12 @@ function statusText(conn: ConnectionState, mode: 'tws' | 'gateway', showAccount:
     case 'connected': {
       const accounts = conn.account ? [conn.account] : conn.accounts;
       const acct = showAccount && accounts.length ? ` ${accounts.join(', ')}` : '';
-      const parts = [m.connectedTo(hostAppName(conn.port, mode), addr), (conn.isPaper ? m.paperAccount : m.liveAccount) + acct];
+      const app = hostAppName(conn.port, mode);
+      const parts = [m.connectedTo(app, addr), (conn.isPaper ? m.paperAccount : m.liveAccount) + acct];
       if (conn.serverVersion) parts.push(m.serverVersion(conn.serverVersion));
+      // Connected, but orders cannot reach IB (see logic.ts → statusDotColor).
+      if (conn.ibLinkLost) parts.push(m.ibLinkLost(app));
+      else if (conn.unresponsive) parts.push(m.notResponding(app));
       return parts.join(' · ');
     }
     case 'connecting':
@@ -267,7 +271,7 @@ function ConnectionStatus() {
           {connected ? m.disconnect : busy ? m.stop : m.connect}
         </button>
         <div className="selectable" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--mu)', lineHeight: 1.5, minWidth: 0 }}>
-          <div style={{ width: 7, height: 7, flexShrink: 0, background: statusDotColor(conn.status) }} />
+          <div style={{ width: 7, height: 7, flexShrink: 0, background: statusDotColor(conn) }} />
           <div>{maskAccounts(statusText(conn, mode, showAccount, m), showAccount)}</div>
         </div>
       </div>

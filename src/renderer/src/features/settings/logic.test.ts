@@ -97,10 +97,13 @@ describe('connection inputs', () => {
   });
 
   it('colors the status dot green only while connected', () => {
-    expect(statusDotColor('connected')).toBe('var(--g)');
-    expect(statusDotColor('connecting')).toBe('var(--mu)');
-    expect(statusDotColor('reconnecting')).toBe('var(--r)');
-    expect(statusDotColor('disconnected')).toBe('var(--r)');
+    expect(statusDotColor({ status: 'connected' })).toBe('var(--g)');
+    expect(statusDotColor({ status: 'connecting' })).toBe('var(--mu)');
+    expect(statusDotColor({ status: 'reconnecting' })).toBe('var(--r)');
+    expect(statusDotColor({ status: 'disconnected' })).toBe('var(--r)');
+    // Connected, but orders cannot reach IB.
+    expect(statusDotColor({ status: 'connected', ibLinkLost: true })).toBe('var(--r)');
+    expect(statusDotColor({ status: 'connected', unresponsive: true })).toBe('var(--r)');
   });
 
   it('sorts farms', () => {

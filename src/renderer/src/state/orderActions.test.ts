@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { TimeFormat } from '@shared/timeFormat';
 import type { Lang, OrderRequest, WorkingOrder } from '@shared/types';
-import { confirmCancel, orderErrorText, orderLine, sendOrder, submitOrder } from './orderActions';
+import { confirmCancel, connectionHealthText, orderErrorText, orderLine, sendOrder, submitOrder } from './orderActions';
 import { usePanels } from '../features/panels/panelStore';
 import { isPanelSending, useOrderFeedback } from './orderFeedback';
 import { useStore } from './store';
@@ -338,6 +338,48 @@ describe('orders sent from a floating panel', () => {
     useStore.setState({ positions: [{ key: 'p', contract: stock('AAPL'), quantity: 200, avgPrice: 200 } as never] });
     await sendOrder(pending);
     expect(useOrderFeedback.getState().sent.ticket?.positionBefore).toBe(200);
+  });
+});
+
+describe('orders while IB Gateway cannot carry them', () => {
+  const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 227.56, tif: 'DAY', outsideRth: false };
+  const docked = { request, rows: [], label: 'Buy', summary: 'Buy 100 AAPL', session: 0 };
+  const health = (patch: { ibLinkLost?: boolean; unresponsive?: boolean }) => useStore.setState((s) => ({ connection: { ...s.connection, ibLinkLost: undefined, unresponsive: undefined, ...patch } }));
+
+  beforeEach(() => {
+    setUp(4002);
+    useOrderFeedback.setState({ sent: {} });
+    for (const f of [placeOrder, modifyOrder]) f.mockReset();
+  });
+  afterEach(() => health({}));
+
+  it('sends no order or modify after IB Gateway lost IB (1100) or while it does not answer', async () => {
+    health({ ibLinkLost: true });
+    await expect(sendOrder(docked)).resolves.toBe(false);
+    expect(useStore.getState().toast).toMatchObject({
+      tone: 'error',
+      text: 'Order failed: IB Gateway has lost its connection to IBKR (1100): orders cannot reach IBKR until it is restored. Nothing was sent.',
+    });
+    await expect(sendOrder({ ...docked, modifyOrderId: 31 })).resolves.toBe(false);
+    health({ unresponsive: true });
+    await expect(sendOrder(docked)).resolves.toBe(false);
+    expect(useStore.getState().toast?.text).toBe('Order failed: IB Gateway is not responding: nothing was sent. Tape reconnects if it stays silent.');
+    expect(placeOrder).not.toHaveBeenCalled();
+    expect(modifyOrder).not.toHaveBeenCalled();
+    health({});
+    placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [] });
+    await expect(sendOrder(docked)).resolves.toBe(true);
+  });
+
+  it('names the state for the top bar in the user’s language', () => {
+    health({ unresponsive: true });
+    expect(connectionHealthText('chip')).toBe('IB Gateway not responding');
+    setUp(7497, 'tws', 'zh');
+    health({ ibLinkLost: true });
+    expect(connectionHealthText('chip')).toBe('与 IBKR 断开 (1100)');
+    // Not connected: nothing to say.
+    useStore.setState((s) => ({ connection: { ...s.connection, status: 'disconnected' } }));
+    expect(connectionHealthText('chip')).toBeUndefined();
   });
 });
 

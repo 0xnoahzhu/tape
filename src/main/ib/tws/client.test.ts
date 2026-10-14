@@ -206,6 +206,22 @@ describe('IBApi handshake and lifecycle', () => {
     expect((await second.waitFrames(2))[1]).toEqual(['49', '1']);
   });
 
+  it('never sends a request made while its socket closes on the next socket', async () => {
+    const { fake, api } = await ready();
+    const gone = nextEvent(api, EventName.disconnected);
+    api.disconnect();
+    // Between disconnect() and the close event: the next socket may carry another login.
+    api.cancelOrder(58);
+    api.reqGlobalCancel();
+    await gone;
+    api.connect(121);
+    await nextEvent(api, EventName.nextValidId);
+    expect(api.getQueueStats().held).toBe(0);
+    api.reqCurrentTime();
+    const second = await fake.session(2);
+    expect((await second.waitFrames(2)).map((f) => f[0])).toEqual(['71', '49']);
+  });
+
   it('reconnecting while the previous socket is still closing reports its close first', async () => {
     const { fake, api } = await ready();
     const events: string[] = [];

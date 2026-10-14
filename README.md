@@ -179,6 +179,14 @@ orders* under *API › Precautions* to send them. Overnight + day orders are SMA
 default; change it in *Settings › Connection › Advanced*, or set `TAPE_CLIENT_ID` for a development run). Orders
 belong to the client id that placed them; client id 0 also sees orders entered manually in TWS.
 
+**Connection health.** A connected Gateway can still be unable to pass orders on. When IB Gateway / TWS loses
+its own connection to IBKR (IBKR's 1100; 2110 when Tape connects while that is already the case), or stops answering Tape's heartbeat for 10 s (it hangs with its
+socket open), the top bar shows a red **IBKR link lost (1100)** or **IB Gateway not responding** chip and
+Settings › Connection says the same. Until it is back, orders and modifies are held back (nothing is sent),
+while cancels still go out. A
+Gateway that stays silent for about 40 s is disconnected and, with *Settings › Connection › Auto-reconnect*
+on (the default), reconnected automatically (notification *IB Gateway stopped responding*).
+
 **Switching accounts.** Changing the host, port or client id, or IB Gateway / TWS logging in to another user
 on the same port (paper ↔ live), starts afresh: the previous account's orders, trades, positions and account
 values are cleared at once, so one account's orders never show (or can be cancelled) under another. An order

@@ -52,6 +52,30 @@ export function orderErrorText(err: unknown): string {
   return text;
 }
 
+/** What a text about TWS / IB Gateway's health is for (connectionHealthText). */
+export type HealthUse = 'chip' | 'tip' | 'order';
+
+/**
+ * While TWS / IB Gateway cannot carry an order (ConnectionState.ibLinkLost: it lost its link to IB,
+ * 1100; `unresponsive`: it does not answer the heartbeat), what that means for `use`: the top bar's
+ * chip and its tooltip, or an order refused before it is sent. Undefined while it can.
+ */
+export function connectionHealthText(use: HealthUse): string | undefined {
+  const { connection, settings } = useStore.getState();
+  if (connection.status !== 'connected' || !(connection.ibLinkLost || connection.unresponsive)) return undefined;
+  const app = hostAppName(connection.port, settings.connection.mode);
+  const h = useCommon.now().health;
+  const lost = !!connection.ibLinkLost;
+  switch (use) {
+    case 'chip':
+      return lost ? h.linkLostChip : h.unresponsiveChip(app);
+    case 'tip':
+      return (lost ? h.linkLostTip : h.unresponsiveTip)(app);
+    case 'order':
+      return (lost ? h.linkLostOrder : h.unresponsiveOrder)(app);
+  }
+}
+
 /** How long after "Submitted" / "Modified" a rejection by IB still replaces that toast. */
 const LATE_REJECTION_MS = 5_000;
 
@@ -115,7 +139,8 @@ function panelOnScreen(id: PanelId): boolean {
  * expanded (and a late one expands it again) with the form as it was. When that panel is not on
  * screen when IB answers (docked back, another page or view), the toasts report as well, so no
  * answer goes unseen. A panel's second order while the first still waits for IB is not sent (its
- * button is disabled, and ⏎ must not send it twice).
+ * button is disabled, and ⏎ must not send it twice). Nothing is sent either while TWS / IB Gateway
+ * cannot carry it (connectionHealthText).
  */
 export async function sendOrder(p: PendingOrder): Promise<boolean> {
   const s = useStore.getState();
@@ -175,6 +200,12 @@ export async function sendOrder(p: PendingOrder): Promise<boolean> {
   if (p.session !== s.connection.session) {
     if (panel) useOrderFeedback.getState().update(panel, seq, { phase: 'failed', error: m.sessionChanged });
     if (toast()) s.showToast(m.sessionChanged, 'error');
+    return false;
+  }
+  // TWS / IB Gateway lost IB (1100) or hangs: the order could not reach IB (main refuses it too).
+  const unhealthy = connectionHealthText('order');
+  if (unhealthy) {
+    fail(unhealthy);
     return false;
   }
   try {

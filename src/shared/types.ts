@@ -893,6 +893,19 @@ export interface ConnectionState {
   farms: Record<string, 'ok' | 'inactive' | 'broken'>;
   /** Market-wide data problem, e.g. 10197 "No market data during competing live session". */
   marketDataIssue?: { code: number; message: string };
+  /**
+   * TWS / IB Gateway reported 1100 (it lost its own connection to IB) or 2110 (the link is broken,
+   * as said to a socket that connects during an outage) and not yet 1101 / 1102: orders and modifies
+   * cannot reach IB, so they are refused until it is restored (a cancel is still sent). Cleared by the
+   * next handshake (which learns it again from a 2110) and by a new session.
+   */
+  ibLinkLost?: boolean;
+  /**
+   * The socket is open but TWS / IB Gateway has not answered the heartbeat (reqCurrentTime) for
+   * 10 s: it hangs. Orders and modifies are refused meanwhile; when it stays silent through the next
+   * heartbeat, Tape closes the socket and auto-reconnect takes over.
+   */
+  unresponsive?: boolean;
   lastError?: { code: number; message: string; time: number };
   /** Round-trip time of the last reqCurrentTime heartbeat, in ms. */
   latencyMs?: number;

@@ -8,7 +8,7 @@ import type { ConnectionState, OrderRequest, Settings } from '@shared/types';
 import type { MainContext } from '../context';
 import { createAccountService } from './account';
 import { createConnection, FIRST_REQ_ID } from './connection';
-import { createOrderService, NOT_CONNECTED_MESSAGE } from './orders';
+import { createOrderService, IB_LINK_LOST_MESSAGE, NOT_CONNECTED_MESSAGE } from './orders';
 import { FakeTws } from './tws/__fixtures__/fakeTws';
 
 /** Stand-in for IBApi: records calls; tests emit the events IB would send. */
@@ -16,6 +16,8 @@ class FakeApi extends EventEmitter {
   connects: number[] = [];
   disconnects = 0;
   currentTimeRequests = 0;
+  /** IB answers the heartbeat at once (a test that runs for minutes without a Gateway that hangs). */
+  answersHeartbeat = false;
   /** Every other request (req… / cancel…, e.g. the services' on ready) as [name, ...args]. */
   requests: Array<[string, ...unknown[]]> = [];
   constructor(readonly opts: { host: string; port: number }) {
@@ -38,6 +40,7 @@ class FakeApi extends EventEmitter {
   }
   reqCurrentTime() {
     this.currentTimeRequests++;
+    if (this.answersHeartbeat) this.emit('currentTime', 1791084178);
     return this;
   }
   /** The handshake as IB Gateway sends it: server version, accounts, next order id. */
@@ -225,6 +228,58 @@ describe('IbConnection', () => {
     expect(t.api().currentTimeRequests).toBe(2);
   });
 
+  it('marks a Gateway that stops answering the heartbeat unresponsive, and reconnects when it stays silent', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    vi.advanceTimersByTime(9_999);
+    expect(t.last().unresponsive).toBeUndefined();
+    vi.advanceTimersByTime(1);
+    expect(t.last()).toMatchObject({ status: 'connected', unresponsive: true });
+    expect(t.notes.map((n) => n.name)).toContain('no heartbeat answer');
+    // The next beat asks again; still nothing 10 s later: the socket is closed, and auto-reconnect runs.
+    vi.advanceTimersByTime(20_000);
+    expect(t.api().currentTimeRequests).toBe(2);
+    expect(t.api().disconnects).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(t.api().disconnects).toBe(1);
+    expect(t.notes.at(-1)).toEqual({ name: 'socket close', fields: [['reason', 'no heartbeat answer for 40 s']] });
+    // The session ends with the close, not at its event: nothing sent meanwhile is held for the next socket.
+    expect(t.ib.api).toBeNull();
+    expect(t.ib.isConnected()).toBe(false);
+    // The close event (the fake socket reports it a moment later).
+    vi.advanceTimersByTime(1);
+    expect(t.last()).toMatchObject({ status: 'reconnecting', reconnectAttempt: 1 });
+    expect(t.last().unresponsive).toBeUndefined();
+    expect(t.notices.map((n) => n.title.en)).toEqual(['IB Gateway stopped responding']);
+    expect(t.notices[0].body.en).toBe('127.0.0.1:4002 did not answer for 40 s, so Tape closed the connection. Retrying every 5 s, up to 10 times.');
+    vi.advanceTimersByTime(5_000);
+    expect(t.api().connects).toEqual([7, 7]);
+    t.api().handshake();
+    await Promise.resolve();
+    expect(t.last()).toMatchObject({ status: 'connected', session: 0 });
+  });
+
+  it('forgets an unanswered heartbeat once IB answers, and counts afresh', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    vi.advanceTimersByTime(10_000);
+    expect(t.last().unresponsive).toBe(true);
+    t.api().emit('currentTime', 1791084178);
+    expect(t.last().unresponsive).toBeUndefined();
+    expect(t.last().latencyMs).toBe(10_000);
+    // One silent beat later it is unresponsive again, not closed: the earlier miss was answered.
+    vi.advanceTimersByTime(30_000);
+    expect(t.last().unresponsive).toBe(true);
+    expect(t.api().disconnects).toBe(0);
+    t.api().emit('currentTime', 1791084218);
+    vi.advanceTimersByTime(40_000);
+    expect(t.api().disconnects).toBe(0);
+  });
+
   it('reports a refused connection without retrying', async () => {
     const t = setup();
     const p = t.ib.connect();
@@ -366,6 +421,7 @@ describe('IbConnection', () => {
     expect(t.last().status).toBe('connected');
     expect(t.ib.api).toBe(t.api());
     expect(t.notices).toEqual([]);
+    t.api().answersHeartbeat = true;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.api().connects).toHaveLength(2);
   });
@@ -859,10 +915,77 @@ describe('IbConnection', () => {
     await p;
     t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
     expect(t.last().lastError?.code).toBe(1100);
+    expect(t.last()).toMatchObject({ status: 'connected', ibLinkLost: true });
     t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data lost.', 1101);
     expect(t.last().lastError).toBeUndefined();
+    expect(t.last().ibLinkLost).toBeUndefined();
     expect(ready).toHaveBeenCalledTimes(2);
     expect(t.notices.map((n) => n.title.en)).toEqual(['IB Gateway lost its connection to IB', 'IB Gateway reconnected to IB']);
+    // 1102 (data maintained) restores it as well.
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data maintained.', 1102);
+    expect(t.last().ibLinkLost).toBeUndefined();
+    expect(ready).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets a lost IB link on the next handshake and on a new session', async () => {
+    const t = setup();
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
+    t.api().emit('disconnected');
+    vi.advanceTimersByTime(5_000);
+    expect(t.last()).toMatchObject({ status: 'reconnecting' });
+    expect(t.last().ibLinkLost).toBeUndefined();
+    t.api().handshake();
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
+    expect(t.last().ibLinkLost).toBe(true);
+    t.changeSettings({ port: 4001 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.last()).toMatchObject({ port: 4001, session: 1 });
+    expect(t.last().ibLinkLost).toBeUndefined();
+  });
+
+  it('learns an outage still under way from the new socket’s 2110, and holds orders back', async () => {
+    const t = setup();
+    Object.assign(t.ctx, { ib: t.ib, contracts: { resolve: async (c: unknown) => c, getInfo: async () => null } });
+    t.ctx.account = createAccountService(t.ctx);
+    t.ctx.orders = createOrderService(t.ctx);
+    await vi.advanceTimersByTimeAsync(0); // deferred subscriptions
+    const p = t.ib.connect();
+    t.api().handshake();
+    await p;
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
+    // The API socket drops during the outage (a relaunch or Paper / Live switch back lands here too).
+    t.api().emit('disconnected');
+    await vi.advanceTimersByTimeAsync(5_000);
+    t.api().handshake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.last()).toMatchObject({ status: 'connected' });
+    expect(t.last().ibLinkLost).toBeUndefined();
+    // TWS tells a socket that connects during an outage with 2110, never with that outage's 1100.
+    t.api().emit('info', 'Connectivity between Trader Workstation and server is broken. It will be restored automatically.', 2110);
+    expect(t.last()).toMatchObject({ status: 'connected', ibLinkLost: true, lastError: { code: 2110 } });
+    // Said again after the reconnect's notice, which would otherwise read as all clear.
+    expect(t.notices.map((n) => n.title.en).slice(-2)).toEqual(['Reconnected to IB Gateway', 'IB Gateway lost its connection to IB']);
+    const order: OrderRequest = { contract: { ...stock('AAPL'), conId: 265598 }, action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false };
+    await expect(t.ctx.orders.place(order)).rejects.toThrow(IB_LINK_LOST_MESSAGE);
+    expect(t.api().requests.filter((r) => r[0] === 'placeOrder')).toEqual([]);
+    t.api().emit('info', 'Connectivity between IB and Trader Workstation has been restored - data maintained.', 1102);
+    expect(t.last().ibLinkLost).toBeUndefined();
+    expect(t.last().lastError).toBeUndefined();
+    // A 2110 heard first on a fresh socket is the outage's notice.
+    const fresh = setup();
+    const q = fresh.ib.connect();
+    fresh.api().handshake();
+    await q;
+    fresh.api().emit('info', 'Connectivity between Trader Workstation and server is broken. It will be restored automatically.', 2110);
+    expect(fresh.last().ibLinkLost).toBe(true);
+    // A 2110 after the 1100 of the same outage says nothing new: one notice.
+    fresh.api().emit('info', 'Connectivity between IB and Trader Workstation has been lost.', 1100);
+    fresh.api().emit('info', 'Connectivity between Trader Workstation and server is broken. It will be restored automatically.', 2110);
+    expect(fresh.notices.map((n) => n.title.en)).toEqual(['IB Gateway lost its connection to IB']);
   });
 });
 

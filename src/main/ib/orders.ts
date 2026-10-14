@@ -21,6 +21,12 @@
 // Tape has no read-only switch of its own: with "Read-Only API" on in TWS / IB Gateway, IB rejects
 // orders with error 321, which reaches the caller (and the rejection notification) as IB's message.
 //
+// A connection that cannot carry an order is refused, before anything is sent: TWS / IB Gateway
+// lost its link to IB (1100, ConnectionState.ibLinkLost) or does not answer the heartbeat
+// (unresponsive). place() and modify() throw then (IB would get such an order late, at another
+// price, or never, and Tape could not tell); cancel() and cancelAll() still send, since getting out
+// must stay possible.
+//
 // A working order keeps its trading session: IB refuses to move it to the OVERNIGHT venue (105)
 // or to add includeOvernight (462), so modify() refuses a request with another session. Its TIF
 // changes only between DAY and GTC, or to IOC (462 otherwise, see tifChangeAllowed). IB reports an
@@ -93,6 +99,10 @@ export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
 export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
 /** A request reviewed on another session (account or Gateway) than the current one. */
 export const SESSION_CHANGED_MESSAGE = 'The connection switched to another account or Gateway; nothing was sent';
+/** place() / modify() while TWS / IB Gateway has lost its connection to IB (1100). */
+export const IB_LINK_LOST_MESSAGE = 'TWS / IB Gateway has lost its connection to IB (1100): orders cannot reach IB until it is restored; nothing was sent';
+/** place() / modify() while TWS / IB Gateway does not answer the heartbeat. */
+export const GATEWAY_UNRESPONSIVE_MESSAGE = 'TWS / IB Gateway is not responding; nothing was sent';
 export const PREVIEW_TIMEOUT_MESSAGE = 'IB did not answer the margin and commission preview in time';
 const CLOSED_MESSAGE = 'Connection to TWS / IB Gateway closed';
 
@@ -533,6 +543,16 @@ export function createOrderService(ctx: MainContext): OrderService {
   }
 
   /**
+   * Orders and modifies need TWS / IB Gateway to reach IB now (see the header): not after a 1100,
+   * not while it ignores the heartbeat. The renderer refuses them first; this is the backstop.
+   */
+  function requireIbLink(): void {
+    const s = ctx.ib.getState();
+    if (s.ibLinkLost) throw new Error(IB_LINK_LOST_MESSAGE);
+    if (s.unresponsive) throw new Error(GATEWAY_UNRESPONSIVE_MESSAGE);
+  }
+
+  /**
    * A request made for session `session` (the one the user reviewed it on) is refused on any
    * other, before anything is sent: an order reviewed on paper never reaches live.
    */
@@ -658,11 +678,13 @@ export function createOrderService(ctx: MainContext): OrderService {
     requireUnlocked();
     requireSession(reviewed);
     const checked = requireApi();
+    requireIbLink();
     const clientId = myClientId();
     const session = sessionNow();
     const { req, conditionConIds, rules } = await prepare(input);
-    // A Gateway, client id or account switched to meanwhile does not get it.
+    // A Gateway, client id or account switched to meanwhile does not get it, nor a link lost meanwhile.
     const api = sameSession(checked, clientId, session);
+    requireIbLink();
     const orderId = ctx.ib.nextOrderId();
     const built = buildOrders(req, {
       orderId,
@@ -750,6 +772,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     requireUnlocked();
     requireSession(reviewed);
     const checked = requireApi();
+    requireIbLink();
     const clientId = myClientId();
     const session = sessionNow();
     const current = modifiable(orderId);
@@ -762,6 +785,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     // While the contract was resolved, the connection may have changed (the order id would name
     // another client's or account's order, or a new one) and the order may have been filled or cancelled.
     const api = sameSession(checked, clientId, session);
+    requireIbLink();
     const existing = modifiable(orderId);
     const [main] = buildOrders(req, {
       orderId,

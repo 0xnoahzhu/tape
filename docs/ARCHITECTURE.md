@@ -72,7 +72,27 @@ updates and P&L name the account): without it 2 s after `nextValidId`, Tape asks
 auto-reconnect on, an unexpected close retries every 5 s, at most 10 times (`reconnecting`); so does
 a failed first attempt of the reconnect that a host / port / client id change starts. A failed
 manual connect is reported and not retried; `disconnect()` never reconnects. A `reqCurrentTime`
-heartbeat every 30 s measures latency.
+heartbeat every 30 s measures latency and health (below).
+
+**Health.** A ready connection can still be unable to carry an order, which the status alone does not
+show. IB's 1100 (TWS / IB Gateway lost its own connection to IB) sets `ConnectionState.ibLinkLost`
+until 1101 / 1102, and so does 2110 (the link is broken): TWS says so to a socket that connects while
+an outage is under way (a reconnect, a relaunch, a switch back to that Gateway), which never hears
+the outage's 1100, since each new socket starts with the flag cleared. One notice per outage (a 2110
+after its 1100 adds none). A heartbeat unanswered for 10 s sets `unresponsive` (a Gateway that hangs keeps its
+local socket open, and the kernel answers TCP keepalives for it, so only an answer tells); the next beat
+asks again without restarting the clock, and when it is unanswered too (about 40 s of silence) Tape
+closes the socket itself, without `closeSocket` so the connection stays wanted, and auto-reconnect
+(when on) takes over; with it off the connection ends as `disconnected` ("IB Gateway stopped
+responding" instead of the usual disconnect notice; the API log notes both). That session ends when Tape closes the socket, not at its close event, as with any close on
+purpose (`beginClose`): `api` is null and `isConnected()` false from then on, so a cancel made in that
+moment is refused instead of being held by the TWS client for the next socket, which may carry
+another login. Any answer clears it. The next handshake and a new session clear both flags. Meanwhile
+`orders.ts` refuses `place()` / `modify()` before sending anything (`requireIbLink`, also after the
+contract lookup), and the renderer first: `sendOrder` fails with the reason, a cancel is still sent,
+and the top bar shows a red chip ("IBKR link lost (1100)", "IB
+Gateway not responding"; its tooltip says what is held back, a click opens Settings › Connection, whose
+status line and red dot say the same; `orderActions.ts → connectionHealthText`).
 
 **Sessions.** Moving to another Gateway, client id or account starts a new session:
 `ConnectionState.session` increments and `onSessionChange(reason)` runs, between the previous
@@ -115,7 +135,8 @@ renderer passes the session the user reviewed a request on (`PendingOrder.sessio
 dialog's `ConfirmRequest.session`, the what-if estimates): `placeOrder` / `modifyOrder` /
 `cancelOrder` / `previewOrder` / `cancelAllOrders` refuse it on any other session before sending
 anything, and so does the renderer itself; a login change during a request's contract lookup
-(`sameSession`) sends nothing either. `ownOrder` refuses an order of an account the login does not
+(`sameSession`) sends nothing either. Orders and modifies are also refused while TWS / IB Gateway lost
+IB or does not answer (see *Connection › Health*); cancels are not. `ownOrder` refuses an order of an account the login does not
 manage. What-if answers are reused per account and never past the socket's close.
 
 Time in force and trading session (`shared/orderTiming.ts`) are checked by the same rules in the
@@ -280,7 +301,8 @@ names and listener arguments), built on `node:net` and `node:events` only.
 * `connection.ts` — the socket, the `API\0` handshake offering server versions 176..193
   (`messageIds.ts`; TWS / IB Gateway 10.x) and length-prefixed frames of NUL-separated fields.
 * `encoder.ts` / `decoder.ts` — requests and messages; `client.ts` is `IBApi`. Requests made before
-  `nextValidId` are held and flushed after it. Every frame sent and received is also emitted as
+  `nextValidId` are held and flushed after it; those held when the socket closes, or made while it
+  closes (between `disconnect()` and the close event), are dropped, never sent on the next socket. Every frame sent and received is also emitted as
   `sent` / `received` (the API log records them). A text field with a control character is refused
   (`checkFieldText`, an `error` event; nothing is sent): a NUL would split the field and shift the
   rest of the frame.

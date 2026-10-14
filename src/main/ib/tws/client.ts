@@ -7,7 +7,9 @@
 //   -> START_API -> `connected` -> `server` (version, connection time)
 //   -> managedAccounts / nextValidId / farm status (`info`) ...
 // Requests made before nextValidId (or while disconnected) are held and flushed right after
-// the next nextValidId event; afterwards they are sent at once. Every frame goes through the
+// the next nextValidId event; afterwards they are sent at once. Those held when the socket
+// closes, or made while it closes, are dropped: they never go out on the next socket, which may
+// carry another login (a cancel would hit its order with that id). Every frame goes through the
 // send queue (sendQueue.ts): at most 45 messages per second, spread evenly past a burst of 10
 // (halved for 10 s after IB's error 100), orders before control before market data when frames
 // wait, IB's pacing of symbol searches and historical data checked at write time (pacing.ts),
@@ -383,6 +385,8 @@ export class IBApi extends EventEmitter {
       this.status = Status.Disconnecting;
       this.ready = false;
       this.queue.clear();
+      // A request held for this socket never goes out on the next one (another login, maybe).
+      this.held.length = 0;
       this.conn.close();
     } else {
       this.emitInfo('Cannot disconnect if already disconnected.', ErrorCode.NOT_CONNECTED);
@@ -394,6 +398,8 @@ export class IBApi extends EventEmitter {
     this.conn = null;
     this.ready = false;
     this.queue.clear();
+    // Including those made while it closed (see disconnect); requests made from now on wait for the next session.
+    this.held.length = 0;
     this.awaitingServerVersion = false;
     const was = this.status;
     this.status = Status.Disconnected;

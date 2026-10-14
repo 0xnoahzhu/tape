@@ -1,15 +1,49 @@
 // The 56px application header, which doubles as the window title bar.
 // macOS: native traffic lights at the left edge, then a divider (no logo; the Dock shows it).
 // Windows / Linux: a small logo at the left; native caption buttons overlay the right edge.
+// Before the bell, a red chip while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does
+// not answer).
 
+import type { CSSProperties } from 'react';
 import { useCommon } from '../i18n/common';
 import { modKey } from '../lib/shortcuts';
+import { connectionHealthText } from '../state/orderActions';
 import { useStore } from '../state/store';
 import { BellIcon, Dot, LockIcon, LogoMark, SlidersIcon } from '../ui/icons';
 import { IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
 import { requestLock } from '../features/lock/actions';
 import { useLockMessages } from '../features/lock/messages';
+
+/** The red outlined chips of the top bar. */
+const warningChip: CSSProperties = {
+  height: 26,
+  display: 'flex',
+  alignItems: 'center',
+  padding: '0 10px',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+  fontSize: 12,
+  color: 'var(--r)',
+  boxShadow: 'inset 0 0 0 1px var(--r)',
+  cursor: 'pointer',
+};
+
+/**
+ * TWS / IB Gateway is connected but cannot carry orders: it lost its connection to IB (1100) or does
+ * not answer the heartbeat (ConnectionState.ibLinkLost / unresponsive). Orders and modifies are held
+ * back meanwhile, cancels still go out; the tooltip says so, and a click opens Settings › Connection.
+ */
+function HealthChip() {
+  const text = useStore((s) => (s.connection.ibLinkLost || s.connection.unresponsive ? connectionHealthText('chip') : undefined));
+  const tip = useStore((s) => (s.connection.ibLinkLost || s.connection.unresponsive ? connectionHealthText('tip') : undefined));
+  if (!text) return null;
+  return (
+    <div className="no-drag" role="status" data-testid="health-chip" title={tip} onClick={() => useStore.getState().openSettings('conn')} style={warningChip}>
+      {text}
+    </div>
+  );
+}
 
 export function TopBar() {
   const m = useCommon();
@@ -64,6 +98,9 @@ export function TopBar() {
       <SymbolSearch />
       {/* Takes the free space only once the search box has reached its maximum width. */}
       <div style={{ marginLeft: 'auto' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <HealthChip />
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 12, boxShadow: 'inset 1px 0 0 var(--ln2)' }}>
         <IconButton size={34} title={m.notifications} active={bellOpen} onClick={() => setBell(!bellOpen)}>
           <BellIcon />

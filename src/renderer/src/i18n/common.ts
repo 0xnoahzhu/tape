@@ -58,6 +58,19 @@ export const useCommon = createMessages({
     notConnected: 'Not connected to TWS / IB Gateway',
     /** An order reviewed before Tape moved to another account or Gateway (ConnectionState.session). */
     sessionChanged: 'The connection switched to another account; the order was not sent',
+    /**
+     * TWS / IB Gateway cannot carry orders (orderActions.ts → connectionHealthText): it lost its
+     * connection to IBKR (1100), or does not answer the heartbeat. `app`: TWS or IB Gateway.
+     */
+    health: {
+      linkLostChip: 'IBKR link lost (1100)',
+      unresponsiveChip: (app: string) => `${app} not responding`,
+      linkLostTip: (app: string) =>
+        `${app} has lost its connection to IBKR (1100): market data and order updates pause, and orders and modifies are held back until it is restored. Cancels are still sent.`,
+      unresponsiveTip: (app: string) => `${app} has not answered for 10 s: orders and modifies are held back, and Tape reconnects if it stays silent. Cancels are still sent.`,
+      linkLostOrder: (app: string) => `${app} has lost its connection to IBKR (1100): orders cannot reach IBKR until it is restored. Nothing was sent.`,
+      unresponsiveOrder: (app: string) => `${app} is not responding: nothing was sent. Tape reconnects if it stays silent.`,
+    },
     readOnlyApiHint: (path: string) => `Turn off “Read-Only API” in ${path} to trade.`,
     /** IB's 10329: the API precautions block directly routed orders (the overnight-only session). */
     directRouteHint: (path: string) => `Overnight-only orders go directly to IBKR's OVERNIGHT venue: turn on “Bypass Redirect Order warning for Stock API orders” in ${path} to send them.`,
@@ -118,6 +131,14 @@ export const useCommon = createMessages({
     noWorkingOrders: '没有挂单',
     notConnected: '未连接 TWS / IB Gateway',
     sessionChanged: '连接已切换到其他账户，订单未发送',
+    health: {
+      linkLostChip: '与 IBKR 断开 (1100)',
+      unresponsiveChip: (app: string) => `${app} 无响应`,
+      linkLostTip: (app: string) => `${app} 与 IBKR 的连接已中断（1100）：连接恢复前，行情和订单状态暂停更新，下单和改单也会暂停发送。撤单仍会发送。`,
+      unresponsiveTip: (app: string) => `${app} 已 10 秒无响应：下单和改单暂停发送；若持续无响应，Tape 会重新连接。撤单仍会发送。`,
+      linkLostOrder: (app: string) => `${app} 与 IBKR 的连接已中断（1100）：连接恢复前订单无法送达 IBKR。未发送任何内容。`,
+      unresponsiveOrder: (app: string) => `${app} 无响应：未发送任何内容。若持续无响应，Tape 会重新连接。`,
+    },
     readOnlyApiHint: (path: string) => `如需交易，请在 ${path} 中关闭 “Read-Only API”。`,
     directRouteHint: (path: string) => `仅夜盘订单会直接发往 IBKR 的 OVERNIGHT 场所：如需发送，请在 ${path} 中勾选 “Bypass Redirect Order warning for Stock API orders”。`,
     sessions: { regular: '常规时段', extended: '盘前盘后', overnight: '夜盘', overnightDay: '夜盘 + 日盘' } as Record<TradingSession, string>,

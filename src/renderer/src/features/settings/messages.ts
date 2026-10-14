@@ -43,6 +43,9 @@ const en = {
   paperAccount: 'paper account',
   liveAccount: 'live account',
   serverVersion: (v: number) => `server v${v}`,
+  /** The status line while connected but unable to carry orders (orders and modifies are held back). */
+  ibLinkLost: (app: string) => `${app} lost IBKR (1100): orders held back`,
+  notResponding: (app: string) => `${app} not responding: orders held back`,
   connecting: (addr: string) => `Connecting to ${addr}…`,
   reconnecting: (n: number, max: number) => `Reconnecting · attempt ${n} of ${max}`,
   notConnectedHelp: 'Not connected. Make sure TWS is running with the API port open.',
@@ -364,6 +367,8 @@ const zh: typeof en = {
   paperAccount: '模拟账户',
   liveAccount: '实盘账户',
   serverVersion: (v: number) => `服务器版本 ${v}`,
+  ibLinkLost: (app: string) => `${app} 与 IBKR 断开（1100）：暂停下单`,
+  notResponding: (app: string) => `${app} 无响应：暂停下单`,
   connecting: (addr: string) => `正在连接 ${addr}…`,
   reconnecting: (n: number, max: number) => `正在重连 · 第 ${n} / ${max} 次`,
   notConnectedHelp: '未连接。确认 TWS 已启动并开放 API 端口。',

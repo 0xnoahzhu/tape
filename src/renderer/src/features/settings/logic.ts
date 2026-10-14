@@ -163,12 +163,13 @@ export function hostAppName(port: number, mode: Mode): string {
 }
 
 /**
- * Dot color of the connection status line: green only while connected (--ac equals --g in
- * skin a, so it cannot mark progress), muted during a first attempt, red when not connected.
+ * Dot color of the connection status line: green only while connected and able to carry orders
+ * (--ac equals --g in skin a, so it cannot mark progress), muted during a first attempt, red when
+ * not connected, or connected to a TWS / IB Gateway that lost IB (1100) or does not answer.
  */
-export function statusDotColor(status: ConnectionState['status']): string {
-  if (status === 'connected') return 'var(--g)';
-  if (status === 'connecting') return 'var(--mu)';
+export function statusDotColor(conn: Pick<ConnectionState, 'status' | 'ibLinkLost' | 'unresponsive'>): string {
+  if (conn.status === 'connected') return conn.ibLinkLost || conn.unresponsive ? 'var(--r)' : 'var(--g)';
+  if (conn.status === 'connecting') return 'var(--mu)';
   return 'var(--r)';
 }
 

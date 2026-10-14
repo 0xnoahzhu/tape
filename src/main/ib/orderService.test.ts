@@ -2,9 +2,16 @@ import type { Contract, IBApi, Order } from './tws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
-import type { OrderRequest } from '@shared/types';
+import type { ConnectionState, OrderRequest } from '@shared/types';
 import type { IbConnection, IbListener, MainContext, SessionChangeReason } from '../context';
-import { CONNECTION_CHANGED_MESSAGE, createOrderService, sameGoodAfter, SESSION_CHANGED_MESSAGE } from './orders';
+import {
+  CONNECTION_CHANGED_MESSAGE,
+  createOrderService,
+  GATEWAY_UNRESPONSIVE_MESSAGE,
+  IB_LINK_LOST_MESSAGE,
+  sameGoodAfter,
+  SESSION_CHANGED_MESSAGE,
+} from './orders';
 
 const CLIENT_ID = 101;
 
@@ -34,11 +41,13 @@ function fakeIb() {
   let session = 0;
   let orderId = 50;
   let reqId = 1000;
+  /** The connection's health flags (1100, an unanswered heartbeat). */
+  let health: Pick<ConnectionState, 'ibLinkLost' | 'unresponsive'> = {};
   const ib: IbConnection = {
     get api() {
       return connected ? api : null;
     },
-    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: 'h', port: 1, clientId, session, accounts: [account], account, isPaper: account.startsWith('D'), farms: {} }),
+    getState: () => ({ status: connected ? 'connected' : 'disconnected', host: 'h', port: 1, clientId, session, accounts: [account], account, isPaper: account.startsWith('D'), farms: {}, ...health }),
     connect: async () => undefined,
     disconnect: async () => undefined,
     isConnected: () => connected,
@@ -67,6 +76,7 @@ function fakeIb() {
     ready: () => ready.forEach((l) => l(api)),
     setConnected: (v: boolean) => void (connected = v),
     setClientId: (v: number) => void (clientId = v),
+    setHealth: (v: Pick<ConnectionState, 'ibLinkLost' | 'unresponsive'>) => void (health = v),
     /** A new IBApi instance, as after a host / port / client id change. */
     replaceApi: () => void (api = newApi()),
     close,
@@ -293,6 +303,35 @@ describe('OrderService', () => {
     t.setConnected(false);
     await expect(t.svc.place(req)).rejects.toThrow('Not connected');
     expect(t.calls).toEqual([]);
+  });
+
+  it('sends no order or modify while IB Gateway has lost IB (1100) or does not answer, but still a cancel', async () => {
+    const t = await loaded();
+    t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });
+    t.calls.length = 0;
+    t.setHealth({ ibLinkLost: true });
+    await expect(t.svc.place(req)).rejects.toThrow(IB_LINK_LOST_MESSAGE);
+    await expect(t.svc.modify(40, { ...req, limitPrice: 225 })).rejects.toThrow(IB_LINK_LOST_MESSAGE);
+    t.setHealth({ unresponsive: true });
+    await expect(t.svc.place(req)).rejects.toThrow(GATEWAY_UNRESPONSIVE_MESSAGE);
+    await expect(t.svc.modify(40, { ...req, limitPrice: 225 })).rejects.toThrow(GATEWAY_UNRESPONSIVE_MESSAGE);
+    expect(t.calls).toEqual([]);
+    // Getting out stays possible.
+    const c = t.svc.cancel(40);
+    expect(t.calls.map((x) => x[0])).toEqual(['cancelOrder']);
+    t.emit('orderStatus', 40, 'Cancelled', 0, 100, 0, 9040, 0, 0, CLIENT_ID, '');
+    await expect(c).resolves.toBeUndefined();
+  });
+
+  it('does not send an order whose IB link drops while its contract is being resolved', async () => {
+    const t = await loaded();
+    const release = t.holdLookups();
+    const p = t.svc.place({ ...req, contract: stock('AAPL') });
+    await tick();
+    t.setHealth({ ibLinkLost: true });
+    release();
+    await expect(p).rejects.toThrow(IB_LINK_LOST_MESSAGE);
+    expect(t.calls.filter((c) => c[0] === 'placeOrder')).toEqual([]);
   });
 
   it('only modifies and cancels orders of this client', async () => {

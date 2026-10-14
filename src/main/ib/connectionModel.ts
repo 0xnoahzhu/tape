@@ -48,7 +48,12 @@ const m = createMessages({
     gaveUpTitle: (app: string) => `Could not reconnect to ${app}`,
     gaveUpBody: (reason: string, attempts: number) => `Gave up after ${attempts} attempts. ${reason}.`,
     lostTitle: (app: string) => `${app} lost its connection to IB`,
-    lostBody: 'Market data and order updates pause until the connection is restored.',
+    lostBody: 'Market data and order updates pause, and Tape holds new orders and modifies back, until the connection is restored.',
+    silentTitle: (app: string) => `${app} stopped responding`,
+    silentBody: (addr: string, retry: boolean) =>
+      retry
+        ? `${addr} did not answer for 40 s, so Tape closed the connection. Retrying every 5 s, up to 10 times.`
+        : `${addr} did not answer for 40 s, so Tape closed the connection.`,
     restoredTitle: (app: string) => `${app} reconnected to IB`,
     restoredKept: 'Connection restored, data maintained.',
     restoredLost: 'Connection restored. Market data subscriptions were renewed.',
@@ -74,7 +79,10 @@ const m = createMessages({
     gaveUpTitle: (app: string) => `无法重新连接 ${app}`,
     gaveUpBody: (reason: string, attempts: number) => `已重试 ${attempts} 次仍未成功。${reason}。`,
     lostTitle: (app: string) => `${app} 与 IB 服务器的连接已中断`,
-    lostBody: '连接恢复前，行情和订单状态暂停更新。',
+    lostBody: '连接恢复前，行情和订单状态暂停更新，Tape 也会暂停发送新订单和改单。',
+    silentTitle: (app: string) => `${app} 无响应`,
+    silentBody: (addr: string, retry: boolean) =>
+      retry ? `${addr} 40 秒未响应，Tape 已断开连接。每 5 秒重试，最多 10 次。` : `${addr} 40 秒未响应，Tape 已断开连接。`,
     restoredTitle: (app: string) => `${app} 已恢复与 IB 服务器的连接`,
     restoredKept: '连接已恢复，数据保持不变。',
     restoredLost: '连接已恢复，行情订阅已重新提交。',
@@ -137,6 +145,11 @@ export const connectionNotices = {
   gaveUp: (mode: Mode, reason: LocalizedText, attempts: number): NoticeText => ({
     title: m.both((t) => t.gaveUpTitle(appName(t, mode))),
     body: { en: m('en').gaveUpBody(reason.en, attempts), zh: m('zh').gaveUpBody(reason.zh, attempts) },
+  }),
+  /** The heartbeat went unanswered twice: Tape closed the socket of a TWS / IB Gateway that hangs. */
+  silent: (mode: Mode, p: ConnectionParams, retry: boolean): NoticeText => ({
+    title: m.both((t) => t.silentTitle(appName(t, mode))),
+    body: m.both((t) => t.silentBody(`${p.host}:${p.port}`, retry)),
   }),
   lost: (mode: Mode): NoticeText => ({
     title: m.both((t) => t.lostTitle(appName(t, mode))),

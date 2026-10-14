@@ -22,6 +22,15 @@
 // is never ready before managedAccounts has named the login's accounts: orders, account updates
 // and P&L requests name the account. Without it, Tape asks again (reqManagedAccts), and the
 // handshake timeout ends an attempt that never gets it.
+//
+// Health of a ready connection, which the status alone does not show: 1100 (TWS / IB Gateway lost
+// its own connection to IB), or 2110 (the link is broken; how TWS reports an outage already under
+// way to a socket that connects during it, which never hears that outage's 1100), sets ibLinkLost
+// until 1101 / 1102; a heartbeat (reqCurrentTime every
+// 30 s) unanswered for 10 s sets unresponsive (a Gateway that hangs keeps its socket open), and when
+// the next beat goes unanswered too, Tape closes the socket so auto-reconnect starts over. The order
+// service refuses orders and modifies in either state (a cancel is still sent); the next handshake
+// and a new session clear both.
 
 import { EventName, IBApi } from './tws';
 import type { ConnectionState } from '@shared/types';
@@ -48,6 +57,10 @@ const HANDSHAKE_TIMEOUT_MS = 15_000;
  */
 const ACCOUNTS_WAIT_MS = 2_000;
 const HEARTBEAT_MS = 30_000;
+/** A heartbeat unanswered this long marks the connection unresponsive (IB answers within a second). */
+const HEARTBEAT_STALE_MS = 10_000;
+/** Heartbeats in a row unanswered after HEARTBEAT_STALE_MS (about 40 s of silence) close the socket. */
+const MISSED_BEATS_CLOSE = 2;
 const CLOSE_WAIT_MS = 1_000;
 /**
  * Request ids start far above the order ids IB hands out (nextValidId, one more per order), so the
@@ -128,7 +141,14 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   let accountsTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** HEARTBEAT_STALE_MS after a beat: whether it has been answered. */
+  let heartbeatCheck: ReturnType<typeof setTimeout> | null = null;
+  /** When the oldest unanswered heartbeat was sent; 0 while none waits. */
   let heartbeatSentAt = 0;
+  /** Heartbeat checks in a row that found no answer. */
+  let missedBeats = 0;
+  /** Tape is closing the socket of a TWS / IB Gateway that stopped answering (it reconnects). */
+  let silentClose = false;
   /** The socket being closed on purpose, until its close event (every close of it waits for that). */
   let closing: { api: IBApi; done: Promise<void>; resolve: () => void } | null = null;
 
@@ -149,7 +169,13 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   function beginSession(reason: SessionChangeReason, patch: Partial<ConnectionState>): void {
     const session = state.session + 1;
     if (reason === 'params') sessionAccounts = null;
-    setState({ ...patch, session, ...(reason === 'params' ? { accounts: [], account: undefined, isPaper: false } : {}) });
+    setState({
+      ...patch,
+      session,
+      ibLinkLost: undefined,
+      unresponsive: undefined,
+      ...(reason === 'params' ? { accounts: [], account: undefined, isPaper: false } : {}),
+    });
     ctx.apiLog.note('out', 'new session', [
       ['reason', reason === 'params' ? 'host, port or client id changed' : 'other accounts'],
       ['session', String(session)],
@@ -227,6 +253,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     accountsKnown = false;
     lastFailure = null;
     socketOpen = true;
+    silentClose = false;
     setState({
       status: isRetry ? 'reconnecting' : 'connecting',
       host: params.host,
@@ -237,6 +264,10 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       connTime: undefined,
       latencyMs: undefined,
       farms: {},
+      // Learnt again from this handshake (2110) or a later 1100: the IB link a 1100 reported lost may
+      // have come back while no socket was there to hear its 1101 / 1102.
+      ibLinkLost: undefined,
+      unresponsive: undefined,
       ...(isRetry ? {} : { lastError: undefined }),
     });
     const promise = new Promise<void>((resolve, reject) => {
@@ -353,7 +384,11 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     }
     if (api !== inst || !socketOpen) return;
     socketOpen = false;
-    const wasReady = ready;
+    // Tape closed it because TWS / IB Gateway stopped answering (logged then): it reconnects.
+    const silent = silentClose;
+    silentClose = false;
+    // A heartbeat close ended the session before the socket closed (checkHeartbeat): it was ready.
+    const wasReady = ready || silent;
     ready = false;
     gotValidId = false;
     handshakeTimer = clearTimer(handshakeTimer);
@@ -374,8 +409,8 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     const retry = settings().autoReconnect;
     if (wasReady) {
       droppedAt = Date.now();
-      ctx.apiLog.note('in', 'socket close', [['reason', 'closed by TWS / IB Gateway']], true);
-      notify(connectionNotices.disconnected(mode(), params, retry));
+      if (!silent) ctx.apiLog.note('in', 'socket close', [['reason', 'closed by TWS / IB Gateway']], true);
+      notify(silent ? connectionNotices.silent(mode(), params, retry) : connectionNotices.disconnected(mode(), params, retry));
     }
     if (retry && (wasReady || reconnectAttempt > 0 || retryFirstAttempt)) {
       scheduleRetry();
@@ -485,12 +520,15 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     }
     switch (code) {
       case 1100:
-        setState({ lastError: { code, message, time: Date.now() } });
-        notify(connectionNotices.lost(mode()));
+      case 2110: // the link is (still) broken, e.g. said to a socket that connects during the outage
+        // Orders and modifies are refused until 1101 / 1102 (orders.ts); a cancel is still sent.
+        // One notice per outage: a 2110 after its 1100 says nothing new.
+        if (!state.ibLinkLost) notify(connectionNotices.lost(mode()));
+        setState({ lastError: { code, message: cleanIbMessage(message), time: Date.now() }, ibLinkLost: true });
         return;
       case 1101:
       case 1102:
-        if (state.lastError?.code === 1100) setState({ lastError: undefined });
+        setState({ ibLinkLost: undefined, ...(state.lastError?.code === 1100 || state.lastError?.code === 2110 ? { lastError: undefined } : {}) });
         notify(connectionNotices.restored(mode(), code === 1101));
         // 1101: IB dropped the market data subscriptions; services re-issue them.
         if (code === 1101 && ready) fireReady(api);
@@ -522,32 +560,70 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
   // ---------------------------------------------------------------------------
   // Heartbeat and market data health
 
+  /**
+   * reqCurrentTime every HEARTBEAT_MS: the latency, and a TWS / IB Gateway that hangs (its socket
+   * stays open, nothing is answered; see the header). A beat while the previous one is unanswered
+   * asks again but keeps the first one's time, so the silence is measured from there.
+   */
   function startHeartbeat(api: IBApi): void {
     stopHeartbeat();
     const beat = () => {
       if (!ready || api !== inst) return;
-      heartbeatSentAt = Date.now();
+      if (!heartbeatSentAt) heartbeatSentAt = Date.now();
       try {
         api.reqCurrentTime();
       } catch (err) {
         console.error('[ib] heartbeat failed:', err);
       }
+      heartbeatCheck = clearTimer(heartbeatCheck);
+      heartbeatCheck = setTimeout(() => checkHeartbeat(api), HEARTBEAT_STALE_MS);
     };
     beat();
     heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
   }
 
+  /** HEARTBEAT_STALE_MS after a beat, still no answer: unresponsive, and the second time closed. */
+  function checkHeartbeat(api: IBApi): void {
+    heartbeatCheck = null;
+    if (!heartbeatSentAt || !ready || api !== inst) return;
+    missedBeats++;
+    const silence = `${Math.round((Date.now() - heartbeatSentAt) / 1000)} s`;
+    if (missedBeats >= MISSED_BEATS_CLOSE) {
+      ctx.apiLog.note('out', 'socket close', [['reason', `no heartbeat answer for ${silence}`]], true);
+      // Not closeSocket(): the connection is still wanted, so onSocketClosed reconnects.
+      silentClose = true;
+      // The session ends now, as in beginClose: a cancel sent before the close event would be held
+      // by the TWS client, and the user told it never left Tape.
+      ready = false;
+      stopHeartbeat();
+      try {
+        api.disconnect();
+      } catch {
+        onSocketClosed(api);
+      }
+      return;
+    }
+    if (state.unresponsive) return;
+    ctx.apiLog.note('in', 'no heartbeat answer', [['after', silence]], true);
+    setState({ unresponsive: true });
+  }
+
   function stopHeartbeat(): void {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = null;
+    heartbeatCheck = clearTimer(heartbeatCheck);
     heartbeatSentAt = 0;
+    missedBeats = 0;
+    if (state.unresponsive) setState({ unresponsive: undefined });
   }
 
   function onCurrentTime(): void {
     if (!heartbeatSentAt) return;
     const latencyMs = Date.now() - heartbeatSentAt;
     heartbeatSentAt = 0;
-    setState({ latencyMs });
+    missedBeats = 0;
+    heartbeatCheck = clearTimer(heartbeatCheck);
+    setState({ latencyMs, unresponsive: undefined });
   }
 
   /** Any real price tick means market data flows again (clears a 10197 notice). */
