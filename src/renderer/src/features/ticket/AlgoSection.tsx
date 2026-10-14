@@ -5,8 +5,9 @@
 import { ALGOS, type AlgoParam } from '@shared/orderRules';
 import type { AlgoStrategy, ContractRef } from '@shared/types';
 import type { TicketState } from '../../state/store';
+import { Select } from '../../ui/select';
 import { algoDefaults } from './algo';
-import { Check, Field, hint11, Section, Seg, Select, WallTimeField, type Choices } from './controls';
+import { Check, Field, hint11, Section, Seg, WallTimeField, type Choices } from './controls';
 import { TextField } from './fields';
 import { useTicketM } from './messages';
 

@@ -995,7 +995,9 @@ delete open files):
 * `src/renderer/src/features/<feature>/` — one folder per feature. Each feature declares its own
   strings with `createMessages({ en, zh })` (see `src/renderer/src/i18n/index.ts`).
 * `src/renderer/src/ui/primitives.tsx` — controls that reproduce the design (Toggle, Segmented,
-  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, AccountTag, Popover, MenuItem). Segmented and
+  Chip, TabItems, TextInput, Button, Modal, KeyValueRows, AccountTag, Popover, MenuItem).
+  `ui/select.tsx` has the drop-down menus (Dropdown, MenuHeading, MenuChoice, and Select, a 34px box):
+  the order ticket's. Segmented and
   TabItems items carry `data-key` (and `data-active` on the selected one) for UI tests. `Modal` swallows
   the rest of a double-click that began before it opened (`isCarriedOverClick`: a click with `detail` > 1
   within 500 ms), so the second click of a double-click on Submit neither closes the review on its

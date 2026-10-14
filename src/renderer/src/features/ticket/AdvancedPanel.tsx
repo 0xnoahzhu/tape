@@ -15,10 +15,11 @@ import type { ContractRef, OrderRequest, StopOrderType, TradingSession, TriggerM
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import type { AdvancedSection, TicketState } from '../../state/store';
+import { Select } from '../../ui/select';
 import { adjustText, conditionsShort, conditionsText, fillFlags } from '../orders/attributes';
 import { AlgoSection } from './AlgoSection';
 import { ConditionsSection } from './ConditionsSection';
-import { Field, hint11, Section, Seg, Select, SwitchRow, WallTimeField, type Choices } from './controls';
+import { Field, hint11, Section, Seg, SwitchRow, WallTimeField, type Choices } from './controls';
 import { TextField } from './fields';
 import { useTicketM } from './messages';
 import type { TicketModel } from './ticketModel';
