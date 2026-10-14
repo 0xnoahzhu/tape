@@ -4,6 +4,7 @@ import { contractLabel } from '@shared/contract';
 import { resolveTimeTokens, type Clock } from '@shared/timeFormat';
 import type { NotificationView } from '@shared/ipc';
 import type { AppNotification, ContractRef, Lang } from '@shared/types';
+import { maskAccounts } from '../../lib/account';
 import type { Page } from '../../state/store';
 import type { NotificationsMessages } from './messages';
 
@@ -33,16 +34,20 @@ export function filterNotifications(list: AppNotification[], filter: Notificatio
  * risk alert to the option chain, a fill to Portfolio › Trades, an order update to Portfolio ›
  * Orders; any other notification about an instrument, a cancelled or rejected order's too
  * (`orderDone`: Orders does not list it), leaves Settings for the chart, and on another page only
- * selects the instrument (null: the page stays, design nt.items open).
+ * selects the instrument (null: the page stays, design nt.items open). So does a fill or order
+ * notice of an account the connected login does not manage (`accounts`; an earlier session's, paper
+ * or live): Orders and Trades list the connected login's, so its order or fill is not there.
  */
-export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone'>, page: Page): NotificationView | null {
+export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone' | 'account'>, page: Page, accounts: readonly string[]): NotificationView | null {
+  const listed = !n.account || accounts.includes(n.account);
   switch (n.kind) {
     case 'opt':
       return 'opt';
     case 'fill':
-      return 'trades';
+      if (listed) return 'trades';
+      break;
     case 'order':
-      if (!n.orderDone) return 'orders';
+      if (!n.orderDone && listed) return 'orders';
       break;
   }
   return page === 'set' ? 'chart' : null;
@@ -64,9 +69,20 @@ export function relativeTime(t: number, now: number, m: Pick<NotificationsMessag
   return m.daysAgo(Math.round(hours / 24));
 }
 
-/** Title and body in a language, with their clock times (stored as tokens) in `clock`'s format. */
-export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lang: Lang, clock: Clock): { title: string; body: string } {
-  return { title: resolveTimeTokens(n.title[lang], clock), body: resolveTimeTokens(n.body[lang], clock) };
+/** The id of an account tag in a notice's title ("PAPER DUP899854", "实盘 U18630011"): orders.ts, riskWatcher.ts. */
+const TAGGED_ID_RE = /(PAPER|LIVE|模拟|实盘) (?:D[A-Z]{1,2}|U|F)\d{5,}\b/g;
+
+/**
+ * Title and body in a language, with their clock times (stored as tokens) in `clock`'s format. While
+ * Settings › Privacy hides account IDs (`showAccountId` false) they are left out of notices stored
+ * before: a tag keeps PAPER / LIVE alone, as a notice posted now has it, and any other id reads "—".
+ */
+export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lang: Lang, clock: Clock, showAccountId = true): { title: string; body: string } {
+  const text = (s: string) => {
+    const resolved = resolveTimeTokens(s, clock);
+    return showAccountId ? resolved : maskAccounts(resolved.replace(TAGGED_ID_RE, '$1'), false);
+  };
+  return { title: text(n.title[lang]), body: text(n.body[lang]) };
 }
 
 /** Full date and time of a notification or alert trigger: "2026-10-05 09:41:07 AM", "2026-10-05 下午 02:35:07". */

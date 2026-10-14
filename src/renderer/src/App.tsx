@@ -4,9 +4,9 @@ import { confirmCancel } from './state/orderActions';
 import { isCovered, useStore } from './state/store';
 import type { AppCommand } from '@shared/ipc';
 import { useCommon } from './i18n/common';
-import { lastCancellableOrder } from './lib/orders';
+import { lastCancellableOrder, otherAppsOrders } from './lib/orders';
 import { TopBar } from './layout/TopBar';
-import { ConfirmDialog, OrderConfirmDialog, ToastHost } from './layout/Dialogs';
+import { CancelAllDialog, ConfirmDialog, OrderConfirmDialog, ToastHost } from './layout/Dialogs';
 import { TradePage } from './pages/TradePage';
 import { PortfolioPage } from './features/portfolio/PortfolioPage';
 import { showPortfolio } from './features/portfolio/uiState';
@@ -56,9 +56,19 @@ function runCommand(command: AppCommand, dark: boolean): void {
       s.focusSearch();
       break;
     case 'cancel-last-order': {
-      const last = lastCancellableOrder(s.orders, s.connection.clientId, s.connection.accounts);
-      if (last) confirmCancel(last);
-      else s.showToast(useCommon.now().noWorkingOrders);
+      const m = useCommon.now();
+      if (s.connection.status !== 'connected') {
+        s.showToast(m.notConnected, 'error');
+        break;
+      }
+      const last = lastCancellableOrder(s.orders, s.connection, s.pendingCancels);
+      if (last) {
+        confirmCancel(last);
+        break;
+      }
+      // Only other apps' orders work: say so, and where they can be cancelled.
+      const others = otherAppsOrders(s.orders, s.connection).length;
+      s.showToast(others ? m.onlyOtherOrders(others) : m.noWorkingOrders);
       break;
     }
     case 'set-pin-and-lock':
@@ -143,6 +153,7 @@ export function App() {
         <PriceAlertDialog />
       </ErrorBoundary>
       <ConfirmDialog />
+      <CancelAllDialog />
       <OrderConfirmDialog />
       <PinDialogHost />
       <ToastHost />

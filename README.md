@@ -38,7 +38,20 @@ Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   Tape estimates them from IB's market scanner (US stocks: the date and before the open / after the
   close, marked *Est.*, since IB marks none as confirmed).
 - **Orders**: working orders with their attributes and each instrument's last price beside the order price
-  (how far the limit or trigger is from it on hover; modify, cancel, cancel all).
+  (how far the limit or trigger is from it on hover); modify and cancel the orders Tape placed. The cancel
+  dialog names the order, the account (paper or live) and what has filled, and for a bracket what cancelling
+  takes with it (or leaves unprotected); the row reads "Cancelling…" until IBKR confirms, and Tape says so
+  when IBKR has not confirmed it within 10 s. Orders placed in IBKR Mobile, TWS or the web (or by another API
+  app) show where they came from with a **Why?**: IBKR lets only the app that placed an order cancel it.
+  **Cancel all…** (IBKR's global cancel, the only way to reach those from Tape) lists every open order and
+  account, warns that it cancels every open order of every account of the IBKR login, and needs a tick
+  plus a separate confirm. Right before the cancel Tape asks IBKR for its current open orders and sends
+  nothing when they are not the ones confirmed (say, a stop-loss placed in IBKR Mobile since); afterwards
+  it says how many IBKR cancelled, how many filled first, and how many IBKR no longer lists without saying
+  how (never counted as cancelled). IBKR sends Tape no updates of orders placed in other apps, so Tape asks
+  for every app's open and completed orders every 30 s and whenever Orders or Cancel all opens; an order
+  that ended elsewhere is announced (cancelled, or filled), and one IBKR no longer lists reads "Not reported
+  by IB" (not offered for cancel or modify) until IBKR says how it ended.
 - **Trades**: today's executions with commissions.
 
 **Trade**
@@ -167,7 +180,7 @@ In IB Gateway open *Configure › Settings › API › Settings*; in TWS open *G
 | --- | --- |
 | Enable ActiveX and Socket Clients | On (TWS only; IB Gateway always listens). |
 | Socket port | IB Gateway: **4002** paper / **4001** live. TWS: **7497** paper / **7496** live. Must match *Settings › Connection* in Tape (default 127.0.0.1:4002). |
-| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order (error 321, shown with where to turn it off); quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
+| Read-Only API | **Off** to place, modify or cancel orders. While it is on, IBKR rejects every order and cancel (error 321, shown with where to turn it off), and Tape shows a red **Read-Only API** chip in the top bar and a warning in the cancel dialogs; quotes, account data and positions still work. Tape has no read-only switch of its own: use this one to keep it from trading. |
 | Download open orders on connection | On, so working orders show up as soon as Tape connects. |
 | Allow connections from localhost only | Recommended. To connect from another machine, turn it off and add that machine under *Trusted IPs*. |
 
@@ -177,13 +190,21 @@ orders* under *API › Precautions* to send them. Overnight + day orders are SMA
 
 **Client ids.** Every program connected to the same TWS / Gateway needs its own client id (Tape uses 7 by
 default; change it in *Settings › Connection › Advanced*, or set `TAPE_CLIENT_ID` for a development run). Orders
-belong to the client id that placed them; client id 0 also sees orders entered manually in TWS.
+belong to the client id that placed them, and only that client can modify or cancel them. Orders placed in
+IBKR Mobile, Client Portal or TWS come as client 0 with no API order id: cancel them where they were placed, or
+with *Portfolio › Orders › Cancel all…*. Client id 0 also takes over orders entered in TWS after it connects.
+
+**Order results.** Tape reports what IBKR answered: an order or modify IBKR has not confirmed within 2 s reads
+"Sent #N: IBKR has not confirmed it yet; check Orders" (a refusal that follows is still announced), and an
+order the connection lost right after sending it is "not confirmed", never "rejected": check Orders after
+reconnecting before sending it again. When one order of a bracket is rejected, Tape cancels the rest (unless
+the entry has filled) and says so.
 
 **Connection health.** A connected Gateway can still be unable to pass orders on. When IB Gateway / TWS loses
 its own connection to IBKR (IBKR's 1100; 2110 when Tape connects while that is already the case), or stops answering Tape's heartbeat for 10 s (it hangs with its
 socket open), the top bar shows a red **IBKR link lost (1100)** or **IB Gateway not responding** chip and
 Settings › Connection says the same. Until it is back, orders and modifies are held back (nothing is sent),
-while cancels still go out. A
+while cancels still go out with a warning that they may not arrive. A
 Gateway that stays silent for about 40 s is disconnected and, with *Settings › Connection › Auto-reconnect*
 on (the default), reconnected automatically (notification *IB Gateway stopped responding*).
 
@@ -192,7 +213,11 @@ on the same port (paper ↔ live), starts afresh: the previous account's orders,
 values are cleared at once, so one account's orders never show (or can be cancelled) under another. An order
 review or cancel confirmation opened before the switch closes without sending anything, and the new account's
 existing orders and today's fills are not announced as new. A plain reconnect to the same account keeps
-everything. Option risk notifications name the account they are about (paper or live).
+everything. Order, fill and option risk notifications name the account they are about: *Buy 100 AAPL
+submitted · PAPER DUP899854* (the id left out with *Settings › Privacy › Account ID: Hide*, also in earlier
+notifications; PAPER / LIVE never is). Clicking a fill or order notification of an account that is no
+longer connected opens its instrument rather than *Portfolio › Trades / Orders*, which list the connected
+account's.
 
 **Market data sharing and error 10197.** IBKR delivers real-time market data to one session per username.
 A paper account receives data only when *Share real-time market data subscriptions with paper trading

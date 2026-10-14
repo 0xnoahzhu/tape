@@ -33,6 +33,7 @@ describe('IPC dispatch while locked', () => {
         'getOptionChainParams',
         'getEarnings',
         'getCacheStats',
+        'refreshOrders',
         'refreshExecutions',
         'notify',
         'setApiLogStreaming',

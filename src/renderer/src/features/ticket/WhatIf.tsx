@@ -7,7 +7,7 @@ import { contractKey } from '@shared/contract';
 import type { OrderPreview } from '@shared/types';
 import { useCommon } from '../../i18n/common';
 import { commissionText, marginText } from '../../layout/Dialogs';
-import { errorText } from '../../state/orderActions';
+import { orderErrorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import type { TicketCtl } from './useTicket';
 
@@ -36,7 +36,8 @@ function useWhatIf(T: TicketCtl, enabled: boolean): PreviewState | null {
     const timer = setTimeout(() => {
       window.tape.previewOrder(request.current, connectionSession).then(
         (preview) => alive && setState({ status: 'done', preview }),
-        (err: unknown) => alive && setState({ status: 'error', message: errorText(err) }),
+        // Main's own refusals (not connected, another session, IB link lost) in the user's language.
+        (err: unknown) => alive && setState({ status: 'error', message: orderErrorText(err) }),
       );
     }, 600);
     return () => {

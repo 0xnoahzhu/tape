@@ -2,13 +2,17 @@
 // (grouped, with the toolbar line: PositionsView.tsx), Orders (the working orders) or Trades
 // (today's executions); the last two are the orders feature's tables. ⌘1 opens Positions, ⌘3 and
 // the menu's Orders open Orders (uiState.ts → showPortfolio). Each tab fills the page height, so no
-// bare page background shows under short content.
+// bare page background shows under short content. The Orders tab's bar holds "Cancel all…" (IB's
+// global cancel, confirmed in its own dialog: layout/Dialogs.tsx → CancelAllDialog).
 
 import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
 import type { AccountSummary } from '@shared/types';
 import { useAccountId } from '../../lib/account';
+import { cancelAllOrders } from '../../lib/orders';
+import { useCommon } from '../../i18n/common';
 import { useConnectedExecutions, useConnectedOrders } from '../../state/connectedLists';
+import { openCancelAll } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { TabItems } from '../../ui/primitives';
 import { newestExecutions, workingOrders } from '../orders/model';
@@ -112,6 +116,39 @@ interface Counts {
   trades: number;
 }
 
+/**
+ * "Cancel all…" on the Orders tab's bar: opens the Cancel all dialog, while connected and an order
+ * IB still reports works (whichever app placed it: only IB's global cancel reaches them all).
+ */
+function CancelAllButton() {
+  const m = useCommon();
+  const orders = useConnectedOrders();
+  const accounts = useStore((s) => s.connection.accounts);
+  const connected = useStore((s) => s.connection.status === 'connected');
+  const enabled = connected && cancelAllOrders(orders, accounts).length > 0;
+  return (
+    <div
+      role="button"
+      aria-disabled={!enabled || undefined}
+      title={m.cancelAllHint}
+      onClick={enabled ? openCancelAll : undefined}
+      className={enabled ? 'hover-p2' : undefined}
+      style={{
+        alignSelf: 'center',
+        marginLeft: 'auto',
+        padding: '6px 10px',
+        fontSize: 13,
+        whiteSpace: 'nowrap',
+        color: enabled ? 'var(--r)' : 'var(--dm)',
+        cursor: enabled ? 'pointer' : 'not-allowed',
+        opacity: enabled ? 1 : 0.6,
+      }}
+    >
+      {m.cancelAll}
+    </div>
+  );
+}
+
 function Header({ account, totals, counts }: { account: AccountSummary | null; totals: AccountTotals; counts: Counts }) {
   const m = usePortfolioMessages();
   const accountId = useAccountId();
@@ -153,6 +190,7 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
           value={tab}
           onChange={setTab}
         />
+        {tab === 'ord' && <CancelAllButton />}
       </div>
     </div>
   );

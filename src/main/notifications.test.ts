@@ -43,7 +43,10 @@ function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin')
   const lock = { locked: false };
   const played: string[] = [];
   const player = { play: (file: string) => void played.push(file) };
+  /** The connected login's accounts (ConnectionState.accounts). */
+  const accounts = ['DU1'];
   const ctx = {
+    ib: { getState: () => ({ accounts }) },
     lock: { isLocked: () => lock.locked },
     emit: (e: TapeEvent) => events.push(e),
     showMainWindow,
@@ -63,6 +66,7 @@ function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin')
     list: () => list,
     setSettings: (s: Settings) => void (settings = s),
     lock,
+    accounts,
   };
 }
 
@@ -132,6 +136,19 @@ describe('Notifier', () => {
     expect(t.showMainWindow).toHaveBeenCalled();
     expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'opt' });
     expect(t.list().find((x) => x.id === n.id)?.read).toBe(true);
+  });
+
+  it('clicking a fill or order of an account no longer connected opens its instrument, not the lists', () => {
+    const t = setup();
+    t.notifier.notify({ kind: 'fill', title: text('Filled'), body: text('100 AAPL'), contract: aapl, account: 'DU1' });
+    t.notifier.notify({ kind: 'order', title: text('Submitted'), body: text('Buy 100 AAPL'), contract: aapl, account: 'DU1' });
+    os.shown[0].emitter.emit('click');
+    expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'trades' });
+    // Tape moved to the live account: the paper order is not in Portfolio › Orders.
+    t.accounts.splice(0, 1, 'U18630011');
+    t.events.length = 0;
+    os.shown[1].emitter.emit('click');
+    expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'chart' });
   });
 
   it('clicking while Tape is locked only shows the window: nothing behind the lock changes', () => {

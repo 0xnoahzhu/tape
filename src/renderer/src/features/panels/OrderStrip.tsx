@@ -1,9 +1,12 @@
 // A floating panel's status strip: the latest order sent from that panel, from "Submitting…" to
-// IB's live status (stripModel.ts), with inline Modify / Cancel while it works and a × to dismiss
-// it. A rejection turns it red with IB's reason; the form keeps every value.
+// IB's live status (stripModel.ts), with inline Modify / Cancel while it works (and Tape can cancel
+// it: lib/orders.ts → orderRowAction; "Cancelling…" while a cancel waits for IB) and a × to dismiss
+// it. A rejection turns it red with IB's reason; the form keeps every value. An order the closing
+// connection left unconfirmed says to check Orders before sending it again.
 
 import { f0 } from '@shared/format';
 import { useCommon } from '../../i18n/common';
+import { orderRowAction } from '../../lib/orders';
 import { useConnectedExecutions, useConnectedOrders } from '../../state/connectedLists';
 import { useOrderFeedback } from '../../state/orderFeedback';
 import { confirmCancel } from '../../state/orderActions';
@@ -30,12 +33,18 @@ export function useStripView(id: PanelId): StripView | null {
 
 export function OrderStrip({ id }: { id: PanelId }) {
   const m = usePanelMessages();
+  const c = useCommon();
   const sent = useOrderFeedback((s) => s.sent[id]);
   const view = useStripView(id);
+  const status = useStore((s) => s.connection.status);
+  const clientId = useStore((s) => s.connection.clientId);
+  const accounts = useStore((s) => s.connection.accounts);
+  const pending = useStore((s) => s.pendingCancels);
   const dismiss = () => useOrderFeedback.getState().dismiss(id);
   if (!sent || !view) return null;
   const color = TONE[view.tone];
   const o = view.working;
+  const action = o ? orderRowAction(o, { status, clientId, accounts }, pending).kind : 'none';
   const link = { cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' } as const;
   return (
     <div
@@ -79,25 +88,26 @@ export function OrderStrip({ id }: { id: PanelId }) {
               {view.error}
             </div>
           )}
-          <div onClick={dismiss} style={{ ...link, color: 'var(--ac)', alignSelf: 'flex-start' }}>
-            {m.fix}
-          </div>
+          {sent.phase !== 'unconfirmed' && (
+            <div onClick={dismiss} style={{ ...link, color: 'var(--ac)', alignSelf: 'flex-start' }}>
+              {m.fix}
+            </div>
+          )}
         </>
       )}
-      {o && (
+      {o && action === 'actions' && (
         <div style={{ display: 'flex', gap: 14 }}>
           {id === 'ticket' && canModifyInTicket(o) && (
             <div onClick={() => modifyOrderInTicket(o)} style={{ ...link, color: 'var(--ac)' }}>
               {m.modify}
             </div>
           )}
-          {o.status !== 'PendingCancel' && (
-            <div onClick={() => confirmCancel(o)} className="hover-tx" style={{ ...link, color: 'var(--dm)' }}>
-              {m.cancel}
-            </div>
-          )}
+          <div onClick={() => confirmCancel(o)} className="hover-tx" style={{ ...link, color: 'var(--dm)' }}>
+            {m.cancel}
+          </div>
         </div>
       )}
+      {o && action === 'cancelling' && <div style={{ ...link, color: 'var(--dm)' }}>{c.cancelling}</div>}
     </div>
   );
 }

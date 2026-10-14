@@ -102,6 +102,7 @@ export function createFakeIb(): FakeIb {
     onClosed: (l) => add(closedListeners, l),
     onSessionChange: (l) => add(sessionListeners, l),
     onRequestError: (l) => add(errorListeners, l),
+    noteOrderAccepted: () => undefined,
   };
   return fake;
 }

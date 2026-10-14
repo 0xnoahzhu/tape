@@ -3,6 +3,7 @@
 
 import { multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, px } from '@shared/format';
+import type { SourceBlock } from '@shared/orderOwnership';
 import { isOrderType, ORDER_TYPE_FIELDS, TRAILING_ORDER_TYPES } from '@shared/orderRules';
 import { isTimeInForce, NEW_YORK, parseIbDateTime, sessionOf, timingText, zonedParts } from '@shared/orderTiming';
 import { CLOCK_24H, type Clock } from '@shared/timeFormat';
@@ -42,6 +43,12 @@ export function workingOrders(orders: WorkingOrder[]): WorkingOrder[] {
   }
   roots.sort((a, b) => b.createdAt - a.createdAt || b.orderId - a.orderId);
   return roots.flatMap((r) => [r, ...(children.get(orderRef(r.clientId, r.orderId)) ?? []).sort((a, b) => a.orderId - b.orderId)]);
+}
+
+/** Who placed an order Tape cannot cancel (shared/orderOwnership.ts): another app (client 0), another API client, another account. */
+export function sourceLabel(o: Pick<WorkingOrder, 'clientId'>, block: SourceBlock, m: OrdersMessages): string {
+  if (block === 'otherAccount') return m.otherAccount;
+  return block === 'manual' ? m.otherApp : m.clientN(o.clientId);
 }
 
 /** True when the order is a bracket child shown under its parent. */
@@ -207,11 +214,14 @@ function trailText(o: WorkingOrder): string {
  * a pending good-after time "After 09:35 AM ET · DAY", anything else "<status> · <TIF>" plus
  * trailing / iceberg details. The TIF carries a GTD expiry and a session other than regular
  * hours ("GTD 10/09 04:00 PM ET", "DAY · Overnight + Day"). IB warnings and hold reasons are
- * appended. Times are in `clock`'s format.
+ * appended. An order IB no longer lists reads "Not reported by IB · <TIF>". Times are in
+ * `clock`'s format.
  */
 export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock, now: number = Date.now()): OrderStatusText {
   const tif = timingText(o, m.sessions, clock);
   const extra = (o.whyHeld ? ` · ${m.held}: ${o.whyHeld}` : '') + (o.message ? ` · ${o.message}` : '');
+  // IB's list of open orders no longer has it: how it ended follows (orders.ts → sweep).
+  if (o.notReported) return { text: `${m.stNotReported} · ${tif}`, tone: 'mu' };
   if (o.status === 'PendingCancel') return { text: m.stCancelling + extra, tone: 'mu' };
   if (o.status === 'ApiPending' || o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
 

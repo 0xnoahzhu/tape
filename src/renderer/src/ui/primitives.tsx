@@ -433,8 +433,8 @@ export function Modal({
   );
 }
 
-/** Key/value rows inside dialogs. */
-export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string; parts?: boolean }> }) {
+/** Key/value rows inside dialogs. A `prose` value (a warning sentence) is set in the text font. */
+export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: ReactNode; color?: string; parts?: boolean; prose?: boolean }> }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       {rows.map((r, i) => (
@@ -443,7 +443,15 @@ export function KeyValueRows({ rows }: { rows: Array<{ label: ReactNode; value: 
           style={{ minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', fontSize: 13 }}
         >
           <div style={{ color: 'var(--mu)', flexShrink: 0, whiteSpace: 'nowrap' }}>{r.label}</div>
-          <div className="num selectable" style={{ color: r.color ?? 'var(--tx)', textAlign: 'right', minWidth: 0 }}>
+          <div
+            className={r.prose ? 'selectable' : 'num selectable'}
+            style={{
+              color: r.color ?? 'var(--tx)',
+              textAlign: 'right',
+              minWidth: 0,
+              ...(r.prose ? { lineHeight: 1.45, padding: '8px 0', textWrap: 'pretty' } : null),
+            }}
+          >
             {r.parts && typeof r.value === 'string'
               ? r.value.split(' · ').map((part, k) => (
                   <span key={k}>

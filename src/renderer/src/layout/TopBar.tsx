@@ -1,19 +1,35 @@
 // The 56px application header, which doubles as the window title bar.
 // macOS: native traffic lights at the left edge, then a divider (no logo; the Dock shows it).
 // Windows / Linux: a small logo at the left; native caption buttons overlay the right edge.
-// Before the bell, a red chip while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does
-// not answer).
+// Before the bell, a red chip while IB refuses requests in Read-Only API mode (and where to turn it
+// off), another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer).
 
 import type { CSSProperties } from 'react';
 import { useCommon } from '../i18n/common';
 import { modKey } from '../lib/shortcuts';
-import { connectionHealthText } from '../state/orderActions';
+import { connectionHealthText, readOnlyWarning } from '../state/orderActions';
 import { useStore } from '../state/store';
 import { BellIcon, Dot, LockIcon, LogoMark, SlidersIcon } from '../ui/icons';
 import { IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
 import { requestLock } from '../features/lock/actions';
 import { useLockMessages } from '../features/lock/messages';
+
+/**
+ * IB answered a request of this connection with its Read-Only refusal (ConnectionState.readOnlyApi):
+ * it refuses orders and cancels until the setting is off. The chip stays while connected; its
+ * tooltip, and a click, say where to turn it off.
+ */
+function ReadOnlyChip() {
+  const m = useCommon();
+  const text = useStore((s) => (s.connection.status === 'connected' && s.connection.readOnlyApi ? readOnlyWarning() : undefined));
+  if (!text) return null;
+  return (
+    <div className="no-drag" role="status" title={text} onClick={() => useStore.getState().showToast(text, 'warning')} style={warningChip}>
+      {m.readOnlyApiChip}
+    </div>
+  );
+}
 
 /** The red outlined chips of the top bar. */
 const warningChip: CSSProperties = {
@@ -100,6 +116,7 @@ export function TopBar() {
       <div style={{ marginLeft: 'auto' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <HealthChip />
+        <ReadOnlyChip />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 12, boxShadow: 'inset 1px 0 0 var(--ln2)' }}>
         <IconButton size={34} title={m.notifications} active={bellOpen} onClick={() => setBell(!bellOpen)}>

@@ -76,6 +76,8 @@ export function stripView(
   const line = (state: string) => ({ short: `${lead} · ${state}`, lead, state });
   if (sent.phase === 'sending') return { tone: 'busy', head: m.submitting, details: [], ...line(m.submitting) };
   if (sent.phase === 'failed') return { tone: 'error', head: m.rejected, details: [], error: sent.error, ...line(m.rejected) };
+  // The connection closed after the order was written: IB may have it, so it is not "rejected".
+  if (sent.phase === 'unconfirmed') return { tone: 'error', head: m.unconfirmed, details: [], error: sent.error, ...line(m.unconfirmed) };
 
   const head = sent.kind === 'modify' ? m.modified(sent.orderId!) : m.submitted(sent.orderId!);
   const o = sentWorkingOrder(sent, live.orders);
@@ -87,6 +89,8 @@ export function stripView(
   const position = filled > 0 && live.position !== sent.positionBefore ? [m.positionChange(signedQty(sent.positionBefore), signedQty(live.position))] : [];
   const paid = commission != null ? [m.commission(usd(commission))] : [];
 
+  // IB's list of open orders no longer has it: how it ended follows (no Modify / Cancel meanwhile).
+  if (o.notReported) return { tone: 'muted', head, status: m.notReported, details: [...fills, ...position, ...paid], ...line(m.notReported) };
   switch (o.status) {
     case 'Inactive':
       return { tone: 'error', head: m.rejected, details: [], error: o.message, ...line(m.rejected) };

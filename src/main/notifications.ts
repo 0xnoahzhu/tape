@@ -98,7 +98,9 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     os.on('click', () => {
       release();
       markRead([item.id]);
-      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone) });
+      // Orders and Trades list the connected login's accounts: another account's notice opens the chart.
+      const otherAccount = !!item.account && !ctx.ib.getState().accounts.includes(item.account);
+      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone, otherAccount) });
       else ctx.showMainWindow();
     });
     os.on('close', release);

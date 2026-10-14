@@ -329,6 +329,11 @@ describe('sanitizeNotifications', () => {
     expect(sanitizeNotifications([{ ...n(1), kind: 'spam' }, { ...n(2), title: 'x' }, n(3)])).toEqual([n(3)]);
   });
 
+  it('keeps the account on order, fill and option risk notices only', () => {
+    const fill = { ...n(1), kind: 'fill' as const, account: 'DUP899854' };
+    expect(sanitizeNotifications([fill, { ...n(2), account: 'U1' }, { ...n(3), kind: 'order', account: 42 }])).toEqual([{ ...n(3), kind: 'order' }, n(2), fill]);
+  });
+
   it('keeps a finished order’s mark on order notices only', () => {
     const done = { ...n(1), kind: 'order' as const, orderDone: true as const };
     expect(sanitizeNotifications([done, { ...n(2), orderDone: true }, { ...n(3), kind: 'order', orderDone: 'yes' }])).toEqual([{ ...n(3), kind: 'order' }, n(2), done]);

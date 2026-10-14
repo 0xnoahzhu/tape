@@ -880,7 +880,7 @@ describe('IbConnection', () => {
       await vi.advanceTimersByTimeAsync(200);
       expect(t.notices.filter((n) => n.kind === 'order')).toEqual([]);
       // Order #58 of the paper login is nothing to cancel on the live one.
-      await expect(t.ctx.orders.cancel(58)).rejects.toThrow('Order #58 was not found');
+      await expect(t.ctx.orders.cancel({ orderId: 58, clientId: 7, permId: 9058, account: 'DUP899854' })).rejects.toThrow('Order #58 was not found');
       expect(t.api().requests.filter((r) => r[0] === 'cancelOrder')).toEqual([]);
     });
   });
@@ -904,6 +904,55 @@ describe('IbConnection', () => {
     expect(t.notices.map((n) => n.title.en)).toEqual(['Disconnected from IB Gateway', 'Could not connect to IB Gateway']);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.api().connects).toHaveLength(2);
+  });
+
+  describe('Read-Only API', () => {
+    const READ_ONLY = "Error validating request.-'bZ' : cause - The API interface is currently in Read-Only mode.";
+
+    it('notes a 321 Read-Only refusal at the handshake (reqId -1) until the next handshake', async () => {
+      const t = setup();
+      const p = t.ib.connect();
+      t.api().handshake(1, 'U18630011');
+      await p;
+      expect(t.last().readOnlyApi).toBeUndefined();
+      // As on 10-13 19:08: IB refuses reqCompletedOrders.
+      t.api().emit('info', READ_ONLY, 321);
+      expect(t.last().readOnlyApi).toBe(true);
+      // A plain reconnect asks again: its handshake starts without it.
+      t.api().emit('disconnected');
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(t.last().readOnlyApi).toBeUndefined();
+      t.api().handshake(1, 'U18630011');
+      expect(t.last()).toMatchObject({ status: 'connected', readOnlyApi: undefined });
+      // Other 321s (invalid requests) are not the Read-Only mode.
+      t.api().emit('error', new Error("Error validating request.-'bC' : cause - missing order exchange"), 321, 4012);
+      expect(t.last().readOnlyApi).toBeUndefined();
+    });
+
+    it('notes an order’s 321 Read-Only refusal, and forgets it once IB accepts an order request', async () => {
+      const t = setup();
+      const p = t.ib.connect();
+      t.api().handshake();
+      await p;
+      t.api().emit('error', new Error(READ_ONLY), 321, 4012);
+      expect(t.last().readOnlyApi).toBe(true);
+      // The user turned the setting off, and IB took an order.
+      t.ib.noteOrderAccepted();
+      expect(t.last().readOnlyApi).toBeUndefined();
+    });
+
+    it('forgets it on another Gateway or account', async () => {
+      const t = setup();
+      const p = t.ib.connect();
+      t.api().handshake(1, 'U18630011');
+      await p;
+      await vi.advanceTimersByTimeAsync(0); // settings subscription is deferred
+      t.api().emit('info', READ_ONLY, 321);
+      t.changeSettings({ port: 4001 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.last()).toMatchObject({ port: 4001, session: 1 });
+      expect(t.last().readOnlyApi).toBeUndefined();
+    });
   });
 
   it('handles IB connectivity loss and restore', async () => {

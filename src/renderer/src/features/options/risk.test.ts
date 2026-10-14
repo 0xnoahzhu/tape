@@ -3,7 +3,7 @@ import { contractKey, option, stock } from '@shared/contract';
 import type { Position, Quote } from '@shared/types';
 import { useM } from './messages';
 import { computeRiskAlerts } from './risk';
-import { riskNotifTitle } from './riskWatcher';
+import { dueRiskNotices, riskNotifTitle } from './riskWatcher';
 
 const now = new Date(2026, 9, 5);
 
@@ -79,5 +79,27 @@ describe('risk alerts per account', () => {
     expect(riskNotifTitle(a, useM.for('en'), false, true)).toBe('Option risk · AAPL 10/09 250 Call · LIVE U18630011');
     expect(riskNotifTitle(a, useM.for('en'), true, false)).toBe('Option risk · AAPL 10/09 250 Call · PAPER');
     expect(riskNotifTitle(a, useM.for('zh'), false, true)).toBe('期权风险 · AAPL 10/09 250 Call · 实盘 U18630011');
+  });
+
+  it('counts a notice given before ids named the account as given, once per stamp, and forgets the old id', () => {
+    const paper = pos('20261009', 230, 'C', -1, 2, { account: 'DUP899854' });
+    const live = pos('20261009', 230, 'C', -1, 2, { account: 'U18630011' });
+    const alerts = computeRiskAlerts([paper, live], {}, () => quote({ last: 235 }), now);
+    // Stored by an earlier Tape: the expiry reminder (once) and today's assignment notice, per contract.
+    const stored: Record<string, string> = { [`exp:${paper.key}`]: 'once', [`asg:${paper.key}`]: '2026-10-05' };
+    const first = dueRiskNotices(alerts, stored, '2026-10-05');
+    expect(first.notify).toEqual([]);
+    expect(first.changed).toBe(true);
+    expect(stored).toEqual({
+      [`exp:DUP899854:${paper.key}`]: 'once',
+      [`asg:DUP899854:${paper.key}`]: '2026-10-05',
+      [`exp:U18630011:${live.key}`]: 'once',
+      [`asg:U18630011:${live.key}`]: '2026-10-05',
+    });
+    // Nothing repeats; the next day's assignment notice is given for each account.
+    expect(dueRiskNotices(alerts, stored, '2026-10-05')).toEqual({ notify: [], changed: false });
+    expect(dueRiskNotices(alerts, stored, '2026-10-06').notify.map((a) => a.id)).toEqual([`asg:DUP899854:${paper.key}`, `asg:U18630011:${live.key}`]);
+    // Without an earlier notice, each is given.
+    expect(dueRiskNotices(alerts, {}, '2026-10-05').notify).toHaveLength(4);
   });
 });

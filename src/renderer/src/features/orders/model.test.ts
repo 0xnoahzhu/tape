@@ -173,6 +173,9 @@ describe('orderStatusText', () => {
   it('describes transitional states', () => {
     expect(orderStatusText(order({ status: 'PendingCancel' }), en, CLOCK_24H, now).text).toBe('Cancelling');
     expect(orderStatusText(order({ status: 'PendingSubmit' }), en, CLOCK_24H, now).text).toBe('Submitting · DAY');
+    // IB's list of open orders no longer has it: how it ended follows.
+    expect(orderStatusText(order({ notReported: true }), en, CLOCK_24H, now)).toEqual({ text: 'Not reported by IB · DAY', tone: 'mu' });
+    expect(orderStatusText(order({ notReported: true }), zh, CLOCK_24H, now).text).toBe('IB 未再报告 · DAY');
   });
 
   it('adds the GTD expiry and a session other than regular hours to the TIF', () => {

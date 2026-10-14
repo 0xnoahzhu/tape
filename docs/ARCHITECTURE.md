@@ -45,7 +45,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
 | `ib/account.ts` | Account summary, positions/portfolio (IB's average cost kept as sent), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates from the account updates |
-| `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, executions and commissions (today's, from `reqExecutions` on every connect) |
+| `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, Cancel all (IB's global cancel), reconciliation with IB's lists, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
@@ -89,10 +89,18 @@ purpose (`beginClose`): `api` is null and `isConnected()` false from then on, so
 moment is refused instead of being held by the TWS client for the next socket, which may carry
 another login. Any answer clears it. The next handshake and a new session clear both flags. Meanwhile
 `orders.ts` refuses `place()` / `modify()` before sending anything (`requireIbLink`, also after the
-contract lookup), and the renderer first: `sendOrder` fails with the reason, a cancel is still sent,
-and the top bar shows a red chip ("IBKR link lost (1100)", "IB
+contract lookup), and the renderer first: `sendOrder` fails with the reason, a cancel and Cancel all
+are still sent with a warning in their dialogs that they may not reach IBKR, and the top bar shows a red chip ("IBKR link lost (1100)", "IB
 Gateway not responding"; its tooltip says what is held back, a click opens Settings › Connection, whose
 status line and red dot say the same; `orderActions.ts → connectionHealthText`).
+
+**Read-Only API.** IB's 321 "The API interface is currently in Read-Only mode" (any request id: at the
+handshake it refuses `reqCompletedOrders` with reqId −1) sets `ConnectionState.readOnlyApi`: IB then
+refuses orders and cancels. The next handshake (and a new session) clears it, and so does IB accepting
+an order request of this client (`noteOrderAccepted`: the user turned the setting off meanwhile).
+Nothing is refused on it, since it can be stale for a moment; the renderer warns: a red "Read-Only
+API: IBKR refuses orders" chip in the top bar while connected (its tooltip and a click say where to turn it off,
+`orderActions.ts → readOnlyWarning`), and a red line in the cancel dialog and Cancel all.
 
 **Sessions.** Moving to another Gateway, client id or account starts a new session:
 `ConnectionState.session` increments and `onSessionChange(reason)` runs, between the previous
@@ -107,23 +115,52 @@ same accounts) keeps the session, the account and paper / live, also through its
 keep their state, so nothing is announced twice. On a new session the services forget everything of
 the previous one at once: `orders.ts` its orders, fills and notice state, `account.ts` the summary
 (a null `account` event) and positions; the renderer drops its mirrors and what was opened on that
-session (`state/sessionReset.ts`: the order review, a cancel confirmation, the ticket's Modify, the
-panels' order strips) and lists orders and fills only of the login's accounts
+session (`state/sessionReset.ts`: the order review, a cancel confirmation, Cancel all, the cancels
+waiting for IB, the ticket's Modify, the panels' order strips) and lists orders and fills only of the login's accounts
 (`state/connectedLists.ts`, `lib/orders.ts → ofConnectedAccounts`; all of an advisor login's
 accounts). The API log notes each new session.
 
 ### Orders
 
 Orders are keyed by client id + order id (`orderMapping.ts → orderKey`), since order ids are per
-API client. `reqAllOpenOrders` shows the orders of every client (TWS is client 0), but `modifyOrder`
-/ `cancelOrder` act only on orders of the connected client id: an id that only another client's
-order has, or no order has, is refused without sending anything (IB would apply it to this
-client's order with that id). `cancelAllOrders` (`reqGlobalCancel`) cancels every order of the
-account. With client id 0, orders entered in TWS afterwards are bound to Tape (`reqAutoOpenOrders`)
-and count as its own. Tape has no read-only mode of its own: with *Read-Only API* on in TWS / IB
-Gateway, IB rejects orders with error 321, and the renderer's toast adds where to turn it off
-(`state/orderActions.ts → orderErrorText`). Saved settings that still have Tape's former read-only
-switch on get a one-time notice in the notification list saying so (`store.ts`).
+API client. `reqAllOpenOrders` shows the orders of every client, but IB lets a client modify or
+cancel only the orders it placed. Orders placed in IBKR Mobile, TWS or the web that no API client
+has bound come as order id 0, client 0: no API client can name them. One rule says whether Tape can
+cancel an order and why not (`shared/orderOwnership.ts → cancelBlock`: not connected, done, not
+reported, `manual` (order id 0, or client 0 while Tape is another client), another client, another
+account, already PendingCancel); the lists, the panels' strips and ⌘⌫ offer Cancel only where it
+allows, and `cancel()` refuses the rest without sending anything. `cancelOrder` takes the order as
+the list showed it (`OrderRef`: order id, client id, permId, account): main finds it by permId first,
+then by client id + order id, and refuses "This order list is out of date" when the order it holds
+under those ids is another (IB would apply the id to this client's order with that id).
+`modifyOrder` takes an order id and refuses another client's order the same way. With client id 0,
+orders entered in TWS afterwards are bound to Tape (`reqAutoOpenOrders`) and count as its own;
+orders already open stay unbound (binding them would cancel and resubmit them at the exchange).
+Tape has no read-only mode of its own: with *Read-Only API* on in TWS / IB Gateway, IB rejects
+orders and cancels with error 321, and the renderer's toast adds where to turn it off
+(`state/orderActions.ts → orderErrorText`; see *Connection* for the warning). Main's own order,
+cancel and Cancel all refusals (not connected, another session, an out-of-date list, the IB link lost,
+…) are fixed English texts in `shared/ipc.ts`, which `orderErrorText` shows in the user's language;
+IB's texts stay as IB wrote them. Saved settings that
+still have Tape's former read-only switch on get a one-time notice in the notification list saying
+so (`store.ts`).
+
+**Cancel all** (`cancelAllOrders`, `reqGlobalCancel`) is the only API path to orders placed in other
+apps: IB cancels every open order of every account of the login, whichever app placed it. Main sends
+it only for what the user confirmed (`CancelAllExpect`): unlocked, connected, the same session, an
+account of the login, and the permIds of the active orders exactly the confirmed ones ("The order
+list changed"), checked against Tape's list and then against IB's full list of open orders, which
+main asks for right before the global cancel (this client gets no updates of other clients' orders,
+so an order placed or ended in another app since the last list would otherwise be cancelled, or
+counted, unseen; one placed elsewhere in the moment between that list's end and the cancel is still
+reached). No answer to that list (the socket closed, 15 s without an end) sends nothing. Opening the
+dialog asks for the lists too (`refreshOrders`), so it lists IB's current orders. After the global
+cancel main asks for the open and completed orders again and resolves once the completed orders said
+how the orders the list left out ended (`completedOrdersEnd`, or 3 s after the list when IB refuses
+them), or after 6 s: of the confirmed orders, how many IB cancelled, how many filled, how many it no
+longer lists without saying how (`unknown`, never counted as cancelled) and how many still work. The
+toast names each (a warning unless all were cancelled), and when some still work the lists are asked
+again 5 s later.
 
 Orders, fills and notices belong to one session (see *Connection*). A plain reconnect keeps them:
 known orders are not announced again, and fills found on reconnect are. A new session starts empty,
@@ -136,8 +173,44 @@ dialog's `ConfirmRequest.session`, the what-if estimates): `placeOrder` / `modif
 `cancelOrder` / `previewOrder` / `cancelAllOrders` refuse it on any other session before sending
 anything, and so does the renderer itself; a login change during a request's contract lookup
 (`sameSession`) sends nothing either. Orders and modifies are also refused while TWS / IB Gateway lost
-IB or does not answer (see *Connection › Health*); cancels are not. `ownOrder` refuses an order of an account the login does not
+IB or does not answer (see *Connection › Health*); cancels and Cancel all are not. `ownOrder` refuses an order of an account the login does not
 manage. What-if answers are reused per account and never past the socket's close.
+
+**Answers and silence.** IB's silence is never reported as success. `place()` / `modify()` wait 2 s
+and resolve `confirmed: false` when IB has not answered (an order sent, its updates still to come; a
+MOC / LOC modify, which IB never echoes, always); the renderer then says "Sent #N: IBKR has not
+confirmed it yet; check Orders" instead of "Submitted" / "Modified". A refusal that arrives within
+60 s after such a wait is still announced (a rejected order, a "Modify … refused – order unchanged").
+A modify counts only an `openOrder` that is not part of a list of open orders as IB's answer, or
+one that shows its change. `cancel()` waits 4 s for IB to cancel the order (its 202 counts) and
+resolves `Cancelled`, `PendingCancel` or `sent` (no answer); a refusal after the wait is announced
+("Cancel of … refused"). A socket that closes during a wait ends it according to what was written
+(the TWS client's `sent` event, as `market/ibRequest.ts`): a frame the client still held never
+reached IB (place: "nothing reached IB", and sending it again is safe); one written may be at IB
+(place: never "rejected" but an "unconfirmed" notice and `ORDER_UNCONFIRMED_MESSAGE`, its key kept,
+so a reconnect to the same account lists the order and announces it; cancel: `sent`). When one leg
+of a bracket fails, `withdraw` cancels the legs still alive, unless the entry has filled (the other
+exit then protects the position); the error and the leg's rejection notice say what happened.
+
+**Reconciliation.** One open-orders request is outstanding at a time (`openOrderEnd` names none; a
+request that never ends frees the queue after 15 s, and one of a closed socket ends unanswered). At the
+end of a full list (`reqAllOpenOrders`: every handshake, every 30 s while connected, when Portfolio ›
+Orders or Cancel all opens (`refreshOrders`), before and after Cancel all), active orders it left out
+are marked `notReported` ("Not reported by IB", nothing offered; `cancel()` and `modify()` refuse it,
+and so does the ticket's Submit for an order loaded with Modify): they ended while Tape could not hear
+it (disconnected; another client's order, of which this client gets no updates). The completed orders
+IB answers right after say how: a cancel, rejection or expiry of an order this session knew as working
+is announced once. A fill of this client's order is announced by its execution; one of another app's
+or client's order, whose executions never reach this client, gets a fill notice from its completed
+order ("Buy 100 AAPL filled", kind `fill`), and an execution of it that IB reports later is not
+announced again. At `completedOrdersEnd`, or 3 s after the list when IB refuses `reqCompletedOrders`
+(Read-Only API), each one left is announced as "no longer working" and dropped. The 30 s refresh
+(`refreshLists`) skips while a full list is asked already, while Cancel all waits for its own, and while
+TWS / IB Gateway has lost IB or does not answer; it asks for the completed orders only while IB has not
+refused them with 321 (Read-Only API). A modify's own-orders list (`reqOpenOrders`; every client's for
+client 0, whose `reqOpenOrders` would bind TWS orders) never sweeps, and a session change forgets the
+marked orders without a word. A modify still counts only an `openOrder` outside such a list as IB's
+answer (or one showing its change).
 
 Time in force and trading session (`shared/orderTiming.ts`) are checked by the same rules in the
 order ticket, which disables choices that do not combine and says why, and in `orderBuilder.ts`,
@@ -174,9 +247,9 @@ IB rejects some orders only after taking them: an Inactive `openOrder`, then the
 `place()` / `modify()` do not count an Inactive order as accepted: they fail with that reason, or
 when the 2 s wait ends with the order still Inactive. IB may also acknowledge an order
 (PreSubmitted) and reject it half a second later: for 5 s the renderer replaces the "Submitted" /
-"Modified" toast with the failure (`state/orderActions.ts → watchLateRejection`). The rejection
-notification waits up to 1 s for the reason, and a request is announced as rejected once (the
-order IB reported, or else the request).
+"Modified" toast with the failure (`state/orderActions.ts → watchLateRejection`), and the bracket
+the order belongs to is withdrawn as above. The rejection notification waits up to 1 s for the
+reason, and a request is announced as rejected once (the order IB reported, or else the request).
 
 **Last price.** Portfolio › Orders and the Trade page's activity panel show the current price of
 each order's instrument in a Last column beside the order price (`orders/lastPrice.ts`): an
@@ -205,7 +278,7 @@ answered on the paper account (DUP899854, server version 193, outside regular ho
 | Item | IB fields | Paper account |
 | --- | --- | --- |
 | MIT / LIT | `auxPrice` trigger (+ `lmtPrice`) | stocks, options, futures, forex; MIT ignores outside RTH (2109), so regular hours only |
-| MOC / LOC | (+ `lmtPrice`) | stocks; DAY only (201 for GTC); a modify gets no `openOrder` back, so `modify()` then asks `reqOpenOrders` (the order shows PendingSubmit with the new values) |
+| MOC / LOC | (+ `lmtPrice`) | stocks; DAY only (201 for GTC); a modify gets no `openOrder` back, so `modify()` reports it sent, not confirmed, and asks `reqOpenOrders` (the order shows PendingSubmit with the new values) |
 | MTL | – | stocks, options, futures; regular hours |
 | TRAIL LIMIT / TRAIL LIT | `auxPrice` or `trailingPercent`, `trailStopPrice`, `lmtPriceOffset` | the initial stop is required, and exactly one of limit price and offset (321); IB reports `lmtPrice` as stop + offset, so the offset is read back |
 | TRAIL MIT | as TRAIL | accepted |
@@ -268,12 +341,33 @@ working order. IB answers in parts (commission and notice, then margin, a few ms
 merged, and the answer is complete with the margin or 400 ms after the last part. Previews go one at
 a time, an identical request within 10 s is answered from the previous one, and IB's answer is
 awaited 8 s. It sends an order to IB, so it is refused while Tape is
-locked (`LOCK_POLICY`).
+locked (`LOCK_POLICY`), and an order that is not a what-if one is never sent from there (fail
+closed). The API log marks IB's what-if answers `whatIf=1` with their estimate (margin changes,
+commission), so they do not read like working orders.
+
+### Notifications
+
+`notifications.ts` adds every notification to the bell list (`notifications.json`) and shows an OS
+notification when `notificationModel.ts → shouldShowSystem` allows it. Order and fill notices
+(`ib/orders.ts`, texts in `orderMapping.ts`) name the account in their title, as the option risk
+notices do: "Buy 100 AAPL submitted · PAPER DUP899854", "AAPL: bought 100 shares · LIVE U18630011"
+(zh 模拟 / 实盘; `accountTag`, `withAccount`): the order's or execution's own account (the one a request
+was sent for), else the session's, its id left out while Settings › Privacy hides account IDs, never
+PAPER / LIVE. A notice owed to the previous session (a fill waiting for its commission, a rejection for
+IB's reason) is given when Tape moves to another account, named by its own account only: the
+connection already names the new one. The account is kept on the notice too (`AppNotification.account`,
+on `order`, `fill` and `opt` only): a click on a fill or order notice leads to Portfolio › Trades or
+Orders only while that account's login is connected (`notifications/model.ts → notificationTarget`,
+`notificationModel.ts → viewForKind`), else it opens the instrument, since those lists are the connected
+login's. The bell applies Settings › Privacy when it shows a notice (`notificationText`): with
+account IDs hidden, an id stored in an earlier notice is left out too.
 
 ### Notification sounds
 
 Each OS notification plays the sound of its category (`shared/notificationSounds.ts`): orders
-(kind `order`: submitted, modified, cancelled, rejected), fills (`fill`, partial fills too) and
+(kind `order`: submitted, modified, cancelled, rejected, a cancel or modify refused, not confirmed,
+no longer working), fills (`fill`, partial fills too, and another app's order that IB's completed
+orders show filled) and
 other (`price`, `opt`, `conn`, `sys`). `settings.notifications.sounds` holds one sound id per
 category; defaults are distinct per platform (macOS Tink / Glass / Purr; Windows the IM, Reminder
 and Default sound events). A sound only goes with a notification that is shown: none when Tape's
@@ -901,6 +995,9 @@ delete open files):
 * Design tokens are CSS variables in `styles/tokens.css`. The root element carries
   `data-th` (dark | light), `data-sk="a"` and `data-cv` (cn = red up, us = green up).
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green.
+* `ConfirmRequest` (the shared confirmation dialog, `layout/Dialogs.tsx`) takes optional `warnings`,
+  red lines after the note: what the action costs or why it may fail (a stop-loss left without
+  protection, Read-Only API on).
 * `src/renderer/src/lib/retiredKeys.ts` — per-device `localStorage` keys of features that are gone,
   removed at startup (`main.tsx`): `tape.dash.v1`, the Portfolio dashboard's layout.
 
@@ -914,7 +1011,7 @@ Portfolio › Orders. A notification's click: in the bell, `notifications/model.
 (a fill → `trades`, an order update → `orders`, an option risk alert → `opt`, anything else → `chart`
 from Settings, else null: only the instrument is selected); from the system notification center, main's
 `notificationModel.ts → viewForKind` (the same, `chart` otherwise) in the `openContract` event's `view`.
-A cancelled or rejected order's notice carries `orderDone` (`main/ib/orders.ts`; kept on order
+A cancelled, rejected or no longer working order's notice carries `orderDone` (`main/ib/orders.ts`; kept on order
 notices only, through the store too): Portfolio › Orders lists working orders only, so such a notice
 goes where any other notification does.
 Both end in `orders/navigation.ts → openNotificationTarget`: `trades` / `orders` select the instrument
@@ -933,8 +1030,9 @@ above it differs: 200px of chart, 320px under the options desk (its header, tabs
 
 **Activity panel.** The current symbol's positions (the stock and its derivatives: stock first, then
 options by expiry, strike and right, `activityModel.ts → byInstrument`) and its open orders (newest
-first), each under column names, with Modify / Cancel for this client's orders and "All orders ›"
-(Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price" where
+first), each under column names, with Modify / Cancel for the orders Tape can cancel and, for the
+others, who placed them with a "Why?" (`orders/OrderActions.tsx`, as on Portfolio › Orders), and
+"All orders ›" (Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price" where
 contract and status keep 200px between them beside it (`orderModel.ts → lastColumnFits`: from about
 758px of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window while the
 watchlist is open); narrower, the column and its name are left out and the last price is in the
@@ -1084,8 +1182,10 @@ disabled until IB answers; the review dialog (when enabled) works as before. The
 (`OrderStrip.tsx`, `stripModel.ts`) shows "Submitted #1234" / "Modified #1234", the order line and IB's
 live status: pre-submitted / working → partially filled with progress → filled with the average price,
 the position change and the commission; cancelled; or IB's rejection in red (also the late Inactive /
-201 case) with "Fix and resubmit" — the form keeps its values. Inline Modify / Cancel while it works;
-× dismisses it; the next order replaces it. The strip remembers the account the order went to: it
+201 case) with "Fix and resubmit" — the form keeps its values. An order the closing connection left
+unconfirmed reads "Not confirmed" in red, without "Fix and resubmit": IB may have it, so the user
+checks Orders first. Inline Modify / Cancel while it works and Tape can cancel it ("Cancelling…" while a
+cancel waits for IB); × dismisses it; the next order replaces it. The strip remembers the account the order went to: it
 never adopts another account's order with the same ids, compares positions only within that account
 (`stripModel.ts → sentPosition`), and is dropped when Tape moves to another account or Gateway. The
 new order flashes in the Trade page's activity panel
@@ -1113,6 +1213,30 @@ and excess liquidity stays the last stat so that a wrapped row carries it on its
 one 13px line of balances and margin that wraps item by item, each label and value on one baseline
 (the sans label and the mono value sit 2px apart otherwise). Totals are `calc.ts → accountTotals`
 (re-marked to the rows' prices).
+
+**Orders tab.** `orders/WorkingTable.tsx` lists the working orders; its actions cell
+(`orders/OrderActions.tsx`, `lib/orders.ts → orderRowAction`) offers Modify / Cancel only for an order
+Tape can cancel, "Cancelling…" while a cancel sent from here waits for IB (`StoreState.pendingCancels`,
+so a second click sends nothing), and for the others who placed them ("Other app" for client 0,
+"Client 12", "Other account") with a "Why?" (`orderActions.ts → explainCancelBlock`) that says where
+the order can be cancelled and offers Cancel all for another app's or client's order. The cancel
+dialog (`confirmCancel`) names the order and its account (PAPER / LIVE, live in red, the id hidden
+per Settings › Privacy, `lib/account.ts → accountRow`), what has filled, and for a bracket the exits cancelled with a parent or what
+cancelling one exit leaves (a stop-loss: the position without stop protection, now or once the entry
+fills, in red). After it: a toast
+when IB has cancelled the order, else "Cancel sent", then the order list has 10 s to show it
+cancelled before a warning says to check it. The tab bar's "Cancel all…" (while connected and an
+order IB still reports works) opens `layout/Dialogs.tsx → CancelAllDialog`: every such order of the
+login with who placed it, the accounts (PAPER / LIVE), a red warning that IB cancels every open order
+of every account of the login (also IBKR Mobile / TWS GTC orders and protective stop-losses) and that
+it cannot be undone, then two steps no setting skips: a check box naming the count, and the red
+"Cancel N orders", armed 600 ms after it (`CONFIRM_ARM_MS`); a changed list unticks the box. ⌘⌫
+("Cancel last order", `lib/orders.ts → lastCancellableOrder`) takes the newest order Tape can cancel
+(never a bracket exit while its entry works, has filled, or is not listed: IB cancels the exits of an
+entry that did not fill, so a working exit without its entry protects a position, and the cancel
+dialog then warns about a stop-loss as for a filled entry), and says so when only other apps' orders
+work. Portfolio › Orders asks IB for its lists when it opens
+(`refreshOrders`, as Trades does `refreshExecutions`).
 
 | Figure | Source |
 | --- | --- |
@@ -1152,7 +1276,9 @@ one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L
 The bell's option risk alerts (`options/risk.ts`) measure a loss against the premium with the same row
 P&L (`positionRow`). Their ids carry the position's account, so a notice given for one account never
 silences the same alert in another, and the notification names the account (paper or live, with its
-id unless account ids are hidden; `options/riskWatcher.ts`).
+id unless account ids are hidden; `options/riskWatcher.ts`). A notice stored under the id it had
+before ids carried the account (`rule:contractKey`, in localStorage `tape.options.riskNotified`)
+counts as given: `dueRiskNotices` moves its stamp to the new id and drops the old key.
 
 | Group | Columns | Source |
 | --- | --- | --- |

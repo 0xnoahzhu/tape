@@ -13,6 +13,9 @@ import type {
   ApiLogEntry,
   AppNotification,
   Bar,
+  CancelAllExpect,
+  CancelAllResult,
+  CancelResult,
   ConnectionState,
   ContractInfo,
   ContractRef,
@@ -22,11 +25,13 @@ import type {
   MarketDataCheck,
   MarketDataCheckState,
   MarketDataType,
+  ModifyOrderResult,
   Execution,
   HistoryPage,
   HistoryRequest,
   OptionChainParams,
   OrderPreview,
+  OrderRef,
   OrderRequest,
   PlaceOrderResult,
   Position,
@@ -105,6 +110,11 @@ export interface IbConnection {
   onSessionChange(listener: (reason: SessionChangeReason) => void): Unsubscribe;
   /** Errors that carry a request/order id (reqId >= 0). Info codes (2104 etc.) are not routed here. */
   onRequestError(listener: (e: { reqId: number; code: number; message: string; advancedOrderReject?: string }) => void): Unsubscribe;
+  /**
+   * IB accepted an order request of this client (a placed order, a modify or a cancel, not a
+   * what-if): Read-Only API is off now, whatever an earlier 321 said (ConnectionState.readOnlyApi).
+   */
+  noteOrderAccepted(): void;
 }
 
 export interface ApiLog {
@@ -254,11 +264,15 @@ export interface OrderService {
   getOrders(): WorkingOrder[];
   getExecutions(): Execution[];
   place(req: OrderRequest, session?: number): Promise<PlaceOrderResult>;
-  modify(orderId: number, req: OrderRequest, session?: number): Promise<void>;
+  modify(orderId: number, req: OrderRequest, session?: number): Promise<ModifyOrderResult>;
   /** IB's margin and commission estimate of an order (whatIf); nothing is placed. */
   preview(req: OrderRequest, session?: number): Promise<OrderPreview>;
-  cancel(orderId: number, session?: number): Promise<void>;
-  cancelAll(session?: number): Promise<void>;
+  /** Cancels the order `ref` names, as the list showed it (TapeApi.cancelOrder). */
+  cancel(ref: OrderRef, session?: number): Promise<CancelResult>;
+  /** IB's global cancel, confirmed for `expect` (TapeApi.cancelAllOrders). */
+  cancelAll(expect: CancelAllExpect): Promise<CancelAllResult>;
+  /** IB's lists of open and completed orders again (TapeApi.refreshOrders). */
+  refreshOrders(): Promise<void>;
   refreshExecutions(): Promise<void>;
 }
 

@@ -10,6 +10,7 @@ const L: StatusLabels = {
   after: (t) => `After ${t}`,
   pending: 'Pending',
   cancelling: 'Cancelling…',
+  notReported: 'Not reported by IB',
   working: 'Working',
   iceberg: 'ice',
   filled: (n) => `${n} filled`,

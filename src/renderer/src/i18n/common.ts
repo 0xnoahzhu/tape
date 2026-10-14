@@ -1,5 +1,5 @@
 // Strings shared by several features.
-import type { TradingSession } from '@shared/types';
+import type { CancelAllResult, TradingSession } from '@shared/types';
 import { createMessages } from './index';
 
 export const useCommon = createMessages({
@@ -49,15 +49,83 @@ export const useCommon = createMessages({
     orderSubmitted: (desc: string) => `Submitted: ${desc}`,
     orderModified: (id: number) => `Order #${id} modified`,
     orderFailed: (msg: string) => `Order failed: ${msg}`,
+    /** IB has not answered within the wait (PlaceOrderResult / ModifyOrderResult.confirmed). */
+    orderSentUnconfirmed: (id: number) => `Sent #${id}: IBKR has not confirmed it yet; check Orders`,
+    modifySentUnconfirmed: (id: number) => `Modify of #${id} sent: IBKR has not confirmed it yet; check Orders`,
+    /** The socket closed after the order was written (ORDER_UNCONFIRMED_MESSAGE): never "failed", never resend blindly. */
+    orderUnconfirmed: 'The connection closed after the order was sent, before IBKR confirmed it: IBKR may have it. Check Orders after reconnecting before sending it again.',
     /** A late rejection without IB's reason (see orderActions.ts › watchLateRejection). */
     orderInactive: 'IBKR set the order inactive',
-    cancelOrderTitle: 'Cancel order',
+    /** "Cancel order #3" (`name`: "#3", or the permId of an order without an API id). */
+    cancelOrderTitle: (name: string) => `Cancel order ${name}`,
     orderAttributes: 'Attributes',
     cancelOrderLabel: 'Cancel order',
+    // The cancel dialog: the account, fills and bracket legs, and what cancelling does to them.
+    account: 'Account',
+    paperTag: 'PAPER',
+    liveTag: 'LIVE',
+    /** "LIVE · U18630011"; without the id while account IDs are hidden (Settings › Privacy). */
+    accountValue: (tag: string, id: string) => (id ? `${tag} · ${id}` : tag),
+    filled: 'Filled',
+    filledOf: (filled: string, total: string, remaining: string) => `${filled} / ${total} · ${remaining} remaining`,
+    takeProfit: 'Take profit',
+    stopLoss: 'Stop loss',
+    bracket: 'Bracket',
+    bracketOf: (id: number) => `Exit of order #${id}`,
+    exitsCancelledWith: 'Its take-profit and stop-loss orders are cancelled with it.',
+    stopLossUnprotected: 'This is the position’s stop-loss: once it is cancelled, the position has no stop protection.',
+    entryLosesStop: (id: number) => `Order #${id} stays working without this stop-loss: once it fills, the position has no stop protection.`,
+    otherLegStays: 'Only this order is cancelled; the rest of the bracket stays working.',
+    /** IB's Read-Only API mode (ConnectionState.readOnlyApi), with where to turn it off. */
+    readOnlyApiOn: (app: string, path: string) => `Read-Only API is on in ${app}: IBKR refuses orders and cancels. Turn it off in ${path}.`,
+    readOnlyApiChip: 'Read-Only API: IBKR refuses orders',
+    // Cancel feedback
+    cancelling: 'Cancelling…',
+    orderCancelled: (name: string) => `Order ${name} cancelled`,
+    cancelSent: (name: string) => `Cancel of order ${name} sent, waiting for IBKR`,
+    cancelUnconfirmed: (name: string) => `IBKR has not confirmed the cancel of order ${name} yet; check it in Orders`,
+    // Why an order cannot be cancelled (orderActions.ts → explainCancelBlock)
+    whyTitle: 'Why Tape can’t cancel this order',
+    placedIn: 'Placed in',
+    whyManual: 'IBKR lets only the app that placed an order cancel it. Cancel it in IBKR Mobile, Client Portal or TWS, where it was placed, or cancel every open order with Cancel all orders… below.',
+    whyOtherClient: (client: number) => `IBKR lets only the app that placed an order cancel it, here API client ${client}. Cancel it there, or cancel every open order with Cancel all orders… below.`,
+    whyOtherAccount: (account: string) => `It belongs to account ${account}, which this login does not manage. Connect to that account to cancel it.`,
+    cancelAllAction: 'Cancel all orders…',
+    // Cancel all (Portfolio › Orders)
+    cancelAll: 'Cancel all…',
+    cancelAllTitle: 'Cancel all orders',
+    cancelAllHint: 'Cancel every open order of this IBKR login (IBKR’s global cancel)',
+    cancelAllWarning:
+      'IBKR cancels EVERY open order of EVERY account of this IBKR login, including GTC orders placed in IBKR Mobile, TWS or other API apps, and protective stop-losses. This cannot be undone.',
+    cancelAllUnderstand: (n: number) => (n === 1 ? 'I understand the order will be cancelled' : `I understand all ${n} orders will be cancelled`),
+    cancelAllConfirm: (n: number) => (n === 1 ? 'Cancel 1 order' : `Cancel ${n} orders`),
+    /** Cancel all's result: an order IB no longer lists is never called cancelled unless IB said so. */
+    cancelAllDone: (r: CancelAllResult) => {
+      const rest = [r.filled && `${r.filled} filled`, r.unknown && `${r.unknown} no longer listed, outcome unknown`, r.stillWorking && `${r.stillWorking} still working`].filter(Boolean);
+      const check = r.filled || r.unknown ? '; check Orders and Trades' : r.stillWorking ? '; check Orders' : '';
+      return `Cancel all: ${[`${r.cancelled} of ${r.requested} cancelled`, ...rest].join(', ')}${check}`;
+    },
+    /** ⌘⌫ with only other apps' orders working. */
+    onlyOtherOrders: (n: number) =>
+      `No open order of Tape to cancel. ${n === 1 ? '1 order was' : `${n} orders were`} placed in other apps: cancel ${n === 1 ? 'it' : 'them'} there, or with Cancel all orders… (Portfolio › Orders).`,
     noWorkingOrders: 'No open orders',
     notConnected: 'Not connected to TWS / IB Gateway',
     /** An order reviewed before Tape moved to another account or Gateway (ConnectionState.session). */
     sessionChanged: 'The connection switched to another account; the order was not sent',
+    /**
+     * Main's refusals of an order, cancel or Cancel all (shared/ipc.ts), in the user's language
+     * (orderActions.ts → orderErrorText); IB's own texts stay as IB wrote them.
+     */
+    refused: {
+      sessionChanged: 'The connection switched to another account or Gateway; nothing was sent',
+      connectionChanged: 'The connection changed while the order was being prepared; nothing was sent',
+      orderNotSent: 'The connection closed before the order was sent; nothing reached IBKR',
+      orderListStale: 'This order list is out of date; nothing was sent',
+      orderListChanged: 'The order list changed; review it again. Nothing was sent',
+      cancelAllNoList: 'IBKR did not list its open orders to check the confirmation against; nothing was sent',
+    },
+    /** The socket closed after IB's global cancel was written (CANCEL_ALL_UNCONFIRMED_MESSAGE): a warning, not "failed". */
+    cancelAllUnconfirmed: 'The connection closed after the global cancel was sent: IBKR may have cancelled the orders. Check Orders after reconnecting.',
     /**
      * TWS / IB Gateway cannot carry orders (orderActions.ts → connectionHealthText): it lost its
      * connection to IBKR (1100), or does not answer the heartbeat. `app`: TWS or IB Gateway.
@@ -70,6 +138,8 @@ export const useCommon = createMessages({
       unresponsiveTip: (app: string) => `${app} has not answered for 10 s: orders and modifies are held back, and Tape reconnects if it stays silent. Cancels are still sent.`,
       linkLostOrder: (app: string) => `${app} has lost its connection to IBKR (1100): orders cannot reach IBKR until it is restored. Nothing was sent.`,
       unresponsiveOrder: (app: string) => `${app} is not responding: nothing was sent. Tape reconnects if it stays silent.`,
+      linkLostCancel: (app: string) => `${app} has lost its connection to IBKR (1100): the cancel may not reach IBKR until it is restored.`,
+      unresponsiveCancel: (app: string) => `${app} is not responding: the cancel may not reach IBKR.`,
     },
     readOnlyApiHint: (path: string) => `Turn off “Read-Only API” in ${path} to trade.`,
     /** IB's 10329: the API precautions block directly routed orders (the overnight-only session). */
@@ -90,7 +160,7 @@ export const useCommon = createMessages({
     buyShort: '买',
     sellShort: '卖',
     cancel: '取消',
-    back: '取消',
+    back: '返回',
     confirm: '确认',
     close: '关闭',
     delete: '删除',
@@ -124,13 +194,63 @@ export const useCommon = createMessages({
     orderSubmitted: (desc: string) => `已提交：${desc}`,
     orderModified: (id: number) => `订单 #${id} 已修改`,
     orderFailed: (msg: string) => `下单失败：${msg}`,
+    orderSentUnconfirmed: (id: number) => `已发送 #${id}：IBKR 尚未确认，请在订单中查看`,
+    modifySentUnconfirmed: (id: number) => `改单 #${id} 已发送：IBKR 尚未确认，请在订单中查看`,
+    orderUnconfirmed: '订单发出后、IBKR 确认前连接已断开：IBKR 可能已收到该订单。重新连接后请先在订单中查看，再决定是否重新下单。',
     orderInactive: 'IBKR 已将订单设为无效',
-    cancelOrderTitle: '确认撤单',
+    cancelOrderTitle: (name: string) => `撤单 ${name}`,
     orderAttributes: '属性',
     cancelOrderLabel: '撤单',
+    account: '账户',
+    paperTag: '模拟',
+    liveTag: '实盘',
+    accountValue: (tag: string, id: string) => (id ? `${tag} · ${id}` : tag),
+    filled: '已成交',
+    filledOf: (filled: string, total: string, remaining: string) => `${filled} / ${total} · 剩余 ${remaining}`,
+    takeProfit: '止盈',
+    stopLoss: '止损',
+    bracket: '括号单',
+    bracketOf: (id: number) => `订单 #${id} 的平仓单`,
+    exitsCancelledWith: '其止盈单和止损单将一并撤销。',
+    stopLossUnprotected: '这是该持仓的止损单：撤销后，该持仓将没有止损保护。',
+    entryLosesStop: (id: number) => `订单 #${id} 将在没有这张止损单的情况下继续有效：成交后，该持仓将没有止损保护。`,
+    otherLegStays: '只撤销这一张订单，括号单的其余订单仍然有效。',
+    readOnlyApiOn: (app: string, path: string) => `${app} 已开启 “Read-Only API”：IBKR 会拒绝下单和撤单。请在 ${path} 中关闭。`,
+    readOnlyApiChip: '只读 API：IBKR 拒绝下单和撤单',
+    cancelling: '撤单中…',
+    orderCancelled: (name: string) => `订单 ${name} 已撤销`,
+    cancelSent: (name: string) => `订单 ${name} 的撤单请求已发送，等待 IBKR 确认`,
+    cancelUnconfirmed: (name: string) => `IBKR 尚未确认订单 ${name} 已撤销，请在订单中查看`,
+    whyTitle: '为什么 Tape 无法撤销此订单',
+    placedIn: '来源',
+    whyManual: 'IBKR 只允许下单的应用撤销该订单。请在下单的 IBKR Mobile、Client Portal 或 TWS 中撤单，或用“全部撤单…”撤销所有挂单。',
+    whyOtherClient: (client: number) => `IBKR 只允许下单的应用（此处为 API 客户端 ${client}）撤销该订单。请在该应用中撤单，或用“全部撤单…”撤销所有挂单。`,
+    whyOtherAccount: (account: string) => `该订单属于账户 ${account}，当前登录不管理此账户。请连接该账户后再撤单。`,
+    cancelAllAction: '全部撤单…',
+    cancelAll: '全部撤单…',
+    cancelAllTitle: '撤销全部订单',
+    cancelAllHint: '撤销此 IBKR 登录的所有挂单（IBKR 全局撤单）',
+    cancelAllWarning: 'IBKR 会撤销此 IBKR 登录下所有账户的全部挂单，包括在 IBKR Mobile、TWS 或其他 API 应用中下的 GTC 订单，以及保护性止损单。此操作无法撤回。',
+    cancelAllUnderstand: (n: number) => (n === 1 ? '我已了解，该订单将被撤销' : `我已了解，全部 ${n} 笔订单都将被撤销`),
+    cancelAllConfirm: (n: number) => `撤销 ${n} 笔订单`,
+    cancelAllDone: (r: CancelAllResult) => {
+      const rest = [r.filled && `${r.filled} 笔已成交`, r.unknown && `${r.unknown} 笔已不在挂单中、结果未知`, r.stillWorking && `仍有 ${r.stillWorking} 笔有效`].filter(Boolean);
+      const check = r.filled || r.unknown ? '，请在订单和成交中查看' : r.stillWorking ? '，请在订单中查看' : '';
+      return `全部撤单：${[`${r.requested} 笔中已撤销 ${r.cancelled} 笔`, ...rest].join('，')}${check}`;
+    },
+    onlyOtherOrders: (n: number) => `没有可由 Tape 撤销的挂单。${n} 笔挂单来自其他应用：请在该应用中撤单，或在“组合 › 订单”中使用“全部撤单…”。`,
     noWorkingOrders: '没有挂单',
     notConnected: '未连接 TWS / IB Gateway',
     sessionChanged: '连接已切换到其他账户，订单未发送',
+    refused: {
+      sessionChanged: '连接已切换到其他账户或 Gateway，未发送任何内容',
+      connectionChanged: '准备订单期间连接发生了变化，未发送任何内容',
+      orderNotSent: '订单发出前连接已关闭，IBKR 未收到任何内容',
+      orderListStale: '订单列表已过期，未发送任何内容',
+      orderListChanged: '订单列表已变化，请重新确认。未发送任何内容',
+      cancelAllNoList: 'IBKR 未列出挂单，无法核对确认内容，未发送任何内容',
+    },
+    cancelAllUnconfirmed: '全部撤单指令发出后连接已关闭：IBKR 可能已撤销这些订单。重新连接后请在订单中查看。',
     health: {
       linkLostChip: '与 IBKR 断开 (1100)',
       unresponsiveChip: (app: string) => `${app} 无响应`,
@@ -138,6 +258,8 @@ export const useCommon = createMessages({
       unresponsiveTip: (app: string) => `${app} 已 10 秒无响应：下单和改单暂停发送；若持续无响应，Tape 会重新连接。撤单仍会发送。`,
       linkLostOrder: (app: string) => `${app} 与 IBKR 的连接已中断（1100）：连接恢复前订单无法送达 IBKR。未发送任何内容。`,
       unresponsiveOrder: (app: string) => `${app} 无响应：未发送任何内容。若持续无响应，Tape 会重新连接。`,
+      linkLostCancel: (app: string) => `${app} 与 IBKR 的连接已中断（1100）：连接恢复前，撤单请求可能无法送达 IBKR。`,
+      unresponsiveCancel: (app: string) => `${app} 无响应：撤单请求可能无法送达 IBKR。`,
     },
     readOnlyApiHint: (path: string) => `如需交易，请在 ${path} 中关闭 “Read-Only API”。`,
     directRouteHint: (path: string) => `仅夜盘订单会直接发往 IBKR 的 OVERNIGHT 场所：如需发送，请在 ${path} 中勾选 “Bypass Redirect Order warning for Stock API orders”。`,

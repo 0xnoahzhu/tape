@@ -20,7 +20,7 @@ export function applyLockState(state: LockState): void {
 }
 
 export function closeTransientUi(): void {
-  useStore.setState({ bellOpen: false, pendingOrder: null, confirm: null, alertForm: null, pinDialog: null });
+  useStore.setState({ bellOpen: false, pendingOrder: null, confirm: null, cancelAll: null, alertForm: null, pinDialog: null });
   usePositionColumns.getState().closeTransient();
   if (typeof document === 'undefined') return;
   // The search dropdown closes on blur; popovers and context menus close on a click outside them.

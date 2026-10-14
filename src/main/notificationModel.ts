@@ -3,7 +3,7 @@
 import type { NewNotification, NotificationView } from '@shared/ipc';
 import { NOTIFICATION_KINDS } from '@shared/defaults';
 import type { AppNotification, NotificationKind, Settings } from '@shared/types';
-import { capNotifications, isObject, sanitizeContract, sanitizeLocalizedText } from './storeSchema';
+import { capNotifications, isObject, sanitizeContract, sanitizeLocalizedText, sanitizeNoticeAccount } from './storeSchema';
 
 /** Validates a notification request (it may come from the renderer). Returns null when invalid. */
 export function sanitizeNewNotification(raw: unknown): NewNotification | null {
@@ -15,6 +15,8 @@ export function sanitizeNewNotification(raw: unknown): NewNotification | null {
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
   if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
+  const account = sanitizeNoticeAccount(raw.account, n.kind);
+  if (account) n.account = account;
   return n;
 }
 
@@ -22,6 +24,7 @@ export function createNotification(n: NewNotification, id: string, t: number): A
   const item: AppNotification = { id, t, kind: n.kind, title: n.title, body: n.body, read: false };
   if (n.contract) item.contract = n.contract;
   if (n.orderDone) item.orderDone = true;
+  if (n.account) item.account = n.account;
   return item;
 }
 
@@ -54,16 +57,18 @@ export function shouldShowSystem(settings: Settings, kind: NotificationKind, for
 /**
  * Where a click on a notification about an instrument leads: an option risk alert to the option
  * chain, a fill to Portfolio › Trades, an order update to Portfolio › Orders (a cancelled or
- * rejected order, `orderDone`, is not listed there: the chart), anything else to the chart.
+ * rejected order, `orderDone`, is not listed there: the chart), anything else to the chart. A fill
+ * or order notice of an account the connected login does not manage (`otherAccount`: an earlier
+ * session's, paper or live) goes to the chart too: Orders and Trades list the connected login's.
  */
-export function viewForKind(kind: NotificationKind, orderDone = false): NotificationView {
+export function viewForKind(kind: NotificationKind, orderDone = false, otherAccount = false): NotificationView {
   switch (kind) {
     case 'opt':
       return 'opt';
     case 'fill':
-      return 'trades';
+      return otherAccount ? 'chart' : 'trades';
     case 'order':
-      return orderDone ? 'chart' : 'orders';
+      return orderDone || otherAccount ? 'chart' : 'orders';
     default:
       return 'chart';
   }

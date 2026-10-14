@@ -21,6 +21,8 @@ function paperSession(): ConnectionState {
     account: { account: 'DUP899854', currency: 'USD', netLiquidation: 1_000_000, updatedAt: 0 },
     pendingOrder: { request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 0 },
     confirm: { title: 'Cancel order', rows: [], label: 'Cancel order', session: 0, run: () => undefined },
+    cancelAll: { session: 0 },
+    pendingCancels: ['7:40'],
     ticket: { ...s.ticket, qty: 25, modifyingOrderId: 40 },
     toast: null,
   }));
@@ -38,7 +40,7 @@ describe('a new connection session', () => {
     // Tape moved to the live Gateway (4001): the account is unknown until it names it.
     applyConnection({ ...paper, status: 'connecting', port: 4001, session: 1, accounts: [], account: undefined, isPaper: false });
     const s = useStore.getState();
-    expect(s).toMatchObject({ orders: [], executions: [], positions: [], account: null, pendingOrder: null, confirm: null });
+    expect(s).toMatchObject({ orders: [], executions: [], positions: [], account: null, pendingOrder: null, confirm: null, cancelAll: null, pendingCancels: [] });
     expect(s.ticket).toMatchObject({ modifyingOrderId: null, qty: 25 });
     expect(useOrderFeedback.getState().sent).toEqual({});
     // The review was never sent, and the user is told.
@@ -66,6 +68,8 @@ describe('a new connection session', () => {
     expect(s.account).not.toBeNull();
     expect(s.pendingOrder).not.toBeNull();
     expect(s.confirm).not.toBeNull();
+    expect(s.cancelAll).toEqual({ session: 0 });
+    expect(s.pendingCancels).toEqual(['7:40']);
     expect(s.ticket.modifyingOrderId).toBe(40);
     expect(useOrderFeedback.getState().sent.ticket).toBeDefined();
     expect(s.toast).toBeNull();

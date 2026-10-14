@@ -208,8 +208,9 @@ const handlers: TapeHandlers = {
   placeOrder: (req, session) => ctx.orders.place(req, session),
   modifyOrder: (id, req, session) => ctx.orders.modify(id, req, session),
   previewOrder: (req, session) => ctx.orders.preview(req, session),
-  cancelOrder: (id, session) => ctx.orders.cancel(id, session),
-  cancelAllOrders: (session) => ctx.orders.cancelAll(session),
+  cancelOrder: (ref, session) => ctx.orders.cancel(ref, session),
+  cancelAllOrders: (expect) => ctx.orders.cancelAll(expect),
+  refreshOrders: () => ctx.orders.refreshOrders(),
   refreshExecutions: () => ctx.orders.refreshExecutions(),
   saveWatchlists: async (lists) => {
     ctx.store.setWatchlists(lists);

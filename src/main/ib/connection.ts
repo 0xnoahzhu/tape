@@ -23,6 +23,11 @@
 // and P&L requests name the account. Without it, Tape asks again (reqManagedAccts), and the
 // handshake timeout ends an attempt that never gets it.
 //
+// IB's 321 "The API interface is currently in Read-Only mode" (Read-Only API on in TWS / IB
+// Gateway; at the handshake it refuses reqCompletedOrders, reqId -1) sets readOnlyApi: IB then
+// refuses orders and cancels. The next handshake clears it, and so does IB accepting an order
+// request of this client (the user turned the setting off meanwhile).
+//
 // Health of a ready connection, which the status alone does not show: 1100 (TWS / IB Gateway lost
 // its own connection to IB), or 2110 (the link is broken; how TWS reports an outage already under
 // way to a socket that connects during it, which never hears that outage's 1100), sets ibLinkLost
@@ -70,6 +75,9 @@ const CLOSE_WAIT_MS = 1_000;
 export const FIRST_REQ_ID = 1_000_000_000;
 
 type RequestError = { reqId: number; code: number; message: string; advancedOrderReject?: string };
+
+/** IB's refusal while Read-Only API is on: "…The API interface is currently in Read-Only mode." (321, any request id). */
+const isReadOnlyRefusal = (code: number, message: string) => code === 321 && /read-only/i.test(message);
 
 /** The parts of eventemitter3 used here (IBApi's typed overloads do not accept plain strings). */
 interface Emitter {
@@ -172,6 +180,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     setState({
       ...patch,
       session,
+      readOnlyApi: undefined,
       ibLinkLost: undefined,
       unresponsive: undefined,
       ...(reason === 'params' ? { accounts: [], account: undefined, isPaper: false } : {}),
@@ -264,6 +273,8 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
       connTime: undefined,
       latencyMs: undefined,
       farms: {},
+      // Learnt again from this handshake (IB refuses its reqCompletedOrders with 321).
+      readOnlyApi: undefined,
       // Learnt again from this handshake (2110) or a later 1100: the IB link a 1100 reported lost may
       // have come back while no socket was there to hear its 1101 / 1102.
       ibLinkLost: undefined,
@@ -493,6 +504,7 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     if (api !== inst) return;
     const message = err instanceof Error ? err.message : String(err ?? '');
     if (typeof id === 'number' && id >= 0) {
+      noteReadOnly(code, message);
       if (code === 10197) {
         // One notice per episode: the issue clears with the next real price tick.
         if (!state.marketDataIssue) notify(connectionNotices.competingSession());
@@ -510,9 +522,15 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     onGlobal(api, code, message);
   }
 
+  /** A 321 Read-Only refusal: IB refuses orders and cancels from now on (see the header). */
+  function noteReadOnly(code: number, message: string): void {
+    if (isReadOnlyRefusal(code, message) && !state.readOnlyApi) setState({ readOnlyApi: true });
+  }
+
   /** Messages without a request id: farm status, connectivity, client id conflicts, etc. */
   function onGlobal(api: IBApi, code: number, message: string): void {
     if (api !== inst) return;
+    noteReadOnly(code, message);
     const farm = farmUpdate(code, message);
     if (farm) {
       setState({ farms: { ...state.farms, [farm.farm]: farm.status } });
@@ -772,6 +790,9 @@ export function createConnection(ctx: MainContext, createApi: (o: { host: string
     onRequestError(listener) {
       requestErrorListeners.add(listener);
       return () => void requestErrorListeners.delete(listener);
+    },
+    noteOrderAccepted() {
+      if (state.readOnlyApi) setState({ readOnlyApi: undefined });
     },
   };
   return connection;

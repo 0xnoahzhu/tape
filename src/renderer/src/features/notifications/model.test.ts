@@ -48,23 +48,37 @@ describe('relativeTime', () => {
 describe('notificationTarget', () => {
   it('opens fills in Portfolio › Trades, order updates in › Orders and option alerts in the chain, from any page', () => {
     for (const page of ['acct', 'trade', 'set'] as const) {
-      expect(notificationTarget({ kind: 'fill' }, page)).toBe('trades');
-      expect(notificationTarget({ kind: 'order' }, page)).toBe('orders');
-      expect(notificationTarget({ kind: 'opt' }, page)).toBe('opt');
+      expect(notificationTarget({ kind: 'fill' }, page, ['DU1'])).toBe('trades');
+      expect(notificationTarget({ kind: 'order' }, page, ['DU1'])).toBe('orders');
+      expect(notificationTarget({ kind: 'opt' }, page, ['DU1'])).toBe('opt');
     }
   });
 
   it('leaves Settings for the chart, and otherwise only selects the instrument', () => {
-    expect(notificationTarget({ kind: 'price' }, 'set')).toBe('chart');
-    expect(notificationTarget({ kind: 'price' }, 'acct')).toBeNull();
-    expect(notificationTarget({ kind: 'price' }, 'trade')).toBeNull();
-    expect(notificationTarget({ kind: 'sys' }, 'trade')).toBeNull();
+    expect(notificationTarget({ kind: 'price' }, 'set', ['DU1'])).toBe('chart');
+    expect(notificationTarget({ kind: 'price' }, 'acct', ['DU1'])).toBeNull();
+    expect(notificationTarget({ kind: 'price' }, 'trade', ['DU1'])).toBeNull();
+    expect(notificationTarget({ kind: 'sys' }, 'trade', ['DU1'])).toBeNull();
+  });
+
+  it('opens Orders or Trades only for a notice of the connected login’s accounts', () => {
+    // A paper notice after the switch to live: its order and fill are not in the live lists.
+    const paperFill = { kind: 'fill' as const, account: 'DUP899854' };
+    const paperOrder = { kind: 'order' as const, account: 'DUP899854' };
+    expect(notificationTarget(paperFill, 'acct', ['U18630011'])).toBeNull();
+    expect(notificationTarget(paperOrder, 'trade', ['U18630011'])).toBeNull();
+    expect(notificationTarget(paperOrder, 'set', ['U18630011'])).toBe('chart');
+    // Back on paper, or another account of the same login: listed.
+    expect(notificationTarget(paperFill, 'acct', ['DUP899854'])).toBe('trades');
+    expect(notificationTarget(paperOrder, 'acct', ['U1', 'DUP899854'])).toBe('orders');
+    // The option chain is no account's list.
+    expect(notificationTarget({ kind: 'opt', account: 'DUP899854' }, 'acct', ['U18630011'])).toBe('opt');
   });
 
   it('treats a cancelled or rejected order like any other notice: Orders does not list it', () => {
-    expect(notificationTarget({ kind: 'order', orderDone: true }, 'set')).toBe('chart');
-    expect(notificationTarget({ kind: 'order', orderDone: true }, 'acct')).toBeNull();
-    expect(notificationTarget({ kind: 'order', orderDone: true }, 'trade')).toBeNull();
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'set', ['DU1'])).toBe('chart');
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'acct', ['DU1'])).toBeNull();
+    expect(notificationTarget({ kind: 'order', orderDone: true }, 'trade', ['DU1'])).toBeNull();
   });
 });
 
@@ -89,6 +103,17 @@ describe('notification times', () => {
     expect(notificationText(stored, 'en', createClock('12h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 04:00 PM ET · awaiting fill');
     expect(notificationText(stored, 'zh', createClock('12h', 'zh'))).toEqual({ title: '买入 100 AAPL 已提交', body: '限价 226.95 · GTD 10/09 下午 04:00 ET · 等待成交' });
     expect(notificationText(stored, 'en', createClock('24h', 'en')).body).toBe('Limit 226.95 · GTD 10/09 16:00 ET · awaiting fill');
+  });
+
+  it('leaves account ids out of stored notices while Settings › Privacy hides them', () => {
+    const tagged = {
+      title: { en: 'Buy 100 AAPL submitted · LIVE U18630011', zh: '买入 100 AAPL 已提交 · 实盘 U18630011' },
+      body: { en: 'Connected to account DUP899854', zh: '已连接账户 DUP899854' },
+    };
+    const clock = createClock('12h', 'en');
+    expect(notificationText(tagged, 'en', clock)).toEqual({ title: 'Buy 100 AAPL submitted · LIVE U18630011', body: 'Connected to account DUP899854' });
+    expect(notificationText(tagged, 'en', clock, false)).toEqual({ title: 'Buy 100 AAPL submitted · LIVE', body: 'Connected to account —' });
+    expect(notificationText(tagged, 'zh', clock, false)).toEqual({ title: '买入 100 AAPL 已提交 · 实盘', body: '已连接账户 —' });
   });
 
   it('keeps texts stored before tokens existed as they are', () => {

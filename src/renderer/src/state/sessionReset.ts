@@ -3,7 +3,8 @@
 // empties its own lists: the mirrors are emptied here at once too, so the previous account's
 // orders, fills, positions and values never show under the new connection. Everything opened on
 // the previous session goes with them: the order review (never sent), a cancel confirmation, the
-// ticket's "Modify" and the floating panels' order strips. A plain reconnect keeps them all.
+// Cancel all dialog, the cancels waiting for IB, the ticket's "Modify" and the floating panels'
+// order strips. A plain reconnect keeps them all.
 
 import { useCommon } from '../i18n/common';
 import { useOrderFeedback } from './orderFeedback';
@@ -17,8 +18,11 @@ export function resetSessionState(): void {
     positions: [],
     account: null,
     pendingOrder: null,
-    // A dialog bound to the session (a cancel) closes; generic confirmations stay.
+    // A dialog bound to the session (a cancel, Cancel all) closes; generic confirmations stay.
     confirm: s.confirm?.session != null ? null : s.confirm,
+    cancelAll: null,
+    // Their ids name the new login's orders now.
+    pendingCancels: [],
     ticket: s.ticket.modifyingOrderId == null ? s.ticket : { ...s.ticket, modifyingOrderId: null },
   }));
   useOrderFeedback.getState().clear();

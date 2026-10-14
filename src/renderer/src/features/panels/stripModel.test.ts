@@ -95,6 +95,16 @@ describe('status strip', () => {
     });
   });
 
+  it('says an order the closing connection left unconfirmed is not confirmed, never rejected', () => {
+    expect(stripView(sent({ phase: 'unconfirmed', error: 'IBKR may have it' }), live([]), m, side)).toMatchObject({ tone: 'error', head: 'Not confirmed', error: 'IBKR may have it', short: 'Buy 100 · Not confirmed' });
+  });
+
+  it('offers nothing for an order IB no longer lists', () => {
+    const view = stripView(sent(), live([order({ notReported: true })]), m, side);
+    expect(view).toMatchObject({ tone: 'muted', status: 'Not reported by IB', short: 'Buy 100 · Not reported by IB' });
+    expect(view.working).toBeUndefined();
+  });
+
   it('matches only this client’s order of that id', () => {
     expect(stripView(sent(), live([order({ clientId: 0 })]), m, side).status).toBe('Sent');
   });

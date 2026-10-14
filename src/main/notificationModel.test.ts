@@ -32,6 +32,16 @@ describe('sanitizeNewNotification', () => {
     expect(createNotification({ kind: 'order', title: text, body: text, orderDone: true }, 'id', 1).orderDone).toBe(true);
   });
 
+  it('keeps the account on order, fill and option risk notices only', () => {
+    expect(sanitizeNewNotification({ kind: 'fill', title: text, body: text, account: 'DUP899854' })).toEqual({ kind: 'fill', title: text, body: text, account: 'DUP899854' });
+    expect(sanitizeNewNotification({ kind: 'order', title: text, body: text, account: 'U18630011' })?.account).toBe('U18630011');
+    expect(sanitizeNewNotification({ kind: 'opt', title: text, body: text, account: 'U18630011' })?.account).toBe('U18630011');
+    for (const kind of ['price', 'conn', 'sys'] as const) expect(sanitizeNewNotification({ kind, title: text, body: text, account: 'U1' })).toEqual({ kind, title: text, body: text });
+    for (const account of ['', 7, 'U'.repeat(32)]) expect(sanitizeNewNotification({ kind: 'fill', title: text, body: text, account })).toEqual({ kind: 'fill', title: text, body: text });
+    expect(createNotification({ kind: 'fill', title: text, body: text, account: 'U1' }, 'id', 1).account).toBe('U1');
+    expect('account' in createNotification({ kind: 'fill', title: text, body: text }, 'id', 1)).toBe(false);
+  });
+
   it('drops an invalid contract but keeps the notification', () => {
     expect(sanitizeNewNotification({ kind: 'sys', title: text, body: text, contract: { symbol: 1 } })).toEqual({ kind: 'sys', title: text, body: text });
   });
@@ -101,5 +111,9 @@ describe('shouldShowSystem', () => {
     expect(viewForKind('order', true)).toBe('chart');
     expect(viewForKind('price')).toBe('chart');
     expect(viewForKind('conn')).toBe('chart');
+    // A fill or order of an account the connected login does not manage is not in its lists.
+    expect(viewForKind('fill', false, true)).toBe('chart');
+    expect(viewForKind('order', false, true)).toBe('chart');
+    expect(viewForKind('opt', false, true)).toBe('opt');
   });
 });

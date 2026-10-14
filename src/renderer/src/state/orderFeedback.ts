@@ -12,8 +12,12 @@ export interface SentOrder {
   /** Increments per send: a newer order replaces the strip. */
   seq: number;
   kind: 'place' | 'modify';
-  /** Waiting for IB's answer, accepted, or refused (IB's reason in `error`). */
-  phase: 'sending' | 'sent' | 'failed';
+  /**
+   * Waiting for IB's answer, accepted (or sent and not confirmed yet), refused (IB's reason in
+   * `error`), or unconfirmed: the socket closed after the order was written, so IB may have it
+   * (`error` says to check Orders before sending it again).
+   */
+  phase: 'sending' | 'sent' | 'failed' | 'unconfirmed';
   /** "Buy 100 AAPL · LMT 227.56 · DAY". */
   summary: string;
   side: OrderAction;

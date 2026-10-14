@@ -17,10 +17,11 @@
 import { readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app } from 'electron';
-import { EventName, type OrderState } from './tws';
+import { EventName, type Order, type OrderState } from './tws';
 import type { ApiLogEntry } from '@shared/types';
 import type { ApiLog, MainContext } from '../context';
 import { createLogFileWriter, expiredLogFiles, logFileName } from './apiLogFiles';
+import { num } from './ibContract';
 import {
   DEFAULT_SERVER_VERSION,
   decodeFrame,
@@ -44,6 +45,8 @@ export const STREAM_BY_DEFAULT = false;
 
 export const RING_SIZE = 20_000;
 const PUSH_MS = 250;
+/** The estimate of a what-if answer the log shows (its margin changes and commission). */
+const WHAT_IF_FIELDS = ['initMarginChange', 'maintMarginChange', 'equityWithLoanChange', 'commission', 'minCommission', 'maxCommission'] as const;
 /** Estimated file line size: the frame text plus time, direction, name and field names. */
 const lineBytes = (raw: RawFrame): number => (typeof raw === 'string' ? raw.length * 2 + 40 : 80);
 
@@ -320,11 +323,21 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
   /**
    * openOrder / completedOrder frames carry the order state deep inside a variable layout;
    * the library has just decoded the same frame, so its status is added to the entry (without
-   * decoding the frame here, on the socket path).
+   * decoding the frame here, on the socket path). IB's answer to a what-if request (a margin and
+   * commission estimate, never a working order) is marked whatIf=1 with the estimate it carries,
+   * so it does not read like an order.
    */
-  function annotate(name: string, state: OrderState | undefined): void {
+  function annotate(name: string, state: OrderState | undefined, order?: Order): void {
     if (!state || !ring.has(lastIn) || !ring.isFrame(lastIn, 'in') || messageName('in', ring.msgId(lastIn)) !== name) return;
     const fields: Fields = [];
+    if (order?.whatIf) {
+      fields.push(['whatIf', '1']);
+      for (const k of WHAT_IF_FIELDS) {
+        // Double.MAX_VALUE: IB left it unset.
+        const v = num(state[k]);
+        if (v != null) fields.push([k, String(v)]);
+      }
+    }
     if (state.status) fields.push(['status', String(state.status)]);
     if (state.completedStatus) fields.push(['completedStatus', state.completedStatus]);
     if (state.warningText) fields.push(['warningText', state.warningText]);
@@ -385,7 +398,7 @@ export function createApiLog(ctx: MainContext, options: ApiLogOptions = {}): Api
     setFileLogging(ctx.store.getSettings().apiLog.writeFile);
     ctx.ib.on(EventName.sent, onSent);
     ctx.ib.on(EventName.received, onReceived);
-    ctx.ib.on(EventName.openOrder, (_id: number, _c: unknown, _o: unknown, state: OrderState) => annotate('openOrder', state));
+    ctx.ib.on(EventName.openOrder, (_id: number, _c: unknown, order: Order | undefined, state: OrderState) => annotate('openOrder', state, order));
     ctx.ib.on(EventName.completedOrder, (_c: unknown, _o: unknown, state: OrderState) => annotate('completedOrder', state));
     ctx.store.onSettingsChanged((next, prev) => {
       setFileLogging(next.apiLog.writeFile);

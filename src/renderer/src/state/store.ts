@@ -172,6 +172,8 @@ export interface ConfirmRow {
   color?: string;
   /** The value is " · "-separated parts that wrap between parts only ("Start 09:45 AM ET" stays whole). */
   parts?: boolean;
+  /** The value is a sentence (a warning), set in the text font rather than the figures'. */
+  prose?: boolean;
 }
 
 /** Generic confirmation dialog ("act" in the design). */
@@ -179,6 +181,8 @@ export interface ConfirmRequest {
   title: string;
   rows: ConfirmRow[];
   note?: string;
+  /** Red lines under the rows: what the action costs or why it may fail (a stop-loss left unprotected, Read-Only API on). */
+  warnings?: string[];
   label: string;
   danger?: boolean;
   /**
@@ -187,7 +191,13 @@ export interface ConfirmRequest {
    * (watchlists, settings) leave it out and stay.
    */
   session?: number;
-  run: () => void | Promise<void>;
+  /** The action. Without it the dialog only informs: its one button (`label`) closes it. */
+  run?: () => void | Promise<void>;
+}
+
+/** The Cancel all dialog (layout/Dialogs.tsx → CancelAllDialog), bound to the session it was opened on. */
+export interface CancelAllRequest {
+  session: number;
 }
 
 /** Order review dialog shown before sending when Settings › Trade › Confirm is on. */
@@ -229,7 +239,8 @@ export interface PinDialogRequest {
 export interface Toast {
   id: number;
   text: string;
-  tone: 'info' | 'error';
+  /** 'warning': not a failure, but not the success either (sent, IB has not confirmed it yet). */
+  tone: 'info' | 'warning' | 'error';
 }
 
 interface DataState {
@@ -270,6 +281,12 @@ interface UiState {
   ticket: TicketState;
   pendingOrder: PendingOrder | null;
   confirm: ConfirmRequest | null;
+  cancelAll: CancelAllRequest | null;
+  /**
+   * Cancels sent from here that IB has not confirmed yet (lib/orders.ts → cancelKey): their rows show
+   * "Cancelling…" instead of Cancel, so a second click sends nothing (state/orderActions.ts).
+   */
+  pendingCancels: string[];
   alertForm: AlertFormState | null;
   toast: Toast | null;
   /** Incremented to ask the symbol search to take focus (⌘K). */
@@ -303,6 +320,8 @@ interface Actions {
   resetTicket(): void;
   ask(req: ConfirmRequest): void;
   closeConfirm(): void;
+  setCancelAll(req: CancelAllRequest | null): void;
+  setCancelPending(key: string, pending: boolean): void;
   setPendingOrder(p: PendingOrder | null): void;
   openAlertForm(contract: ContractRef): void;
   setAlertForm(form: AlertFormState | null): void;
@@ -444,6 +463,8 @@ export const useStore = create<StoreState>()((set, get) => ({
   ticket: initialTicket(settings0),
   pendingOrder: null,
   confirm: null,
+  cancelAll: null,
+  pendingCancels: [],
   alertForm: null,
   toast: null,
   searchFocus: 0,
@@ -498,6 +519,13 @@ export const useStore = create<StoreState>()((set, get) => ({
   resetTicket: () => set((s) => ({ ticket: initialTicket(s.settings) })),
   ask: (confirm) => set({ confirm }),
   closeConfirm: () => set({ confirm: null }),
+  setCancelAll: (cancelAll) => set({ cancelAll }),
+  setCancelPending: (key, pending) =>
+    set((s) => {
+      const has = s.pendingCancels.includes(key);
+      if (has === pending) return s;
+      return { pendingCancels: pending ? [...s.pendingCancels, key] : s.pendingCancels.filter((k) => k !== key) };
+    }),
   setPendingOrder: (pendingOrder) => set({ pendingOrder }),
   openAlertForm: (contract) => {
     const q = get().quotes[contractKey(contract)];

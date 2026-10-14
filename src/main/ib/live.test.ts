@@ -234,7 +234,7 @@ describe.skipIf(!live)('live IB Gateway', async () => {
       console.log('placed', JSON.stringify(res));
       await sleep(1500);
       console.log('order', JSON.stringify(ctx.orders.getOrders().find((o) => o.orderId === res.orderId)));
-      await ctx.orders.cancel(res.orderId);
+      console.log('cancel', JSON.stringify(await ctx.orders.cancel({ orderId: res.orderId, clientId: ctx.ib.getState().clientId })));
       await sleep(1500);
       console.log('after cancel', JSON.stringify(ctx.orders.getOrders().find((o) => o.orderId === res.orderId)));
     } catch (err) {
@@ -256,12 +256,13 @@ describe.skipIf(!live)('live IB Gateway', async () => {
     const own = new Set(ctx.orders.getOrders().filter((o) => o.clientId === me).map((o) => o.orderId));
     const foreign = ctx.orders.getOrders().find((o) => o.clientId !== me && o.orderId !== 0 && !own.has(o.orderId) && isOrderActive(o.status));
     if (foreign) {
-      await expect(ctx.orders.cancel(foreign.orderId)).rejects.toThrow(`belongs to`);
+      // Another API client's order, or a TWS order bound to client 0.
+      await expect(ctx.orders.cancel({ orderId: foreign.orderId, clientId: foreign.clientId, permId: foreign.permId })).rejects.toThrow(/belongs to|placed outside Tape/);
       console.log('foreign order refused:', foreign.clientId, foreign.orderId);
     } else {
       console.log('no working order of another client to check');
     }
-    await expect(ctx.orders.cancel(2_000_000_000)).rejects.toThrow('was not found');
+    await expect(ctx.orders.cancel({ orderId: 2_000_000_000, clientId: me })).rejects.toThrow('was not found');
   });
 
   it('retries when the first attempt after a settings change fails', async () => {

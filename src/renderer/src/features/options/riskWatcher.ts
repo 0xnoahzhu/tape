@@ -43,21 +43,40 @@ export function riskNotifTitle(a: RiskAlert, m: DeskMessages, paper: boolean, sh
   return m.notifTitle(`${contractLabel(a.position.contract)} · ${account}`);
 }
 
+/**
+ * The alerts to notify now, recorded in `notified` (alert id → the stamp it was notified under: 'once'
+ * for an expiry, the day for the other rules); `changed` when `notified` changed. A notice stored
+ * under the id it had before ids named the account (`rule:contractKey`) counts as given: its stamp
+ * moves to the new id, and the old key goes (after all alerts, so every account holding the contract
+ * is covered, as the old per-contract id was) so it cannot silence another account's notice later.
+ */
+export function dueRiskNotices(due: RiskAlert[], notified: Record<string, string>, today: string): { notify: RiskAlert[]; changed: boolean } {
+  const notify: RiskAlert[] = [];
+  const legacyUsed = new Set<string>();
+  let changed = false;
+  for (const a of due) {
+    const stamp = a.rule === 'exp' ? 'once' : today;
+    if (notified[a.id] === stamp) continue;
+    notified[a.id] = stamp;
+    changed = true;
+    const legacy = `${a.rule}:${contractKey(a.position.contract)}`;
+    if (notified[legacy] === stamp) legacyUsed.add(legacy);
+    else notify.push(a);
+  }
+  for (const k of legacyUsed) delete notified[k];
+  return { notify, changed };
+}
+
 function notifyNew(alerts: RiskAlert[]): void {
   const due = alerts.filter((a) => a.severity !== 'info');
   if (!due.length) return;
   const map = remembered();
-  const today = ymd(Date.now());
+  const { notify, changed } = dueRiskNotices(due, map, ymd(Date.now()));
   const s = useStore.getState();
   // The positions are the connected login's: paper or live is the login's.
   const paper = s.connection.isPaper;
   const showId = s.settings.appearance.showAccountId;
-  let changed = false;
-  for (const a of due) {
-    const stamp = a.rule === 'exp' ? 'once' : today;
-    if (map[a.id] === stamp) continue;
-    map[a.id] = stamp;
-    changed = true;
+  for (const a of notify) {
     const en = useM.for('en');
     const zh = useM.for('zh');
     void window.tape
@@ -66,6 +85,7 @@ function notifyNew(alerts: RiskAlert[]): void {
         title: { en: riskNotifTitle(a, en, paper, showId), zh: riskNotifTitle(a, zh, paper, showId) },
         body: { en: riskMessage(a, en), zh: riskMessage(a, zh) },
         contract: underlyingFor(a.position.contract.symbol, s.watchlists),
+        ...(a.position.account ? { account: a.position.account } : {}),
       })
       .catch(() => undefined);
   }

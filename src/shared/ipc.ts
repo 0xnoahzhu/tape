@@ -10,6 +10,9 @@ import type {
   AppSnapshot,
   Bar,
   CacheStats,
+  CancelAllExpect,
+  CancelAllResult,
+  CancelResult,
   ConnectionState,
   ContractInfo,
   ContractRef,
@@ -23,9 +26,11 @@ import type {
   LockState,
   MarketDataCheck,
   MarketDataCheckState,
+  ModifyOrderResult,
   NotificationKind,
   OptionChainParams,
   OrderPreview,
+  OrderRef,
   OrderRequest,
   PlaceOrderResult,
   Position,
@@ -96,6 +101,8 @@ export interface NewNotification {
   contract?: ContractRef;
   /** See AppNotification.orderDone. */
   orderDone?: true;
+  /** See AppNotification.account (kept on order, fill and opt notices only). */
+  account?: string;
 }
 
 export interface TapeApi {
@@ -163,17 +170,35 @@ export interface TapeApi {
   // Orders -----------------------------------------------------------------
   // `session`: the connection session (ConnectionState.session) the user reviewed the request
   // on. Main refuses the call, sending nothing, once Tape has moved to another account or Gateway.
+  // Place and modify resolve with `confirmed: false` when IB has not answered within the wait.
   placeOrder(req: OrderRequest, session?: number): Promise<PlaceOrderResult>;
-  modifyOrder(orderId: number, req: OrderRequest, session?: number): Promise<void>;
+  modifyOrder(orderId: number, req: OrderRequest, session?: number): Promise<ModifyOrderResult>;
   /**
    * IB's margin and commission estimate of an order (whatIf, the order without its bracket);
    * nothing is placed. IB asks for few of these: an identical request for the same account within
    * 10 s gets the previous answer.
    */
   previewOrder(req: OrderRequest, session?: number): Promise<OrderPreview>;
-  cancelOrder(orderId: number, session?: number): Promise<void>;
-  /** reqGlobalCancel: cancels every working order in the account. */
-  cancelAllOrders(session?: number): Promise<void>;
+  /**
+   * Cancels the order the list showed (`ref`). Refused, with nothing sent, when the order IB lists
+   * now differs from it or IB would not let Tape cancel it (another app's or client's order, another
+   * account's, already done or being cancelled: shared/orderOwnership.ts).
+   */
+  cancelOrder(ref: OrderRef, session?: number): Promise<CancelResult>;
+  /**
+   * reqGlobalCancel: IB cancels every open order of every account of the login, whichever app
+   * placed it. Refused unless the account and the active orders (by permId) are the ones the
+   * confirmation listed, on the same session, in Tape's list and in IB's full list of open orders
+   * asked right before the cancel; resolves once IB's lists were asked again and said how the
+   * orders ended.
+   */
+  cancelAllOrders(expect: CancelAllExpect): Promise<CancelAllResult>;
+  /**
+   * Asks IB again for every client's open orders and today's completed ones (other apps' orders
+   * get no updates in between; main also asks every 30 s while connected). The new list arrives as
+   * an `orders` event.
+   */
+  refreshOrders(): Promise<void>;
   /** Re-requests today's executions (reqExecutions). */
   refreshExecutions(): Promise<void>;
 
@@ -259,6 +284,8 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   previewOrder: 'deny',
   cancelOrder: 'deny',
   cancelAllOrders: 'deny',
+  // Read-only: asks IB for lists, like refreshExecutions.
+  refreshOrders: 'allow',
   refreshExecutions: 'allow',
   saveWatchlists: 'deny',
   savePriceAlerts: 'deny',
@@ -286,6 +313,34 @@ export const INVOKE_METHODS: readonly TapeInvokeMethod[] = Object.keys(LOCK_POLI
 
 /** Error message of every method refused while locked. */
 export const LOCKED_MESSAGE = 'Tape is locked';
+
+/**
+ * placeOrder's error when the socket closed after the order was written and before IB answered:
+ * IB may have it, so it is neither a rejection nor safe to send again (the renderer warns).
+ */
+export const ORDER_UNCONFIRMED_MESSAGE = 'The connection closed after the order was sent, before IB confirmed it: IB may have it. Check Orders after reconnecting before sending it again';
+
+// Order, cancel and Cancel all refusals of main (ib/orders.ts), each sent before anything reaches IB
+// unless it says otherwise. Shared so that the renderer shows them in the user's language
+// (orderActions.ts → orderErrorText); IB's own texts stay as IB wrote them.
+export const NOT_CONNECTED_MESSAGE = 'Not connected to TWS / IB Gateway';
+export const CONNECTION_CHANGED_MESSAGE = 'The connection changed while the order was being prepared; nothing was sent';
+/** A request reviewed on another session (account or Gateway) than the current one. */
+export const SESSION_CHANGED_MESSAGE = 'The connection switched to another account or Gateway; nothing was sent';
+/** place(): the socket closed before any frame of the order was written; sending it again is safe. */
+export const ORDER_NOT_SENT_MESSAGE = 'The connection closed before the order was sent; nothing reached IB';
+/** cancel(): the order under the listed ids is not the one the list showed (another order, client or account). */
+export const STALE_ORDER_MESSAGE = 'This order list is out of date; nothing was sent';
+/** cancelAll(): the active orders are not the ones the confirmation listed. */
+export const ORDER_LIST_CHANGED_MESSAGE = 'The order list changed; review it again. Nothing was sent';
+/** cancelAll(): IB did not list its open orders before the global cancel (no answer, or the socket closed). */
+export const CANCEL_ALL_NO_LIST_MESSAGE = 'IB did not list its open orders to check the confirmation against; nothing was sent';
+/** cancelAll(): the connection closed or moved on after the global cancel was sent, before IB's open orders were asked again. */
+export const CANCEL_ALL_UNCONFIRMED_MESSAGE = 'The connection closed after the global cancel was sent: check Orders after reconnecting';
+/** place() / modify() while TWS / IB Gateway has lost its connection to IB (1100). */
+export const IB_LINK_LOST_MESSAGE = 'TWS / IB Gateway has lost its connection to IB (1100): orders cannot reach IB until it is restored; nothing was sent';
+/** place() / modify() while TWS / IB Gateway does not answer the heartbeat. */
+export const GATEWAY_UNRESPONSIVE_MESSAGE = 'TWS / IB Gateway is not responding; nothing was sent';
 
 export const EVENT_CHANNEL = 'tape:event';
 

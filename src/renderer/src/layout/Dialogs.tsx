@@ -1,13 +1,38 @@
-// App-level dialogs: generic confirmation ("act"), order review, and toasts.
+// App-level dialogs: generic confirmation ("act"), order review, Cancel all, and toasts.
 
-import { useEffect, useState } from 'react';
-import { f2 } from '@shared/format';
-import type { OrderPreview, OrderRequest } from '@shared/types';
+import { useEffect, useMemo, useState } from 'react';
+import { contractLabel } from '@shared/contract';
+import { DASH, f0, f2 } from '@shared/format';
+import { cancelBlock, isSourceBlock } from '@shared/orderOwnership';
+import type { OrderPreview, OrderRequest, WorkingOrder } from '@shared/types';
+import { useOrdersMessages, type OrdersMessages } from '../features/orders/messages';
+import { orderPriceText, orderTypeLabel, sourceLabel } from '../features/orders/model';
 import { useCommon } from '../i18n/common';
-import { errorText, sendOrder } from '../state/orderActions';
+import { cancelAllExpect, cancelAllOrders } from '../lib/orders';
+import { connectionHealthText, orderErrorText, readOnlyWarning, sendCancelAll, sendOrder } from '../state/orderActions';
 import { useStore } from '../state/store';
 import { Button, KeyValueRows, Modal } from '../ui/primitives';
 import { stableGutter } from '../ui/scrollGutter';
+
+/**
+ * How long Cancel all's button stays inert once its box is ticked, so a click or ⏎ meant for
+ * something before it does not confirm.
+ */
+const CONFIRM_ARM_MS = 600;
+
+/** Red lines in a dialog: what an action costs, or why it may fail. */
+function Warnings({ lines }: { lines: readonly string[] }) {
+  if (!lines.length) return null;
+  return (
+    <div data-testid="dialog-warnings" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, lineHeight: 1.6, color: 'var(--r)' }}>
+      {lines.map((line) => (
+        <div key={line} className="selectable">
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function ConfirmDialog() {
   const m = useCommon();
@@ -23,11 +48,12 @@ export function ConfirmDialog() {
     return () => window.removeEventListener('keydown', onKey);
   }, [req, close]);
   if (!req) return null;
+  const { run } = req;
   const ok = async () => {
     setBusy(true);
     close();
     try {
-      await req.run();
+      await run?.();
     } finally {
       setBusy(false);
     }
@@ -37,14 +63,22 @@ export function ConfirmDialog() {
       <div style={{ font: '600 18px/1.2 var(--sans)' }}>{req.title}</div>
       <KeyValueRows rows={req.rows} />
       {req.note && <div style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--dm)' }}>{req.note}</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
-        <Button kind="secondary" onClick={close}>
-          {m.back}
-        </Button>
-        <Button bg={req.danger ? 'var(--r)' : undefined} onClick={ok} disabled={busy}>
+      <Warnings lines={req.warnings ?? []} />
+      {run ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+          <Button kind="secondary" onClick={close}>
+            {m.back}
+          </Button>
+          <Button bg={req.danger ? 'var(--r)' : undefined} onClick={ok} disabled={busy}>
+            {req.label}
+          </Button>
+        </div>
+      ) : (
+        // Information only: one button closes it.
+        <Button kind="secondary" onClick={close} autoFocus>
           {req.label}
         </Button>
-      </div>
+      )}
     </Modal>
   );
 }
@@ -97,7 +131,8 @@ function OrderEstimate({ request, session }: { request: OrderRequest; session: n
     // For the account the order was reviewed on only (main refuses another session).
     window.tape.previewOrder(request, session).then(
       (preview) => alive && setState({ status: 'done', preview }),
-      (err: unknown) => alive && setState({ status: 'error', message: errorText(err) }),
+      // Main's own refusals (not connected, another session, IB link lost) in the user's language.
+      (err: unknown) => alive && setState({ status: 'error', message: orderErrorText(err) }),
     );
     return () => {
       alive = false;
@@ -199,13 +234,135 @@ export function OrderConfirmDialog() {
   );
 }
 
+/**
+ * Cancel all orders (Portfolio › Orders): IB's global cancel, which reaches every open order of
+ * every account of the login, whichever app placed it. It lists those orders with who placed them
+ * and the accounts (paper or live), says what cannot be undone, and confirms in two steps that no
+ * setting skips: a check box naming the count, then the red button, armed CONFIRM_ARM_MS after it.
+ * A changed list (an order placed, filled or cancelled meanwhile) unticks the box; opening it asks IB
+ * for its lists again (openCancelAll), since other apps' orders get no updates in between. Bound to the
+ * session it was opened on (state/sessionReset.ts closes it); main refuses it for any other list,
+ * checked against IB's full list of open orders asked right before the global cancel.
+ */
+export function CancelAllDialog() {
+  const m = useCommon();
+  const om = useOrdersMessages();
+  const req = useStore((s) => s.cancelAll);
+  const connection = useStore((s) => s.connection);
+  const showId = useStore((s) => s.settings.appearance.showAccountId);
+  const orders = useStore((s) => s.orders);
+  const list = useMemo(() => cancelAllOrders(orders, connection.accounts), [orders, connection.accounts]);
+  const expect = cancelAllExpect(list, connection);
+  const listed = expect?.permIds.join(',') ?? '';
+  const [understood, setUnderstood] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const close = () => useStore.getState().setCancelAll(null);
+  // Another list (or the dialog opened again) is confirmed anew.
+  useEffect(() => setUnderstood(false), [listed, req]);
+  useEffect(() => {
+    setArmed(false);
+    if (!understood) return;
+    const t = setTimeout(() => setArmed(true), CONFIRM_ARM_MS);
+    return () => clearTimeout(t);
+  }, [understood]);
+  useEffect(() => {
+    if (!req) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      useStore.getState().setCancelAll(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [req]);
+  if (!req) return null;
+  const n = list.length;
+  const ready = !!expect && connection.status === 'connected' && req.session === connection.session && understood && armed;
+  const readOnly = connection.readOnlyApi ? readOnlyWarning() : undefined;
+  // Still sent while TWS / IB Gateway lost IB or hangs (getting out stays possible), with a warning.
+  const unhealthy = connection.ibLinkLost || connection.unresponsive ? connectionHealthText('cancel') : undefined;
+  const tag = connection.isPaper ? m.paperTag : m.liveTag;
+  const accountRows = (connection.accounts.length ? connection.accounts : ['']).map((a) => ({
+    label: m.account,
+    value: m.accountValue(tag, showId ? a : ''),
+    ...(connection.isPaper ? {} : { color: 'var(--r)' }),
+  }));
+  const toggle = () => n > 0 && setUnderstood((u) => !u);
+  return (
+    <Modal onClose={close} zIndex={20} width={480}>
+      <div style={{ font: '600 18px/1.2 var(--sans)', flexShrink: 0 }}>{m.cancelAllTitle}</div>
+      <div style={{ minHeight: 0, overflowY: 'auto', ...stableGutter, marginRight: 'calc(0px - var(--sbw, 0px))', display: 'grid', alignContent: 'start', gap: 14 }}>
+        <KeyValueRows rows={accountRows} />
+        <div data-testid="cancel-all-orders" style={{ display: 'flex', flexDirection: 'column', fontSize: 13 }}>
+          {list.map((o) => {
+            const block = cancelBlock(o, { ...connection, status: 'connected' });
+            const source = isSourceBlock(block) ? sourceLabel(o, block, om) : om.thisApp;
+            const buy = o.action === 'BUY';
+            return (
+              <div key={o.permId ?? `${o.clientId}:${o.orderId}`} style={{ minHeight: 32, display: 'flex', alignItems: 'center', gap: 10, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+                <div style={{ color: buy ? 'var(--up)' : 'var(--dn)', fontWeight: 500, flexShrink: 0 }}>{buy ? m.buyShort : m.sellShort}</div>
+                <div className="ellipsis num selectable" style={{ flex: 1, minWidth: 0 }} title={cancelAllLine(o, om)}>
+                  {cancelAllLine(o, om)}
+                </div>
+                <div className="ellipsis" style={{ color: 'var(--mu)', flexShrink: 0, maxWidth: '40%' }}>
+                  {source}
+                </div>
+              </div>
+            );
+          })}
+          {!n && <div style={{ minHeight: 32, display: 'flex', alignItems: 'center', color: 'var(--dm)' }}>{m.noWorkingOrders}</div>}
+        </div>
+        <Warnings lines={[m.cancelAllWarning, readOnly, unhealthy].filter((w): w is string => !!w)} />
+      </div>
+      <div
+        role="checkbox"
+        aria-checked={understood}
+        aria-disabled={!n || undefined}
+        tabIndex={n ? 0 : -1}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: n ? 'pointer' : 'not-allowed', opacity: n ? 1 : 0.5, flexShrink: 0 }}
+      >
+        <div style={{ width: 14, height: 14, flexShrink: 0, boxShadow: `inset 0 0 0 ${understood ? 7 : 1}px ${understood ? 'var(--r)' : 'var(--mu)'}` }} />
+        <div>{m.cancelAllUnderstand(n)}</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8, flexShrink: 0 }}>
+        {/* Focus starts on Back: ⏎ closes, it never cancels. */}
+        <Button kind="secondary" onClick={close} autoFocus>
+          {m.back}
+        </Button>
+        <Button bg="var(--r)" disabled={!ready} onClick={() => expect && ready && void sendCancelAll(expect)}>
+          {m.cancelAllConfirm(n)}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * An order of the Cancel all list: "AAPL · 100 @ 220.00 · DAY" for a limit order; other types name
+ * themselves ("NVDA · 200 Stop 110.00 · GTC", "MSFT · 5 Market · DAY"), so a protective stop-loss
+ * does not read as a limit order.
+ */
+function cancelAllLine(o: WorkingOrder, om: OrdersMessages): string {
+  const price = orderPriceText(o);
+  const type = orderTypeLabel(o.orderType, om);
+  const how = o.orderType === 'LMT' ? `@ ${price}` : price === DASH ? type : `${type} ${price}`;
+  return `${contractLabel(o.contract)} · ${f0(o.totalQuantity)} ${how} · ${o.tif}`;
+}
+
 export function ToastHost() {
   const toast = useStore((s) => s.toast);
   const [visible, setVisible] = useState<typeof toast>(null);
   useEffect(() => {
     if (!toast) return;
     setVisible(toast);
-    const t = setTimeout(() => setVisible((v) => (v?.id === toast.id ? null : v)), toast.tone === 'error' ? 6000 : 3200);
+    const t = setTimeout(() => setVisible((v) => (v?.id === toast.id ? null : v)), toast.tone === 'info' ? 3200 : 6000);
     return () => clearTimeout(t);
   }, [toast]);
   if (!visible) return null;
@@ -223,7 +380,8 @@ export function ToastHost() {
         padding: '10px 16px',
         background: 'var(--p)',
         color: visible.tone === 'error' ? 'var(--r)' : 'var(--tx)',
-        boxShadow: `0 0 0 1px ${visible.tone === 'error' ? 'var(--r)' : 'var(--ln)'}, 0 12px 32px rgba(0,0,0,.2)`,
+        // A warning (sent, not confirmed by IB) keeps the text's colour with a red edge: not a failure, not a success either.
+        boxShadow: `${visible.tone === 'warning' ? 'inset 3px 0 0 var(--r), ' : ''}0 0 0 1px ${visible.tone === 'error' ? 'var(--r)' : 'var(--ln)'}, 0 12px 32px rgba(0,0,0,.2)`,
         fontSize: 13,
         lineHeight: 1.5,
         cursor: 'pointer',

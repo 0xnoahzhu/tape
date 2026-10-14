@@ -67,6 +67,8 @@ export const useOrdersMessages = createMessages({
     stSubmitting: 'Submitting',
     stCancelling: 'Cancelling',
     stUnknown: 'Unknown',
+    /** IB's list of open orders no longer has it (WorkingOrder.notReported). */
+    stNotReported: 'Not reported by IB',
     waiting: 'Waiting',
     after: 'After',
     held: 'Held',
@@ -74,12 +76,19 @@ export const useOrdersMessages = createMessages({
     stopLimitTitle: 'Stop / Limit',
     sessions: useCommon.for('en').sessions,
     attr: useAttrM.for('en'),
-    // Ownership
-    tws: 'TWS',
+    // Ownership: who placed an order Tape cannot cancel (shared/orderOwnership.ts), with a "Why?"
+    thisApp: 'This app',
+    otherApp: 'Other app',
     clientN: (id: number) => `Client ${id}`,
+    otherAccount: 'Other account',
+    why: 'Why?',
+    cancelling: 'Cancelling…',
     ownOrder: (id: number, client: number) => `Order #${id} · placed by this app (client ${client})`,
-    otherOrder: (id: number, client: number) =>
-      `Order #${id} · placed by ${client === 0 ? 'TWS' : `API client ${client}`}. Modify or cancel it there.`,
+    /** An order of another app: one placed outside the API has no order id, so its permId names it. */
+    otherOrder: (o: { orderId: number; clientId: number; permId?: number }) =>
+      o.orderId === 0 || o.clientId === 0
+        ? `Placed outside Tape (IBKR Mobile, TWS or the web; IB reports these as client 0)${o.permId ? ` · permId ${o.permId}` : ''}. Only that app can change or cancel it.`
+        : `Order #${o.orderId} · placed by API client ${o.clientId}. Only that client can change or cancel it.`,
     // Modify
     modifyHint: (id: number) => `Modify #${id}: edit in the order ticket and resubmit`,
   },
@@ -129,6 +138,7 @@ export const useOrdersMessages = createMessages({
     stSubmitting: '提交中',
     stCancelling: '撤单中',
     stUnknown: '未知',
+    stNotReported: 'IB 未再报告',
     waiting: '等待触发',
     after: '定时',
     held: '暂挂',
@@ -136,11 +146,17 @@ export const useOrdersMessages = createMessages({
     stopLimitTitle: '触发价 / 限价',
     sessions: useCommon.for('zh').sessions,
     attr: useAttrM.for('zh'),
-    tws: 'TWS',
+    thisApp: '本应用',
+    otherApp: '其他终端',
     clientN: (id: number) => `客户端 ${id}`,
+    otherAccount: '其他账户',
+    why: '原因',
+    cancelling: '撤单中…',
     ownOrder: (id: number, client: number) => `订单 #${id} · 由本应用提交（客户端 ${client}）`,
-    otherOrder: (id: number, client: number) =>
-      `订单 #${id} · 由 ${client === 0 ? 'TWS' : `API 客户端 ${client}`} 提交。请在该处改单或撤单。`,
+    otherOrder: (o: { orderId: number; clientId: number; permId?: number }) =>
+      o.orderId === 0 || o.clientId === 0
+        ? `在 Tape 之外提交（IBKR Mobile、TWS 或网页端，IB 记为客户端 0）${o.permId ? ` · permId ${o.permId}` : ''}。只有该应用可以改单或撤单。`
+        : `订单 #${o.orderId} · 由 API 客户端 ${o.clientId} 提交。只有该客户端可以改单或撤单。`,
     modifyHint: (id: number) => `改单 #${id}：在下单面板修改后重新提交`,
   },
 });

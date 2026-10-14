@@ -1,14 +1,17 @@
 // Working orders table (design "ordRows" for the work tab), with a Last column beside the order price.
+// The actions cell (OrderActions.tsx) offers Modify / Cancel only for orders Tape can cancel, and
+// names who placed the others with a "Why?".
 
+import { useEffect } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0 } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
-import { confirmCancel } from '../../state/orderActions';
 import { useStore } from '../../state/store';
-import { useOrdersMessages, type OrdersMessages } from './messages';
+import { useOrdersMessages } from './messages';
+import { OrderActions } from './OrderActions';
 import { openTicket } from '../panels/actions';
 import { lastCellTitle, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
 import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
@@ -35,10 +38,6 @@ function modify(o: WorkingOrder): void {
   s.showToast(useOrdersMessages.now().modifyHint(o.orderId));
 }
 
-function clientLabel(clientId: number, m: OrdersMessages): string {
-  return clientId === 0 ? m.tws : m.clientN(clientId);
-}
-
 export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
   const m = useOrdersMessages();
   const c = useCommon();
@@ -47,6 +46,11 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
   const myClientId = useStore((s) => s.connection.clientId);
   const connected = useStore((s) => s.connection.status === 'connected');
   const quotes = useOrderQuotes(ORDERS_QUOTE_OWNER, orders);
+
+  // Other apps' orders get no updates between IB's lists (main asks every 30 s): ask when the tab opens.
+  useEffect(() => {
+    if (connected) window.tape.refreshOrders().catch(() => undefined);
+  }, [connected]);
 
   return (
     <TableBody
@@ -73,7 +77,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
         const st = orderStatusText(o, m, clock);
         const buy = o.action === 'BUY';
         const child = isChildRow(o, orders);
-        const title = (own ? m.ownOrder(o.orderId, o.clientId) : m.otherOrder(o.orderId, o.clientId)) + (o.message ? `\n${o.message}` : '');
+        const title = (own ? m.ownOrder(o.orderId, o.clientId) : m.otherOrder(o)) + (o.message ? `\n${o.message}` : '');
         const price = orderPriceText(o);
         const quote = quotes[contractKey(o.contract)];
         const last = orderLastPrice(o.contract, quote);
@@ -105,20 +109,8 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             <div className="ellipsis" style={{ color: st.tone === 'ac' ? 'var(--ac)' : 'var(--mu)' }} title={st.text}>
               {st.text}
             </div>
-            <div style={{ display: 'flex', gap: 14, justifyContent: 'flex-end', whiteSpace: 'nowrap' }}>
-              {own && o.status !== 'PendingCancel' && (
-                <>
-                  {canModifyInTicket(o) && (
-                    <div onClick={() => modify(o)} style={{ color: 'var(--ac)', cursor: 'pointer' }}>
-                      {m.modify}
-                    </div>
-                  )}
-                  <div onClick={() => confirmCancel(o)} className="hover-tx" style={{ color: 'var(--dm)', cursor: 'pointer' }}>
-                    {m.cancel}
-                  </div>
-                </>
-              )}
-              {!own && <div style={{ color: 'var(--mu)' }}>{clientLabel(o.clientId, m)}</div>}
+            <div style={{ display: 'flex', gap: 14, justifyContent: 'flex-end', whiteSpace: 'nowrap', minWidth: 0 }}>
+              <OrderActions o={o} onModify={canModifyInTicket(o) ? () => modify(o) : undefined} />
             </div>
           </Row>
         );

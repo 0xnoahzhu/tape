@@ -1,6 +1,9 @@
 import { ConjunctionConnection, Encoder, PriceCondition, TriggerMethod, type Contract, type Order } from './tws';
 import { describe, expect, it } from 'vitest';
+import { stock } from '@shared/contract';
+import type { OrderRequest } from '@shared/types';
 import { decodeFrame, decodeFrameText, formatLogLine, frameBytes, frameLogLine, frameTokens, messageName } from './messageSchema';
+import { buildOrders, buildPreviewOrder, type BuiltOrder } from './orderBuilder';
 import gateway from './tws/__fixtures__/gateway-193.json';
 import synthetic from './tws/__fixtures__/synthetic.json';
 
@@ -331,6 +334,17 @@ describe('decodeFrame', () => {
     // Unset attributes are not listed.
     const plain = Object.fromEntries(decodeFrame('out', encode(193, (enc) => enc.placeOrder(7, contract, { ...order, ...{ sweepToFill: undefined, hidden: undefined, triggerMethod: undefined, discretionaryAmt: undefined, allOrNone: undefined, minQty: undefined, algoStrategy: undefined, whatIf: undefined } }))).fields);
     for (const k of ['sweepToFill', 'hidden', 'triggerMethod', 'discretionaryAmt', 'allOrNone', 'minQty', 'algoStrategy', 'whatIf']) expect(plain).not.toHaveProperty(k);
+  });
+
+  it('shows whatIf=1 for a preview only: an order Tape places never carries it', () => {
+    // The user's logs had only what-if placeOrders: an order built to be placed must decode without it.
+    const request: OrderRequest = { contract: { ...stock('AAPL'), conId: 265598 }, action: 'BUY', orderType: 'LMT', quantity: 100, limitPrice: 158.11, tif: 'DAY', outsideRth: false };
+    const fieldsOf = (b: BuiltOrder) => Object.fromEntries(decodeFrame('out', encode(193, (enc) => enc.placeOrder(b.orderId, b.contract, b.order)), { serverVersion: 193 }).fields);
+    let next = 4;
+    const placed = buildOrders({ ...request, bracket: { takeProfit: 170, stopLoss: 150 } }, { orderId: 3, nextOrderId: () => next++, account: 'U18630011' });
+    expect(placed).toHaveLength(3);
+    for (const b of placed) expect(fieldsOf(b)).not.toHaveProperty('whatIf');
+    expect(fieldsOf(buildPreviewOrder(request, { orderId: 3, account: 'U18630011' }))).toMatchObject({ whatIf: '1' });
   });
 
   it('decodes combo legs of a BAG order', () => {

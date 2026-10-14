@@ -430,6 +430,18 @@ const m = createMessages({
     submitted: (side: string, qty: string, label: string) => `${side} ${qty} ${label} submitted`,
     cancelled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} cancelled`,
     rejected: (side: string, qty: string, label: string) => `${side} ${qty} ${label} rejected`,
+    cancelRefused: (side: string, qty: string, label: string) => `Cancel of ${side} ${qty} ${label} refused`,
+    modifyRefused: (side: string, qty: string, label: string) => `Modify of ${side} ${qty} ${label} refused – order unchanged`,
+    unconfirmed: (side: string, qty: string, label: string) => `${side} ${qty} ${label} not confirmed`,
+    notReported: (side: string, qty: string, label: string) => `${side} ${qty} ${label} no longer working`,
+    filled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} filled`,
+    unconfirmedBody: 'The connection closed after the order was sent, before IB confirmed it: IB may have it. Check Orders after reconnecting before sending it again',
+    notReportedBody: 'IB no longer lists it as working',
+    endedOfflineBody: 'IB no longer lists it as working: it ended while Tape was disconnected',
+    avg: (p: string) => `Avg ${p}`,
+    /** The account a notice is about (accountTag). */
+    paperTag: 'PAPER',
+    liveTag: 'LIVE',
     working: 'awaiting fill',
     market: 'Market',
     limit: (p: string) => `Limit ${p}`,
@@ -469,6 +481,14 @@ const m = createMessages({
     fillTitle: (label: string, buy: boolean, qty: string, units: boolean, one: boolean) =>
       `${label}: ${buy ? 'bought' : 'sold'} ${qty} ${units ? (one ? 'contract' : 'contracts') : one ? 'share' : 'shares'}`,
     fillBody: (avg: string, commission: string, orderId: number) => `Avg ${avg} · Commission ${commission} · Order #${orderId}`,
+    /** Bracket legs, in errors and in what happened to the rest of a bracket. */
+    roles: { main: 'Entry', takeProfit: 'Take-profit', stopLoss: 'Stop-loss' } as Record<BracketRole, string>,
+    leg: (role: string, id: number) => `${role.toLowerCase()} #${id}`,
+    list: (items: string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`),
+    withdrawn: (legs: string) => `Cancel sent for the rest of the bracket: ${legs}`,
+    notWithdrawn: (legs: string) => `The connection changed before the rest of the bracket could be cancelled: check ${legs} in Orders`,
+    entryFilled: (id: number, qty: string, missing: string) => `Entry #${id} has filled ${qty}: the other exit order keeps working, the position has no ${missing.toLowerCase()}`,
+    nothingLeft: 'No other order of the bracket is working',
   },
   zh: {
     buy: '买入',
@@ -476,6 +496,17 @@ const m = createMessages({
     submitted: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已提交`,
     cancelled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已撤销`,
     rejected: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 被拒绝`,
+    cancelRefused: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 撤单被拒绝`,
+    modifyRefused: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 改单被拒绝，订单未变`,
+    unconfirmed: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 未确认`,
+    notReported: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已不在挂单中`,
+    filled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已成交`,
+    unconfirmedBody: '订单发出后、IB 确认前连接已断开：IB 可能已收到该订单。重新连接后请先在订单中查看，再决定是否重新下单',
+    notReportedBody: 'IB 不再将其列为挂单',
+    endedOfflineBody: 'IB 不再将其列为挂单：它在 Tape 断开连接期间已结束',
+    avg: (p: string) => `均价 ${p}`,
+    paperTag: '模拟',
+    liveTag: '实盘',
     working: '等待成交',
     market: '市价',
     limit: (p: string) => `限价 ${p}`,
@@ -513,6 +544,13 @@ const m = createMessages({
     sessions: { regular: '常规时段', extended: '盘前盘后', overnight: '夜盘', overnightDay: '夜盘 + 日盘' } as Record<TradingSession, string>,
     fillTitle: (label: string, buy: boolean, qty: string, units: boolean) => `${label} ${buy ? '买入' : '卖出'} ${qty} ${units ? '张' : '股'}已成交`,
     fillBody: (avg: string, commission: string, orderId: number) => `均价 ${avg} · 佣金 ${commission} · 订单 #${orderId}`,
+    roles: { main: '主单', takeProfit: '止盈单', stopLoss: '止损单' } as Record<BracketRole, string>,
+    leg: (role: string, id: number) => `${role} #${id}`,
+    list: (items: string[]) => items.join('、'),
+    withdrawn: (legs: string) => `已对括号单的其余订单发送撤单：${legs}`,
+    notWithdrawn: (legs: string) => `连接已变化，未能撤销括号单的其余订单：请在订单中查看 ${legs}`,
+    entryFilled: (id: number, qty: string, missing: string) => `主单 #${id} 已成交 ${qty}：另一张平仓单仍然有效，该持仓没有${missing}`,
+    nothingLeft: '括号单的其他订单均未生效',
   },
 });
 
@@ -526,7 +564,7 @@ const inContracts = (c: ContractRef) => c.secType === 'OPT' || c.secType === 'FO
 
 /** The order fields a notification describes (a WorkingOrder, or a request IB never accepted). */
 export type NoticeOrder = Pick<WorkingOrder, 'contract' | 'action' | 'totalQuantity' | 'orderType' | 'limitPrice' | 'auxPrice' | 'trailingPercent' | 'filled'> &
-  Partial<Pick<WorkingOrder, 'limitOffset' | 'percentOffset' | 'algo' | 'allOrNone'>> &
+  Partial<Pick<WorkingOrder, 'limitOffset' | 'percentOffset' | 'algo' | 'allOrNone' | 'avgFillPrice'>> &
   TimingFields;
 
 function trailText(o: NoticeOrder, t: Texts): string {
@@ -590,21 +628,79 @@ export interface NoticeText {
 }
 
 /**
- * "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". A GTD expiry
- * is a time token, shown in the time format of the moment it is read (resolveTimeTokens).
+ * Kinds of order notice: IB's answers (submitted, cancelled, rejected), a cancel or modify IB
+ * refused after Tape's wait, an order the connection lost before IB confirmed it (unconfirmed),
+ * one IB's full list of open orders no longer has (notReported), and another app's or client's
+ * order IB's completed orders show filled (filled: this client gets no executions of it).
  */
-export function orderNotice(o: NoticeOrder, kind: 'submitted' | 'cancelled' | 'rejected', reason?: string): NoticeText {
+export type OrderNoticeKind = 'submitted' | 'cancelled' | 'rejected' | 'cancelRefused' | 'modifyRefused' | 'unconfirmed' | 'notReported' | 'filled';
+
+/**
+ * "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". A GTD expiry
+ * is a time token, shown in the time format of the moment it is read (resolveTimeTokens). A
+ * refusal's body is IB's reason; `outcome` adds what happened to the rest of a bracket, and
+ * `offline` says a notReported order ended while Tape was disconnected.
+ */
+export function orderNotice(o: NoticeOrder, kind: OrderNoticeKind, reason?: string, opts: { outcome?: LocalizedText; offline?: boolean } = {}): NoticeText {
   const label = contractLabel(o.contract);
   const qty = qtyText(o.totalQuantity);
-  const title = m.both((t) => t[kind](o.action === 'BUY' ? t.buy : t.sell, qty, label));
+  // A fill names what filled (all of the order, unless IB says less).
+  const title = m.both((t) => t[kind](o.action === 'BUY' ? t.buy : t.sell, kind === 'filled' && o.filled > 0 ? qtyText(o.filled) : qty, label));
   const body = m.both((t) => {
     const parts = [priceText(o, t), timingText(o, t.sessions, TOKEN_CLOCK)];
     if (kind === 'submitted') parts.push(t.working);
     if (kind === 'cancelled' && o.filled > 0) parts.push(t.filledOf(qtyText(o.filled), qty));
-    if (kind === 'rejected' && reason) return reason;
-    return parts.join(' · ');
+    if (kind === 'filled' && o.avgFillPrice) parts.push(t.avg(px(o.avgFillPrice)));
+    if (kind === 'unconfirmed') return t.unconfirmedBody;
+    if (kind === 'notReported') return opts.offline ? t.endedOfflineBody : t.notReportedBody;
+    return (kind === 'rejected' || kind === 'cancelRefused' || kind === 'modifyRefused') && reason ? reason : parts.join(' · ');
   });
-  return { title, body };
+  const { outcome } = opts;
+  return { title, body: outcome ? { en: `${body.en} · ${outcome.en}`, zh: `${body.zh} · ${outcome.zh}` } : body };
+}
+
+/** A leg of a bracket request (orderBuilder.ts → BuiltOrder.role). */
+export type BracketRole = 'main' | 'takeProfit' | 'stopLoss';
+
+/**
+ * What happened to the rest of a bracket when one leg failed (orders.ts → withdraw): the legs a
+ * cancel was sent for, the legs it could not be sent for (the connection changed), the entry
+ * already filled (the surviving exit stays, `missing` is the failed one), or nothing else working.
+ */
+export type BracketOutcome =
+  | { kind: 'withdrawn' | 'notWithdrawn'; legs: Array<{ role: BracketRole; orderId: number }> }
+  | { kind: 'entryFilled'; entryId: number; filled: number; missing: BracketRole }
+  | { kind: 'nothingLeft' };
+
+export function bracketOutcomeText(r: BracketOutcome): LocalizedText {
+  return m.both((t) => {
+    switch (r.kind) {
+      case 'withdrawn':
+      case 'notWithdrawn':
+        return t[r.kind](t.list(r.legs.map((l) => t.leg(t.roles[l.role], l.orderId))));
+      case 'entryFilled':
+        return t.entryFilled(r.entryId, qtyText(r.filled), t.roles[r.missing]);
+      case 'nothingLeft':
+        return t.nothingLeft;
+    }
+  });
+}
+
+/** "Stop-loss #52" (the English name of a bracket leg, for errors). */
+export const legName = (role: BracketRole, orderId: number): string => `${m('en').roles[role]} #${orderId}`;
+
+/**
+ * The account a notice is about, as the order review and the top bar name it: "PAPER DUP899854",
+ * "LIVE U18630011" (zh 模拟 / 实盘). `account` is empty while Settings › Privacy hides account IDs;
+ * PAPER / LIVE is never left out.
+ */
+export function accountTag(paper: boolean, account: string): LocalizedText {
+  return m.both((t) => [paper ? t.paperTag : t.liveTag, account].filter(Boolean).join(' '));
+}
+
+/** A notice's title with the account it is about: "Buy 100 AAPL submitted · LIVE U18630011". */
+export function withAccount(n: NoticeText, account: LocalizedText | undefined): NoticeText {
+  return account ? { ...n, title: { en: `${n.title.en} · ${account.en}`, zh: `${n.title.zh} · ${account.zh}` } } : n;
 }
 
 /** "AAPL: bought 100 shares" / "Avg 226.95 · Commission 1.00 · Order #4008". */

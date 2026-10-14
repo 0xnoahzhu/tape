@@ -318,6 +318,14 @@ export function sanitizeAlerts(raw: unknown): PriceAlert[] | null {
 // ---------------------------------------------------------------------------
 // Notifications
 
+/** Kinds a notification names an account in (AppNotification.account): orders, fills, option risk. */
+export const ACCOUNT_KINDS: readonly NotificationKind[] = ['order', 'fill', 'opt'];
+
+/** The account of a notice of `kind` (AppNotification.account): an IB account id, else undefined. */
+export function sanitizeNoticeAccount(raw: unknown, kind: NotificationKind): string | undefined {
+  return ACCOUNT_KINDS.includes(kind) && typeof raw === 'string' && raw.length > 0 && raw.length < 32 ? raw : undefined;
+}
+
 function sanitizeNotification(raw: unknown): AppNotification | null {
   if (!isObject(raw) || !nonEmpty(raw.id) || !isFiniteNumber(raw.t)) return null;
   if (!NOTIFICATION_KINDS.includes(raw.kind as NotificationKind)) return null;
@@ -328,6 +336,8 @@ function sanitizeNotification(raw: unknown): AppNotification | null {
   const contract = raw.contract === undefined ? null : sanitizeContract(raw.contract);
   if (contract) n.contract = contract;
   if (raw.orderDone === true && n.kind === 'order') n.orderDone = true;
+  const account = sanitizeNoticeAccount(raw.account, n.kind);
+  if (account) n.account = account;
   return n;
 }
 

@@ -16,6 +16,8 @@ export interface StatusLabels {
   after: (time: string) => string;
   pending: string;
   cancelling: string;
+  /** IB's list of open orders no longer has it (WorkingOrder.notReported). */
+  notReported: string;
   working: string;
   iceberg: string;
   filled: (n: string) => string;
@@ -38,6 +40,7 @@ function isEarly(o: WorkingOrder): boolean {
 
 /** Status text of a working order; its times (good-after, GTD expiry) are written in `clock`'s format. */
 export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock): OrderStatusText {
+  if (o.notReported) return { text: L.notReported, accent: false };
   if (o.status === 'PendingCancel') return { text: L.cancelling, accent: false };
   const early = isEarly(o);
   // TIF with its GTD expiry and any session other than regular hours, as on Portfolio › Orders.

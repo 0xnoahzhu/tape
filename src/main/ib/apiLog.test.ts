@@ -149,6 +149,23 @@ describe('API log', () => {
     expect(tick.fields.map(([k]) => k)).not.toContain('status');
   });
 
+  it('marks IB’s answers to what-if requests with their estimate, so they do not read like orders', async () => {
+    const { log, receive, fire } = await setup();
+    receive(OPEN_ORDER);
+    fire('openOrder', 4012, {}, { whatIf: true }, { status: 'PreSubmitted', initMarginChange: 110.06, maintMarginChange: 1.7976931348623157e308, commission: 1, warningText: '' });
+    receive(OPEN_ORDER);
+    fire('openOrder', 4012, {}, { whatIf: false }, { status: 'PreSubmitted' });
+    const [preview, order] = log.getEntries();
+    expect(preview.fields.slice(-4)).toEqual([
+      ['whatIf', '1'],
+      ['initMarginChange', '110.06'],
+      ['commission', '1'],
+      ['status', 'PreSubmitted'],
+    ]);
+    expect(order.fields.map(([k]) => k)).not.toContain('whatIf');
+    expect(order.fields.at(-1)).toEqual(['status', 'PreSubmitted']);
+  });
+
   it('adds the order state without decoding the frame on the socket path', async () => {
     const { log, receive, fire } = await setup();
     receive(OPEN_ORDER);

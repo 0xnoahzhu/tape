@@ -31,7 +31,7 @@ function openNotification(n: AppNotification): void {
   const s = useStore.getState();
   s.setBell(false);
   if (!n.contract) return;
-  const target = notificationTarget(n, s.page);
+  const target = notificationTarget(n, s.page, s.connection.accounts);
   if (target) openNotificationTarget(n.contract, target);
   else s.selectSymbol(n.contract, knownName(n.contract));
 }
@@ -41,6 +41,7 @@ export function NotificationsTab() {
   const lang = useLang();
   const clock = useClock();
   const all = useStore((s) => s.notifications);
+  const showAccountId = useStore((s) => s.settings.appearance.showAccountId);
   const [filter, setFilter] = useState<NotificationFilter>(lastFilter);
   const items = useMemo(() => filterNotifications(all, filter), [all, filter]);
   const now = useNow(30_000);
@@ -74,7 +75,7 @@ export function NotificationsTab() {
           <div style={{ padding: `32px ${lessGutter(18)} 32px 18px`, textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{m.empty}</div>
         )}
         {items.map((n) => {
-          const text = notificationText(n, lang, clock);
+          const text = notificationText(n, lang, clock, showAccountId);
           return (
           <div
             key={n.id}

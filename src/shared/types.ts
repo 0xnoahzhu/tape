@@ -764,6 +764,59 @@ export interface OrderPreview {
 export interface PlaceOrderResult {
   orderId: number;
   childOrderIds: number[];
+  /**
+   * IB acknowledged every order of the request within the wait. False: they were sent and IB has
+   * not answered yet (its updates, or a refusal, may still come), which is not reported as success.
+   */
+  confirmed: boolean;
+}
+
+export interface ModifyOrderResult {
+  /** IB answered with the change (or an echo with no refusal after it); false: sent, not confirmed yet. */
+  confirmed: boolean;
+}
+
+/**
+ * The order a cancel is for, as the list showed it: main finds it by permId first (unique at IB),
+ * then by client id + order id, and refuses when the order it finds disagrees with this.
+ */
+export interface OrderRef {
+  orderId: number;
+  clientId: number;
+  permId?: number;
+  account?: string;
+}
+
+/**
+ * A cancel's answer: IB cancelled the order, IB has it pending ("PendingCancel"), or it was sent
+ * and IB has not answered within the wait ('sent': never reported as cancelled).
+ */
+export interface CancelResult {
+  status: 'Cancelled' | 'PendingCancel' | 'sent';
+}
+
+/**
+ * What "Cancel all orders" was confirmed for: the account the dialog named, the permIds of every
+ * active order it listed and the session it was opened on. Main refuses it when any differs.
+ */
+export interface CancelAllExpect {
+  account: string;
+  permIds: number[];
+  session: number;
+}
+
+/**
+ * IB's global cancel, once IB's lists were asked again and its completed orders said how the orders
+ * they left out ended: of the orders listed, how many IB cancelled, how many filled (before the
+ * cancel reached them), how many IB no longer lists without saying how (`unknown`: never counted as
+ * cancelled), and how many still work.
+ */
+export interface CancelAllResult {
+  requested: number;
+  cancelled: number;
+  filled: number;
+  unknown: number;
+  stillWorking: number;
 }
 
 /** Order states as reported by IB. */
@@ -838,6 +891,12 @@ export interface WorkingOrder {
   /** Rejection or warning text from IB (error callback or orderState.warningText). */
   message?: string;
   whyHeld?: string;
+  /**
+   * IB's full list of open orders (after a reconnect, every 30 s, around Cancel all) no longer has
+   * this order, which was working: it ended meanwhile, and reqCompletedOrders may still say how.
+   * Shown as not reported, never cancelled or modified; it goes once that answer is in (see orders.ts).
+   */
+  notReported?: true;
   /** Unix ms when this client first saw the order. */
   createdAt: number;
   updatedAt: number;
@@ -893,6 +952,13 @@ export interface ConnectionState {
   farms: Record<string, 'ok' | 'inactive' | 'broken'>;
   /** Market-wide data problem, e.g. 10197 "No market data during competing live session". */
   marketDataIssue?: { code: number; message: string };
+  /**
+   * IB answered a request with 321 "The API interface is currently in Read-Only mode" (TWS / IB
+   * Gateway has Read-Only API on): it refuses orders and cancels. Cleared by the next handshake and
+   * when IB accepts an order request of this client, so it can be stale for a moment after the user
+   * turns the setting off; nothing is refused on it, the UI only warns.
+   */
+  readOnlyApi?: boolean;
   /**
    * TWS / IB Gateway reported 1100 (it lost its own connection to IB) or 2110 (the link is broken,
    * as said to a socket that connects during an outage) and not yet 1101 / 1102: orders and modifies
@@ -982,6 +1048,13 @@ export interface AppNotification {
    * Orders does not list it, so a click opens its instrument as other notifications do.
    */
   orderDone?: true;
+  /**
+   * The account an order, fill or option risk notice is about (its title names it too: PAPER / LIVE
+   * and the id). A click leads to Portfolio › Orders or Trades only while that account's login is
+   * connected: those lists are the connected login's, so another account's notice opens its
+   * instrument instead.
+   */
+  account?: string;
   read: boolean;
 }
 
