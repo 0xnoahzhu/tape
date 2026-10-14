@@ -226,7 +226,7 @@ const en = {
   rules: {
     fill: { l: 'Fills', d: 'Orders fully or partially filled' },
     order: { l: 'Order status', d: 'Submitted, modified, cancelled, rejected' },
-    price: { l: 'Price alerts', d: 'A watchlist symbol hits your level' },
+    price: { l: 'Alerts', d: 'An alert you set goes off' },
     opt: { l: 'Expiry & assignment', d: 'Near expiry, short assignment risk, early exercise before ex-div' },
     conn: { l: 'Connection', d: 'Disconnected from or reconnected to TWS / Gateway' },
     sys: { l: 'System', d: 'Updates, errors' },
@@ -258,7 +258,7 @@ const en = {
   soundCats: {
     order: { l: 'Order notifications', d: 'Submitted, modified, cancelled, rejected' },
     fill: { l: 'Fill notifications', d: 'Full and partial fills' },
-    other: { l: 'Other notifications', d: 'Price alerts, expiry & assignment, connection, system' },
+    other: { l: 'Other notifications', d: 'Alerts, expiry & assignment, connection, system' },
   } as Record<'order' | 'fill' | 'other', Pair>,
   soundCatOff: 'System notifications of this kind are off, so they make no sound',
   soundNames: {
@@ -596,7 +596,7 @@ const zh: typeof en = {
   rules: {
     fill: { l: '成交', d: '订单全部或部分成交' },
     order: { l: '订单状态', d: '提交、改单、撤单、被拒' },
-    price: { l: '价格提醒', d: '自选标的触发你设置的价位' },
+    price: { l: '提醒', d: '你设置的提醒被触发' },
     opt: { l: '期权到期与指派', d: '临近到期、空头被指派风险、除息前提前行权' },
     conn: { l: '连接', d: '与 TWS / Gateway 断开或重连' },
     sys: { l: '系统', d: '更新、错误等' },
@@ -624,7 +624,7 @@ const zh: typeof en = {
   soundCats: {
     order: { l: '下单通知', d: '提交、改单、撤单、被拒' },
     fill: { l: '成交通知', d: '全部成交与部分成交' },
-    other: { l: '其他通知', d: '价格提醒、期权到期与指派、连接、系统' },
+    other: { l: '其他通知', d: '提醒、期权到期与指派、连接、系统' },
   },
   soundCatOff: '这类系统通知已关闭，不会播放提示音',
   soundNames: {

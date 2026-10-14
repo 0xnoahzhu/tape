@@ -1,5 +1,5 @@
 // Candlestick chart with moving averages (MA5 … MA200) and their legend, volume, last-price
-// and price-alert lines, a right price axis, a bottom time axis and a hover crosshair.
+// and price-level alert lines, a right price axis, a bottom time axis and a hover crosshair.
 // Coordinates follow the design: the price SVG uses an 800×300 viewBox and the volume SVG
 // 800×56, both stretched (preserveAspectRatio none) with non-scaling strokes.
 //
@@ -73,7 +73,7 @@ interface Props {
   /** Text shown over an empty chart (loading, error, not connected, no data). */
   message?: string;
   lastPrice?: number;
-  /** Active price-alert levels for this instrument. */
+  /** Levels of the instrument's active price-level alerts (price, bid, ask; alerts/model.ts → alertLevel). */
   alerts: number[];
   /** Moving averages to draw (MA_PERIODS order); their colors are the --ma<period> tokens. */
   mas: readonly MaPeriod[];

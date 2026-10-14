@@ -410,6 +410,12 @@ export interface HistoryRequest {
   slot?: string;
   /** Bypass the cached result and fetch the newest bars (e.g. right after the close). */
   fresh?: boolean;
+  /**
+   * A background load (indicator alerts, main/market/alertBars.ts): it waits behind every view's
+   * request, uses at most one request slot and its own small share of IB's historical requests;
+   * a view asking for the same bars meanwhile lifts it to the view's priority.
+   */
+  background?: boolean;
 }
 
 export interface Bar {
@@ -1020,16 +1026,181 @@ export interface Watchlist {
   groups: WatchGroup[];
 }
 
+/**
+ * How often an alert notifies (moomoo's Only once / Once a day / Always on):
+ * - once: fires once, then turns itself off (resuming it arms it again);
+ * - daily: at most once per New York trading day while the condition holds (shared/session.ts → tradingDay);
+ * - always: every time the condition is met again (after it has gone back, per metric, and a cooldown).
+ */
+export type AlertFrequency = 'once' | 'daily' | 'always';
+
+/** US stock sessions an alert is evaluated in (moomoo: US_PRE / OPEN / US_AFTER / US_OVERNIGHT). */
+export type AlertSession = 'pre' | 'regular' | 'post' | 'overnight';
+
+/** Bar intervals indicator alerts read (shared/alerts.ts → ALERT_TIMEFRAMES). */
+export type AlertTimeframe = Extract<Timeframe, '1m' | '5m' | '15m' | '30m' | '1h' | '1D' | '1W'>;
+
+/** Direction of a cross: up = crosses above (a golden cross for two lines), down = crosses below (a dead cross). */
+export type AlertCross = 'up' | 'down';
+
+/**
+ * What an indicator alert watches (formulas in shared/indicators.ts, Futu / TDX conventions):
+ * - ma / ema price: the close crosses MA(period); lines: MA(fast) crosses MA(slow);
+ * - macd signal: DIF crosses DEA (golden / dead cross); zero: DIF crosses 0;
+ * - kdj cross: K crosses D; level: K, D or J crosses a level;
+ * - rsi level: RSI(period) crosses a level; lines: RSI(fast) crosses RSI(slow);
+ * - boll band: the close crosses the upper, middle or lower band of BOLL(period, k).
+ */
+export type IndicatorSignal =
+  | { ind: 'ma' | 'ema'; kind: 'price'; period: number; cross: AlertCross }
+  | { ind: 'ma' | 'ema'; kind: 'lines'; fast: number; slow: number; cross: AlertCross }
+  | { ind: 'macd'; kind: 'signal' | 'zero'; fast: number; slow: number; signal: number; cross: AlertCross }
+  | { ind: 'kdj'; kind: 'cross'; n: number; m1: number; m2: number; cross: AlertCross }
+  | { ind: 'kdj'; kind: 'level'; n: number; m1: number; m2: number; line: 'k' | 'd' | 'j'; level: number; cross: AlertCross }
+  | { ind: 'rsi'; kind: 'level'; period: number; level: number; cross: AlertCross }
+  | { ind: 'rsi'; kind: 'lines'; fast: number; slow: number; cross: AlertCross }
+  | { ind: 'boll'; kind: 'band'; period: number; k: number; band: 'upper' | 'middle' | 'lower'; cross: AlertCross };
+
+/** The condition of an alert (evaluated by main/market/alertEval.ts). */
+export type AlertRule =
+  // Uptrend / downtrend
+  | { type: 'priceAbove'; value: number }
+  | { type: 'priceBelow'; value: number }
+  /** Change on the day in percent (5 = 5%): against the previous close, after the close against today's close. */
+  | { type: 'dayRise'; pct: number }
+  | { type: 'dayFall'; pct: number }
+  /** Change against the price `minutes` ago, in percent. */
+  | { type: 'windowRise'; minutes: 3 | 5; pct: number }
+  | { type: 'windowFall'; minutes: 3 | 5; pct: number }
+  // Market data
+  /** IB's day volume (shares; contracts for options and futures), extended hours included. */
+  | { type: 'volumeAbove'; shares: number }
+  /** Traded value in the contract's currency, approximated as volume × the day's VWAP (stocks only). */
+  | { type: 'turnoverAbove'; amount: number }
+  | { type: 'bidAbove'; value: number }
+  | { type: 'askBelow'; value: number }
+  | { type: 'bidSizeAbove'; shares: number }
+  | { type: 'askSizeAbove'; shares: number }
+  // Indicators
+  /** `on`: 'close' tests closed bars when a new bar starts; 'live' tests the forming bar (at most one fire per bar). */
+  | { type: 'indicator'; timeframe: AlertTimeframe; on: 'close' | 'live'; signal: IndicatorSignal }
+  // Events
+  | { type: 'halt'; dir: 'halted' | 'resumed' };
+
+export type AlertRuleType = AlertRule['type'];
+
+/**
+ * An alert on one instrument. Main is the only writer of `active`, `lastTriggeredAt` and
+ * `lastValue` (IPC upsertPriceAlert / setPriceAlertsActive / deletePriceAlerts).
+ */
 export interface PriceAlert {
   id: string;
   contract: ContractRef;
-  condition: 'above' | 'below';
-  price: number;
-  repeat: boolean;
-  createdAt: number;
-  lastTriggeredAt?: number;
-  /** One-shot alerts are disabled after firing; repeating alerts re-arm after the price crosses back. */
+  /**
+   * The condition. When `unsupported` is set it is whatever a newer Tape wrote (only `type` can be
+   * relied on; `frequency` and `sessions` are kept as written too) and is never evaluated.
+   */
+  rule: AlertRule;
+  frequency: AlertFrequency;
+  /** US stocks only; absent = DEFAULT_ALERT_SESSIONS (shared/alerts.ts). Other instruments ignore it. */
+  sessions?: AlertSession[];
+  /** Remarks, trimmed, at most NOTE_MAX code points. */
+  note?: string;
+  /** false: paused by the user, or spent ('once' after firing). */
   active: boolean;
+  createdAt: number;
+  /**
+   * The user's last change of the trigger (rule, frequency, sessions) or of `active` (pause,
+   * resume); a note-only edit does not count. A trigger before it belongs to the previous setup:
+   * it neither holds back a 'daily' alert nor marks the alert triggered.
+   */
+  updatedAt?: number;
+  lastTriggeredAt?: number;
+  /** The measured value at the last trigger (price, percent, shares, the indicator's value). */
+  lastValue?: number;
+  /**
+   * A rule or frequency this version does not know (written by a newer Tape) or cannot read: kept
+   * as it was, `active` included, and never evaluated here, so a downgrade neither deletes nor turns
+   * off what the newer Tape runs. Its `active` means nothing to this version (shown as off).
+   */
+  unsupported?: true;
+  // Legacy mirror of priceAbove / priceBelow, written for Tape 0.12 and older, whose loader
+  // requires these fields: a downgrade keeps price alerts. Never read when `rule` is present.
+  condition?: 'above' | 'below';
+  price?: number;
+  repeat?: boolean;
+}
+
+/**
+ * Whether main is watching an alert now (not persisted; getAlertStatuses / `alertStatuses` events):
+ * - ok: evaluated on live data;
+ * - triggered: a 'once' alert that fired (now off), or a 'daily' one that fired this trading day;
+ * - paused: turned off by the user;
+ * - unsupported: written by a newer Tape (see PriceAlert.unsupported);
+ * - offline: Tape is not connected to IB;
+ * - noLine: no market data line was free (Tape's 95-line limit);
+ * - noData: IB sent an error for the line (permissions, a competing session, …), or the indicator's
+ *   bars could not be loaded or are too few (`reason`, `message`);
+ * - outOfSession: a US stock outside the alert's sessions (nothing fires; re-arming goes on);
+ * - frozen: the quote is frozen (IB market data type 2 / 4): nothing fires;
+ * - delayed: delayed data (type 3): price and day-change rules fire, marked "Delayed 15 min";
+ *   the others (`needsLive`) wait for live data;
+ * - waiting: no quote yet, the 3 / 5-minute window is filling, the bars are loading, or the quote
+ *   lacks what the rule measures (`reason`).
+ */
+export type AlertState =
+  | 'ok'
+  | 'triggered'
+  | 'paused'
+  | 'unsupported'
+  | 'offline'
+  | 'noLine'
+  | 'noData'
+  | 'outOfSession'
+  | 'frozen'
+  | 'delayed'
+  | 'waiting';
+
+/**
+ * Why an alert waits, has no data or is not evaluated (the UI has a text for each):
+ * - noQuote: no quote since Tape (re)connected or subscribed (waiting);
+ * - window: the 3 / 5-minute price window is filling (waiting, `readyIn`);
+ * - bars: the indicator's bars are loading (waiting);
+ * - noValue: the quote lacks what the rule measures: no previous close yet, no VWAP (turnover), no
+ *   size, no halt status (waiting);
+ * - lineError: IB's error on the market data line (noData, `message`);
+ * - barsError: the bars could not be loaded (noData, `message`);
+ * - tooFewBars: the interval's bars are fewer than the indicator's period needs (noData);
+ * - seriesLimit: more indicator series than MAX_INDICATOR_SERIES are active (noData);
+ * - newerVersion: a rule written by a newer Tape (unsupported).
+ */
+export type AlertStatusReason =
+  | 'noQuote'
+  | 'window'
+  | 'bars'
+  | 'noValue'
+  | 'lineError'
+  | 'barsError'
+  | 'tooFewBars'
+  | 'seriesLimit'
+  | 'newerVersion';
+
+export interface AlertStatus {
+  id: string;
+  state: AlertState;
+  reason?: AlertStatusReason;
+  /** The measured value now: price, percent, shares, amount, or the indicator's main line. */
+  value?: number;
+  /** Indicator lines at the evaluated bar, e.g. { DIF: 1.21, DEA: 1.31, MACD: −0.2 }. */
+  detail?: Record<string, number>;
+  /** A day-change rule measured against today's close (after hours), not the previous close. */
+  afterHours?: true;
+  /** The rule needs live data (window, volume, turnover, bid / ask, sizes, indicators, halts): it waits on delayed or frozen data. */
+  needsLive?: true;
+  /** Waiting for a 3 / 5-minute window: milliseconds until it covers the rule's minutes. */
+  readyIn?: number;
+  /** IB's error text (noLine, noData lineError) or the load's (barsError), English as given. */
+  message?: string;
 }
 
 export type NotificationKind = 'fill' | 'order' | 'price' | 'opt' | 'conn' | 'sys';
@@ -1152,6 +1323,8 @@ export interface AppSnapshot {
   executions: Execution[];
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
+  /** Whether main is watching each alert now (updates: `alertStatuses` events). */
+  alertStatuses: AlertStatus[];
   notifications: AppNotification[];
   logFilePath: string;
   lock: LockState;

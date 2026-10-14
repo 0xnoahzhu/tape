@@ -5,7 +5,7 @@
 // Feature-local UI state should stay in components or feature-local stores.
 
 import { create } from 'zustand';
-import { presetPrice } from '../features/alerts/model';
+import { duplicateForm, formFromAlert, newAlertForm, type AlertFormState } from '../features/alerts/model';
 import { ticketTimingFor } from '../features/orders/model';
 import { newCondition } from '../features/ticket/ticketConditions';
 import { ofConnectedAccounts } from '../lib/orders';
@@ -16,6 +16,7 @@ import type { PanelId } from '../features/panels/model';
 import type { MarketDataQuality, OrderRisk } from '../features/ticket/orderRisk';
 import type {
   AccountSummary,
+  AlertStatus,
   AlgoStrategy,
   ApiLogEntry,
   AppNotification,
@@ -250,12 +251,7 @@ export interface PendingOrder {
   origin?: PanelId;
 }
 
-export interface AlertFormState {
-  contract: ContractRef;
-  condition: 'above' | 'below';
-  price: string;
-  repeat: boolean;
-}
+export type { AlertFormState } from '../features/alerts/model';
 
 /** Set, change or remove the lock PIN. `lockAfter`: lock once a new PIN is saved (lock button, ⌘L). */
 export interface PinDialogRequest {
@@ -300,6 +296,8 @@ interface DataState {
   notifications: AppNotification[];
   watchlists: Watchlist[];
   priceAlerts: PriceAlert[];
+  /** Whether main watches each alert (`alertStatuses` events; values as of the last change, getAlertStatuses for current ones). */
+  alertStatuses: AlertStatus[];
   /** Mirror of main's lock state (main is the only authority). */
   lock: LockState;
 }
@@ -324,6 +322,7 @@ interface UiState {
    * "Cancelling…" instead of Cancel, so a second click sends nothing (state/orderActions.ts).
    */
   pendingCancels: string[];
+  /** The New / Edit alert dialog (features/alerts/PriceAlertDialog.tsx). */
   alertForm: AlertFormState | null;
   toast: Toast | null;
   /** Incremented to ask the symbol search to take focus (⌘K). */
@@ -371,7 +370,11 @@ interface Actions {
   setCancelAll(req: CancelAllRequest | null): void;
   setCancelPending(key: string, pending: boolean): void;
   setPendingOrder(p: PendingOrder | null): void;
-  openAlertForm(contract: ContractRef): void;
+  /**
+   * Opens the alert dialog: a new alert on `contract`, or with `alert` editing it ('edit') or
+   * starting a copy ('duplicate'). Opened from the bell's list, the bell stays open behind it.
+   */
+  openAlertForm(contract: ContractRef, alert?: PriceAlert, mode?: 'edit' | 'duplicate'): void;
   setAlertForm(form: AlertFormState | null): void;
   showToast(text: string, tone?: Toast['tone']): void;
   focusSearch(): void;
@@ -532,6 +535,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   notifications: [],
   watchlists: [],
   priceAlerts: [],
+  alertStatuses: [],
   lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui
@@ -600,13 +604,13 @@ export const useStore = create<StoreState>()((set, get) => ({
       return { pendingCancels: pending ? [...s.pendingCancels, key] : s.pendingCancels.filter((k) => k !== key) };
     }),
   setPendingOrder: (pendingOrder) => set({ pendingOrder }),
-  openAlertForm: (contract) => {
-    const q = get().quotes[contractKey(contract)];
-    const last = q ? (q.last ?? q.close) : undefined;
-    set({
-      alertForm: { contract, condition: 'above', price: last ? presetPrice(last, 2) : '', repeat: false },
-      bellOpen: false,
-    });
+  openAlertForm: (contract, alert, mode = 'edit') => {
+    const lang = get().settings.appearance.language;
+    if (alert) {
+      set({ alertForm: mode === 'edit' ? formFromAlert(alert, lang) : duplicateForm(alert, lang) });
+      return;
+    }
+    set({ alertForm: newAlertForm(contract, get().quotes[contractKey(contract)], lang) });
   },
   setAlertForm: (alertForm) => set({ alertForm }),
   showToast: (text, tone = 'info') => set({ toast: { id: toastSeq++, text, tone } }),

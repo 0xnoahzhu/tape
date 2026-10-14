@@ -1,4 +1,4 @@
-// Right-click menu of a watchlist row: move to group, add to another list, price alert, remove.
+// Right-click menu of a watchlist row: move to group, add to another list, add an alert, remove.
 
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { contractLabel } from '@shared/contract';

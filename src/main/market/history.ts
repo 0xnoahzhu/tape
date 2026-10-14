@@ -43,9 +43,12 @@
 // 60 per 10 minutes) are enforced by the send queue (ib/tws/pacing.ts). This service bounds what
 // waits there: at most MAX_CONCURRENT requests are out (at most MAX_PAGE_CONCURRENT of them for
 // pages) and at most MAX_QUEUED wait (beyond that the oldest of the lowest priority is dropped);
-// requests for the newest bars go first, then background refreshes, then pages. Pages use at
-// most PAGE_BUDGET of IB's 60 historical requests per 10 minutes, so scrolling far back never
-// leaves the newest bars of the next chart waiting in IB's pacing. A newer request from the same
+// requests for the newest bars go first, then background refreshes, then pages, then `background`
+// requests (indicator alerts, market/alertBars.ts). Pages use at most PAGE_BUDGET of IB's 60
+// historical requests per 10 minutes, so scrolling far back never leaves the newest bars of the
+// next chart waiting in IB's pacing; background requests use at most BACKGROUND_BUDGET of them and
+// one request slot (MAX_BACKGROUND_CONCURRENT), and a view asking for the same bars while one waits
+// lifts it to its own priority (it no longer counts as background). A newer request from the same
 // slot (e.g. the chart) supersedes older ones, cancelling them at IB when already sent; a slot's
 // pages are superseded by its newer pages and by a newest-bars request for another series.
 // Identical requests share one load (pages are remembered for 15 s). A 162 pacing
@@ -112,6 +115,12 @@ const MAX_PAGE_CONCURRENT = 2;
  */
 export const PAGE_BUDGET = 40;
 export const PAGE_BUDGET_WINDOW_MS = 600_000;
+/**
+ * Background requests (indicator alerts) within PAGE_BUDGET_WINDOW_MS, enough for 20 alert series
+ * reloading every 30 minutes; they take one request slot at a time.
+ */
+export const BACKGROUND_BUDGET = 12;
+const MAX_BACKGROUND_CONCURRENT = 1;
 /** Requests waiting beyond the ones in flight; past this the oldest of the lowest priority is dropped. */
 export const MAX_QUEUED = 20;
 export const BACKOFF_START_MS = 10_000;
@@ -140,8 +149,10 @@ const DAY_MS = 86_400_000;
 /** An 'N S' window (bars below a minute). */
 const isSecondsWindow = (duration: string) => /^\d+ S$/.test(duration.trim());
 
-const Priority = { Newest: 0, Refresh: 1, Page: 2 } as const;
+const Priority = { Newest: 0, Refresh: 1, Page: 2, Background: 3 } as const;
 type Priority = (typeof Priority)[keyof typeof Priority];
+/** Priorities whose IB requests count against a budget (pages, background loads). */
+const budgeted = (p: Priority) => p === Priority.Page || p === Priority.Background;
 
 export class SupersededError extends Error {
   constructor() {
@@ -177,12 +188,16 @@ interface Job<T = unknown> {
   abort: AbortController;
   /** Removes the job from its map of running jobs. */
   forget(): void;
+  /** Started by a background request and not joined by a view since (its requests wait behind the views'). */
+  background?: boolean;
+  /** Lifts a background job's waiting request to a view's priority. */
+  promote?(): void;
 }
 
 interface Ticket {
   priority: Priority;
   seq: number;
-  /** Page budget the request takes: 1 for a page's reqHistoricalData, 0 for anything else. */
+  /** Budget the request takes: 1 for a page's or a background load's reqHistoricalData, 0 for anything else. */
   cost: number;
   grant(): void;
   fail(err: Error): void;
@@ -217,23 +232,42 @@ export function createHistoryService(ctx: MainContext): HistoryService {
 
   const waiting: Ticket[] = [];
   let active = 0;
-  let activePages = 0;
+  /** Requests out per budgeted priority (pages, background loads). */
+  const activeOf = new Map<Priority, number>([
+    [Priority.Page, 0],
+    [Priority.Background, 0],
+  ]);
   let ticketSeq = 0;
   let pausedUntil = 0;
   let backoffMs = BACKOFF_START_MS;
   let pumpTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Times page requests were let out within the budget window, one entry per unit of cost. */
-  const pageSpent: number[] = [];
+  /** Times budgeted requests were let out within the budget window, one entry per unit of cost. */
+  const spent = new Map<Priority, number[]>([
+    [Priority.Page, []],
+    [Priority.Background, []],
+  ]);
+  const budgetOf = (p: Priority) => (p === Priority.Page ? PAGE_BUDGET : BACKGROUND_BUDGET);
+  const concurrencyOf = (p: Priority) => (p === Priority.Page ? MAX_PAGE_CONCURRENT : MAX_BACKGROUND_CONCURRENT);
 
-  /** Milliseconds until a page request of `cost` fits the page budget (0: now). */
-  const budgetWait = (cost: number, now: number): number => {
-    while (pageSpent.length && now - pageSpent[0] >= PAGE_BUDGET_WINDOW_MS) pageSpent.shift();
-    const excess = pageSpent.length + cost - PAGE_BUDGET;
-    return excess > 0 ? pageSpent[Math.min(excess, pageSpent.length) - 1] + PAGE_BUDGET_WINDOW_MS - now : 0;
+  /** Milliseconds until a request of `cost` fits its priority's budget (0: now). */
+  const budgetWait = (priority: Priority, cost: number, now: number): number => {
+    const list = spent.get(priority)!;
+    while (list.length && now - list[0] >= PAGE_BUDGET_WINDOW_MS) list.shift();
+    const excess = list.length + cost - budgetOf(priority);
+    return excess > 0 ? list[Math.min(excess, list.length) - 1] + PAGE_BUDGET_WINDOW_MS - now : 0;
   };
-  const spend = (cost: number) => {
+  const spend = (priority: Priority, cost: number) => {
+    const list = spent.get(priority);
+    if (!list) return;
     const now = Date.now();
-    for (let i = 0; i < cost; i++) pageSpent.push(now);
+    for (let i = 0; i < cost; i++) list.push(now);
+  };
+
+  /** Puts a ticket in the queue: after those of its priority and better, before the others. */
+  const enqueue = (ticket: Ticket) => {
+    let i = waiting.length;
+    while (i > 0 && waiting[i - 1].priority > ticket.priority) i--;
+    waiting.splice(i, 0, ticket);
   };
 
   const pump = () => {
@@ -248,12 +282,12 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     let wake = Infinity;
     for (let i = 0; i < waiting.length && active < MAX_CONCURRENT; ) {
       const t = waiting[i];
-      if (t.priority === Priority.Page) {
-        if (activePages >= MAX_PAGE_CONCURRENT) {
+      if (budgeted(t.priority)) {
+        if (activeOf.get(t.priority)! >= concurrencyOf(t.priority)) {
           i++;
           continue;
         }
-        const wait = budgetWait(t.cost, now);
+        const wait = budgetWait(t.priority, t.cost, now);
         if (wait > 0) {
           wake = Math.min(wake, wait);
           i++;
@@ -266,11 +300,14 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     if (wake < Infinity) pumpTimer = setTimeout(pump, wake);
   };
 
-  /** Waits for a request slot (by priority, then first come); resolves with its release. */
-  const acquire = (priority: Priority, signal: AbortSignal, cost = 0): Promise<() => void> =>
+  /**
+   * Waits for a request slot (by priority, then first come); resolves with its release. `onQueued`
+   * gets a function that lifts the request, while it waits, to the newest bars' priority without a
+   * budget (a background load a view joined); it returns whether the request was still waiting.
+   */
+  const acquire = (priority: Priority, signal: AbortSignal, cost = 0, onQueued?: (promote: () => boolean) => void): Promise<() => void> =>
     new Promise((resolve, reject) => {
       if (signal.aborted) return reject(abortReason(signal));
-      const page = priority === Priority.Page;
       const onAbort = () => {
         const i = waiting.indexOf(ticket);
         if (i >= 0) waiting.splice(i, 1);
@@ -282,15 +319,16 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         cost,
         grant() {
           signal.removeEventListener('abort', onAbort);
+          const kind = ticket.priority;
           active++;
-          if (page) activePages++;
-          spend(cost);
+          if (budgeted(kind)) activeOf.set(kind, activeOf.get(kind)! + 1);
+          spend(kind, ticket.cost);
           let released = false;
           resolve(() => {
             if (released) return;
             released = true;
             active--;
-            if (page) activePages--;
+            if (budgeted(kind)) activeOf.set(kind, activeOf.get(kind)! - 1);
             pump();
           });
         },
@@ -300,9 +338,17 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         },
       };
       signal.addEventListener('abort', onAbort, { once: true });
-      let i = waiting.length;
-      while (i > 0 && waiting[i - 1].priority > priority) i--;
-      waiting.splice(i, 0, ticket);
+      onQueued?.(() => {
+        const i = waiting.indexOf(ticket);
+        if (i < 0) return false;
+        waiting.splice(i, 1);
+        ticket.priority = Priority.Newest;
+        ticket.cost = 0;
+        enqueue(ticket);
+        pump();
+        return true;
+      });
+      enqueue(ticket);
       while (waiting.length > MAX_QUEUED) {
         const lowest = waiting[waiting.length - 1].priority;
         const [dropped] = waiting.splice(
@@ -377,8 +423,14 @@ export function createHistoryService(ctx: MainContext): HistoryService {
 
   /** Fetches under a permit, with one retry after a pacing violation. */
   const fetchBars = async (job: Job, spec: HistorySpec, contract: ContractRef, duration: string, end: string, priority: Priority): Promise<Bar[]> => {
-    const cost = priority === Priority.Page ? 1 : 0;
-    const release = await acquire(priority, job.abort.signal, cost);
+    let cost = budgeted(priority) ? 1 : 0;
+    const release = await acquire(priority, job.abort.signal, cost, (promote) => {
+      if (priority !== Priority.Background) return;
+      job.promote = () => {
+        job.background = false;
+        if (promote()) cost = 0;
+      };
+    });
     try {
       try {
         const bars = await requestBars(job, spec, contract, duration, end);
@@ -388,7 +440,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         if (!isPacingViolation(err)) throw err;
         pauseForPacing();
         await sleep(Math.max(0, pausedUntil - Date.now()), job.abort.signal);
-        spend(cost);
+        spend(priority, cost);
         const bars = await requestBars(job, spec, contract, duration, end);
         backoffMs = BACKOFF_START_MS;
         return bars;
@@ -627,14 +679,16 @@ export function createHistoryService(ctx: MainContext): HistoryService {
       throw new Error(NOT_CONNECTED);
     }
     const nowSec = Math.floor(now / 1000);
-    let priority: Priority = Priority.Newest;
+    let early = false;
+    // Read at each request: a view may join a background load meanwhile (Job.promote).
+    const priority = (): Priority => (job.background ? Priority.Background : early ? Priority.Refresh : Priority.Newest);
     if (plan.kind === 'tail') {
       if (!fresh && !newestBarsStale(req.timeframe, cov.fetchedAt!, now)) {
         // Only the forming bar can have moved: answer now, refresh the tail in the background.
         answerEarly(job, newestAnswer(spec, stored, cov, windowStart, now));
-        priority = Priority.Refresh;
+        early = true;
       }
-      const tail = await fetchBars(job, spec, req.contract, plan.duration, '', priority);
+      const tail = await fetchBars(job, spec, req.contract, plan.duration, '', priority());
       if (!historyAdjusted(stored, tail)) {
         storeBars(spec, job.series, tail);
         const range = tail.length ? claimStart({ spec, contract: req.contract, end: nowSec, duration: plan.duration, bars: tail }) : undefined;
@@ -644,7 +698,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
       // IB adjusted the history (a split): the window is loaded again, older coverage is dropped.
       console.warn(`[history] ${job.series}: history was adjusted, reloading`);
     }
-    const bars = await fetchBars(job, spec, req.contract, spec.duration, '', priority);
+    const bars = await fetchBars(job, spec, req.contract, spec.duration, '', priority());
     storeBars(spec, job.series, bars);
     const start = claimStart({ spec, contract: req.contract, end: nowSec, duration: spec.duration, bars });
     // A split while the chart was not opened (a full load after a long time) makes older pages stale too.
@@ -841,14 +895,27 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     if (pending && pending.series !== series) supersede(pending, pageSlot(slot));
   };
 
-  /** Joins the running job for `key`, or starts one. */
-  const run = <T>(map: Map<string, Job<T>>, key: string, series: string, slot: string | undefined, body: (job: Job<T>) => Promise<T>, onValue: (value: T) => void, onError: (key: string, err: Error, job: Job<T>) => void): Promise<T> =>
+  /**
+   * Joins the running job for `key`, or starts one. A view (`background` false) joining a
+   * background load lifts it to its own priority.
+   */
+  const run = <T>(
+    map: Map<string, Job<T>>,
+    key: string,
+    series: string,
+    slot: string | undefined,
+    body: (job: Job<T>) => Promise<T>,
+    onValue: (value: T) => void,
+    onError: (key: string, err: Error, job: Job<T>) => void,
+    background = false,
+  ): Promise<T> =>
     new Promise<T>((resolve, reject) => {
       const waiter: Waiter<T> = { slot, resolve, reject };
       const running = map.get(key);
       if (running) {
         running.waiters.add(waiter);
         claimSlot(slot, running as Job);
+        if (!background && running.background) running.promote?.();
         return;
       }
       const job: Job<T> = {
@@ -861,6 +928,14 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         forget: () => {
           if (map.get(key) === job) map.delete(key);
         },
+        ...(background
+          ? {
+              background: true,
+              promote: () => {
+                job.background = false;
+              },
+            }
+          : {}),
       };
       map.set(key, job);
       claimSlot(slot, job as Job);
@@ -939,6 +1014,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
           failures.delete(key);
         },
         (_k, err, job) => remembered(key, err, job),
+        req.background === true,
       );
     },
 

@@ -7,7 +7,7 @@ import type { HistoryService } from '../context';
 import type { MemoryDatabase } from '../db/memory';
 import type { SeriesCoverage } from './coverage';
 import { createFakeContext, createFakeIb } from './fakeIb';
-import { BACKOFF_START_MS, COVERAGE_NS, createHistoryService, HEAD_ERROR_MS, MAX_QUEUED, PAGE_BUDGET, PAGE_BUDGET_WINDOW_MS, PAGE_TTL_MS, SupersededError } from './history';
+import { BACKGROUND_BUDGET, BACKOFF_START_MS, COVERAGE_NS, createHistoryService, HEAD_ERROR_MS, MAX_QUEUED, PAGE_BUDGET, PAGE_BUDGET_WINDOW_MS, PAGE_TTL_MS, SupersededError } from './history';
 import { historySpec, parseBarTime, seriesKey } from './historyParams';
 import { ibEndDateTime, weekdaysBackStart } from './historyPages';
 
@@ -677,6 +677,65 @@ describe('scheduling', () => {
     t.answerCall(t.hist()[5]);
     await latest;
     expect(t.fake.callsOf('cancelHistoricalData')).toEqual([]);
+  });
+
+  it('lets background loads (indicator alerts) out after views and pages, one at a time', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    await t.ctx.db.kv.set(COVERAGE_NS, 'head|STK:A|TRADES|1', { head: day('20000103') });
+    t.manual();
+    const sym = (c: unknown[]) => (c[1] as { symbol: string }).symbol;
+    const busy = ['S1', 'S2', 'S3', 'S4', 'S5'].map((s) => t.get({ contract: stock(s), timeframe: '1D' }));
+    await t.flush();
+    const bg = ['B1', 'B2'].map((s) => t.get({ contract: stock(s), timeframe: '1D', background: true }));
+    const page = t.older({ contract: stock('A'), timeframe: '1D' }, day('20200101'), 10);
+    const newest = t.get({ contract: stock('N'), timeframe: '1D' });
+    await t.flush();
+    for (const c of t.hist()) t.answerCall(c);
+    await t.flush();
+    expect(t.hist().map(sym).slice(5)).toEqual(['N', 'A', 'B1']);
+    for (const c of t.hist().slice(5)) t.answerCall(c);
+    await t.flush();
+    // B2 once B1 is done (the empty page goes on further back meanwhile).
+    expect(t.hist().map(sym).slice(8)).toContain('B2');
+    t.auto();
+    for (const c of t.hist().slice(8)) t.answerCall(c);
+    await Promise.all([...busy, ...bg, page, newest]);
+  });
+
+  it('lifts a waiting background load to the priority of a view that asks for the same bars', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    await t.ctx.db.kv.set(COVERAGE_NS, 'head|STK:A|TRADES|1', { head: day('20000103') });
+    t.manual();
+    const sym = (c: unknown[]) => (c[1] as { symbol: string }).symbol;
+    const busy = ['S1', 'S2', 'S3', 'S4', 'S5'].map((s) => t.get({ contract: stock(s), timeframe: '1D' }));
+    await t.flush();
+    const page = t.older({ contract: stock('A'), timeframe: '1D' }, day('20200101'), 10);
+    const alert = t.get({ contract: stock('AAPL'), timeframe: '1D', background: true, slot: 'alerts:STK:AAPL|1D' });
+    await t.flush();
+    const chart = t.get({ contract: stock('AAPL'), timeframe: '1D', slot: 'chart' });
+    t.answerCall(t.hist()[0]);
+    await t.flush();
+    // The chart's bars go before the page; one request answers both.
+    expect(t.hist().map(sym).slice(5)).toEqual(['AAPL']);
+    t.auto();
+    for (const c of t.hist().slice(1)) t.answerCall(c);
+    expect(await chart).toEqual(await alert);
+    await Promise.all([...busy, page]);
+  });
+
+  it('keeps background loads within their share of the historical data budget', async () => {
+    const t = setup(ny('2026-10-02', '17:00'));
+    t.answers.set('2 Y', [row('20241002', 5)]);
+    for (let i = 0; i < BACKGROUND_BUDGET; i++) await t.get({ contract: stock(`S${i}`), timeframe: '1D', background: true });
+    expect(t.hist()).toHaveLength(BACKGROUND_BUDGET);
+    const late = t.get({ contract: stock('LATE'), timeframe: '1D', background: true });
+    await t.flush();
+    expect(t.hist()).toHaveLength(BACKGROUND_BUDGET);
+    // A view's request goes at once.
+    expect(closes(await t.get({ contract: stock('NEW'), timeframe: '1D' }))).toEqual([5]);
+    await vi.advanceTimersByTimeAsync(PAGE_BUDGET_WINDOW_MS);
+    expect(closes(await late)).toEqual([5]);
+    expect(t.hist()).toHaveLength(BACKGROUND_BUDGET + 2);
   });
 
   it('keeps at most five requests out and bounds the waiting ones', async () => {

@@ -10,6 +10,7 @@ import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { SoundCategory } from '@shared/notificationSounds';
 import type {
   AccountSummary,
+  AlertStatus,
   ApiLogEntry,
   AppNotification,
   Bar,
@@ -247,9 +248,25 @@ export interface CorporateEventsService {
   getEarnings(underlyings: ContractRef[]): Promise<CorporateEarnings>;
 }
 
-/** Evaluates price alerts against live quotes and keeps their instruments subscribed. */
+/**
+ * The alerts engine (market/alerts.ts): keeps the list, evaluates it against quotes, price windows
+ * and bars, and keeps the instruments of active alerts subscribed. Main is the only writer of
+ * `active`, `lastTriggeredAt` and `lastValue`; the renderer changes one alert at a time.
+ */
 export interface AlertService {
-  save(alerts: PriceAlert[]): void;
+  /** The stored alerts (the snapshot's priceAlerts). */
+  list(): PriceAlert[];
+  /** Whether each alert is watched now, in list order (recomputed on each call). */
+  statuses(): AlertStatus[];
+  /**
+   * Creates or edits an alert (it may come from the renderer, so it is checked). An edit keeps the
+   * alert's `active`, `createdAt`, `lastTriggeredAt` and `lastValue`; a new alert whose condition
+   * is already met fires at once. Throws when invalid or over a limit.
+   */
+  upsert(alert: PriceAlert): void;
+  /** Pauses or resumes alerts; resuming arms them again (a condition already met fires at once). */
+  setActive(ids: string[], active: boolean): void;
+  remove(ids: string[]): void;
 }
 
 export interface AccountService {

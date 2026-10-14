@@ -66,7 +66,7 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
-  delayed data keeps seconds bars from being live), session status, the watchlist star and price-alert bell
+  delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity, average
   cost, value, % of net liquidation, unrealized and day P&L) and open orders (time, side, contract, quantity
   @ price, last price where the panel is wide enough, status, Modify / Cancel), under column names; a
@@ -131,7 +131,7 @@ Tabs Positions, Orders and Trades (⌘3 / Ctrl+3 opens Orders).
   the switch yourself, and a book from some exchanges only (IB's 2152, e.g. IEX only) leaves it off, with a
   note under the switch.
 
-**Notifications and price alerts** — fills, order updates, price alerts, option risk alerts and connection
+**Notifications** — fills, order updates, alerts, option risk alerts and connection
 events appear in the bell; each kind can also be pushed to the system notification center, with a sound
 switch. Turning off the system notifications of fills, order updates, the connection or option risk asks
 first, and so do turning the sound off and choosing *None* for the order or other sounds (critical
@@ -149,6 +149,60 @@ notification server decides the sound. Clicking a fill opens Portfolio › Trade
 Orders (not a cancelled or rejected order, which that tab no longer lists: it counts as any other
 notification), an option risk alert the option chain; other notifications about an instrument open it in
 the chart (from the bell, outside Settings, they only select it).
+
+**Alerts** — moomoo-style alerts on any instrument, from the bell above the chart, a watchlist row's
+right-click menu or *Add for …* in the bell. The dialog shows the instrument and, outside regular hours, a
+*Pre* / *Post* / *Overnight* tag with that session's price and change, then the alert type, grouped:
+- *Uptrend / Downtrend*: rises above / falls below a price, intraday rise / fall exceeds a percent (after
+  the close against today's close), 3-minute and 5-minute rise / fall exceeds a percent;
+- *Market data*: volume exceeds, turnover exceeds (about volume × the day's VWAP; stocks), bid rises
+  above, ask falls below, bid / ask size exceeds. *Turnover ratio* is listed but unavailable: IB does not
+  provide shares outstanding;
+- *Indicators*: MA and EMA (the price crosses a line, golden / dead cross), MACD (golden / dead cross, DIF
+  crosses 0), KDJ (golden / dead cross, K, D or J crosses a level), RSI (crosses a level, golden / dead
+  cross) and BOLL (crosses a band), with Futu's default parameters, an interval (1m 5m 15m 30m 1h D W),
+  *On bar close* or *Real time*, and a preview of the values the alert tests now;
+- *Events*: trading halted / resumed.
+
+Types an instrument cannot have are greyed out with the reason (no volume for FX, indices and combos,
+turnover for stocks only, no bid / ask on indices). Values come with presets (−5 / −2 / +2 / +5 % of the
+last price, 1–10 %, multiples of the average volume, 1K / 5K / 10K) and amounts may be typed as *10M*,
+*1.5B*, *1000万* or *2亿*; the dialog says how far the market is ("From last +3.31%", "Now +1.24%") and
+whether the alert would fire at once. *Frequency*: *Only once* (it then turns itself off), *Once a day*
+or *Always on* (every time the condition is met again). US stocks choose their *sessions*.
+*Remarks* (up to 20 characters) show in the list and
+the notification. ⏎ creates or saves, Esc cancels. Mistakes are
+shown under their field, and a full limit on the disabled button: 10 alerts of one type per instrument,
+200 in all, indicator alerts on at most 20 instrument + interval pairs.
+
+**Managing alerts** — Bell › Alerts lists them by instrument: what each watches, the value now, its
+frequency and remarks, and its status: *Paused*,
+*Triggered 10:31*, *Delayed 15 min*, *Waiting for 5 min of data*, *Outside selected sessions*,
+or in red when an alert that is on is not being watched (*Not monitored: market data line limit*,
+IB's error on the line, delayed data an alert that needs live data waits on);
+the bell in the top bar then shows a red dot. A click edits an alert (one that is off can be turned on as
+it is saved), its switch pauses or resumes it and × deletes it after a confirmation; right-click also
+duplicates it or opens its chart. *Delete triggered* removes the one-time alerts that have fired. With more
+than 8 alerts the list can show the charted symbol's only. The chart draws a dashed line for price, bid
+and ask levels and lights its bell while the symbol has an alert on.
+
+**How alerts are watched** — Tape watches alerts itself, so only while it runs and is connected to TWS /
+IB Gateway (on macOS also with the window closed or Tape locked); nothing watches them on a server, and on
+Windows and Linux closing the window quits Tape. Each instrument with alerts on holds one of Tape's 95
+market data lines; alert lines are the first to go when they run out (the dialog warns above 40).
+Price and day-change alerts also fire on delayed data, marked *Delayed 15 min*; 3 / 5-minute, volume,
+turnover, bid / ask, size, indicator and halt alerts need live data, and nothing fires on frozen data or
+on prices kept from before a disconnect. The change on the day is measured against the previous close,
+and after the close against today's close (*after hours*), as the chart header shows. Alerts on US stocks
+fire only in their sessions (pre-market, regular and after-hours unless chosen otherwise; IB's overnight
+session optional). *Once a day* means once per New York trading day, which begins at 20:00 New York time
+(IB's day roll), so midnight where you are does not start a new one. An alert that is already met fires
+when it is created or turned on. Indicator alerts read the chart's bars (formulas in
+`docs/ARCHITECTURE.md`, *Alerts*); *On bar close* fires when a bar closes (a daily bar at the regular
+close, a weekly bar at the regular close of its week's last trading day) and counts in the bar's own
+session, so an alert limited to regular hours still fires on the bar that closes at 16:00. At most 20 alert notifications go
+out a minute; the rest are folded into one. An alert whose instrument gets none of Tape's 95 market data
+lines is reported once.
 
 **API log** — every message sent to and received from TWS / IB Gateway, decoded field by field, with
 daily log files, retention and export. A shorter retention deletes the older files right away, so Tape
@@ -347,7 +401,7 @@ Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 | --- | --- |
 | `settings.json` | Settings (validated on load; unknown keys are dropped) |
 | `watchlists.json` | Watchlists and groups |
-| `alerts.json` | Price alerts |
+| `alerts.json` | Alerts: rule, frequency, sessions, note and on / off. Price alerts are also written in the format Tape 0.12 reads, and alerts of a newer version are kept as written (not run here) |
 | `notifications.json` | The last 200 notifications |
 | `window.json` | Window position and size |
 | `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
@@ -407,14 +461,15 @@ with `electron-builder --linux` after `pnpm build`.
 
 ```
 src/
-  shared/      types, IPC contract (TapeApi / TapeEvent), formatting and contract helpers, defaults
+  shared/      types, IPC contract (TapeApi / TapeEvent), formatting and contract helpers, defaults,
+               indicators and live bars (shared by the chart and the alerts)
   main/        Electron main process
     index.ts         services, window, IPC handlers
     store.ts         JSON persistence (storeSchema.ts validates, jsonFile.ts writes atomically)
     db/              tape.db: SQLite (node:sqlite) in a worker thread, in-memory fallback
     ib/              connection, account, orders, API log
       tws/           dependency-free TWS API client: socket, encoder / decoder, send queue, pacing
-    market/          contracts, quotes, history, depth, options, price alerts, demo simulator
+    market/          contracts, quotes, history, depth, options, alerts engine, demo simulator
     notifications.ts in-app list + OS notifications
     appearance.ts    theme and theme-matched icons
     finderIcon.ts    macOS: the bundle's Finder icon follows the theme
@@ -465,7 +520,7 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   survives a restart. If `lock.json` cannot be read (damaged, or blocked by permissions), Tape stays locked
   and accepts no PIN; *Forgot PIN?* is the way out.
 - **What keeps running**: IB Gateway / TWS stays connected, market data keeps flowing, orders already sent
-  keep working on IB's servers and price alerts keep firing.
+  keep working on IB's servers and alerts keep firing.
 - **What it does not protect**: IB Gateway / TWS stays logged in and accepts any local API client, so anyone
   at the computer can still use IBKR through another program, and the files in the user data folder are
   readable by your user account. *Forgot PIN?* needs no PIN either: anyone at the computer can reset Tape
@@ -473,7 +528,7 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   to prevent trading, lock the computer itself or log out of IB Gateway. *Settings › Privacy & Security* and
   the *Reset Tape* dialog say so too.
 - **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes all of
-  Tape's local data: settings, watchlists, price alerts, notifications, API logs, the PIN, the database
+  Tape's local data: settings, watchlists, alerts, notifications, API logs, the PIN, the database
   (market data caches) and the window position; only the language and the theme are kept. Tape then
   restarts like a fresh install, on *Settings › Connection*, without connecting. Your IBKR account,
   positions and orders on IB's servers are not affected.

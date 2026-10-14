@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { index, option, stock } from './contract';
 import { createClock } from './timeFormat';
 import type { Quote } from './types';
-import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from './sessionQuote';
+import { dailyBarsCurrent, etTime, liveChangeRef, sessionQuote, usesUsEquitySession } from './sessionQuote';
 
 const q = (fields: Partial<Quote>): Quote => ({ key: 'STK:AAPL', updatedAt: 0, ...fields });
 
@@ -87,6 +87,28 @@ describe('sessionQuote', () => {
 
   it('ignores IB placeholder values (-1, 0)', () => {
     expect(sessionQuote(q({ last: -1, close: 0 }), 'regular')).toEqual({ price: undefined, ref: undefined, refs: [] });
+  });
+});
+
+describe('liveChangeRef', () => {
+  const full = q({ last: 228.1, close: 224.52, lastRthTrade: 227.48 });
+
+  it('is the previous close before and during the regular session', () => {
+    expect(liveChangeRef(full, 'pre')).toEqual({ ref: 224.52, afterHours: false });
+    expect(liveChangeRef(full, 'regular')).toEqual({ ref: 224.52, afterHours: false });
+  });
+
+  it("is today's close after the close and overnight, as the header's after-hours change", () => {
+    expect(liveChangeRef(full, 'post')).toEqual({ ref: 227.48, afterHours: true });
+    expect(liveChangeRef(full, 'overnight')).toEqual({ ref: 227.48, afterHours: true });
+    expect(liveChangeRef(full, 'post')!.ref).toBe(sessionQuote(full, 'post').ref);
+    expect(liveChangeRef(q({ last: 10, close: 9 }), 'post', 9.5)).toEqual({ ref: 9.5, afterHours: true });
+  });
+
+  it("falls back to the previous close without today's close, and to nothing without either", () => {
+    expect(liveChangeRef(q({ last: 10, close: 9, marketDataType: 3 }), 'post')).toEqual({ ref: 9, afterHours: false });
+    expect(liveChangeRef(q({ last: 10 }), 'regular')).toBeUndefined();
+    expect(liveChangeRef(q({ last: 10, close: 0 }), 'regular')).toBeUndefined();
   });
 });
 

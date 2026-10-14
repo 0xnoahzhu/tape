@@ -21,6 +21,7 @@ const SNAPSHOT_EVENTS: ReadonlySet<TapeEvent['type']> = new Set([
   'executions',
   'watchlists',
   'priceAlerts',
+  'alertStatuses',
   'notifications',
   'lock',
   'marketDataCheck',
@@ -58,6 +59,7 @@ export async function startBridge(): Promise<void> {
     executions: snap.executions,
     watchlists: snap.watchlists,
     priceAlerts: snap.priceAlerts,
+    alertStatuses: snap.alertStatuses,
     notifications: snap.notifications,
     lock: snap.lock,
     marketDataCheck: snap.marketDataCheck,
@@ -183,6 +185,9 @@ function apply(e: TapeEvent): void {
       break;
     case 'priceAlerts':
       set({ priceAlerts: e.alerts });
+      break;
+    case 'alertStatuses':
+      set({ alertStatuses: e.statuses });
       break;
     case 'lock':
       applyLockState(e.state);

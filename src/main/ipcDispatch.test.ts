@@ -35,6 +35,7 @@ describe('IPC dispatch while locked', () => {
         'getCacheStats',
         'refreshOrders',
         'refreshExecutions',
+        'getAlertStatuses',
         'notify',
         'setApiLogStreaming',
         'getLockState',
@@ -44,7 +45,7 @@ describe('IPC dispatch while locked', () => {
         'resetApp',
       ].sort(),
     );
-    for (const m of ['placeOrder', 'modifyOrder', 'cancelOrder', 'cancelAllOrders', 'updateSettings', 'saveWatchlists', 'savePriceAlerts', 'clearMarketDataCache', 'exportApiLog', 'connect', 'disconnect', 'setLockPin', 'removeLockPin', 'verifyLockPin', 'updateLockSettings', 'apiLogExpiring'] as const)
+    for (const m of ['placeOrder', 'modifyOrder', 'cancelOrder', 'cancelAllOrders', 'updateSettings', 'saveWatchlists', 'upsertPriceAlert', 'setPriceAlertsActive', 'deletePriceAlerts', 'clearMarketDataCache', 'exportApiLog', 'connect', 'disconnect', 'setLockPin', 'removeLockPin', 'verifyLockPin', 'updateLockSettings', 'apiLogExpiring'] as const)
       expect(denied).toContain(m);
   });
 

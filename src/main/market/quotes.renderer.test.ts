@@ -9,6 +9,7 @@ import { option, stock } from '@shared/contract';
 import { defaultSettings, defaultWatchlists } from '@shared/defaults';
 import type { TapeApi, TapeEvent } from '@shared/ipc';
 import type { AppSnapshot, Position, PriceAlert, Quote, QuoteSubscription } from '@shared/types';
+import type { MainContext } from '../context';
 import { createAlertService } from './alerts';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
 import { createQuoteService } from './quotes';
@@ -34,7 +35,7 @@ afterEach(() => {
   delete (globalThis as { window?: unknown }).window;
 });
 
-const alertOn = (symbol: string, i: number): PriceAlert => ({ id: `a${i}`, contract: stock(symbol), condition: 'above', price: 99_999, repeat: false, createdAt: 0, active: true });
+const alertOn = (symbol: string, i: number): PriceAlert => ({ id: `a${i}`, contract: stock(symbol), rule: { type: 'priceAbove', value: 99_999 }, frequency: 'once', createdAt: 0, active: true });
 
 /**
  * Tape's main process (quotes and price alerts) and a renderer connected to it. Every timer is fake
@@ -48,6 +49,7 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
   stored.alerts = (opts.alerts ?? []).map(alertOn);
   const svc = createQuoteService(ctx);
   ctx.quotes = svc;
+  ctx.contracts = { getInfo: async () => null } as unknown as MainContext['contracts'];
   ctx.alerts = createAlertService(ctx);
   await settle();
 
@@ -70,6 +72,7 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
     executions: [],
     watchlists: defaultWatchlists(),
     priceAlerts: stored.alerts,
+    alertStatuses: [],
     notifications: [],
     logFilePath: '',
     lock: { locked: false, hasPin: false, biometrics: { available: false } } as unknown as AppSnapshot['lock'],

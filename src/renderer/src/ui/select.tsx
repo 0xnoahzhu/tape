@@ -1,6 +1,6 @@
 // Drop-down menus in the design's dense square style: a menu under an anchor (Dropdown), its
 // headings and items, and a 34px Select box built on them. Used by the order ticket (order type,
-// conditions, algos).
+// conditions, algos) and the alert dialog (alert type, indicator signal).
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -22,16 +22,17 @@ const editable = (t: EventTarget | null) => {
 
 /**
  * A menu under (or above, when there is no room) an anchor, drawn over everything in a portal so
- * the ticket's scrolling body does not clip it. Clicking outside or Escape closes it.
+ * a scrolling body (the ticket's, a dialog's) does not clip it. Clicking outside or Escape closes it.
  *
  * While it is open it owns the keyboard: ↑ / ↓ / Home / End move through the available items,
- * Enter picks the highlighted one, and no key reaches the ticket's shortcuts (Enter there would
- * submit the order behind the menu). A text field the menu belongs to (a symbol search) keeps its
- * typing; Enter there picks the highlighted item, if any. A menu of the order ticket or a floating
- * panel gives it the keys back when it closes: a pick with the mouse leaves the focus on the page
- * (its items take none), where the ticket's keys would not work.
+ * Enter picks the highlighted one, and no key reaches the shortcuts behind it (Enter there would
+ * submit the order or the dialog behind the menu). A text field the menu belongs to (a symbol
+ * search) keeps its typing; Enter there picks the highlighted item, if any. `zIndex` must be above
+ * the layer the anchor is in (dialogs are 19 to 21). A menu of the order ticket or a floating panel
+ * gives it the keys back when it closes: a pick with the mouse leaves the focus on the page (its
+ * items take none), where the ticket's keys would not work.
  */
-export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLElement | null; onClose: () => void; width?: number; children: ReactNode }) {
+export function Dropdown({ anchor, onClose, width, zIndex = 19, children }: { anchor: HTMLElement | null; onClose: () => void; width?: number; zIndex?: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const highlighted = useRef<HTMLElement | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
@@ -105,7 +106,7 @@ export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLEle
           if (current >= 0 && !e.repeat) list[current].click();
           return;
         default:
-          // Nothing else reaches the ticket's shortcuts (B / S switch the side) behind the menu.
+          // Nothing else reaches the shortcuts behind the menu (B / S switch the ticket's side).
           if (!typing && e.key !== 'Tab') handled();
       }
     };
@@ -113,7 +114,7 @@ export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLEle
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   return createPortal(
-    <div className="no-drag" onMouseDown={onClose} style={{ position: 'fixed', inset: 0, zIndex: 19 }}>
+    <div className="no-drag" onMouseDown={onClose} style={{ position: 'fixed', inset: 0, zIndex }}>
       <div
         ref={ref}
         onMouseDown={(e) => e.stopPropagation()}
@@ -141,13 +142,31 @@ export function Dropdown({ anchor, onClose, width, children }: { anchor: HTMLEle
   );
 }
 
-/** A heading line inside a drop-down menu. */
+/** A heading line inside a drop-down menu (not selectable; the keys skip it). */
 export function MenuHeading({ children }: { children: ReactNode }) {
   return <div style={{ padding: '8px 12px 4px', fontSize: 11, color: 'var(--dm)' }}>{children}</div>;
 }
 
-/** A drop-down menu item with an optional hint line; inert with a reason when unavailable. */
-export function MenuChoice({ label, hint, active, why, onPick }: { label: ReactNode; hint?: string; active?: boolean; why?: string | null; onPick: () => void }) {
+/**
+ * A drop-down menu item with an optional hint line; inert with a reason when unavailable. The reason
+ * is its tooltip, or with `showWhy` its hint line (a menu whose reasons must be read, not hovered).
+ */
+export function MenuChoice({
+  label,
+  hint,
+  active,
+  why,
+  showWhy,
+  onPick,
+}: {
+  label: ReactNode;
+  hint?: string;
+  active?: boolean;
+  why?: string | null;
+  showWhy?: boolean;
+  onPick: () => void;
+}) {
+  const line = why && showWhy ? why : hint;
   return (
     <div
       onClick={why ? undefined : onPick}
@@ -157,8 +176,8 @@ export function MenuChoice({ label, hint, active, why, onPick }: { label: ReactN
       aria-checked={!!active}
       aria-disabled={!!why}
       style={{
-        padding: hint ? '6px 12px' : '0 12px',
-        minHeight: hint ? undefined : 30,
+        padding: line ? '6px 12px' : '0 12px',
+        minHeight: line ? undefined : 30,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
@@ -168,17 +187,20 @@ export function MenuChoice({ label, hint, active, why, onPick }: { label: ReactN
         opacity: why ? 0.45 : 1,
       }}
     >
-      <div style={{ fontSize: 13, color: active ? 'var(--tx)' : 'var(--tx)' }}>{label}</div>
-      {hint && (
+      <div style={{ fontSize: 13, color: 'var(--tx)' }}>{label}</div>
+      {line && (
         <div className="ellipsis" style={{ fontSize: 11, lineHeight: 1.35, color: 'var(--dm)' }}>
-          {hint}
+          {line}
         </div>
       )}
     </div>
   );
 }
 
-/** A 34px box showing the chosen option with ▾ that opens a menu of the options. */
+/**
+ * A 34px box showing the chosen option with ▾ that opens a menu of the options. Options carrying a
+ * `group` are listed under a heading for each group (in the order the options come).
+ */
 export function Select<K extends string | number>({
   options,
   value,
@@ -186,15 +208,21 @@ export function Select<K extends string | number>({
   disabled,
   title,
   width,
+  zIndex,
+  showWhy,
   style,
 }: {
-  options: Array<Choice<K> & { hint?: string }>;
+  options: Array<Choice<K> & { hint?: string; group?: string }>;
   value: K;
   onChange: (k: K) => void;
   disabled?: boolean;
   title?: string;
   /** Menu width (default: the box's). */
   width?: number;
+  /** The menu's layer (Dropdown); above the dialog the box is in. */
+  zIndex?: number;
+  /** Unavailable options say why on their hint line, not only in their tooltip. */
+  showWhy?: boolean;
   style?: CSSProperties;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -230,19 +258,22 @@ export function Select<K extends string | number>({
         <div style={{ fontSize: 12, lineHeight: 1, color: 'var(--dm)', flexShrink: 0 }}>▾</div>
       </div>
       {anchor && (
-        <Dropdown anchor={anchor} width={width} onClose={() => setAnchor(null)}>
-          {options.map((o) => (
-            <MenuChoice
-              key={String(o.key)}
-              label={o.label}
-              hint={o.hint}
-              active={o.key === value}
-              why={o.why}
-              onPick={() => {
-                setAnchor(null);
-                onChange(o.key);
-              }}
-            />
+        <Dropdown anchor={anchor} width={width} zIndex={zIndex} onClose={() => setAnchor(null)}>
+          {options.map((o, i) => (
+            <div key={String(o.key)} style={{ display: 'contents' }}>
+              {o.group != null && o.group !== options[i - 1]?.group && <MenuHeading>{o.group}</MenuHeading>}
+              <MenuChoice
+                label={o.label}
+                hint={o.hint}
+                active={o.key === value}
+                why={o.why}
+                showWhy={showWhy}
+                onPick={() => {
+                  setAnchor(null);
+                  onChange(o.key);
+                }}
+              />
+            </div>
           ))}
         </Dropdown>
       )}

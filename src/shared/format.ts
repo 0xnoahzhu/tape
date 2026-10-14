@@ -63,6 +63,42 @@ export function compact(n: number | null | undefined): string {
   return n < 0 && s !== '0' ? MINUS + s : s;
 }
 
+/**
+ * Compact in myriads, as Chinese writes large numbers: 12_400_000 → "1240" + wan, 1_250_000_000 →
+ * "12.5" + yi, 8_200 → "8200" (at most two decimals, trailing zeros dropped, no separators). The
+ * unit words come from the caller's zh message table.
+ */
+export function compactMyriad(n: number | null | undefined, units: { wan: string; yi: string }): string {
+  if (!valid(n)) return DASH;
+  const a = Math.abs(n);
+  const short = (x: number) => String(Number(x.toFixed(2)));
+  let s: string;
+  if (a >= 1e8 || Number((a / 1e4).toFixed(2)) >= 1e4) s = short(a / 1e8) + units.yi;
+  else if (a >= 1e4 || Math.round(a) >= 1e4) s = short(a / 1e4) + units.wan;
+  else s = String(Math.round(a));
+  return n < 0 && s !== '0' ? MINUS + s : s;
+}
+
+/**
+ * A threshold the user set (an alert's volume or turnover), written exactly: in compact's unit (K
+ * from 10,000, M, B) or with `myriad` in 万 / 亿 when at most two decimals of it are exact
+ * (1_250_000 → "1.25M" / "125万"), else in grouped digits (12_345_678 → "12,345,678"; below 10,000
+ * in myriads without separators, as compactMyriad). Unlike compact, it never shows a rounded value.
+ */
+export function exactCompact(n: number | null | undefined, myriad?: { wan: string; yi: string }): string {
+  if (!valid(n)) return DASH;
+  const a = Math.abs(n);
+  // [from, size, unit]: the largest unit the value reaches.
+  const units: Array<[number, number, string]> = myriad ? [[1e8, 1e8, myriad.yi], [1e4, 1e4, myriad.wan]] : [[1e9, 1e9, 'B'], [1e6, 1e6, 'M'], [1e4, 1e3, 'K']];
+  const unit = units.find(([from]) => a >= from);
+  const v = unit ? a / unit[1] : 0;
+  let s: string;
+  if (unit && Math.abs(v * 100 - Math.round(v * 100)) < 1e-6) s = `${Number(v.toFixed(2))}${unit[2]}`;
+  else if (myriad && a < 1e4) s = String(Number(a.toFixed(2)));
+  else s = fmt(0, 2).format(a);
+  return n < 0 && s !== '0' ? MINUS + s : s;
+}
+
 /** Money with a dollar sign: 1284530.42 -> "$1,284,530.42". No sign when the value rounds to zero. */
 export function usd(n: number | null | undefined, digits = 2): string {
   if (!valid(n)) return DASH;
@@ -109,6 +145,23 @@ export function parseNum(s: string): number {
   const t = s.replace(/,/g, '').replace(MINUS, '-').trim();
   if (!t) return NaN;
   return Number(t);
+}
+
+/** Multipliers of the unit letters parseQuantity takes: K / M / B and the Chinese 万 / 亿. */
+const QUANTITY_UNITS: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9, 万: 1e4, 亿: 1e8 };
+
+/**
+ * Parses a typed quantity or amount (an alert's volume or turnover): a number as parseNum takes it,
+ * optionally followed by one unit, K / M / B (any case) or 万 / 亿, with or without a space:
+ * "10M" → 10_000_000, "1.5B", "1000万", "2亿", "12,000". Returns NaN when invalid.
+ */
+export function parseQuantity(s: string): number {
+  const t = s.replace(/,/g, '').replace(MINUS, '-').trim();
+  const m = /^([-+]?(?:\d+\.?\d*|\.\d+))\s*([kKmMbB万亿])?$/.exec(t);
+  if (!m) return NaN;
+  const unit = m[2] ? QUANTITY_UNITS[m[2].toLowerCase()] : 1;
+  // Rounded so "1.1M" is 1_100_000, not 1_100_000.0000000002.
+  return Number((Number(m[1]) * unit).toPrecision(12));
 }
 
 /** Rounds a price to the instrument's minimum tick. */

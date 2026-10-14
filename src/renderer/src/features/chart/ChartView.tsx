@@ -1,5 +1,5 @@
 // Chart view of the Trade page (design 3a, top-left cell): instrument header with the
-// session-aware price, watchlist star, price-alert bell, intervals and ranges (TimeframeBar), OHLC
+// session-aware price, watchlist star, alert bell, intervals and ranges (TimeframeBar), OHLC
 // row with indicator chips (moving averages and volume), and the candlestick chart fed by IB
 // historical bars plus the live last price.
 //
@@ -31,6 +31,7 @@ import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../h
 import { nameOf, useClock, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
+import { alertLevel } from '../alerts/model';
 import { WatchStar } from '../watchlist/WatchStar';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
@@ -49,7 +50,7 @@ const REFRESH_MS = 60_000;
 const PAD_X = 28;
 const HEADER_GAP = 24;
 const PRICE_GAP = 14;
-/** Width of the header buttons (watchlist star, price-alert bell); the title keeps at least MIN_TITLE_W beside the tools. */
+/** Width of the header buttons (watchlist star, alert bell); the title keeps at least MIN_TITLE_W beside the tools. */
 const BELL_W = 30;
 /** Gap between the star and the bell (as between the ringed indicator chips). */
 const BUTTON_GAP = 6;
@@ -270,7 +271,9 @@ export function ChartView() {
   // Seconds bars do not move with delayed quotes: only the reloads bring them.
   const delayedSeconds = isSecondsTimeframe(timeframe) && (quote?.marketDataType === 3 || quote?.marketDataType === 4);
   const live = session === 'regular';
-  const alertLevels = useMemo(() => alertsAll.filter((a) => a.active && sameContract(a.contract, symbol)).map((a) => a.price), [alertsAll, symbol]);
+  // Lines for the price-level alerts (price, bid, ask); the bell lights up for any active alert of the symbol.
+  const symbolAlerts = useMemo(() => alertsAll.filter((a) => a.active && !a.unsupported && sameContract(a.contract, symbol)), [alertsAll, symbol]);
+  const alertLevels = useMemo(() => symbolAlerts.flatMap((a) => alertLevel(a)?.price ?? []), [symbolAlerts]);
 
   // OHLC row: hovered bar, else the latest bar (on 1D, today's volume).
   const shown = hoverBar ?? bars[bars.length - 1];
@@ -312,7 +315,7 @@ export function ChartView() {
     <div ref={toolsRef} style={{ display: 'flex', alignItems: 'flex-start', gap: HEADER_GAP, flexShrink: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
         <WatchStar contract={symbol} name={symbolName || info?.longName || undefined} size={BELL_W} />
-        <BellButton title={m.addAlert} active={alertLevels.length > 0} onClick={() => openAlertForm(symbol)} />
+        <BellButton title={symbolAlerts.length ? m.alertsOn(symbolAlerts.length) : m.addAlert} active={symbolAlerts.length > 0} onClick={() => openAlertForm(symbol)} />
       </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>

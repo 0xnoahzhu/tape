@@ -80,3 +80,53 @@ export function usEquitySession(now: Date = new Date(), liquidHours?: string): M
   if (minutes >= close && minutes < postClose) return 'post';
   return 'closed';
 }
+
+/** "YYYYMMDD" `n` calendar days after another. */
+function addDaysYmd(ymd: string, n: number): string {
+  const d = new Date(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8)) + n));
+  return d.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/**
+ * Whether the regular sessions of the current New York calendar week (Monday to Friday) are over: on
+ * the weekend, and from the regular close (16:00, or the early close) of the week's last trading day,
+ * which is Friday, or an earlier day when `liquidHours` lists every day after it as a holiday (Good
+ * Friday). A weekly bar closes then (indicator alerts, shared/liveBars.ts → alertBarForming).
+ */
+export function usWeekClosed(now: Date, liquidHours?: string): boolean {
+  const { weekday, minutes, ymd } = nyClock(now);
+  if (weekday === 0 || weekday === 6) return true;
+  for (let d = weekday + 1; d <= 5; d++) {
+    if (!liquidHours || todaysEarlyClose(liquidHours, addDaysYmd(ymd, d - weekday)) !== 'closed') return false;
+  }
+  const early = liquidHours ? todaysEarlyClose(liquidHours, ymd) : undefined;
+  return early === 'closed' || minutes >= (early ?? REGULAR_CLOSE);
+}
+
+/** IB's overnight session for US stocks: 20:00–03:50 New York, Sunday evening to Friday morning. */
+const OVERNIGHT_OPEN = 20 * 60;
+const OVERNIGHT_CLOSE = 3 * 60 + 50;
+
+/**
+ * Session of a US stock including IB's overnight session, which usEquitySession counts as closed:
+ * 'overnight' from 20:00 Sunday to Thursday until 03:50 the next morning. Holidays only shape the
+ * day sessions (through `liquidHours`); the overnight session is taken to run every weeknight.
+ */
+export function usStockSession(now: Date = new Date(), liquidHours?: string): MarketSession | 'overnight' {
+  const session = usEquitySession(now, liquidHours);
+  if (session !== 'closed') return session;
+  const { weekday, minutes } = nyClock(now);
+  if (minutes >= OVERNIGHT_OPEN && weekday >= 0 && weekday <= 4) return 'overnight';
+  if (minutes < OVERNIGHT_CLOSE && weekday >= 1 && weekday <= 5) return 'overnight';
+  return 'closed';
+}
+
+/**
+ * The New York trading day (YYYYMMDD) an instant belongs to: the calendar day, except that from
+ * 20:00 it is the next one, as IB starts the next day (its volume, the overnight session) then.
+ * Alerts that notify once a day count by it, so the day does not end at the user's local midnight
+ * (mid-session for a user in Asia) or at New York midnight inside the overnight session.
+ */
+export function tradingDay(ms: number): string {
+  return nyClock(new Date(ms + 4 * 3_600_000)).ymd;
+}

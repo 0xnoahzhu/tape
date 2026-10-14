@@ -159,7 +159,7 @@ export function App() {
       <ErrorBoundary name="Notifications" style={{ position: 'absolute', top: 60, right: 14, zIndex: 16 }}>
         <NotificationsPanel />
       </ErrorBoundary>
-      <ErrorBoundary name="Price alert" style={{ position: 'absolute', top: 60, right: 14, zIndex: 19 }}>
+      <ErrorBoundary name="Alert" style={{ position: 'absolute', top: 60, right: 14, zIndex: 19 }}>
         <PriceAlertDialog />
       </ErrorBoundary>
       <ConfirmDialog />

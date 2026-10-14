@@ -4,7 +4,8 @@
 // Before the bell, the account badge: LIVE (red) or PAPER and the account Tape trades, or OFFLINE.
 // While IB refuses requests in Read-Only API mode, a red chip there says so (and where to turn it off);
 // another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer). Left of
-// the bell, a DND tag while do-not-disturb is on (features/settings/DndIndicator.tsx).
+// the bell, a DND tag while do-not-disturb is on (features/settings/DndIndicator.tsx). The bell's dot
+// is red while an alert that is on is not being watched (features/alerts/model.ts → isUnwatched).
 
 import type { CSSProperties } from 'react';
 import { useCommon } from '../i18n/common';
@@ -17,6 +18,8 @@ import { AccountTag, IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
 import { requestLock } from '../features/lock/actions';
 import { useLockMessages } from '../features/lock/messages';
+import { useAlertMessages } from '../features/alerts/messages';
+import { unwatchedCount } from '../features/alerts/model';
 import { DndIndicator } from '../features/settings/DndIndicator';
 
 /**
@@ -94,12 +97,14 @@ function AccountBadge() {
 export function TopBar() {
   const m = useCommon();
   const lm = useLockMessages();
+  const am = useAlertMessages();
   const page = useStore((s) => s.page);
   const setPage = useStore((s) => s.setPage);
   const bellOpen = useStore((s) => s.bellOpen);
   const setBell = useStore((s) => s.setBell);
   const openSettings = useStore((s) => s.openSettings);
   const unread = useStore((s) => s.notifications.some((n) => !n.read));
+  const unwatched = useStore((s) => unwatchedCount(s.priceAlerts, s.alertStatuses));
   const mac = useStore((s) => s.platform === 'darwin');
 
   return (
@@ -151,9 +156,14 @@ export function TopBar() {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 12, boxShadow: 'inset 1px 0 0 var(--ln2)' }}>
         <DndIndicator />
-        <IconButton size={34} title={m.notifications} active={bellOpen} onClick={() => setBell(!bellOpen)}>
+        <IconButton
+          size={34}
+          title={unwatched ? `${m.notifications} · ${am.unwatched(unwatched)}` : m.notifications}
+          active={bellOpen}
+          onClick={() => setBell(!bellOpen, unwatched ? 'alerts' : undefined)}
+        >
           <BellIcon />
-          {unread && <Dot top={8} right={8} />}
+          {(unread || unwatched > 0) && <Dot top={8} right={8} color={unwatched ? 'var(--r)' : undefined} />}
         </IconButton>
         <IconButton size={34} title={lm.lockTitle(modKey(mac, 'L'))} onClick={() => requestLock()}>
           <LockIcon />

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { stock } from '@shared/contract';
 import type { Lang, OrderRequest } from '@shared/types';
+import { newAlertForm } from '../features/alerts/model';
 import { isDialogOpen, useStore, type PendingOrder } from '../state/store';
 import { isCarriedOverClick } from '../ui/primitives';
 import { CONFIRM_ARM_MS, confirmLabel, enterAction, mayArm, needsAcknowledgement, reviewRows, reviewTitle, riskRows, warningRows } from './orderReview';
@@ -150,7 +151,7 @@ describe('dialogs hold the screen', () => {
     expect(isDialogOpen({ ...none, pendingOrder: pending() })).toBe(true);
     expect(isDialogOpen({ ...none, confirm: { title: '', rows: [], label: '' } })).toBe(true);
     expect(isDialogOpen({ ...none, cancelAll: { session: 1 } })).toBe(true);
-    expect(isDialogOpen({ ...none, alertForm: { contract: stock('AAPL'), condition: 'above', price: '1', repeat: false } })).toBe(true);
+    expect(isDialogOpen({ ...none, alertForm: newAlertForm(stock('AAPL'), undefined, 'en') })).toBe(true);
     expect(isDialogOpen({ ...none, pinDialog: { mode: 'set' } })).toBe(true);
   });
 });

@@ -11,6 +11,7 @@ import {
   languageFromLocale,
   loadSettings,
   sameData,
+  sanitizeAlertInput,
   sanitizeAlerts,
   sanitizeContract,
   sanitizeNotifications,
@@ -364,15 +365,139 @@ describe('sanitizeWatchlists', () => {
 
 describe('sanitizeAlerts', () => {
   const contract = { symbol: 'AAPL', secType: 'STK', exchange: 'SMART', currency: 'USD' };
+  const v2 = (over: Record<string, unknown>) => ({ id: 'a', contract, frequency: 'once', active: true, createdAt: 1, ...over });
 
-  it('keeps valid alerts and defaults booleans', () => {
-    const out = sanitizeAlerts([{ id: 'a', contract, condition: 'above', price: 240, createdAt: 1 }]);
-    expect(out).toEqual([{ id: 'a', contract, condition: 'above', price: 240, repeat: false, createdAt: 1, active: true }]);
+  it('migrates an alerts.json of Tape 0.11 (condition, price, repeat) and keeps the old fields for a downgrade', () => {
+    const out = sanitizeAlerts([
+      { id: 'a', contract, condition: 'above', price: 240, createdAt: 1 },
+      { id: 'b', contract, condition: 'below', price: 200, repeat: true, createdAt: 2, lastTriggeredAt: 5, active: true },
+      { id: 'c', contract, condition: 'below', price: 190, repeat: false, createdAt: 3, lastTriggeredAt: 6, active: false },
+    ]);
+    expect(out).toEqual([
+      { id: 'a', contract, rule: { type: 'priceAbove', value: 240 }, frequency: 'once', active: true, createdAt: 1, condition: 'above', price: 240, repeat: false },
+      {
+        id: 'b',
+        contract,
+        rule: { type: 'priceBelow', value: 200 },
+        frequency: 'always',
+        active: true,
+        createdAt: 2,
+        lastTriggeredAt: 5,
+        condition: 'below',
+        price: 200,
+        repeat: true,
+      },
+      {
+        id: 'c',
+        contract,
+        rule: { type: 'priceBelow', value: 190 },
+        frequency: 'once',
+        active: false,
+        createdAt: 3,
+        lastTriggeredAt: 6,
+        condition: 'below',
+        price: 190,
+        repeat: false,
+      },
+    ]);
+    // Loading the migrated list again changes nothing.
+    expect(sanitizeAlerts(out)).toEqual(out);
   });
 
-  it('drops invalid alerts', () => {
+  it('drops invalid v1 alerts', () => {
     expect(sanitizeAlerts([{ id: 'a', contract, condition: 'sideways', price: 1, createdAt: 1 }, { id: 'b', contract, condition: 'below', price: NaN, createdAt: 1 }])).toEqual([]);
+    expect(sanitizeAlerts([{ id: 'c', contract, condition: 'below', price: -5, createdAt: 1 }])).toEqual([]);
     expect(sanitizeAlerts('nope')).toBeNull();
+  });
+
+  it('keeps v2 rules with their frequency, sessions and a clipped note; the old fields only for price rules', () => {
+    const [vol, ind] = sanitizeAlerts([
+      v2({ rule: { type: 'volumeAbove', shares: 1e7 }, frequency: 'daily', sessions: ['overnight', 'regular', 'bogus'], note: '  May take-profit line, rewritten later  ', lastValue: 1.2e7 }),
+      v2({
+        id: 'b',
+        rule: { type: 'indicator', timeframe: '15m', on: 'close', signal: { ind: 'macd', kind: 'signal', fast: 12, slow: 26, signal: 9, cross: 'up' } },
+        sessions: ['pre', 'regular', 'post'],
+        condition: 'above',
+      }),
+    ])!;
+    expect(vol).toEqual({
+      id: 'a',
+      contract,
+      rule: { type: 'volumeAbove', shares: 1e7 },
+      frequency: 'daily',
+      sessions: ['regular', 'overnight'],
+      note: 'May take-profit line',
+      active: true,
+      createdAt: 1,
+      lastValue: 1.2e7,
+    });
+    // The default sessions are not stored; a stray v1 field on a non-price rule goes.
+    expect(ind.sessions).toBeUndefined();
+    expect(ind.condition).toBeUndefined();
+    expect(sanitizeAlerts([v2({ rule: { type: 'priceAbove', value: 5 }, frequency: 'always' })])![0]).toMatchObject({ condition: 'above', price: 5, repeat: true });
+  });
+
+  it('counts the note in code points (CJK and emoji are one each)', () => {
+    const [a] = sanitizeAlerts([v2({ rule: { type: 'priceAbove', value: 5 }, note: '止盈线'.repeat(8) + '😀' })])!;
+    expect([...a.note!]).toHaveLength(20);
+    expect(sanitizeAlerts([v2({ rule: { type: 'priceAbove', value: 5 }, note: '   ' })])![0].note).toBeUndefined();
+  });
+
+  it("keeps a newer Tape's rule or frequency as an unsupported row, on or off as written, instead of dropping it", () => {
+    const future = { type: 'turnoverRatioAbove', pct: 3, basis: 'float' };
+    const out = sanitizeAlerts([v2({ rule: future, frequency: 'weekly', sessions: ['auction'], active: true, note: 'keep me' })]);
+    expect(out).toEqual([{ id: 'a', contract, rule: future, frequency: 'weekly', sessions: ['auction'], active: true, createdAt: 1, note: 'keep me', unsupported: true }]);
+    // Kept as it is when written again, so the newer Tape still runs it.
+    expect(sanitizeAlerts(out)).toEqual(out);
+    expect(sanitizeAlerts([v2({ rule: future, active: false })])![0]).toMatchObject({ active: false, unsupported: true });
+    // A known rule with a frequency this version does not know: not run as something else.
+    expect(sanitizeAlerts([v2({ rule: { type: 'priceAbove', value: 5 }, frequency: 'hourly' })])![0]).toEqual({
+      id: 'a',
+      contract,
+      rule: { type: 'priceAbove', value: 5 },
+      frequency: 'hourly',
+      active: true,
+      createdAt: 1,
+      unsupported: true,
+    });
+    expect(sanitizeAlerts([v2({ rule: { type: 'priceAbove', value: 5 }, frequency: undefined })])![0].frequency).toBe('once');
+    // Parameters this version cannot read are kept the same way.
+    expect(sanitizeAlerts([v2({ rule: { type: 'windowRise', minutes: 10, pct: 2 } })])![0]).toMatchObject({ unsupported: true, active: true });
+    // Not an object or no type: nothing to keep.
+    expect(sanitizeAlerts([v2({ rule: 'priceAbove' }), v2({ rule: { value: 3 } })])).toEqual([]);
+  });
+
+  it('validates every rule type', () => {
+    const ok = (rule: unknown) => sanitizeAlertInput(v2({ rule })) !== null;
+    expect(ok({ type: 'dayRise', pct: 5 })).toBe(true);
+    expect(ok({ type: 'dayFall', pct: 0 })).toBe(false);
+    expect(ok({ type: 'dayFall', pct: 1001 })).toBe(false);
+    expect(ok({ type: 'windowFall', minutes: 5, pct: 2 })).toBe(true);
+    expect(ok({ type: 'windowFall', minutes: 4, pct: 2 })).toBe(false);
+    expect(ok({ type: 'turnoverAbove', amount: 1e9 })).toBe(true);
+    expect(ok({ type: 'bidSizeAbove', shares: 0 })).toBe(false);
+    expect(ok({ type: 'askBelow', value: Infinity })).toBe(false);
+    expect(ok({ type: 'halt', dir: 'resumed' })).toBe(true);
+    expect(ok({ type: 'halt', dir: 'paused' })).toBe(false);
+    const ind = (signal: unknown, extra: Record<string, unknown> = {}) => ok({ type: 'indicator', timeframe: '1h', on: 'live', signal, ...extra });
+    expect(ind({ ind: 'ma', kind: 'price', period: 20, cross: 'up' })).toBe(true);
+    expect(ind({ ind: 'ma', kind: 'price', period: 20, cross: 'up' }, { timeframe: '3m' })).toBe(false);
+    expect(ind({ ind: 'ma', kind: 'price', period: 251, cross: 'up' })).toBe(false);
+    expect(ind({ ind: 'ema', kind: 'lines', fast: 26, slow: 12, cross: 'down' })).toBe(false);
+    expect(ind({ ind: 'macd', kind: 'zero', fast: 12, slow: 26, signal: 9, cross: 'down' })).toBe(true);
+    expect(ind({ ind: 'kdj', kind: 'level', n: 9, m1: 3, m2: 3, line: 'j', level: 120, cross: 'up' })).toBe(true);
+    expect(ind({ ind: 'kdj', kind: 'level', n: 9, m1: 3, m2: 3, line: 'k', level: 120, cross: 'up' })).toBe(false);
+    expect(ind({ ind: 'rsi', kind: 'level', period: 6, level: 80, cross: 'up' })).toBe(true);
+    expect(ind({ ind: 'rsi', kind: 'lines', fast: 6, slow: 12, cross: 'sideways' })).toBe(false);
+    expect(ind({ ind: 'boll', kind: 'band', period: 20, k: 2, band: 'upper', cross: 'up' })).toBe(true);
+    expect(ind({ ind: 'boll', kind: 'band', period: 20, k: 6, band: 'upper', cross: 'up' })).toBe(false);
+  });
+
+  it('accepts only valid v2 alerts of known types from the renderer', () => {
+    expect(sanitizeAlertInput(v2({ rule: { type: 'priceBelow', value: 120 } }))).toMatchObject({ rule: { type: 'priceBelow', value: 120 } });
+    expect(sanitizeAlertInput(v2({ rule: { type: 'turnoverRatioAbove', pct: 3 } }))).toBeNull();
+    expect(sanitizeAlertInput({ id: 'a', contract, condition: 'above', price: 240, createdAt: 1 })).toBeNull();
+    expect(sanitizeAlertInput(v2({ rule: { type: 'priceBelow', value: 120 }, contract: { symbol: 'X' } }))).toBeNull();
   });
 });
 

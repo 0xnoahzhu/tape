@@ -5,6 +5,7 @@
 import type { SoundCategory } from './notificationSounds';
 import type {
   AccountSummary,
+  AlertStatus,
   ApiLogEntry,
   AppNotification,
   AppSnapshot,
@@ -71,6 +72,12 @@ export type TapeEvent =
   | { type: 'notifications'; notifications: AppNotification[] }
   | { type: 'watchlists'; watchlists: Watchlist[] }
   | { type: 'priceAlerts'; alerts: PriceAlert[] }
+  /**
+   * Whether main is watching each alert, in list order: sent when what the list shows changes (a
+   * state, its reason or message), at most every 200 ms. The values in it are as of then; views that
+   * show them poll getAlertStatuses.
+   */
+  | { type: 'alertStatuses'; statuses: AlertStatus[] }
   /** The lock state changed (main is the only authority; the renderer just draws it). */
   | { type: 'lock'; state: LockState }
   /** Application menu commands, so menu accelerators and in-app shortcuts share one code path. */
@@ -216,7 +223,21 @@ export interface TapeApi {
 
   // Watchlists and alerts --------------------------------------------------
   saveWatchlists(watchlists: Watchlist[]): Promise<void>;
-  savePriceAlerts(alerts: PriceAlert[]): Promise<void>;
+  // Alerts change one at a time and main applies each change to its own list, so a fire is never
+  // undone by a stale copy (main is the only writer of `active`, `lastTriggeredAt`, `lastValue`).
+  // The new list arrives as a `priceAlerts` event.
+  /**
+   * Creates the alert (an unknown id) or edits it. An edit keeps the alert on or off and its last
+   * trigger; changing its rule, frequency or sessions arms it again. A new alert whose condition is
+   * already met fires at once. Refused when invalid, unfit for the instrument
+   * (shared/alerts.ts → ruleFitProblem) or over a limit (alertLimitProblem).
+   */
+  upsertPriceAlert(alert: PriceAlert): Promise<void>;
+  /** Pauses or resumes alerts; resuming arms them again (a condition already met fires at once). */
+  setPriceAlertsActive(ids: string[], active: boolean): Promise<void>;
+  deletePriceAlerts(ids: string[]): Promise<void>;
+  /** Whether main is watching each alert now, with the measured values (poll while they are shown). */
+  getAlertStatuses(): Promise<AlertStatus[]>;
 
   // Notifications ----------------------------------------------------------
   /** For notifications raised by the renderer (e.g. option risk alerts). */
@@ -303,7 +324,11 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   refreshOrders: 'allow',
   refreshExecutions: 'allow',
   saveWatchlists: 'deny',
-  savePriceAlerts: 'deny',
+  upsertPriceAlert: 'deny',
+  setPriceAlertsActive: 'deny',
+  deletePriceAlerts: 'deny',
+  // Read-only, like the list the snapshot holds.
+  getAlertStatuses: 'allow',
   notify: 'allow',
   markNotificationsRead: 'deny',
   testNotification: 'deny',

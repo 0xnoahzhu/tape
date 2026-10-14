@@ -23,7 +23,7 @@ IB Gateway / TWS ──socket──▶ main (services) ──TapeEvent──▶ 
 ```
 
 * The main process is the single source of truth for everything that comes from IB or is persisted
-  (settings, watchlists, price alerts, notifications in JSON files; market data caches in `tape.db`).
+  (settings, watchlists, alerts, notifications in JSON files; market data caches in `tape.db`).
 * The renderer receives a snapshot on startup (`getSnapshot`) and then push events
   (`src/shared/ipc.ts → TapeEvent`). `src/renderer/src/state/bridge.ts` applies them to the store.
 * Renderer writes go through `window.tape.*` (`TapeApi`). The main process persists and broadcasts
@@ -54,7 +54,8 @@ through the shared `MainContext` (never inside their factory).
 | `market/corporateEvents.ts` | Upcoming earnings of the holdings: Wall Street Horizon, else estimated from IB's market scanner (see *Corporate events*) |
 | `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |
-| `market/alerts.ts` | Price alert evaluation |
+| `market/alerts.ts` | The alerts engine: the alert list (main is its only writer), the alert lines, evaluation, notifications (see *Alerts*) |
+| `market/alertEval.ts`, `alertWindow.ts`, `alertBars.ts` | Pure alert rules, re-arming, frequency and texts; the 3 / 5-minute price windows; the bars of indicator alerts (see *Alerts*) |
 | `notifications.ts` | In-app notification list + OS notifications (see *Notification sounds*) |
 | `notificationSound.ts`, `soundPlayer.ts` | Per-platform notification sound options; the macOS sound player (afplay) |
 | `appearance.ts` | Theme (`nativeTheme.themeSource`), theme-matched dock/window icon and, via `finderIcon.ts`, the macOS Finder icon (see *Appearance*) |
@@ -145,8 +146,8 @@ Tape has no read-only mode of its own: with *Read-Only API* on in TWS / IB Gatew
 orders and cancels with error 321, and the renderer's toast adds where to turn it off
 (`state/orderActions.ts → orderErrorText`; see *Connection* for the warning). Main's own order,
 cancel and Cancel all refusals (not connected, another session, an out-of-date list, the IB link lost,
-…) are fixed English texts in `shared/ipc.ts`, which `orderErrorText` shows in the user's language;
-IB's texts stay as IB wrote them. Saved settings that
+…) are fixed English texts in `shared/ipc.ts`, which `orderErrorText` shows in the user's language, as
+the alert dialog does with its refusals; IB's texts stay as IB wrote them. Saved settings that
 still have Tape's former read-only switch on get a one-time notice in the notification list saying
 so (`store.ts`).
 
@@ -545,6 +546,12 @@ what IB was seen to do). Intervals (`shared/timeframes.ts`, `historyParams.ts �
   per 10 minutes) and the chart says so. IB's small-bar pacing is kept by the send queue
   (`pacing.ts`); the chart reloads every intraday interval every 60 s (10 of IB's 60 requests per
   10 minutes, beside the 40 pages may use).
+* Indicator alerts load the chart's series (the same request, so a series the chart has shown costs
+  no IB request) as `background` requests (`HistoryRequest.background`): they wait behind every
+  view's request and page, take one request slot at a time and at most `BACKGROUND_BUDGET` (12) of
+  IB's historical requests per 10 minutes, are the first dropped when too many wait, and a view
+  asking for the same bars while one waits lifts it to the view's priority (one request answers
+  both). A chart load is therefore never delayed by alerts.
 * The v3 schema migration moves series to retention classes by bar size and drops the coverage of
   those that now stay longer (hours): the old coverage may claim bars the old 30-day maintenance
   had deleted. Their bars stay and are claimed again on the next load.
@@ -559,13 +566,14 @@ is too narrow for 1.25 px a bar; YTD takes a finer interval in the first weeks o
 its span with pages sized to what is missing (Max until IB's head timestamp; a refused page is
 asked again after its wait) and fits the view to it (up to 1,200 bars per screen) until the user
 pans or zooms. Between reloads a real-time last price extends the forming bar and starts the next
-ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`; `chartMath.ts` re-exports it,
-and the moving averages come from `shared/indicators.ts → sma`); the live bars are kept between
+ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator
+alerts, see *Alerts*; `chartMath.ts` re-exports it, and the moving averages come from
+`shared/indicators.ts → sma`); the live bars are kept between
 quotes until a reload reaches them, nothing is filled across the overnight break (the first bar
 starts at the 04:00 open), and delayed quotes (the account's market data type 3 / 4) never touch
 intraday bars, and seconds charts show a note. A reload of a seconds window, which slides with
 every reload, replaces the chart's bars unless older pages were loaded in front of it. In the
-header the watchlist star and the price-alert bell (`BUTTONS_W`) sit left of the interval chips,
+header the watchlist star and the alert bell (`BUTTONS_W`) sit left of the interval chips,
 which get what is left beside a title of `MIN_TITLE_W`.
 
 ### Quote subscriptions
@@ -576,7 +584,7 @@ owner wants any more). `market/quotes.ts` unions the owners per contract (`subsc
 one `reqMktData` line per contract whose generic tick list is the union of the owners' profiles
 (`basic`, `underlying`, `option`, `dividends` and the add-ons below), and cancels lines nobody wants. At most 95 lines are open (IB's
 default limit is 100), in the order the contracts were first wanted; the rest carry a "line limit"
-error on their quote. Price alerts are an owner too (a main-process one, see below). After every
+error on their quote. Alerts are an owner too (a main-process one, see below). After every
 handshake and after 1101, market data type 4 (delayed-frozen fallback) is set and all lines are
 requested again. Errors after which IB dropped a line end it; 10197 (competing live session) keeps it
 open and is shown on the quote and the connection. Quote changes reach the renderer as `quotes` events
@@ -669,7 +677,8 @@ update, dropped on an error that ended it, and cancelled anyway 60 s after the r
 (`CANCEL_CAP_MS`). A 309 for the book while another line of this client is open or being cancelled, or
 right after a cancel, is retried once, when those lines are gone.
 
-Main-process owners (`QuoteService.setSubscriptions`: price alerts, the market data check `md-check`) get
+Main-process owners (`QuoteService.setSubscriptions`: alerts, one `basic` line per instrument of an active
+alert, `vwap` for a stock with a turnover alert; the market data check `md-check`) get
 lines like any other owner, but a contract only they want is never sent to the renderer; renderer owners
 come through `setRendererSubscriptions` (IPC `setQuoteSubscriptions`). `probe()` opens a line
 outside the owners (the check's primary-exchange line); probes and fallback side lines count against the
@@ -888,6 +897,157 @@ refused WSH and the scanner, or only stocks the scanner does not cover are left)
 (not connected, a timeout or another error). Demo mode answers from the simulator, as scanner
 estimates.
 
+### Alerts
+
+Alerts run in the main process (`market/alerts.ts`), so they keep firing while the window is closed
+(macOS) or Tape is locked, but only while Tape runs and is connected to TWS / IB Gateway (or the demo
+feed runs): nothing is evaluated on IB's or anyone's servers. The pure parts: `alertEval.ts` (measuring a
+rule, re-arming, frequency, notification texts), `alertWindow.ts` (3 / 5-minute price windows),
+`alertBars.ts` (indicator bars), and in `src/shared` `alerts.ts` (vocabulary, limits, which rules fit
+which instrument, main's refusal messages), `indicators.ts`, `indicatorSignal.ts` (the two lines a
+signal compares, read at the bars a cross is tested on), `liveBars.ts` and `sessionQuote.ts` (shared
+with the chart and the alert dialog). The renderer's side is under *Renderer › Alerts*.
+
+**Model** (`PriceAlert` in `alerts.json`). A `rule` (`AlertRule`), a `frequency`, US stock `sessions`, a
+`note` (at most `NOTE_MAX` = 20 code points, trimmed), `active`, `createdAt`, `updatedAt` (the user's last
+change of the trigger or of on / off; a note-only edit does not count), `lastTriggeredAt` and
+`lastValue` (the value measured at the last trigger). Rules:
+
+| Rule | Measures | Met when | Data |
+| --- | --- | --- | --- |
+| `priceAbove` / `priceBelow` | last, else the bid / ask midpoint (`tickMap.ts → lastOrMid`) | ≥ / ≤ value | live or delayed |
+| `dayRise` / `dayFall` | change on the day in %, against `shared/sessionQuote.ts → liveChangeRef` | ≥ pct / ≤ −pct | live or delayed |
+| `windowRise` / `windowFall` (3 or 5 min) | change against the price N minutes ago | ≥ pct / ≤ −pct | live |
+| `volumeAbove` | IB's day volume (tick 8; shares, contracts for options; extended hours included, a new day from IB's 20:00 roll) | ≥ shares | live |
+| `turnoverAbove` | ≈ volume × the day's VWAP (RTVolume, generic 233: the `vwap` line profile; stocks only) | ≥ amount | live |
+| `bidAbove` / `askBelow` | bid / ask (an ask of 0 or none is no offer) | ≥ / ≤ value | live |
+| `bidSizeAbove` / `askSizeAbove` | bid / ask size | ≥ shares | live |
+| `indicator` | MA, EMA, MACD, KDJ, RSI or BOLL signal on an interval (below) | a cross | live |
+| `halt` | IB's halt code (tick 49 / 90) | halted (1 or 2) / back to 0 after a halt | live |
+
+`shared/alerts.ts → ruleFitProblem` says which rules an instrument cannot have (no volume for FX,
+indices and combos; turnover for stocks only; halts for stocks, options and warrants; no bid /
+ask on indices; no sizes on indices and combos; no indicator bars for combos); main refuses them.
+
+`storeSchema.ts → sanitizeAlerts` reads both shapes and writes the current one. A Tape 0.12 alert
+(`condition`, `price`, `repeat`) becomes `priceAbove` / `priceBelow` with frequency `always` (repeat) or
+`once`; loading alone does not rewrite the file. Price rules are written with those three fields too, so
+a downgrade keeps them. A rule or frequency this version does not know (a newer Tape's, or parameters it
+cannot read) is kept as written, including on / off, and marked `unsupported`: never evaluated, listed
+(as off), deletable, never dropped, and written back unchanged, so the newer Tape still runs it. Limits
+(`alertLimitProblem`, enforced by main, mirrored by the dialog): at most `MAX_ALERTS_PER_TYPE` (10)
+alerts of one rule type per instrument, `MAX_ALERTS` (200) in all, and active indicator alerts on at most
+`MAX_INDICATOR_SERIES` (20) instrument + interval pairs.
+
+**Changes.** The renderer never sends the list: `upsertPriceAlert(alert)` (create, or edit by id),
+`setPriceAlertsActive(ids, active)` and `deletePriceAlerts(ids)` are applied by main to its own list,
+which goes back as a `priceAlerts` event. Main is the only writer of `active`, `lastTriggeredAt` and
+`lastValue`: an edit keeps the alert on or off, its creation time and its last trigger (a stale copy can
+neither turn a spent alert back on nor undo a trigger); changing the rule, frequency or sessions, a
+resume or a new alert arms it again, and a condition already met then fires at once. Upserts are checked
+(`sanitizeAlertInput`: a valid alert of a known type only), and refused when the rule does not fit or a
+limit is reached (English messages; the dialog says it first). The three changes are
+refused while locked; `getAlertStatuses` is not.
+
+**Evaluation.** Price, day-change, volume, turnover, bid / ask, size and halt rules are evaluated on
+every quote of their instrument (`QuoteService.onQuote`); 3 / 5-minute rules on every quote and every
+second, indicator rules every second (a 1 s timer that runs only while such alerts are on). What may
+fire:
+
+* Fresh data only. After a (re)connect, or after an error on the line (the line limit, a competing
+  session), a quote counts `SETTLE_MS` (1 s) after its first tick, the time IB takes to send the line's
+  current values: the values a quote kept from before never fire anything. While not connected nothing
+  is evaluated.
+* By market data type: window, volume, turnover, bid / ask, size, indicator and halt rules on live data
+  (type 1) only (a 15-minute-old window, size or bar means nothing); price and day-change rules on
+  delayed data (3) too, their notifications marked "Delayed 15 min"; nothing on frozen data (2, 4) or
+  before IB reported the type.
+* Sessions: a US stock's alert (`usesAlertSessions`: STK in USD) fires only within its `sessions`
+  (`pre`, `regular`, `post`, `overnight`; default the first three, as moomoo), from
+  `shared/session.ts → usStockSession` (`usEquitySession` plus IB's overnight session, 20:00–03:50 New
+  York, Sunday to Thursday nights; holidays and half days from the contract's liquid hours). Outside them
+  nothing fires but re-arming goes on. An on-close indicator cross counts in the session of the bar it
+  closes, not when it is read: daily and weekly bars are regular-session bars, an intraday bar belongs
+  to the session of its last second (so the bar ending at 16:00 fires at the close for a Regular-only
+  alert, and a pre-market bar ending at 09:30 does not). Other instruments are always in session.
+* Day change: in the pre-market and the regular session against the previous close; after the close
+  (post-market, overnight) against today's close (the last regular-hours trade, tick 57), worded "after
+  hours" — the reference the chart header shows (`liveChangeRef`, also used by `sessionQuote`). Without
+  today's close (delayed lines) the previous close.
+* Frequency (`alertEval.ts → gate`): `once` fires once, then main turns the alert off (its line goes);
+  `daily` at most once per New York trading day (`shared/session.ts → tradingDay`: the New York date,
+  the next one from 20:00, IB's day roll), so neither the user's local midnight (noon in New York for a
+  user in China) nor New York midnight inside the overnight session starts a new day; `always` every
+  time the condition is met again after it went back by a band (prices `REARM_BAND` 0.05 % and at
+  least a tick, percents max(0.2, 10 % of the threshold) points, sizes below 80 %, volume and turnover
+  only at IB's day roll, RSI levels 2 and KDJ levels 5 points, line crosses the opposite relation) and
+  at least `COOLDOWN_MS` (60 s; a window rule: its 3 or 5 minutes) after the last fire. After a restart
+  an always-on alert that fired waits for its condition to go back, and a daily one that fired on this
+  trading day stays quiet (unless the user changed it since: `updatedAt`).
+
+Windows (`alertWindow.ts`): one per instrument with a window alert, a sample per second (that second's
+last live price) kept for 6 minutes. The change over N minutes is against the newest sample at or before
+N minutes ago (moomoo's definition: the price then, not the window's low or high), and only once the
+window has been continuous that long: it starts over on a disconnect, a line error and any quote that
+is not live. The status says how long until it is ready.
+
+**Indicators** (`alertBars.ts`, `shared/indicators.ts`). One feed per instrument and interval (1m 5m
+15m 30m 1h D W), shared by the alerts on it and dropped with the last one. It loads the chart's request
+(`outsideRth` for intraday intervals) as a `background` history request (see *Historical bars*), so the
+alert and the chart see the same bars; between loads live quotes extend the forming bar and start the
+next on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, as on the chart; delayed or frozen
+quotes never touch intraday bars). Reloads: when the connection is ready again (3 s apart), every 30
+to 60 minutes per intraday feed (spread out, which also corrects highs and lows built from quotes), an
+intraday feed as soon as live quotes come back after delayed or frozen ones (those dropped its live
+bars, and the stored ones may be further behind than live prices bridge, a few bars), daily and weekly
+feeds at 09:31 and, `fresh`, 16:05 New York; a failed load is retried after a minute, doubling to 30
+minutes. Indicators are read over the last max(3 × the bars a rule needs, 250) bars, once a second at
+most, cached while the bars are unchanged. `on: 'close'` compares the two newest
+closed bars (it fires when a bar closes; a daily bar closes at the end of the regular session, a US
+stock's weekly bar at the regular close of its week's last trading day, Friday or the day before a
+Friday holiday: `shared/liveBars.ts → alertBarForming`, `shared/session.ts → usWeekClosed`), `'live'`
+the forming bar with the last closed one; either fires at most once per bar, never on the bar that was
+the newest closed one when the alert was armed (a cross from before it existed), and needs live data.
+A cross: up = a − b at or below 0 on the older bar and above 0 on the newer (golden cross for two lines),
+down mirrored; a and b are two lines, the close and a line or band, or a line and a level. Formulas
+follow the Futu / TDX conventions moomoo shows:
+
+| Indicator | Formula |
+| --- | --- |
+| MA | arithmetic mean of the last n closes (`sma`, also the chart's moving averages) |
+| EMA | α = 2 / (n + 1), seeded with the first close |
+| MACD | DIF = EMA(fast) − EMA(slow), DEA = EMA(DIF, signal), MACD = 2 × (DIF − DEA); defaults 12 / 26 / 9 |
+| KDJ | RSV = (C − LLV(L, n)) / (HHV(H, n) − LLV(L, n)) × 100, K = ((m1 − 1)K′ + RSV) / m1, D = ((m2 − 1)D′ + K) / m2, both from 50, J = 3K − 2D; a bar with no n-bar range keeps K and D; defaults 9 / 3 / 3 |
+| RSI | Wilder smoothing as TDX writes it: SMA(max(Δ, 0), n, 1) / SMA(\|Δ\|, n, 1) × 100, from the second close |
+| BOLL | MID = MA(n), UPPER / LOWER = MID ± k × σ with the population σ (Bollinger's; TDX uses the sample σ, so its bands are slightly wider); defaults 20 / 2 |
+
+Values can still differ a little from moomoo's: intraday bars include extended hours, and live highs and
+lows come from quotes until the next reload. Periods go up to `MAX_INDICATOR_PERIOD` (250); an interval
+whose window holds fewer bars (1h: 20 days) gives "too few bars".
+
+**Statuses** (`AlertStatus`, not persisted): `ok`, `triggered` (a spent `once`, a `daily` that fired
+this trading day), `paused`, `unsupported` (`reason` newerVersion), `offline`, `noLine`
+(the line limit), `noData` (IB's error on the line, the bars could not be loaded, too few bars, over the
+series limit), `outOfSession`, `frozen`, `delayed`
+(`needsLive`: a rule that waits for live data), and `waiting` (no quote yet, the window filling with
+`readyIn`, the bars loading, nothing to measure yet: no previous close, no VWAP).
+Each carries the measured `value` (and an indicator's lines in `detail`,
+`afterHours` for a day change after the close). An `alertStatuses` event is sent (at most every 200 ms)
+when a state, reason or message changes; `getAlertStatuses()` recomputes them with the current values,
+for views that show those (poll while open).
+
+**Notifications** (kind `price`, so Settings › Notifications › system notifications for alerts
+apply; a click opens the chart). Title what happened ("NVDA fell below 120.00", "NVDA is up more than
+5% today (+5.32%)", "NVDA MACD golden cross · 15m"), body the price and its change on the day, "Delayed
+15 min" when delayed and the note, in both languages (`alertTexts`; zh counts in 万 / 亿,
+`format.ts → compactMyriad`; thresholds the user set are written exactly, `format.ts → exactCompact`:
+"volume above 1.25M", never a rounded 1.3M; dollar amounts carry $ in zh too). At most
+`STORM_MAX` (20) alert notifications a minute: the rest are folded
+into one ("5 more alerts triggered", the first titles) when the minute is over. An alert whose
+instrument gets no market data line (alert lines are background, the first to go when the 95 run out)
+shows `noLine`, and the first time in an app run a `sys` notice says so ("Alert on NVDA is not being
+watched"), once per alert.
+
 ### API log
 
 Every frame is recorded raw in a ring of the newest 20,000 (`ib/apiLog.ts`) and, when enabled,
@@ -1034,8 +1194,9 @@ delete open files):
   strings with `createMessages({ en, zh })` (see `src/renderer/src/i18n/index.ts`).
 * `src/renderer/src/ui/primitives.tsx` — controls that reproduce the design (Toggle, Segmented,
   Chip, TabItems, TextInput, Button, Modal, KeyValueRows, AccountTag, Popover, MenuItem).
-  `ui/select.tsx` has the drop-down menus (Dropdown, MenuHeading, MenuChoice, and Select, a 34px box):
-  the order ticket's. Segmented and
+  `ui/select.tsx` has the drop-down menus (Dropdown, MenuHeading, MenuChoice, and Select, a 34px box
+  whose options may carry a `group` heading and, with `showWhy`, show why one is unavailable): the
+  order ticket's and the alert dialog's. Segmented and
   TabItems items carry `data-key` (and `data-active` on the selected one) for UI tests. `Modal` swallows
   the rest of a double-click that began before it opened (`isCarriedOverClick`: a click with `detail` > 1
   within 500 ms), so the second click of a double-click on Submit neither closes the review on its
@@ -1223,7 +1384,7 @@ behind the dialog) and arms `CONFIRM_ARM_MS` (600 ms) after the order arrives, o
 then a capture-phase keydown handler holds ⏎ back (`orderReview.ts → enterAction`: a held ⏎ never
 acts, ⏎ on Cancel after Tab closes at once, ⏎ with nothing focused confirms once armed), its click does
 nothing, and it fades in. Escape and Cancel always work. Every dialog's Escape (the review, a
-confirmation, Cancel all, the PIN dialog) is marked handled (`preventDefault`), so
+confirmation, Cancel all, the alert dialog, the PIN dialog) is marked handled (`preventDefault`), so
 the floating panels (`panelKeyAction`, `escapePanel`) and the notifications panel leave it alone once
 the dialog has closed. A danger `ConfirmDialog` (cancel an order,
 disconnect, delete) arms its button the same way, and Cancel all its red button after the check box.
@@ -1696,6 +1857,75 @@ the user's and saved as edited. The renderer edits them with the pure functions 
   a ✎ (the group's own, or the group now in its place) or to "+ New group" / "New list"
   (`ui/focus.ts → useRefocus`), so the next Enter works the list rather than going nowhere (the
   order ticket's keys never act from `<body>`, `useTicketKeys`).
+
+### Alerts (`features/alerts`, `notifications/AlertsTab.tsx`)
+
+The renderer edits alerts and shows how main watches them; main evaluates them (see *Alerts* under
+the main process). Everything that can be pure is in `features/alerts/model.ts` (unit-tested).
+
+**The dialog** (`PriceAlertDialog.tsx`, `AlertValueBlock.tsx`; the store's `alertForm`, opened by
+`openAlertForm(contract, alert?, 'edit' | 'duplicate')` from the chart's bell, a watchlist row's menu
+and the bell's list, which stays open behind it). The form (`AlertFormState`) keeps every input as typed.
+Its *Alert type* is an `AlertKind`: a rule type, except that the 3- and 5-minute rules are an entry
+each, every indicator is one (its signal is picked below it) and *Turnover ratio* is listed but never
+available. The menu groups them (`ALERT_KIND_GROUPS`: Uptrend, Downtrend, Market data, Indicators,
+Events) with a hint each; `kindProblem` greys out what the instrument cannot have, with the reason
+(`ruleFitProblem`, no shares outstanding). `withKind` keeps a typed value
+across kinds of the same input (a price for "Falls below" and "Bid rises above") and starts the others
+from a default: ±2 % of the last price (the bid / ask for theirs), 3 % for a day's change, 1 % for a
+window, the average daily volume rounded to three digits (the `range` line profile, stocks), 5K for
+sizes. The value blocks (`valueBlock`):
+
+* price: the currency inside the input, −5 / −2 / +2 / +5 % chips (for price rules they also pick
+  the direction), "From last +3.31%" and "already met, fires at once" (`alreadyMet` on the live price);
+* percent: chips 1 / 2 / 3 / 5 / 10, "Now +1.24%" for a day's change (`dayChange`, main's reference:
+  `liveChangeRef`), the window's rule for 3 / 5 minutes (when editing, main's measured change);
+* quantity and size: `format.ts → parseQuantity` takes "10M", "1.5B", "1000万", "2亿"; a typed unit is
+  spelled out under the chips; "Now 12.3M" (turnover "≈", from the stock's VWAP: the dialog asks for the
+  `vwap` line profile, as main does);
+* indicator: a Select of the indicator's signals (`SIGNAL_CHOICES`), its parameters (`signalParams`,
+  Futu's defaults; RSI / KDJ level presets that follow the direction: 70 ↔ 30), the interval and the
+  trigger (*On bar close* for crosses of two lines and levels, *Real time* for the price against a
+  line or band, `defaultTrigger`). The preview reads the chart's bars of that interval (`barsStore`,
+  slot `alert-form`) with the live price on the forming bar (`mergeLivePrice`, as main extends its
+  feeds) through `shared/indicatorSignal.ts → readIndicator`, the function main tests the alert with:
+  "Now: DIF 1.21 below DEA 1.31" ('live') or "Last closed bar: …" ('close');
+* halt: Halted / Resumed.
+
+Under them, red or muted lines about the quote (`dataNote`, from main's
+`shared/alerts.ts → dataAllows`): delayed data (3) a live-only rule waits on, delayed data a price rule
+fires on (marked), frozen data (2, and delayed frozen 4) nothing fires on, bid / ask of one exchange
+only (`Quote.source`). Then the frequency, the sessions (US stocks, `usesAlertSessions`; the last one on
+stays on), remarks (counted in code points, `limitNote` blocks the 21st once an IME composition has
+ended: `typedNote`, `TextInput`'s `composing`) and, editing an alert that is off, *Turn on when saved*
+(on for a spent one-time alert, off for a paused one). `buildRule` turns the form into a rule with
+main's checks (`sanitizeRule`): errors show under their field once it holds text, and the button
+stays disabled. `formLimitProblem` mirrors main's limits on the disabled button; above
+`ALERT_LINES_WARNING` (40) instruments with alerts on, a red line says alert lines go first. Create /
+Save sends one alert (`alertFromForm` → `upsertPriceAlert`; sessions only when not the default), then
+`setPriceAlertsActive` when it is to be turned on; a refusal is shown in the user's language
+(`refusalText` knows main's English messages). ⏎ saves unless a button or menu has the focus, Esc
+cancels (an open menu takes both first; neither while an IME composition is open, where Esc drops the
+pinyin: `dialogKey`). Alerts do not trade, so there is no arming delay.
+
+**The list** (Bell › Alerts). Alerts grouped by instrument in main's order (`groupByInstrument`), each
+with `ruleSummary` ("5-min rise ≥ 2%", "MACD golden cross · 15m", "Price ≥ 125.00", "Volume ≥ 1.25M":
+thresholds exactly, `qtyExact` / `moneyExact`), then "Now …" (`nowText`:
+main's measured value, rounded, an indicator's two operands), the frequency and the remarks, and
+the status (`statusText`), whose room comes first: *Paused*, *Triggered 10:31*, *Delayed 15 min*,
+*Waiting for 5 min of data (2:10 left)*, *Outside selected sessions*, *Not
+supported in this version*, and in red *Not monitored: market data line limit*, IB's error, too few bars,
+*Delayed data: waits for live data*. Statuses come from `useAlertStatuses`: the store's `alertStatuses` (main's event when a
+state changes) and, while the list or an edit is open, `getAlertStatuses` every 2 s for current
+values, the newer of the two. A row's click edits it (not a newer Tape's alert: `isEditable`), its
+switch pauses or resumes it, × deletes it after a danger confirmation listing the
+instrument, type, condition, frequency and remarks; the context menu (a `Dropdown` under the row)
+also duplicates it and opens its chart. *Delete triggered (n)* deletes the spent one-time alerts
+(`isSpent`). Over 8 alerts a *This symbol / All* switch appears. While an alert that is on is not
+watched for a reason the user can act on (`isUnwatched`: no line, IB's error, delayed data for a
+live-only rule; not while Tape is offline), the top bar's bell dot is red, its tooltip counts them
+and it opens on Alerts. The chart draws dashed lines for price-level rules only (`alertLevel`:
+price, bid, ask) and lights its bell while the symbol has an alert on.
 
 ### Time format
 

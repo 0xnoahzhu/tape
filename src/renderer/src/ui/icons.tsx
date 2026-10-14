@@ -56,9 +56,9 @@ export function FingerprintIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-/** Small unread / active marker dot (square, accent). */
-export function Dot({ top, right, size = 6 }: { top: number; right: number; size?: number }) {
-  return <div style={{ position: 'absolute', top, right, width: size, height: size, background: 'var(--ac)', boxShadow: '0 0 0 2px var(--p)' }} />;
+/** Small unread / active marker dot (square, accent unless `color` says otherwise). */
+export function Dot({ top, right, size = 6, color = 'var(--ac)' }: { top: number; right: number; size?: number; color?: string }) {
+  return <div style={{ position: 'absolute', top, right, width: size, height: size, background: color, boxShadow: '0 0 0 2px var(--p)' }} />;
 }
 
 /** Magnifier of the symbol search box. */

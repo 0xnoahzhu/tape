@@ -1,5 +1,6 @@
 // Bars a live price extends (pure; no React or store imports): the chart's tail of live bars beyond
-// the stored ones between IB's bar loads.
+// the stored ones, and the bars the indicator alerts in the main process build from live quotes
+// (main/market/alertBars.ts), so both move their bars the same way between IB's bar loads.
 
 import { nyClock, type MarketSession } from './session';
 import { barEndSec, barSeconds, barStartSec } from './timeframes';
@@ -62,6 +63,18 @@ export function isCurrentBar(bar: Bar, tf: Timeframe, now: Date, session: Market
     default:
       return false;
   }
+}
+
+/**
+ * Whether the newest bar's period is still open, for indicator alerts ('close' mode tests the bars
+ * before it). As isCurrentBar, except for weekly bars: isCurrentBar counts this week's bar as done
+ * outside the regular session (the chart no longer extends it then), but the week is still trading
+ * after Tuesday's close. A weekly bar stays open through its calendar week until `weekDone` (US
+ * stocks: the regular close of the week's last trading day, shared/session.ts → usWeekClosed).
+ */
+export function alertBarForming(bar: Bar, tf: Timeframe, now: Date, session: MarketSession, weekDone: boolean): boolean {
+  if (tf !== '1W') return isCurrentBar(bar, tf, now, session);
+  return !weekDone && weekStart(barDay(bar.time)) === weekStart(nyToday(now));
 }
 
 /** Quarter (0–3) of a "YYYY-MM-DD" day. */

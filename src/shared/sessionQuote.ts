@@ -1,5 +1,6 @@
-// What the chart header shows as "the price" depends on the market session
-// (design: sessionQuote). Pure so it can be unit tested.
+// What the chart header (and the floating ticket's) shows as "the price" depends on the market
+// session (design: sessionQuote). Shared with the main process so price alerts measure a day's
+// change against the same reference (liveChangeRef). Pure so it can be unit tested.
 //
 //   regular  last vs previous close                      refs: Prev close
 //   post     extended last vs today's close              refs: Close (vs prev close), Prev close
@@ -48,7 +49,7 @@ function livePrice(q: Quote): number | undefined {
 export function sessionQuote(q: Quote | undefined, session: MarketSession, regularClose?: number): SessionQuote {
   if (!q) return { refs: [] };
   const prev = ok(q.close) ? q.close : undefined;
-  const rth = ok(q.lastRthTrade) ? q.lastRthTrade : ok(regularClose) ? regularClose : undefined;
+  const rth = todaysClose(q, regularClose);
   const live = livePrice(q);
   const prevRef: SessionRef[] = prev != null ? [{ kind: 'prev', value: prev }] : [];
 
@@ -58,13 +59,33 @@ export function sessionQuote(q: Quote | undefined, session: MarketSession, regul
       return { price: live, ref: prev, refs: prevRef };
     case 'post':
       if (rth == null) return { price: live, ref: prev, refs: prevRef };
-      return { price: live, ref: rth, refs: [{ kind: 'close', value: rth, base: prev }, ...prevRef] };
+      return { price: live, ref: liveChangeRef(q, session, regularClose)?.ref, refs: [{ kind: 'close', value: rth, base: prev }, ...prevRef] };
     case 'closed': {
       const price = rth ?? live;
       const ext = rth != null && ok(q.last) && q.last !== rth ? [{ kind: 'ext' as const, value: q.last, base: rth }] : [];
       return { price, ref: prev, refs: [...ext, ...prevRef] };
     }
   }
+}
+
+/** Today's close: the last regular-hours trade (tick 57), else the caller's daily-bar close. */
+function todaysClose(q: Quote, regularClose?: number): number | undefined {
+  return ok(q.lastRthTrade) ? q.lastRthTrade : ok(regularClose) ? regularClose : undefined;
+}
+
+/**
+ * The reference a live price's change on the day is measured against, as the chart header shows
+ * it: the previous close in the pre-market and the regular session; after the close (post-market,
+ * and the overnight session, which usEquitySession counts as closed) today's close, an after-hours
+ * change (`afterHours`), as long as it is known (IB sends tick 57 on live lines only, so delayed
+ * data falls back to the previous close). Undefined without a reference.
+ */
+export function liveChangeRef(q: Quote, session: MarketSession | 'overnight', regularClose?: number): { ref: number; afterHours: boolean } | undefined {
+  if (session === 'post' || session === 'closed' || session === 'overnight') {
+    const rth = todaysClose(q, regularClose);
+    if (rth != null) return { ref: rth, afterHours: true };
+  }
+  return ok(q.close) ? { ref: q.close, afterHours: false } : undefined;
 }
 
 /** Session part of a New York day; "night" is the closed time before the pre-market. */

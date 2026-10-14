@@ -1,9 +1,8 @@
 // Pure helpers for the bell panel.
 
-import { contractLabel } from '@shared/contract';
 import { resolveTimeTokens, type Clock } from '@shared/timeFormat';
 import type { NotificationView } from '@shared/ipc';
-import type { AppNotification, ContractRef, Lang } from '@shared/types';
+import type { AppNotification, Lang } from '@shared/types';
 import { maskAccounts } from '../../lib/account';
 import type { Page } from '../../state/store';
 import type { NotificationsMessages } from './messages';
@@ -97,15 +96,4 @@ export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lan
 /** Full date and time of a notification or alert trigger: "2026-10-05 09:41:07 AM", "2026-10-05 下午 02:35:07". */
 export function stampText(t: number, clock: Clock): string {
   return clock.time(t, { date: 'ymd', seconds: true });
-}
-
-/**
- * A price alert's instrument split for the bell list: options keep the symbol in the narrow
- * column and move "10/16 230 Call" to the sub line; anything else shows its full label
- * ("AAPL", "EUR.USD", "ESZ6") in the column and no detail.
- */
-export function alertInstrumentParts(c: ContractRef): { symbol: string; detail: string } {
-  const label = contractLabel(c);
-  if (c.secType !== 'OPT' && c.secType !== 'FOP') return { symbol: label, detail: '' };
-  return { symbol: c.symbol, detail: label.slice(c.symbol.length).trim() };
 }

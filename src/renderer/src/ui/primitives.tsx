@@ -2,7 +2,7 @@
 // The design is square (no border radius), uses inset box-shadows as borders,
 // and expresses state through color tokens only.
 
-import { useState, type CSSProperties, type ReactNode, type KeyboardEvent, type ChangeEvent, type MouseEvent, type Ref } from 'react';
+import { useState, type CSSProperties, type ReactNode, type KeyboardEvent, type ChangeEvent, type CompositionEvent, type MouseEvent, type Ref } from 'react';
 
 /** 34×18 switch: accent when on, line color when off. */
 export function Toggle({ on, onClick, disabled, title }: { on: boolean; onClick?: (e: MouseEvent) => void; disabled?: boolean; title?: string }) {
@@ -205,6 +205,7 @@ export function TabItems<K extends string>({
 export function TextInput({
   value,
   onChange,
+  onCompositionEnd,
   onKeyDown,
   onBlur,
   placeholder,
@@ -217,7 +218,14 @@ export function TextInput({
   inputRef,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  /**
+   * `composing`: an IME composition is open (the text holds the unconfirmed pinyin). A caller that
+   * rewrites the text (a length cut) leaves it alone then: writing the field back mid-composition
+   * breaks the composition. Its final text comes with onCompositionEnd.
+   */
+  onChange: (v: string, composing: boolean) => void;
+  /** An IME composition ended: the field's text (the last change of a composition may still be marked composing). */
+  onCompositionEnd?: (v: string) => void;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
   onBlur?: () => void;
   placeholder?: string;
@@ -237,7 +245,8 @@ export function TextInput({
       autoFocus={autoFocus}
       placeholder={placeholder}
       spellCheck={false}
-      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value, (e.nativeEvent as InputEvent).isComposing === true)}
+      onCompositionEnd={onCompositionEnd && ((e: CompositionEvent<HTMLInputElement>) => onCompositionEnd(e.currentTarget.value))}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
       style={{

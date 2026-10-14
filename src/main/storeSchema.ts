@@ -5,15 +5,22 @@
 // unknown keys are dropped, types are coerced where the intent is clear, numbers are clamped,
 // and entries that cannot be repaired are skipped.
 
+import { ALERT_FREQUENCIES, ALERT_SESSIONS, ALERT_TIMEFRAMES, clipNote, DEFAULT_ALERT_SESSIONS, MAX_INDICATOR_PERIOD } from '@shared/alerts';
 import { defaultUpColor, NOTIFICATION_KINDS } from '@shared/defaults';
 import { DND_MAX_MS } from '@shared/dnd';
 import { KNOWN_SOUNDS } from '@shared/notificationSounds';
 import { TIME_FORMATS } from '@shared/timeFormat';
 import type {
+  AlertCross,
+  AlertFrequency,
+  AlertRule,
+  AlertSession,
+  AlertTimeframe,
   AppNotification,
   ComboLeg,
   ContractRef,
   DeepPartial,
+  IndicatorSignal,
   LocalizedName,
   LocalizedText,
   NotificationKind,
@@ -316,29 +323,173 @@ export function sanitizeWatchlists(raw: unknown, defaults: Watchlist[]): Watchli
 
 // ---------------------------------------------------------------------------
 // Price alerts
+//
+// Two shapes are read and the current one is written:
+// - v1 (Tape 0.12 and older): { condition: 'above' | 'below', price, repeat }, migrated to a
+//   priceAbove / priceBelow rule; repeat → frequency 'always' (re-arms after crossing back, as
+//   before), otherwise 'once'. Only loading migrates: the file is rewritten with the next change.
+// - v2: { rule, frequency, sessions?, note?, updatedAt?, lastValue? }. A rule or frequency this
+//   version does not know (a newer Tape's, or parameters it cannot read) is kept as written,
+//   including on / off, and marked `unsupported`, so a downgrade neither deletes nor turns off an
+//   alert (main writes the whole list back with any change); it is never evaluated here.
+// Price rules also get the v1 fields (condition, price, repeat) on write, so Tape 0.12 keeps them
+// after a downgrade (its loader requires those fields and drops the rest).
 
-function sanitizeAlert(raw: unknown): PriceAlert | null {
-  if (!isObject(raw) || !nonEmpty(raw.id)) return null;
-  const contract = sanitizeContract(raw.contract);
-  if (!contract) return null;
-  if (raw.condition !== 'above' && raw.condition !== 'below') return null;
-  if (!isFiniteNumber(raw.price) || !isFiniteNumber(raw.createdAt)) return null;
-  const alert: PriceAlert = {
-    id: raw.id,
-    contract,
-    condition: raw.condition,
-    price: raw.price,
-    repeat: raw.repeat === true,
-    createdAt: raw.createdAt,
-    active: raw.active !== false,
-  };
-  if (isFiniteNumber(raw.lastTriggeredAt)) alert.lastTriggeredAt = raw.lastTriggeredAt;
-  return alert;
+const isPositive = (v: unknown): v is number => isFiniteNumber(v) && v > 0;
+const isPeriod = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 1 && (v as number) <= MAX_INDICATOR_PERIOD;
+const isLevel = (v: unknown, lo = 0, hi = 100): v is number => isFiniteNumber(v) && v >= lo && v <= hi;
+const isCross = (v: unknown): v is AlertCross => v === 'up' || v === 'down';
+
+function sanitizeSignal(raw: unknown): IndicatorSignal | null {
+  if (!isObject(raw) || !isCross(raw.cross)) return null;
+  const cross = raw.cross;
+  const lines = (fast: unknown, slow: unknown) => isPeriod(fast) && isPeriod(slow) && fast < slow;
+  switch (raw.ind) {
+    case 'ma':
+    case 'ema':
+      if (raw.kind === 'price' && isPeriod(raw.period)) return { ind: raw.ind, kind: 'price', period: raw.period, cross };
+      if (raw.kind === 'lines' && lines(raw.fast, raw.slow)) return { ind: raw.ind, kind: 'lines', fast: raw.fast as number, slow: raw.slow as number, cross };
+      return null;
+    case 'macd':
+      if ((raw.kind !== 'signal' && raw.kind !== 'zero') || !lines(raw.fast, raw.slow) || !isPeriod(raw.signal)) return null;
+      return { ind: 'macd', kind: raw.kind, fast: raw.fast as number, slow: raw.slow as number, signal: raw.signal, cross };
+    case 'kdj': {
+      if (!isPeriod(raw.n) || !isPeriod(raw.m1) || !isPeriod(raw.m2)) return null;
+      const { n, m1, m2 } = raw;
+      if (raw.kind === 'cross') return { ind: 'kdj', kind: 'cross', n, m1, m2, cross };
+      if (raw.kind !== 'level' || (raw.line !== 'k' && raw.line !== 'd' && raw.line !== 'j')) return null;
+      // J = 3K − 2D runs beyond 0–100.
+      if (!(raw.line === 'j' ? isLevel(raw.level, -50, 150) : isLevel(raw.level))) return null;
+      return { ind: 'kdj', kind: 'level', n, m1, m2, line: raw.line, level: raw.level as number, cross };
+    }
+    case 'rsi':
+      if (raw.kind === 'level' && isPeriod(raw.period) && isLevel(raw.level)) return { ind: 'rsi', kind: 'level', period: raw.period, level: raw.level, cross };
+      if (raw.kind === 'lines' && lines(raw.fast, raw.slow)) return { ind: 'rsi', kind: 'lines', fast: raw.fast as number, slow: raw.slow as number, cross };
+      return null;
+    case 'boll':
+      if (raw.kind !== 'band' || !isPeriod(raw.period) || raw.period < 2 || !isFiniteNumber(raw.k) || raw.k <= 0 || raw.k > 5) return null;
+      if (raw.band !== 'upper' && raw.band !== 'middle' && raw.band !== 'lower') return null;
+      return { ind: 'boll', kind: 'band', period: raw.period, k: raw.k, band: raw.band, cross };
+    default:
+      return null;
+  }
 }
 
+/** A valid rule of a known type, else null (unknown type or invalid parameters). */
+export function sanitizeRule(raw: unknown): AlertRule | null {
+  if (!isObject(raw)) return null;
+  const pct = (v: unknown): v is number => isPositive(v) && v <= 1000;
+  switch (raw.type) {
+    case 'priceAbove':
+    case 'priceBelow':
+    case 'bidAbove':
+    case 'askBelow':
+      return isPositive(raw.value) ? { type: raw.type, value: raw.value } : null;
+    case 'dayRise':
+    case 'dayFall':
+      return pct(raw.pct) ? { type: raw.type, pct: raw.pct } : null;
+    case 'windowRise':
+    case 'windowFall':
+      return pct(raw.pct) && (raw.minutes === 3 || raw.minutes === 5) ? { type: raw.type, minutes: raw.minutes, pct: raw.pct } : null;
+    case 'volumeAbove':
+    case 'bidSizeAbove':
+    case 'askSizeAbove':
+      return isPositive(raw.shares) ? { type: raw.type, shares: raw.shares } : null;
+    case 'turnoverAbove':
+      return isPositive(raw.amount) ? { type: 'turnoverAbove', amount: raw.amount } : null;
+    case 'indicator': {
+      if (!ALERT_TIMEFRAMES.includes(raw.timeframe as AlertTimeframe) || (raw.on !== 'close' && raw.on !== 'live')) return null;
+      const signal = sanitizeSignal(raw.signal);
+      return signal ? { type: 'indicator', timeframe: raw.timeframe as AlertTimeframe, on: raw.on, signal } : null;
+    }
+    case 'halt':
+      return raw.dir === 'halted' || raw.dir === 'resumed' ? { type: 'halt', dir: raw.dir } : null;
+    default:
+      return null;
+  }
+}
+
+/** A non-empty subset of the sessions in canonical order; undefined for the default (or nothing valid). */
+function sanitizeSessions(raw: unknown): AlertSession[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const picked = ALERT_SESSIONS.filter((s) => raw.includes(s));
+  if (!picked.length || (picked.length === DEFAULT_ALERT_SESSIONS.length && DEFAULT_ALERT_SESSIONS.every((s) => picked.includes(s)))) return undefined;
+  return picked;
+}
+
+/** Adds the v1 fields (condition, price, repeat) to price rules, read by Tape 0.12 and older. */
+function withLegacyMirror(a: PriceAlert): PriceAlert {
+  if (a.unsupported || (a.rule.type !== 'priceAbove' && a.rule.type !== 'priceBelow')) return a;
+  return { ...a, condition: a.rule.type === 'priceAbove' ? 'above' : 'below', price: a.rule.value, repeat: a.frequency === 'always' };
+}
+
+function sanitizeAlert(raw: unknown): PriceAlert | null {
+  if (!isObject(raw) || !nonEmpty(raw.id) || !isFiniteNumber(raw.createdAt)) return null;
+  const contract = sanitizeContract(raw.contract);
+  if (!contract) return null;
+  const optional: Partial<PriceAlert> = {};
+  if (isFiniteNumber(raw.updatedAt)) optional.updatedAt = raw.updatedAt;
+  if (isFiniteNumber(raw.lastTriggeredAt)) optional.lastTriggeredAt = raw.lastTriggeredAt;
+  if (isFiniteNumber(raw.lastValue)) optional.lastValue = raw.lastValue;
+  const note = clipNote(raw.note);
+  if (note) optional.note = note;
+
+  if (raw.rule === undefined) {
+    // v1
+    if (raw.condition !== 'above' && raw.condition !== 'below') return null;
+    if (!isPositive(raw.price)) return null;
+    return withLegacyMirror({
+      id: raw.id,
+      contract,
+      rule: { type: raw.condition === 'above' ? 'priceAbove' : 'priceBelow', value: raw.price },
+      frequency: raw.repeat === true ? 'always' : 'once',
+      active: raw.active !== false,
+      createdAt: raw.createdAt,
+      ...optional,
+    });
+  }
+
+  const frequency = raw.frequency === undefined ? 'once' : ALERT_FREQUENCIES.includes(raw.frequency as AlertFrequency) ? (raw.frequency as AlertFrequency) : null;
+  const rule = sanitizeRule(raw.rule);
+  if (!rule || !frequency) {
+    // A newer Tape's rule or frequency (or one this version cannot read): kept as written,
+    // including on / off (the newer Tape runs it again), never evaluated here.
+    if (!isObject(raw.rule) || !nonEmpty(raw.rule.type)) return null;
+    const kept: PriceAlert = {
+      id: raw.id,
+      contract,
+      rule: raw.rule as unknown as AlertRule,
+      frequency: (nonEmpty(raw.frequency) ? raw.frequency : 'once') as AlertFrequency,
+      active: raw.active !== false,
+      createdAt: raw.createdAt,
+      ...optional,
+      unsupported: true,
+    };
+    if (Array.isArray(raw.sessions) && raw.sessions.length && raw.sessions.every(nonEmpty)) kept.sessions = raw.sessions as AlertSession[];
+    return kept;
+  }
+  const sessions = sanitizeSessions(raw.sessions);
+  if (sessions) optional.sessions = sessions;
+  return withLegacyMirror({ id: raw.id, contract, rule, frequency, active: raw.active !== false, createdAt: raw.createdAt, ...optional });
+}
+
+/**
+ * Validates the alerts file (or main's list before it is written). Entries without an id, an
+ * instrument or a creation time are dropped, and so are v1 entries that are not a valid price alert.
+ */
 export function sanitizeAlerts(raw: unknown): PriceAlert[] | null {
   const list = sanitizeList(raw, sanitizeAlert);
   return list && uniqueById(list);
+}
+
+/**
+ * An alert the renderer sends to be created or edited (upsertPriceAlert): a valid v2 alert of a
+ * known type, or null. Unlike a file, nothing unknown is accepted.
+ */
+export function sanitizeAlertInput(raw: unknown): PriceAlert | null {
+  if (!isObject(raw) || raw.rule === undefined) return null;
+  const alert = sanitizeAlert(raw);
+  return alert && !alert.unsupported ? alert : null;
 }
 
 // ---------------------------------------------------------------------------

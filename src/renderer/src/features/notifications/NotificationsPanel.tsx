@@ -1,4 +1,4 @@
-// Bell panel (design "nt"): risk / price alerts and the notification list.
+// Bell panel (design "nt"): the alerts (yours and option risk alerts) and the notification list.
 // Rendered at the window root; a transparent overlay closes it on any outside click.
 
 import { useEffect } from 'react';

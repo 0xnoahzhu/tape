@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { option, stock } from '@shared/contract';
 import { createClock, NEW_YORK_ZONE, TOKEN_CLOCK } from '@shared/timeFormat';
 import type { AppNotification, NotificationKind } from '@shared/types';
 import { useNotificationsMessages } from './messages';
-import { alertInstrumentParts, filterNotifications, newCriticalNotifications, notificationTarget, notificationText, relativeTime, stampText, unreadCount } from './model';
+import { filterNotifications, newCriticalNotifications, notificationTarget, notificationText, relativeTime, stampText, unreadCount } from './model';
 
 const n = (id: string, kind: NotificationKind, t: number, read = false): AppNotification => ({
   id,
@@ -90,18 +89,6 @@ describe('notificationTarget', () => {
     expect(notificationTarget({ kind: 'order', orderDone: true }, 'set', ['DU1'])).toBe('chart');
     expect(notificationTarget({ kind: 'order', orderDone: true }, 'acct', ['DU1'])).toBeNull();
     expect(notificationTarget({ kind: 'order', orderDone: true }, 'trade', ['DU1'])).toBeNull();
-  });
-});
-
-describe('alertInstrumentParts', () => {
-  it('moves option details to the sub line and keeps other labels whole', () => {
-    expect(alertInstrumentParts(option('AAPL', '20261016', 230, 'C'))).toEqual({ symbol: 'AAPL', detail: '10/16 230 Call' });
-    expect(alertInstrumentParts(stock('AAPL'))).toEqual({ symbol: 'AAPL', detail: '' });
-    expect(alertInstrumentParts({ symbol: 'EUR', secType: 'CASH', exchange: 'IDEALPRO', currency: 'USD' })).toEqual({ symbol: 'EUR.USD', detail: '' });
-    expect(alertInstrumentParts({ symbol: 'ES', secType: 'FUT', exchange: 'CME', currency: 'USD', localSymbol: 'ESZ6', lastTradeDate: '20261218' })).toEqual({
-      symbol: 'ESZ6',
-      detail: '',
-    });
   });
 });
 

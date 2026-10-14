@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
 import type { LockState } from '@shared/types';
+import { newAlertForm } from '../features/alerts/model';
 import { requestLock } from '../features/lock/actions';
 import { usePanels } from '../features/panels/panelStore';
 import { usePositionColumns } from '../features/portfolio/columnStore';
@@ -25,7 +26,7 @@ describe('lock state in the renderer', () => {
       bellOpen: true,
       pendingOrder: { request, rows: [], label: 'Buy', summary: 'Buy 1 AAPL', session: 0, isPaper: true },
       confirm: { title: 'x', rows: [], label: 'y', run: () => undefined },
-      alertForm: { contract: stock('AAPL'), condition: 'above', price: '1', repeat: false },
+      alertForm: newAlertForm(stock('AAPL'), undefined, 'en'),
       pinDialog: { mode: 'change' },
     });
     applyLockState(state({ locked: true }));

@@ -177,7 +177,8 @@ function snapshot(): AppSnapshot {
     orders: ctx.orders.getOrders(),
     executions: ctx.orders.getExecutions(),
     watchlists: ctx.store.getWatchlists(),
-    priceAlerts: ctx.store.getPriceAlerts(),
+    priceAlerts: ctx.alerts.list(),
+    alertStatuses: ctx.alerts.statuses(),
     notifications: ctx.store.getNotifications(),
     logFilePath: ctx.apiLog.filePath(),
     lock: ctx.lock.getState(),
@@ -221,7 +222,10 @@ const handlers: TapeHandlers = {
     ctx.store.setWatchlists(lists);
     ctx.emit({ type: 'watchlists', watchlists: ctx.store.getWatchlists() });
   },
-  savePriceAlerts: async (alerts) => ctx.alerts.save(alerts),
+  upsertPriceAlert: async (alert) => ctx.alerts.upsert(alert),
+  setPriceAlertsActive: async (ids, active) => ctx.alerts.setActive(ids, active),
+  deletePriceAlerts: async (ids) => ctx.alerts.remove(ids),
+  getAlertStatuses: async () => ctx.alerts.statuses(),
   notify: async (n) => void ctx.notifier.notify(n),
   markNotificationsRead: async (ids) => ctx.notifier.markRead(ids),
   testNotification: async (category) => ctx.notifier.test(category),
