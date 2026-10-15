@@ -109,11 +109,10 @@ export const useChartMessages = createMessages({
     posHeaders: [
       ['Contract', 'Contract'],
       ['Qty', 'Quantity'],
-      ['Avg', 'Average cost'],
-      ['Value', 'Market value'],
-      ['% NLV', 'Percent of net liquidation value'],
-      ['Unrl. P&L', 'Unrealized P&L'],
-      ['Day P&L', "Today's P&L"],
+      ['Avg cost', 'Average cost as IB sends it: per contract, with commissions'],
+      ['Value', 'Market value (IB)'],
+      ['Unrl. P&L', 'Unrealized P&L (IB)'],
+      ['Day P&L', "Today's P&L (IB)"],
     ] as Array<[string, string]>,
     orderHeaders: [
       ['Time', 'When Tape first saw the order'],
@@ -206,11 +205,10 @@ export const useChartMessages = createMessages({
     posHeaders: [
       ['合约', '合约'],
       ['数量', '持仓数量'],
-      ['成本', '平均成本'],
-      ['市值', '市值'],
-      ['占净值', '占净清算值的百分比'],
-      ['未实现盈亏', '未实现盈亏'],
-      ['今日盈亏', '今日盈亏'],
+      ['平均成本', 'IB 发送的平均成本：每张合约，含佣金'],
+      ['市值', '市值（IB）'],
+      ['未实现盈亏', '未实现盈亏（IB）'],
+      ['今日盈亏', '今日盈亏（IB）'],
     ] as Array<[string, string]>,
     orderHeaders: [
       ['时间', 'Tape 首次收到该订单的时间'],

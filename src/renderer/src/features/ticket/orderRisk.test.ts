@@ -155,7 +155,7 @@ describe('strategyRisks', () => {
 });
 
 describe('the account side', () => {
-  const pos = (account: string, quantity: number, contract = AAPL): Position => ({ account, key: account, contract, quantity, avgPrice: 1, multiplier: 1, updatedAt: 0 });
+  const pos = (account: string, quantity: number, contract = AAPL): Position => ({ account, key: account, contract, quantity, multiplier: 1, updatedAt: 0 });
 
   it('reads the connected account’s position and values only', () => {
     const s = {

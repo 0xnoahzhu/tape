@@ -118,7 +118,7 @@ describe('status strip', () => {
   });
 
   it('compares positions only within the account the order went to', () => {
-    const pos = (account: string, quantity: number) => ({ account, key: 'STK:AAPL', contract: stock('AAPL'), quantity, avgPrice: 1, multiplier: 1, updatedAt: 0 }) as Position;
+    const pos = (account: string, quantity: number) => ({ account, key: 'STK:AAPL', contract: stock('AAPL'), quantity, multiplier: 1, updatedAt: 0 }) as Position;
     const paper = sent({ account: 'DUP899854' });
     expect(sentPosition(paper, [pos('DUP899854', 300)], 'DUP899854')).toBe(300);
     // Live connected now: its 40 shares are not the paper account's; no change is shown.

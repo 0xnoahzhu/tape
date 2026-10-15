@@ -4,7 +4,7 @@ import type { ContractRef, Position, WorkingOrder } from '@shared/types';
 import type { SentOrder } from '../../state/orderFeedback';
 import { byInstrument, FRESH_MS, isFreshOrder } from './activityModel';
 
-const position = (contract: ContractRef): Position => ({ account: 'DU1', key: contractKey(contract), contract, quantity: 1, avgPrice: 1, multiplier: 1, updatedAt: 0 });
+const position = (contract: ContractRef): Position => ({ account: 'DU1', key: contractKey(contract), contract, quantity: 1, multiplier: 1, updatedAt: 0 });
 
 describe('the activity panel’s position order', () => {
   it('puts the stock first, then the options by expiry, strike and right (calls first)', () => {

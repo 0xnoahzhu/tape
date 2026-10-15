@@ -1,21 +1,17 @@
-// Data hooks of the Portfolio page beyond the position rows: the current minute, and what the
-// Positions tab reads besides the rows (PositionsView.tsx): its options' underlyings (the option
-// lines and the portfolio greeks), the holdings' dividends and earnings (the event chips, and the
-// earnings columns). Each subscribes while its tab is mounted, under its own quote owner, so the
-// main process unions it with the portfolio's lines (both background):
-//   positions-und    option underlyings (moneyness, dollar delta) — basic; none while no option is held
+// Data hooks of the Positions tab beyond the position rows: the current minute and what the tab
+// reads besides the rows (PositionsView.tsx): the holdings' dividends and earnings (the event chips,
+// and the earnings column). The dividends line subscribes while the tab is mounted, under its own
+// quote owner, so the main process unions it with the portfolio's lines (both background):
 //   positions-div    the holdings' stocks — 'dividends' (generic tick 456, live lines only)
 
 import { useEffect, useMemo, useState } from 'react';
 import { contractKey } from '@shared/contract';
-import type { ContractRef, CorporateEarnings, Quote, QuoteDividends } from '@shared/types';
+import type { ContractRef, CorporateEarnings, QuoteDividends } from '@shared/types';
 import { useMarketDataAvailable, useQuoteSubscriptions, useQuotesByKey } from '../../hooks/useQuotes';
-import { underlyingOf, type PositionRow } from './calc';
+import type { PositionRow } from './calc';
 import { holdingUnderlyings } from './events';
 
 const HOUR = 3_600_000;
-/** How soon earnings are asked again while main's scanner is still looking dates up. */
-const PENDING_POLL_MS = 3000;
 const UNAVAILABLE: CorporateEarnings = { status: 'unavailable', events: [] };
 
 /** Unix ms of the current minute, so days to expiry, the event window and today's hours follow the clock. */
@@ -28,41 +24,11 @@ export function useMinute(): number {
   return t;
 }
 
-const isOptionRow = (r: PositionRow) => r.position.contract.secType === 'OPT' || r.position.contract.secType === 'FOP';
-
 /** The holdings' underlyings by contract key (events.ts → holdingUnderlyings), kept while the positions are. */
 export function useHoldingUnderlyings(rows: readonly PositionRow[]): Map<string, ContractRef> {
   const sig = rows.map((r) => r.key).join(',');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => holdingUnderlyings(rows), [sig]);
-}
-
-/**
- * Quotes of the option positions (greeks, model underlying price; already subscribed by the
- * portfolio) and of their underlyings, which this hook subscribes ('positions-und'). Nothing is
- * subscribed while no option is held.
- */
-export function useUnderlyingQuotes(rows: readonly PositionRow[]): Record<string, Quote> {
-  const sig = rows.map((r) => r.key).join(',');
-  const { underlyings, keys } = useMemo(() => {
-    const und = new Map<string, ContractRef>();
-    const k = new Set<string>();
-    for (const r of rows) {
-      if (!isOptionRow(r)) continue;
-      const own = contractKey(r.position.contract);
-      k.add(own);
-      const u = underlyingOf(r.position.contract);
-      const uk = contractKey(u);
-      // A futures option has no underlying of its own here (underlyingOf returns it).
-      if (uk === own) continue;
-      k.add(uk);
-      und.set(uk, u);
-    }
-    return { underlyings: [...und.values()], keys: [...k] };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig]);
-  useQuoteSubscriptions('positions-und', underlyings, 'basic');
-  return useQuotesByKey(keys);
 }
 
 /**
@@ -78,11 +44,9 @@ export function useHoldingDividends(underlyings: ReadonlyMap<string, ContractRef
 }
 
 /**
- * Upcoming earnings of the holdings' stocks (Wall Street Horizon, else estimated from IB's market
- * scanner), asked when the holdings or the connection change and every hour (main keeps the
- * answers for the day), every few seconds while the scanner is still looking dates up
- * (`pending`) and when a stock is due to be searched again (`retryInMs`). `unsubscribed` when IB
- * refuses both; `unavailable` while not connected.
+ * Upcoming earnings of the holdings' stocks (Wall Street Horizon), asked when the holdings or the
+ * connection change and every hour (main keeps the answers for the day). `unsubscribed` when IB
+ * refuses WSH; `unavailable` while not connected.
  */
 export function useEarnings(underlyings: ReadonlyMap<string, ContractRef>): CorporateEarnings | undefined {
   const available = useMarketDataAvailable();
@@ -108,17 +72,6 @@ export function useEarnings(underlyings: ReadonlyMap<string, ContractRef>): Corp
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, available, tick]);
-
-  // Main answers at once with what the scanner knows so far; ask again until it is done, and
-  // when a stock it could not search yet is due again.
-  useEffect(() => {
-    if (!available || state?.sig !== sig) return;
-    const { pending, retryInMs } = state.value;
-    const delay = pending ? PENDING_POLL_MS : typeof retryInMs === 'number' && Number.isFinite(retryInMs) ? Math.max(PENDING_POLL_MS, retryInMs) : undefined;
-    if (delay === undefined) return;
-    const timer = setTimeout(() => setTick((t) => t + 1), delay);
-    return () => clearTimeout(timer);
-  }, [available, sig, state]);
 
   if (!available) return UNAVAILABLE;
   // Answers for a former set of holdings still apply to the stocks that remain.

@@ -42,15 +42,31 @@ export interface ColumnPrefs {
 }
 
 /**
- * Renamed column ids (old → new), so a stored choice keeps a column across a rename. Empty so far;
- * an id that is neither a column nor here is dropped.
+ * Retired column ids (old → new), so a stored choice keeps a column across a rename or a merge.
+ * Each of IB's figures that had two columns has one now (the real-time source first): IB's
+ * portfolio-update and P&L columns and the Mark went into Price, Value, Unrl. P&L, Realized P&L and
+ * Day P&L, and Avg (IB's cost ÷ the multiplier) became IB's Avg cost. An id that is neither a column
+ * nor here is dropped: Tape's calculated columns (% NLV, Cost basis, DTE, Mid, Chg, the position
+ * greeks, …) have no IB equivalent.
  */
-export const COLUMN_ALIASES: Readonly<Record<string, ColumnId>> = {};
+export const COLUMN_ALIASES: Readonly<Record<string, ColumnId>> = {
+  avgPrice: 'averageCost',
+  mark: 'price',
+  marketPriceIb: 'price',
+  valuePnlIb: 'value',
+  marketValueIb: 'value',
+  unrealizedPnlIb: 'unrealized',
+  unrealizedIb: 'unrealized',
+  realizedPnlIb: 'realized',
+  realizedIb: 'realized',
+  dailyPnlIb: 'dayPnl',
+};
 
 /**
  * A stored column list: renamed ids mapped, unknown and repeated ids dropped, Symbol first. Columns
  * added to the catalog later are not added to it. Anything that is not an array is null (the
- * default set).
+ * default set), and so is a list that named columns of which none is left (only retired ones): a
+ * table of Symbol alone is what the user chose only when they stored nothing else.
  */
 export function sanitizeColumns(raw: unknown, aliases: Readonly<Record<string, ColumnId>> = COLUMN_ALIASES): ColumnId[] | null {
   if (!Array.isArray(raw)) return null;
@@ -59,7 +75,8 @@ export function sanitizeColumns(raw: unknown, aliases: Readonly<Record<string, C
     const id = typeof v === 'string' ? (aliases[v] ?? v) : v;
     if (isColumnId(id) && !out.includes(id)) out.push(id);
   }
-  return out;
+  const named = raw.some((v) => typeof v === 'string' && v !== PINNED);
+  return out.length === 1 && named ? null : out;
 }
 
 /** The widest a column can be dragged (px); the narrowest is its catalog width. */
@@ -72,15 +89,19 @@ export function clampWidth(id: ColumnId, w: number): number {
 
 /**
  * Stored widths: renamed ids mapped, unknown ids and anything but a finite number dropped, each
- * clamped (a catalog width raised since keeps its new minimum). Anything that is not an object is
- * none. Hidden columns keep theirs.
+ * clamped (a catalog width raised since keeps its new minimum). A column's own width wins over a
+ * retired one's that maps to it. Anything that is not an object is none. Hidden columns keep theirs.
  */
 export function sanitizeWidths(raw: unknown, aliases: Readonly<Record<string, ColumnId>> = COLUMN_ALIASES): ColumnWidths {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Partial<Record<ColumnId, number>> = {};
+  const own = new Set<ColumnId>();
   for (const [key, w] of Object.entries(raw)) {
-    const id = aliases[key] ?? key;
-    if (isColumnId(id) && typeof w === 'number' && Number.isFinite(w)) out[id] = clampWidth(id, w);
+    const alias = !isColumnId(key);
+    const id = alias ? aliases[key] : key;
+    if (!isColumnId(id) || typeof w !== 'number' || !Number.isFinite(w) || (alias && own.has(id))) continue;
+    out[id] = clampWidth(id, w);
+    if (!alias) own.add(id);
   }
   return out;
 }
@@ -153,8 +174,9 @@ export function tracksWidth(defs: readonly ColumnDef[], widths: ColumnWidths): n
 
 /**
  * Stored preferences ({ columns, sort, widths, groupBy }); null when there are none to read. A sort
- * is kept only on a shown column with a valid direction. What an older version stored (no widths,
- * no grouping) reads as it did, grouped by underlying.
+ * is kept only on a shown column with a valid direction (a sort on a retired column without an
+ * equivalent is no sort). What an older version stored (no widths, no grouping) reads as it did,
+ * grouped by underlying.
  */
 export function sanitizePrefs(raw: unknown): ColumnPrefs | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;

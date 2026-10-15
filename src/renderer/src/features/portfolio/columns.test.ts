@@ -4,7 +4,7 @@ import { ADD_ON_TICKS } from '@shared/quoteProfiles';
 import { createClock } from '@shared/timeFormat';
 import type { ContractInfo, ContractRef, EarningsEvent, Position, Quote, SecType } from '@shared/types';
 import { positionRow, quoteContract } from './calc';
-import { cellColor, cellText, formatValue, type CellWords } from './cells';
+import { cellColor, cellText, formatValue, optionLineText, type CellWords } from './cells';
 import {
   COLUMN_GROUPS,
   COLUMN_IDS,
@@ -24,24 +24,20 @@ import { columnTip, usePortfolioMessages } from './messages';
 
 // Tuesday 2026-10-06, 11:00 local.
 const NOW = new Date(2026, 9, 6, 11, 0).getTime();
-/** The same morning in New York, where days to a date are counted (whatever the machine's zone). */
-const NY_MORNING = Date.UTC(2026, 9, 6, 15, 0);
 const clock = createClock('24h', 'en');
 const en = usePortfolioMessages.for('en');
 const words: CellWords = { ...en.words, kinds: en.kinds };
 
 function position(contract: ContractRef, over: Partial<Position> = {}): Position {
-  return { account: 'DU1', key: contract.symbol, contract, quantity: 100, avgPrice: 200, multiplier: contract.secType === 'OPT' ? 100 : 1, updatedAt: 0, ...over };
+  return { account: 'DU1', key: contract.symbol, contract, quantity: 100, multiplier: contract.secType === 'OPT' ? 100 : 1, updatedAt: 0, ...over };
 }
 
 const q = (over: Partial<Quote>): Quote => ({ key: 'k', updatedAt: 0, ...over });
 
-function ctx(
-  p: Position,
-  opts: { livePx?: number; fx?: number | null; quote?: Quote; info?: ContractInfo | null; grossBase?: number; netLiq?: number; earnings?: EarningsEvent } = {},
-): CellCtx {
+/** A cell context; the row's mark comes from the quote, as usePositionRows reads it. */
+function ctx(p: Position, opts: { fx?: number | null; quote?: Quote; info?: ContractInfo | null; earnings?: EarningsEvent } = {}): CellCtx {
   const fx = opts.fx === undefined ? 1 : opts.fx;
-  return { row: positionRow(p, opts.livePx, opts.netLiq ?? 1_000_000, 'Technology', fx), q: opts.quote, info: opts.info, grossBase: opts.grossBase, earnings: opts.earnings, now: NOW };
+  return { row: positionRow(p, opts.quote?.mark, 'Technology', fx), q: opts.quote, info: opts.info, earnings: opts.earnings, now: NOW };
 }
 
 const value = (id: ColumnId, c: CellCtx) => COLUMNS[id].value(c);
@@ -61,10 +57,10 @@ const aapl = position(aaplStock, {
   industry: 'Technology',
   stockType: 'COMMON',
 });
-const aaplQuote = q({ last: 227.48, bid: 227.45, ask: 227.5, bidSize: 300, askSize: 200, close: 225, volume: 41_200_000, marketDataType: 1, haltCode: 0, lastRthTrade: 227.1 });
+const aaplQuote = q({ last: 227.48, bid: 227.45, ask: 227.5, mark: 227.47, bidSize: 300, askSize: 200, close: 225, volume: 41_200_000, marketDataType: 1, haltCode: 0, lastRthTrade: 227.1 });
 
 const call = { ...option('AAPL', '20261016', 230, 'C'), conId: 7001 };
-const aaplCall = position(call, { quantity: 10, avgPrice: 3.1, averageCost: 310 });
+const aaplCall = position(call, { quantity: 10, averageCost: 310 });
 const callQuote = q({ bid: 3.1, ask: 3.3, mark: 3.2, iv: 0.27, delta: 0.45, gamma: 0.03, theta: -0.09, vega: 0.2, undPrice: 227.48, optPrice: 3.18, pvDividend: 0.26, openInterest: 5_120 });
 
 describe('column catalog', () => {
@@ -78,35 +74,53 @@ describe('column catalog', () => {
     // The editor lists the groups in catalog order, each contiguous.
     const groups = COLUMN_IDS.map((id) => COLUMNS[id].group);
     expect(groups.filter((g, i) => g !== groups[i - 1])).toEqual([...COLUMN_GROUPS]);
-    expect(COLUMN_GROUPS).toEqual(['position', 'ibPnl', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other']);
-    expect(COLUMN_IDS).toHaveLength(145);
+    expect(COLUMN_GROUPS).toEqual(['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other']);
+    expect(COLUMN_IDS).toHaveLength(107);
   });
 
-  it("defaults to today's eight columns", () => {
-    expect(DEFAULT_COLUMNS).toEqual(['symbol', 'quantity', 'avgPrice', 'price', 'value', 'weight', 'unrealized', 'dayPnl']);
+  it('keeps one column per datum: IB’s figures merged, Tape’s calculations gone', () => {
+    const ids: readonly string[] = COLUMN_IDS;
+    for (const gone of ['marketPriceIb', 'marketValueIb', 'unrealizedIb', 'realizedIb', 'dailyPnlIb', 'unrealizedPnlIb', 'realizedPnlIb', 'valuePnlIb', 'mark']) expect(ids, gone).not.toContain(gone);
+    for (const calc of ['avgPrice', 'costBasis', 'weight', 'unrealizedPct', 'valueBase', 'pctGross', 'totalPnl', 'daysToExpiry', 'mid', 'spread', 'change', 'moneyness', 'positionDelta', 'navPremium', 'nextEarningsEst'])
+      expect(ids, calc).not.toContain(calc);
+    expect(COLUMN_IDS.filter((id) => COLUMNS[id].group === 'position')).toEqual([
+      'symbol',
+      'name',
+      'secType',
+      'quantity',
+      'averageCost',
+      'price',
+      'value',
+      'unrealized',
+      'realized',
+      'dayPnl',
+      'currency',
+      'fxRate',
+      'account',
+    ]);
   });
 
-  it('names every column and says where its value comes from, in both languages', () => {
+  it('defaults to IB’s figures: Symbol, Qty, Avg cost, Price, Value, Unrl. P&L, Day P&L', () => {
+    expect(DEFAULT_COLUMNS).toEqual(['symbol', 'quantity', 'averageCost', 'price', 'value', 'unrealized', 'dayPnl']);
+  });
+
+  it('names every column and says where IB sends its value, in both languages', () => {
     for (const lang of ['en', 'zh'] as const) {
       const m = usePortfolioMessages.for(lang);
       for (const id of COLUMN_IDS) {
         expect(m.columns[id][0], `${lang} ${id}`).toBeTruthy();
         expect(m.columns[id][1], `${lang} ${id}`).toBeTruthy();
-        // A calculated column gives its formula; an IB column its source, never both.
-        if (COLUMNS[id].kind === 'calc') {
-          expect(m.formulas[id], `${lang} formula ${id}`).toBeTruthy();
-          expect(m.sources[id], `${lang} source ${id}`).toBeUndefined();
-        } else {
-          expect(m.sources[id], `${lang} source ${id}`).toBeTruthy();
-          expect(m.formulas[id], `${lang} formula ${id}`).toBeUndefined();
-        }
+        expect(m.sources[id], `${lang} source ${id}`).toBeTruthy();
       }
+      // No "(IB)" or "(IB live)" in a header: every column is IB's.
+      for (const id of COLUMN_IDS) expect(m.columns[id][0], `${lang} ${id}`).not.toMatch(/\(IB/);
     }
   });
 
-  it('starts a tooltip with the source or, for a calculation, "Calculated by Tape:"', () => {
-    expect(columnTip(en, 'costBasis')).toBe('Calculated by Tape: Quantity × IB average cost\nCost basis');
+  it('starts every tooltip with IB’s source', () => {
     expect(columnTip(en, 'bid').startsWith('IB · tick 1 Bid')).toBe(true);
+    expect(columnTip(en, 'value').split('\n')).toEqual(['IB · reqPnLSingle value (real time), else updatePortfolio marketValue (every 3 min). The cell’s tooltip says which', 'Market value']);
+    for (const id of COLUMN_IDS) expect(columnTip(en, id).startsWith('IB · '), id).toBe(true);
   });
 
   it('says why an unverified column is not verified yet, in both languages', () => {
@@ -135,42 +149,64 @@ describe('column catalog', () => {
       expect(types, id).toBeDefined();
       for (const t of types!) expect(allowed, `${id} ${t}`).toContain(t);
     }
+    // Price's mark (tick 37) is on the positions' lines already (usePositionRows: the `mark` profile).
     expect(DEFAULT_COLUMNS.filter((id) => COLUMNS[id].profile)).toEqual([]);
   });
+});
 
-  it('marks the calculated default columns', () => {
-    expect(DEFAULT_COLUMNS.filter((id) => COLUMNS[id].kind === 'calc')).toEqual(['avgPrice', 'price', 'value', 'weight', 'unrealized', 'dayPnl']);
+describe('the sources of IB’s figures', () => {
+  // AAPL with both of IB's sources: the P&L engine (real time) and the portfolio update (every 3 minutes).
+  const both = position(aaplStock, {
+    averageCost: 200,
+    marketPrice: 220,
+    marketValue: 22_000,
+    unrealizedPnL: 2_000,
+    realizedPnL: 0,
+    dailyPnL: 150,
+    pnlValue: 22_748,
+    pnlUnrealized: 2_748,
+    pnlRealized: 12.5,
+  });
+  const tip = (id: ColumnId, c: CellCtx) => COLUMNS[id].title?.(c, words);
+
+  it('shows the real-time source first and says so in the cell’s tooltip', () => {
+    const c = ctx(both, { quote: q({ mark: 227.48 }) });
+    expect([value('price', c), value('value', c), value('unrealized', c), value('realized', c), value('dayPnl', c)]).toEqual([227.48, 22_748, 2_748, 12.5, 150]);
+    expect(tip('price', c)).toBe('IB mark price (real time)');
+    for (const id of ['value', 'unrealized', 'realized', 'dayPnl'] as const) expect(tip(id, c), id).toBe('IB P&L (real time)');
   });
 
-  it('adds up on a group row only the columns where a sum means something', () => {
-    expect(Object.fromEntries(COLUMN_IDS.filter((id) => COLUMNS[id].agg).map((id) => [id, COLUMNS[id].agg]))).toEqual({
-      // A share of net liquidation, or an amount in the account currency.
-      weight: 'sum',
-      valueBase: 'sum',
-      pctGross: 'sum',
-      // An amount in the contract's currency.
-      value: 'money',
-      costBasis: 'money',
-      unrealized: 'money',
-      dayPnl: 'money',
-      marketValueIb: 'money',
-      unrealizedIb: 'money',
-      realizedIb: 'money',
-      dailyPnlIb: 'money',
-      unrealizedPnlIb: 'money',
-      realizedPnlIb: 'money',
-      valuePnlIb: 'money',
-      totalPnl: 'money',
-      annualDividends: 'money',
-      deltaDollars: 'money',
-      positionTheta: 'money',
-      positionVega: 'money',
-      // Share equivalents of one underlying.
-      positionDelta: 'units',
-      positionGamma: 'units',
-    });
-    // Every summed column is a number.
-    for (const id of COLUMN_IDS) if (COLUMNS[id].agg) expect(COLUMNS[id].sort, id).toBe('num');
+  it('falls back to the portfolio update in the same column, and says so', () => {
+    const late = ctx({ ...both, pnlValue: undefined, pnlUnrealized: undefined, pnlRealized: undefined, dailyPnL: undefined }, { quote: q({ last: 227.48 }) });
+    expect([value('price', late), value('value', late), value('unrealized', late), value('realized', late)]).toEqual([220, 22_000, 2_000, 0]);
+    for (const id of ['price', 'value', 'unrealized', 'realized'] as const) expect(tip(id, late), id).toBe('IB portfolio update (every 3 min)');
+    // The day's P&L has only IB's P&L engine: "—" with no source.
+    expect(text('dayPnl', late)).toBe('—');
+    expect(tip('dayPnl', late)).toBeUndefined();
+    // Neither source: "—" and no tooltip.
+    const none = ctx(position(aaplStock));
+    for (const id of ['price', 'value', 'unrealized', 'realized'] as const) {
+      expect(text(id, none), id).toBe('—');
+      expect(tip(id, none), id).toBeUndefined();
+    }
+    const zh = usePortfolioMessages.for('zh');
+    expect(COLUMNS.value.title!(late, { ...zh.words, kinds: zh.kinds })).toBe('IB 持仓更新（每 3 分钟）');
+  });
+
+  it('takes Price from the mark (tick 37), whatever the last trade or the midpoint', () => {
+    // The last trade and the bid / ask say other things: Price is IB's mark.
+    const c = ctx(both, { quote: q({ last: 230, bid: 226, ask: 226.2, mark: 226.1 }) });
+    expect(value('price', c)).toBe(226.1);
+    // An option the same way: its mark, never the midpoint.
+    expect(value('price', ctx(aaplCall, { quote: q({ bid: 3.1, ask: 3.3, mark: 3.25 }) }))).toBe(3.25);
+    expect(value('price', ctx({ ...aaplCall, marketPrice: 4.25 }, { quote: q({ bid: 3.1, ask: 3.3 }) }))).toBe(4.25);
+  });
+
+  it('shows Avg cost exactly as IB sends it: per contract, never divided by the multiplier', () => {
+    expect(value('averageCost', ctx(both))).toBe(200);
+    expect(value('averageCost', ctx(aaplCall))).toBe(310);
+    expect(text('averageCost', ctx(aaplCall))).toBe('310.00');
+    expect(text('averageCost', ctx(position(aaplStock)))).toBe('—');
   });
 });
 
@@ -185,11 +221,10 @@ describe('column applicability', () => {
     expect(on('strike')).toEqual(['opt']);
     expect(on('expiry')).toEqual(['opt', 'fut']);
     expect(on('delta')).toEqual(['opt']);
-    expect(on('positionDelta')).toEqual(['stk', 'opt', 'fut']);
     expect(on('stockType')).toEqual(['stk']);
     expect(on('lastRthTrade')).toEqual(['stk']);
-    // Option lines carry the mark; the others ask for it while the column is shown.
-    expect(on('mark')).toEqual(['stk', 'opt', 'fut', 'cash']);
+    // IB's figures of every position.
+    for (const id of ['averageCost', 'price', 'value', 'unrealized', 'realized', 'dayPnl'] as const) expect(on(id), id).toEqual(['stk', 'opt', 'fut', 'cash']);
     // Forex quotes carry no trades.
     expect(on('last')).toEqual(['stk', 'opt', 'fut']);
     expect(on('bid')).toEqual(['stk', 'opt', 'fut', 'cash']);
@@ -210,7 +245,6 @@ describe('column applicability', () => {
     expect(on('etfNav')).toEqual([]);
     const spy = ctx(position({ ...stock('SPY', 'ARCA'), conId: 756733 }, { stockType: 'ETF' })).row;
     expect(applies(COLUMNS.etfNav, spy)).toBe(true);
-    expect(applies(COLUMNS.navPremium, spy)).toBe(true);
   });
 
   it('shows IB’s own contract fields, never Tape’s stand-ins', () => {
@@ -226,20 +260,18 @@ describe('column applicability', () => {
   });
 
   it('writes forex prices to IB’s precision', () => {
-    const c = ctx(cash, { livePx: 1.08345, quote: q({ bid: 1.0834, ask: 1.0835, close: 1.0821 }) });
+    const c = ctx(cash, { quote: q({ bid: 1.0834, ask: 1.0835, close: 1.0821, mark: 1.08345 }) });
     expect(text('bid', c)).toBe('1.08340');
-    expect(text('mid', c)).toBe('1.08345');
-    expect(text('spread', c)).toBe('0.00010');
+    expect(text('close', c)).toBe('1.08210');
     expect(text('price', c)).toBe('1.08345');
-    expect(text('change', c)).toBe('+0.00135');
     const jpy = position({ symbol: 'USD', secType: 'CASH', exchange: 'IDEALPRO', currency: 'JPY' });
-    expect(text('ask', ctx(jpy, { livePx: 150.125, quote: q({ bid: 150.12, ask: 150.125 }) }))).toBe('150.125');
+    expect(text('ask', ctx(jpy, { quote: q({ bid: 150.12, ask: 150.125, mark: 150.125 }) }))).toBe('150.125');
     // Others keep the shared price format.
     expect(text('bid', ctx(aapl, { quote: aaplQuote }))).toBe('227.45');
   });
 
   it('leaves a cell empty when the column does not apply and shows — when IB has not sent the value', () => {
-    const c = ctx(aapl, { livePx: 227.48 });
+    const c = ctx(aapl);
     expect(text('strike', c)).toBe('');
     expect(text('bid', c)).toBe('—');
     expect(text('name', c)).toBe('—');
@@ -249,103 +281,63 @@ describe('column applicability', () => {
 
 describe('column values', () => {
   it('reads a stock with a live quote', () => {
-    const c = ctx(aapl, { livePx: 227.48, quote: aaplQuote, netLiq: 1_284_530 });
+    const c = ctx(aapl, { quote: aaplQuote });
     expect(value('quantity', c)).toBe(100);
     expect(value('averageCost', c)).toBe(200);
-    expect(value('costBasis', c)).toBe(20_000);
-    expect(value('price', c)).toBe(227.48);
-    expect(value('value', c)).toBeCloseTo(22_748);
-    expect(value('weight', c)).toBeCloseTo((22_748 / 1_284_530) * 100);
-    expect(value('unrealized', c)).toBeCloseTo(2_748);
-    expect(COLUMNS.unrealized.sub!.value(c)).toBeCloseTo(13.74);
-    // IB's own values, as sent.
-    expect(value('marketPriceIb', c)).toBe(220);
-    expect(value('marketValueIb', c)).toBe(22_000);
-    expect(value('unrealizedIb', c)).toBe(2_000);
-    expect(value('dailyPnlIb', c)).toBe(150);
-    expect(value('unrealizedPnlIb', c)).toBe(2_748);
-    expect(value('realizedPnlIb', c)).toBe(12.5);
-    expect(value('valuePnlIb', c)).toBe(22_748);
-    expect(value('totalPnl', c)).toBeCloseTo(2_760.5);
+    expect(value('price', c)).toBe(227.47);
+    expect(value('value', c)).toBe(22_748);
+    expect(value('unrealized', c)).toBe(2_748);
+    expect(value('realized', c)).toBe(12.5);
+    expect(value('dayPnl', c)).toBe(150);
+    expect(text('unrealized', c)).toBe('+2,748');
+    expect(cellColor(COLUMNS.unrealized, value('unrealized', c))).toBe('var(--up)');
     // Quote and contract.
-    expect(value('mid', c)).toBeCloseTo(227.475);
-    expect(value('spread', c)).toBeCloseTo(0.05);
-    expect(value('spreadPct', c)).toBeCloseTo((0.05 / 227.475) * 100);
-    expect(text('spreadPct', c)).toBe('0.022%');
-    expect(value('change', c)).toBeCloseTo(2.48);
-    expect(value('changePct', c)).toBeCloseTo((227.48 / 225 - 1) * 100);
+    expect(value('last', c)).toBe(227.48);
+    expect(value('close', c)).toBe(225);
     expect(value('exchange', c)).toBe('NASDAQ');
     expect(value('conId', c)).toBe(265598);
     expect(text('conId', c)).toBe('265598');
-    expect(value('positionDelta', c)).toBe(100);
-    expect(value('deltaDollars', c)).toBeCloseTo(22_748);
     expect(text('halted', c)).toBe('Trading');
     expect(text('dataType', c)).toBe('Live');
     expect(text('dataType', { ...c, q: { ...aaplQuote, marketDataType: 3, source: { kind: 'primary', exchange: 'ARCA' } } })).toBe('Delayed · ARCA');
     expect(text('volume', c)).toBe('41.2M');
   });
 
-  it('does not take the previous close as today’s price', () => {
-    const c = ctx(aapl, { quote: q({ close: 225 }) });
-    expect(value('change', c)).toBeUndefined();
-    expect(value('change', ctx(aapl, { quote: q({ close: 225, bid: 226, ask: 226.2 }) }))).toBeCloseTo(1.1);
-  });
-
-  it('reads an option with its model greeks', () => {
-    const c = ctx(aaplCall, { livePx: 3.2, quote: callQuote });
+  it('reads an option with IB’s model greeks', () => {
+    const c = ctx(aaplCall, { quote: callQuote });
     expect(value('price', c)).toBe(3.2);
     expect(value('averageCost', c)).toBe(310);
-    expect(value('costBasis', c)).toBe(3_100);
-    expect(value('daysToExpiry', { ...c, now: NY_MORNING })).toBe(10);
-    expect(text('daysToExpiry', { ...c, now: NY_MORNING })).toBe('10d');
-    // Thursday 10/15 13:00 in New York (Friday 01:00 in Shanghai): the Friday expiry is a day away.
-    expect(value('daysToExpiry', { ...c, now: Date.UTC(2026, 9, 15, 17, 0) })).toBe(1);
     expect(text('expiry', c)).toBe('2026-10-16');
     expect(text('right', c)).toBe('Call');
     expect(value('underlying', c)).toBe('AAPL');
     expect(text('optIv', c)).toBe('27.0%');
+    expect(value('delta', c)).toBe(0.45);
+    expect(text('gamma', c)).toBe('0.0300');
+    expect(value('undPrice', c)).toBe(227.48);
     expect(value('optModelPrice', c)).toBe(3.18);
     expect(value('pvDividend', c)).toBe(0.26);
-    expect(value('moneyness', c)).toBeCloseTo(((227.48 - 230) / 230) * 100);
-    expect(value('intrinsic', c)).toBe(0);
-    expect(value('extrinsic', c)).toBeCloseTo(3.2);
-    expect(value('breakEven', c)).toBeCloseTo(233.1);
-    expect(value('positionDelta', c)).toBeCloseTo(450);
-    expect(value('deltaDollars', c)).toBeCloseTo(450 * 227.48);
-    expect(value('positionGamma', c)).toBeCloseTo(30);
-    expect(value('positionTheta', c)).toBeCloseTo(-90);
-    expect(value('positionVega', c)).toBeCloseTo(200);
-    expect(text('positionTheta', c)).toBe('−90');
-    expect(cellColor(COLUMNS.positionTheta, value('positionTheta', c))).toBe('var(--dn)');
-    // Greeks wait for IB's model: no partial values.
-    expect(value('positionDelta', ctx(aaplCall, { quote: q({ bid: 3.1, ask: 3.3 }) }))).toBeUndefined();
+    expect(text('openInterest', c)).toBe('5,120');
   });
 
-  it('values a short put in the money', () => {
-    const put = position({ ...option('SPY', '20261120', 560, 'P'), conId: 7002 }, { quantity: -5, avgPrice: 6.8 });
-    const c = ctx(put, { livePx: 12, quote: q({ bid: 11.9, ask: 12.1, undPrice: 550, delta: -0.62 }) });
-    expect(value('intrinsic', c)).toBe(10);
-    expect(value('extrinsic', c)).toBeCloseTo(2);
-    expect(value('moneyness', c)).toBeCloseTo((10 / 560) * 100);
-    expect(value('breakEven', c)).toBeCloseTo(553.2);
-    expect(value('positionDelta', c)).toBeCloseTo(310);
-    expect(text('right', c)).toBe('Put');
+  it('writes an option row’s second line from IB’s contract: the right and the expiry', () => {
+    expect(optionLineText(call, words)).toBe('Call · 10/16');
+    expect(optionLineText({ ...option('SPY', '20261120', 560, 'P') }, words)).toBe('Put · 11/20');
+    const zh = usePortfolioMessages.for('zh');
+    expect(optionLineText(call, { ...zh.words, kinds: zh.kinds })).toBe('看涨 · 10/16');
+    // A futures option; one without an expiry date; not an option.
+    expect(optionLineText({ symbol: 'ES', secType: 'FOP', exchange: 'CME', currency: 'USD', lastTradeDate: '20261218', strike: 6000, right: 'C' }, words)).toBe('Call · 12/18');
+    expect(optionLineText({ ...call, lastTradeDate: undefined }, words)).toBe('Call');
+    expect(optionLineText(aaplStock, words)).toBeUndefined();
   });
 
-  it('converts a foreign-currency position with IB’s exchange rate', () => {
-    const sap = position({ symbol: 'SAP', secType: 'STK', exchange: 'SMART', primaryExchange: 'IBIS', currency: 'EUR', conId: 14204 }, { quantity: 50 });
-    const c = ctx(sap, { livePx: 220, fx: 1.08, netLiq: 1_000_000 });
+  it('shows a foreign-currency position in its currency, with IB’s exchange rate', () => {
+    const sap = position({ symbol: 'SAP', secType: 'STK', exchange: 'SMART', primaryExchange: 'IBIS', currency: 'EUR', conId: 14204 }, { quantity: 50, pnlValue: 11_000 });
+    const c = ctx(sap, { fx: 1.08 });
     expect(value('currency', c)).toBe('EUR');
     expect(value('fxRate', c)).toBe(1.08);
     expect(value('value', c)).toBe(11_000);
-    expect(value('valueBase', c)).toBeCloseTo(11_880);
-    expect(value('weight', c)).toBeCloseTo(1.188);
-    expect(value('pctGross', { ...c, grossBase: 23_760 })).toBeCloseTo(50);
-    // Without the rate the base-currency figures are unknown, never the unconverted value.
-    const unknown = ctx(sap, { livePx: 220, fx: null });
-    expect(value('valueBase', unknown)).toBeUndefined();
-    expect(value('weight', unknown)).toBeUndefined();
-    expect(text('fxRate', unknown)).toBe('—');
+    // Without the rate: "—", never 1.
+    expect(text('fxRate', ctx(sap, { fx: null }))).toBe('—');
   });
 
   it('reads contract details', () => {
@@ -396,13 +388,11 @@ describe('cell formats', () => {
     expect(formatValue('hours', '0930-1200,1300-1600', words, clock, NOW)).toBe('09:30–12:00, 13:00–16:00');
     const zh = usePortfolioMessages.for('zh');
     expect(formatValue('right', 'P', { ...zh.words, kinds: zh.kinds }, clock, NOW)).toBe('看跌');
-    expect(formatValue('days', 3, { ...zh.words, kinds: zh.kinds }, clock, NOW)).toBe('3天');
   });
 
   it('writes numbers with the shared helpers', () => {
     expect(formatValue('pnl', 2_748.4, words, clock, NOW)).toBe('+2,748');
-    expect(formatValue('chg', -0.5, words, clock, NOW)).toBe('−0.50');
-    expect(formatValue('pctU', 12.94, words, clock, NOW)).toBe('12.9%');
+    expect(formatValue('pnl', -1_234.4, words, clock, NOW)).toBe('−1,234');
     expect(formatValue('big', 5_120, words, clock, NOW)).toBe('5,120');
     expect(formatValue('dec', 5, words, clock, NOW)).toBe('5');
     expect(formatValue('num4', 1.08, words, clock, NOW)).toBe('1.0800');
@@ -451,20 +441,18 @@ describe('the extra ticks of the shown columns', () => {
   const rows = [aapl, aaplCall, spy, fut, cash].map((p) => ctx(p).row);
   const subsOf = (...ids: ColumnId[]) => addOnSubscriptions(rows, ids.map((id) => COLUMNS[id])).map((s) => `${contractKey(s.contract)}|${s.profile}`);
 
-  it('asks for nothing with the default columns', () => {
+  it('asks for nothing with the default columns (the mark is on the portfolio’s lines)', () => {
     expect(addOnSubscriptions(rows, DEFAULT_COLUMNS.map((id) => COLUMNS[id]))).toEqual([]);
     expect(addOnSubscriptions(rows, COLUMN_IDS.filter((id) => !COLUMNS[id].profile).map((id) => COLUMNS[id]))).toEqual([]);
   });
 
   it('asks per position and profile, only where the column applies and the profile has ticks', () => {
-    // One entry for the three range columns; the ETF is a stock too.
-    expect(subsOf('high52w', 'from52wHigh', 'relVolume')).toEqual(['STK:AAPL|range', 'STK:SPY|range']);
+    // One entry for the range columns; the ETF is a stock too.
+    expect(subsOf('high52w', 'low52w', 'avgVolume')).toEqual(['STK:AAPL|range', 'STK:SPY|range']);
     // NAV for the ETF only.
-    expect(subsOf('etfNav', 'navPremium')).toEqual(['STK:SPY|etfNav']);
-    // Options carry the mark already; forex and futures ask for it.
-    expect(subsOf('mark')).toEqual(['CASH:EUR|mark', 'FUT:ES:20261218|mark', 'STK:AAPL|mark', 'STK:SPY|mark']);
+    expect(subsOf('etfNav', 'etfNavHigh')).toEqual(['STK:SPY|etfNav']);
     expect(subsOf('impliedVol30', 'futuresOpenInterest')).toEqual(['FUT:ES:20261218|futuresOi', 'FUT:ES:20261218|volatility', 'STK:AAPL|volatility', 'STK:SPY|volatility']);
-    expect(subsOf('divYield', 'divNextDate')).toEqual(['STK:AAPL|dividends', 'STK:SPY|dividends']);
+    expect(subsOf('divNext12m', 'divNextDate')).toEqual(['STK:AAPL|dividends', 'STK:SPY|dividends']);
     expect(subsOf('bidYield', 'cusip', 'nextEarnings')).toEqual([]);
   });
 
@@ -506,15 +494,12 @@ describe('the columns of extra market data, earnings and contract details', () =
       borrowFee: 0.0025,
       dividends: { past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 },
     });
-    const c = ctx(aapl, { livePx: 227.48, quote });
-    expect(value('from52wHigh', c)).toBeCloseTo((227.48 / 260 - 1) * 100);
-    expect(text('from52wHigh', c)).toBe('−12.51%');
-    expect(cellColor(COLUMNS.from52wHigh, value('from52wHigh', c))).toBe('var(--dn)');
-    expect(value('from52wLow', c)).toBeCloseTo((227.48 / 169.21 - 1) * 100);
+    const c = ctx(aapl, { quote });
+    expect(text('high52w', c)).toBe('260.00');
+    expect(text('low52w', c)).toBe('169.21');
     expect(text('high26w', c)).toBe('250.00');
     expect(text('low13w', c)).toBe('201.50');
     expect(text('avgVolume', c)).toBe('45.6M');
-    expect(text('relVolume', c)).toBe('0.50×');
     expect(text('impliedVol30', c)).toBe('26.4%');
     expect(text('rtHistVol', c)).toBe('23.1%');
     expect(text('callVolume', c)).toBe('462.5K');
@@ -532,42 +517,19 @@ describe('the columns of extra market data, earnings and contract details', () =
     expect(text('divNext12m', c)).toBe('1.10');
     expect(text('divNextDate', c)).toBe('2026-11-09');
     expect(text('divNextAmount', c)).toBe('0.27');
-    expect(value('divYield', c)).toBeCloseTo((1.1 / 227.48) * 100);
-    expect(text('divYield', c)).toBe('0.484%');
-    expect(value('annualDividends', c)).toBeCloseTo(110);
-    expect(text('annualDividends', c)).toBe('+110');
-    expect(value('daysToDividend', { ...c, now: NY_MORNING })).toBe(34);
-    // A short position pays the dividends.
-    const short = ctx({ ...aapl, quantity: -100 }, { livePx: 227.48, quote });
-    expect(text('annualDividends', short)).toBe('−110');
-    expect(cellColor(COLUMNS.annualDividends, value('annualDividends', short))).toBe('var(--dn)');
     // A delayed line has none of them: "—", never an older value.
-    const bare = ctx(aapl, { livePx: 227.48, quote: aaplQuote });
-    for (const id of ['high52w', 'from52wHigh', 'relVolume', 'shortable', 'divYield', 'daysToDividend', 'vwap'] as const) expect(text(id, bare), id).toBe('—');
+    const bare = ctx(aapl, { quote: aaplQuote });
+    for (const id of ['high52w', 'avgVolume', 'shortable', 'divNext12m', 'divNextDate', 'vwap'] as const) expect(text(id, bare), id).toBe('—');
   });
 
   it('shows no dividend as 0 when IB says the stock pays none, and "—" while IB has sent nothing', () => {
     // IB's ",,," (tickMap.ts → parseDividends): the summary came, without amounts or a date.
-    const none = ctx(aapl, { livePx: 227.48, quote: q({ ...aaplQuote, dividends: {} }) });
-    expect([text('divPast12m', none), text('divNext12m', none), text('divYield', none), text('annualDividends', none)]).toEqual(['0.00', '0.00', '0.000%', '+0']);
-    const short = ctx({ ...aapl, quantity: -100 }, { livePx: 227.48, quote: q({ ...aaplQuote, dividends: {} }) });
-    expect(Object.is(value('annualDividends', short), 0)).toBe(true);
-    expect(cellColor(COLUMNS.annualDividends, value('annualDividends', short))).not.toBe('var(--dn)');
+    const none = ctx(aapl, { quote: q({ ...aaplQuote, dividends: {} }) });
+    expect([text('divPast12m', none), text('divNext12m', none)]).toEqual(['0.00', '0.00']);
     // No next dividend to date or size.
-    expect([text('divNextDate', none), text('divNextAmount', none), text('daysToDividend', none)]).toEqual(['—', '—', '—']);
-    const bare = ctx(aapl, { livePx: 227.48, quote: aaplQuote });
-    for (const id of ['divPast12m', 'divNext12m', 'divYield', 'annualDividends'] as const) expect(text(id, bare), id).toBe('—');
-  });
-
-  it('reads a price at its 52-week high as 0 % from it, through IB’s float32 noise', () => {
-    // The probe's AAPL: 345.34 arrives as 345.33999634.
-    const quote = q({ ...aaplQuote, last: 345.34, week52High: 345.33999634, week52Low: 345.34000397 });
-    const c = ctx(aapl, { livePx: 345.34, quote });
-    expect(value('from52wHigh', c)).toBe(0);
-    expect(value('from52wLow', c)).toBe(0);
-    expect(cellColor(COLUMNS.from52wHigh, value('from52wHigh', c))).toBe(cellColor(COLUMNS.from52wHigh, 0));
-    // A real difference of one cent still counts.
-    expect(value('from52wHigh', ctx(aapl, { livePx: 345.35, quote }))).toBeGreaterThan(0);
+    expect([text('divNextDate', none), text('divNextAmount', none)]).toEqual(['—', '—']);
+    const bare = ctx(aapl, { quote: aaplQuote });
+    for (const id of ['divPast12m', 'divNext12m'] as const) expect(text(id, bare), id).toBe('—');
   });
 
   it('writes IB’s shortable code as words, by its thresholds', () => {
@@ -577,26 +539,25 @@ describe('the columns of extra market data, earnings and contract details', () =
     expect(cellText(COLUMNS.shortable, ctx(aapl, { quote: q({ shortable: 2 }) }), { ...zh.words, kinds: zh.kinds }, clock)).toBe('需借券');
   });
 
-  it('reads an ETF’s NAV and its premium', () => {
-    const spy = position({ ...stock('SPY', 'ARCA'), conId: 756733 }, { stockType: 'ETF', key: 'SPY', avgPrice: 500 });
-    const c = ctx(spy, { livePx: 571.3, quote: q({ last: 571.3, etfNav: 571.0, etfNavHigh: 572.4, etfNavLow: 569.9 }) });
+  it('reads an ETF’s NAV', () => {
+    const spy = position({ ...stock('SPY', 'ARCA'), conId: 756733 }, { stockType: 'ETF', key: 'SPY' });
+    const c = ctx(spy, { quote: q({ last: 571.3, etfNav: 571.0, etfNavHigh: 572.4, etfNavLow: 569.9 }) });
     expect(text('etfNav', c)).toBe('571.00');
     expect(text('etfNavHigh', c)).toBe('572.40');
-    expect(value('navPremium', c)).toBeCloseTo((571.3 / 571 - 1) * 100);
-    expect(text('navPremium', c)).toBe('+0.05%');
+    expect(text('etfNavLow', c)).toBe('569.90');
     // Not an ETF: the cell is empty.
-    expect(text('etfNav', ctx(aapl, { livePx: 227.48, quote: q({ etfNav: 1 }) }))).toBe('');
+    expect(text('etfNav', ctx(aapl, { quote: q({ etfNav: 1 }) }))).toBe('');
   });
 
-  it('reads a future’s open interest, IV, mark and volume rate', () => {
+  it('reads a future’s open interest, IV, mark (Price, also on a delayed line) and volume rate', () => {
     const fut = position({ symbol: 'ES', secType: 'FUT', exchange: 'CME', currency: 'USD', lastTradeDate: '20261218', multiplier: 50, conId: 515416632 }, { quantity: 1, multiplier: 50 });
-    const c = ctx(fut, { livePx: 7877, quote: q({ marketDataType: 3, futuresOpenInterest: 1_921_143, mark: 7877.65, impliedVol: 0.12183, volumeRate: 154 }) });
+    const c = ctx(fut, { quote: q({ marketDataType: 3, futuresOpenInterest: 1_921_143, mark: 7877.65, impliedVol: 0.12183, volumeRate: 154 }) });
     expect(text('futuresOpenInterest', c)).toBe('1.9M');
-    expect(text('mark', c)).toBe('7,877.65');
+    expect(text('price', c)).toBe('7,877.65');
     expect(text('impliedVol30', c)).toBe('12.2%');
     expect(text('volumeRate', c)).toBe('154');
     // Stock-only columns stay empty.
-    expect(text('divYield', c)).toBe('');
+    expect(text('divNext12m', c)).toBe('');
   });
 
   it('shows 321 in Quote status while IB refused the line’s extra ticks', () => {
@@ -610,13 +571,10 @@ describe('the columns of extra market data, earnings and contract details', () =
     expect(text('quoteStatus', ctx(aapl, { quote: q({ last: 1 }) }))).toBe('—');
   });
 
-  it('shows the earnings from Wall Street Horizon and Tape’s estimate in their own columns; options their underlying’s', () => {
+  it('shows the earnings from Wall Street Horizon; options their underlying’s', () => {
     const wsh: EarningsEvent = { key: 'STK:AAPL', date: '20261030', time: 'amc' };
-    const est: EarningsEvent = { key: 'STK:AAPL', date: '20261030', estimated: true };
     expect(text('nextEarnings', ctx(aapl, { earnings: wsh }))).toBe('2026-10-30 AMC');
-    expect(text('nextEarningsEst', ctx(aapl, { earnings: wsh }))).toBe('—');
-    expect(text('nextEarnings', ctx(aapl, { earnings: est }))).toBe('—');
-    expect(text('nextEarningsEst', ctx(aapl, { earnings: est }))).toBe('2026-10-30');
+    expect(text('nextEarnings', ctx(aapl, { earnings: { key: 'STK:AAPL', date: '20261030' } }))).toBe('2026-10-30');
     expect(text('nextEarnings', ctx(aaplCall, { earnings: { ...wsh, time: 'bmo' } }))).toBe('2026-10-30 BMO');
     expect(text('nextEarnings', ctx(aapl))).toBe('—');
     const zh = usePortfolioMessages.for('zh');
@@ -679,18 +637,17 @@ describe('the columns of extra market data, earnings and contract details', () =
   });
 
   it('sorts the earnings of one day by the time of day: before the open, during, after the close, unknown', () => {
-    const at = (time: EarningsEvent['time'], minutes?: number) => ctx(aapl, { earnings: { key: 'STK:AAPL', date: '20261030', ...(time ? { time } : {}), ...(minutes !== undefined ? { minutes } : {}) } });
-    const days = [at('amc'), at(undefined), at('dmh'), at('bmo'), at('bmo', 7 * 60)];
-    const order = sortBy(days, (c) => COLUMNS.nextEarnings.sortValue!(c), COLUMNS.nextEarnings.sort, 'asc').map((c) => `${c.earnings!.time ?? '?'}${c.earnings!.minutes ?? ''}`);
-    expect(order).toEqual(['bmo420', 'bmo', 'dmh', 'amc', '?']);
-    // A later date comes after, whatever its time; an estimate sorts in its own column only.
+    const at = (time: EarningsEvent['time']) => ctx(aapl, { earnings: { key: 'STK:AAPL', date: '20261030', ...(time ? { time } : {}) } });
+    const days = [at('amc'), at(undefined), at('dmh'), at('bmo')];
+    const order = sortBy(days, (c) => COLUMNS.nextEarnings.sortValue!(c), COLUMNS.nextEarnings.sort, 'asc').map((c) => c.earnings!.time ?? '?');
+    expect(order).toEqual(['bmo', 'dmh', 'amc', '?']);
+    // A later date comes after, whatever its time.
     const next = ctx(aapl, { earnings: { key: 'STK:AAPL', date: '20261031', time: 'bmo' } });
     expect(COLUMNS.nextEarnings.sortValue!(next)! > COLUMNS.nextEarnings.sortValue!(at(undefined))!).toBe(true);
-    expect(COLUMNS.nextEarningsEst.sortValue!(at('amc'))).toBeUndefined();
   });
 
   it('reads a bond’s details and yields', () => {
-    const bond = position({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD', conId: 742000123 }, { quantity: 10_000, avgPrice: 0.98 });
+    const bond = position({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD', conId: 742000123 }, { quantity: 10_000, averageCost: 0.98 });
     const info: ContractInfo = {
       contract: bond.contract,
       longName: 'United States Treasury',
@@ -721,17 +678,16 @@ describe('the columns of extra market data, earnings and contract details', () =
 });
 
 describe('new cell formats', () => {
-  it('writes months, stamps, earnings, ratios, 3 decimals and features', () => {
+  it('writes months, stamps, earnings, 3 decimals and features', () => {
     expect(formatValue('month', '202612', words, clock, NOW)).toBe('2026-12');
     expect(formatValue('stamp', '20261218 08:30', words, clock, NOW)).toBe('2026-12-18 08:30');
     expect(formatValue('stamp', '20261218 08:30', words, createClock('12h', 'zh'), NOW)).toBe('2026-12-18 上午 08:30');
     expect(formatValue('earn', '20261030|bmo', words, clock, NOW)).toBe('2026-10-30 BMO');
     expect(formatValue('earn', '20261030|', words, clock, NOW)).toBe('2026-10-30');
-    expect(formatValue('ratio', 1.254, words, clock, NOW)).toBe('1.25×');
     expect(formatValue('num3', 4.2125, words, clock, NOW)).toBe('4.213');
     expect(formatValue('features', 'putable', words, clock, NOW)).toBe('Putable');
     expect(formatValue('shortable', 1, words, clock, NOW)).toBe('No');
-    for (const fmt of ['month', 'stamp', 'earn', 'ratio', 'num3', 'features', 'shortable'] as const) expect(formatValue(fmt, undefined, words, clock, NOW)).toBe('—');
+    for (const fmt of ['month', 'stamp', 'earn', 'num3', 'features', 'shortable'] as const) expect(formatValue(fmt, undefined, words, clock, NOW)).toBe('—');
   });
 
   it('sorts the shortable column by IB’s code, not its word', () => {

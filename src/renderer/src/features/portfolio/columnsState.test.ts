@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COLUMNS, DEFAULT_COLUMNS, type ColumnId } from './columns';
 import {
+  COLUMN_ALIASES,
   MAX_COLUMN_WIDTH,
   clampWidth,
   REORDER_SLOP,
@@ -47,6 +48,73 @@ describe('stored column choice', () => {
     expect(sanitizeColumns(['last', 'lastPx'], { lastPx: 'last' })).toEqual(['symbol', 'last']);
   });
 
+  it('maps the retired columns of IB’s figures to the one column each has now, and drops Tape’s calculations', () => {
+    // The old default set, stored after a change: Avg → IB's Avg cost, % NLV gone.
+    expect(sanitizeColumns(['symbol', 'quantity', 'avgPrice', 'price', 'value', 'weight', 'unrealized', 'dayPnl'])).toEqual([
+      'symbol',
+      'quantity',
+      'averageCost',
+      'price',
+      'value',
+      'unrealized',
+      'dayPnl',
+    ]);
+    // IB's portfolio-update, P&L and Mark columns: into Price, Value, Unrl. P&L, Realized P&L and Day P&L, once each.
+    expect(sanitizeColumns(['marketPriceIb', 'mark', 'valuePnlIb', 'marketValueIb', 'unrealizedPnlIb', 'unrealizedIb', 'realizedPnlIb', 'realizedIb', 'dailyPnlIb', 'bid'])).toEqual([
+      'symbol',
+      'price',
+      'value',
+      'unrealized',
+      'realized',
+      'dayPnl',
+      'bid',
+    ]);
+    expect(sanitizeColumns(['delta', 'positionDelta', 'moneyness', 'daysToExpiry', 'expiry', 'mid', 'navPremium', 'nextEarningsEst', 'nextEarnings'])).toEqual([
+      'symbol',
+      'delta',
+      'expiry',
+      'nextEarnings',
+    ]);
+    expect(COLUMN_ALIASES).toEqual({
+      avgPrice: 'averageCost',
+      mark: 'price',
+      marketPriceIb: 'price',
+      valuePnlIb: 'value',
+      marketValueIb: 'value',
+      unrealizedPnlIb: 'unrealized',
+      unrealizedIb: 'unrealized',
+      realizedPnlIb: 'realized',
+      realizedIb: 'realized',
+      dailyPnlIb: 'dayPnl',
+    });
+  });
+
+  it('falls back to the default columns when a stored list keeps none but Symbol', () => {
+    // Only Tape's calculations were shown: nothing is left of them.
+    expect(sanitizeColumns(['weight', 'costBasis', 'daysToExpiry'])).toBeNull();
+    expect(sanitizeColumns(['symbol', 'weight', 'unrealizedPct'])).toBeNull();
+    expect(sanitizePrefs({ columns: ['symbol', 'pctGross', 'totalPnl'], sort: { id: 'totalPnl', dir: 'desc' }, groupBy: 'sector' })).toEqual({
+      columns: null,
+      sort: null,
+      widths: {},
+      groupBy: 'sector',
+    });
+    // Symbol alone as the user stored it stays.
+    expect(sanitizeColumns(['symbol'])).toEqual(['symbol']);
+    expect(sanitizeColumns([])).toEqual(['symbol']);
+  });
+
+  it('keeps a sort on a retired column through its alias, and drops one without an equivalent', () => {
+    expect(sanitizePrefs({ columns: ['quantity', 'valuePnlIb'], sort: { id: 'valuePnlIb', dir: 'desc' } })).toMatchObject({
+      columns: ['symbol', 'quantity', 'value'],
+      sort: { id: 'value', dir: 'desc' },
+    });
+    expect(sanitizePrefs({ columns: ['quantity', 'weight'], sort: { id: 'weight', dir: 'asc' } })).toMatchObject({ columns: ['symbol', 'quantity'], sort: null });
+    // With the default columns (nothing stored): % NLV is gone, Day P&L (IB) is Day P&L.
+    expect(sanitizePrefs({ sort: { id: 'weight', dir: 'desc' } })?.sort).toBeNull();
+    expect(sanitizePrefs({ sort: { id: 'dailyPnlIb', dir: 'asc' } })?.sort).toEqual({ id: 'dayPnl', dir: 'asc' });
+  });
+
   it('reads stored preferences, keeping a sort only on a shown column', () => {
     expect(sanitizePrefs(null)).toBeNull();
     expect(sanitizePrefs('x')).toBeNull();
@@ -91,12 +159,16 @@ describe('stored column choice', () => {
     expect(sanitizeWidths(null)).toEqual({});
     expect(sanitizeWidths([120])).toEqual({});
     expect(sanitizeWidths('quantity:120')).toEqual({});
-    expect(sanitizeWidths({ quantity: 120.4, nope: 200, bid: '90', ask: null, price: Number.NaN, value: 1e9, weight: 3 })).toEqual({
+    expect(sanitizeWidths({ quantity: 120.4, nope: 200, bid: '90', ask: null, price: Number.NaN, value: 1e9, averageCost: 3 })).toEqual({
       quantity: 120,
       value: MAX_COLUMN_WIDTH,
-      weight: COLUMNS.weight.width,
+      averageCost: COLUMNS.averageCost.width,
     });
     expect(sanitizeWidths({ lastPx: 150 }, { lastPx: 'last' })).toEqual({ last: 150 });
+    // A retired column's width goes to the column it maps to, unless that one has its own; a dropped one's goes.
+    expect(sanitizeWidths({ avgPrice: 120, valuePnlIb: 150, value: 140, weight: 90 })).toEqual({ averageCost: 120, value: 140 });
+    expect(sanitizeWidths({ value: 140, valuePnlIb: 150 })).toEqual({ value: 140 });
+    expect(sanitizeWidths({ dailyPnlIb: 130 })).toEqual({ dayPnl: 130 });
     // A width of a column that is not shown stays, for when it is shown again.
     expect(sanitizePrefs({ columns: ['quantity'], widths: { quantity: 100, delta: 90 } })?.widths).toEqual({ quantity: 100, delta: 90 });
     expect(sanitizePrefs({ widths: { quantity: 100, nope: 90 } })).toEqual({ columns: null, sort: null, widths: { quantity: 100 }, groupBy: 'underlying' });
@@ -136,29 +208,27 @@ describe('column widths', () => {
   it('keeps the columns left of a sized one at their drawn widths, so its edge follows the pointer', () => {
     // The default columns in a card with spare width: each column drawn wider than its minimum.
     const defs = DEFAULT_COLUMNS.map((id) => COLUMNS[id]);
-    const left = { symbol: 361.6, quantity: 152.8, avgPrice: 164.8, price: 164.8 };
+    const left = { symbol: 361.6, quantity: 152.8, averageCost: 164.8, price: 164.8 };
     const live = liveWidths({}, 'value', 266.8, left);
     // Every track up to Value is fixed, so Value's right edge does not move with the spare width;
     // the columns right of it share what it took.
-    expect(gridTemplate(defs, live)).toBe(
-      '361.6px 152.8px 164.8px 164.8px 266.8px minmax(72px,1fr) minmax(104px,1fr) minmax(96px,1fr)',
-    );
-    expect(tracksWidth(defs, live)).toBeCloseTo(361.6 + 152.8 + 164.8 + 164.8 + 266.8 + 72 + 104 + 96);
+    expect(gridTemplate(defs, live)).toBe('361.6px 152.8px 164.8px 164.8px 266.8px minmax(104px,1fr) minmax(96px,1fr)');
+    expect(tracksWidth(defs, live)).toBeCloseTo(361.6 + 152.8 + 164.8 + 164.8 + 266.8 + 104 + 96);
     // A width of the column itself in `left` or in the stored widths gives way to the live one.
     expect(liveWidths({ value: 120 }, 'value', 266.8, { ...left, value: 176.8 }).value).toBe(266.8);
 
     // Released: the columns that shared the spare width keep their drawn widths, in whole px.
-    expect(sizeColumn({}, 'value', 266.8, left)).toEqual({ symbol: 362, quantity: 153, avgPrice: 165, price: 165, value: 267 });
+    expect(sizeColumn({}, 'value', 266.8, left)).toEqual({ symbol: 362, quantity: 153, averageCost: 165, price: 165, value: 267 });
   });
 
   it('fixes no column left of a sized one that is at its minimum, over the maximum or already sized', () => {
-    const widths = { avgPrice: 120 };
+    const widths = { averageCost: 120 };
     // Scrolling sideways: every unsized track at its catalog width keeps sharing.
-    expect(sizeColumn(widths, 'value', 150, { symbol: 200, quantity: 72.2, avgPrice: 120, price: 84 })).toEqual({ avgPrice: 120, value: 150 });
+    expect(sizeColumn(widths, 'value', 150, { symbol: 200, quantity: 72.2, averageCost: 120, price: 84 })).toEqual({ averageCost: 120, value: 150 });
     // A very wide card: Symbol's share over the maximum stays a share.
     expect(sizeColumn({}, 'quantity', 100, { symbol: 900 })).toEqual({ quantity: 100 });
     // A stored width is not replaced by a drawn one; unknown ids are ignored.
-    expect(sizeColumn(widths, 'value', 150, { avgPrice: 180, nope: 300 } as never)).toEqual({ avgPrice: 120, value: 150 });
+    expect(sizeColumn(widths, 'value', 150, { averageCost: 180, nope: 300 } as never)).toEqual({ averageCost: 120, value: 150 });
     // Nothing changes: the same object back.
     const same = { quantity: 100 };
     expect(sizeColumn(same, 'quantity', 100.2, { symbol: 200 })).toBe(same);

@@ -11,7 +11,7 @@ export const useOrdersMessages = createMessages({
     type: 'Type',
     qty: 'Qty',
     price: 'Price',
-    // The Last column: the instrument's current price beside the order's (options as the Positions tab values them).
+    // The Last column: the instrument's current price beside the order's (options at IB's mark, else their bid / ask midpoint).
     last: 'Last',
     lastTitle: 'Last price',
     limitFromLast: (d: string) => `Limit ${d} from last`,

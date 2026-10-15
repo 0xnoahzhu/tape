@@ -1,12 +1,12 @@
 // The Positions tab's column editor: a "Columns" button on the toolbar line opens a popover with a
 // search box, the shown columns in order (drag, ↑ / ↓ or Alt+↑ / Alt+↓ to reorder, × to hide;
-// Symbol stays first) and every column by group with a check to show or hide it. Calculated
-// columns carry a "Calc." chip; a column's note names the instruments it applies to ("No holdings of
-// this type" when none is held), whether it asks IB for extra market data while shown and whether
-// its values are not verified yet. It is not modal: the table updates behind it, and a header dragged
-// in the table moves the same list. "Reset to default" also gives every column its default width and
-// groups by underlying again, every group expanded. A press outside, Escape, leaving the page and
-// locking Tape close it (state/lockActions.ts).
+// Symbol stays first) and every column by group with a check to show or hide it. Every column is
+// IB's own data (its tooltip names the source); a column's note names the instruments it applies
+// to ("No holdings of this type" when none is held), whether it asks IB for extra market data while
+// shown and whether its values are not verified yet. It is not modal: the table updates behind it,
+// and a header dragged in the table moves the same list. "Reset to default" also gives every column
+// its default width and groups by underlying again, every group expanded. A press outside, Escape,
+// leaving the page and locking Tape close it (state/lockActions.ts).
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react';
 import { useStore } from '../../state/store';
@@ -47,24 +47,12 @@ function matches(id: ColumnId, query: string): boolean {
 
 /**
  * A column's note: its instrument types, "Extra market data" and "Unverified" (" · " between them).
- * Extra data: a column with a profile (generic ticks on the positions' lines) or one of the earnings
- * columns (Wall Street Horizon requests, else the market scanner, for every stock held).
+ * Extra data: a column with a profile (generic ticks on the positions' lines) or the earnings column
+ * (Wall Street Horizon requests for every stock held).
  */
 function columnNote(def: ColumnDef, m: PortfolioMessages): string {
   const extra = !!def.profile || def.needs === 'earnings';
   return [def.note ? m.notes[def.note] : '', extra ? m.extraData : '', def.unverified ? m.unverifiedLabel : ''].filter(Boolean).join(' · ');
-}
-
-function CalcChip({ id, m }: { id: ColumnId; m: PortfolioMessages }) {
-  if (COLUMNS[id].kind !== 'calc') return null;
-  return (
-    <span
-      title={`${m.calculatedBy} ${m.formulas[id] ?? ''}`}
-      style={{ flexShrink: 0, padding: '2px 5px', font: '10px/1 var(--sans)', color: 'var(--mu)', boxShadow: 'inset 0 0 0 1px var(--ln)' }}
-    >
-      {m.calcChip}
-    </span>
-  );
 }
 
 /** The Positions toolbar's Columns button and its popover. */
@@ -183,18 +171,13 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                       className={id === PINNED ? undefined : 'hover-p2'}
                       style={{ ...rowBase, cursor: id === PINNED ? 'default' : 'pointer', color: 'var(--tx)' }}
                     >
-                      {/* Name (13px) and note (11px) on one baseline; the check and the chip stay centred. The
-                          wrapper fills the row, so the note's 58% is of the same width. */}
+                      {/* Name (13px) and note (11px) on one baseline; the check stays centred. The wrapper fills
+                          the row, so the note's 58% is of the same width. */}
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
                         <div style={{ alignSelf: 'center', width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
                         <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
                           {m.columns[id][0]}
                         </div>
-                        {def.kind === 'calc' && (
-                          <span style={{ alignSelf: 'center', display: 'flex', flexShrink: 0 }}>
-                            <CalcChip id={id} m={m} />
-                          </span>
-                        )}
                         {note && (
                           // Shrinks before the column's name does (the full note is in the row's tooltip).
                           <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
@@ -295,14 +278,13 @@ function ShownList({ ids, all }: { ids: readonly ColumnId[]; all: readonly Colum
             style={{ ...rowBase, position: 'relative', opacity: drag === id ? 0.45 : 1, cursor: pinned ? 'default' : 'grab', color: 'var(--tx)' }}
           >
             <div style={{ width: 14, flexShrink: 0, color: 'var(--dm)' }}>{!pinned && <GripIcon size={14} />}</div>
-            {/* The name and Symbol's "Always shown" (11px) on one baseline; the Calc chip and the buttons stay centred outside. */}
+            {/* The name and Symbol's "Always shown" (11px) on one baseline; the buttons stay centred outside. */}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
               <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
                 {m.columns[id][0]}
               </div>
               {pinned && <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{m.alwaysShown}</div>}
             </div>
-            <CalcChip id={id} m={m} />
             {!pinned && (
               <div style={{ display: 'flex', flexShrink: 0 }}>
                 <GlyphButton title={m.moveUp} fontSize={12} disabled={i <= 1} onClick={() => moveBy(id, -1)}>

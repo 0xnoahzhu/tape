@@ -1,6 +1,6 @@
-// The portfolio greeks as one line: Δ sh · $Δ · Γ · Θ/day · Vega/pt, or a dimmed "Greeks: waiting for
-// IB on N options" (exposure.ts → portfolioGreeks). On the Positions toolbar for the whole account and
-// in the Trade page's activity panel under the options desk for one underlying.
+// One underlying's greeks as one line: Δ sh · $Δ · Γ · Θ/day · Vega/pt, or a dimmed "Greeks: waiting
+// for IB on N options" (exposure.ts → portfolioGreeks). In the Trade page's activity panel under the
+// options desk; the Positions page shows IB's own figures only, so none of these.
 
 import { f0, f2, sg, signColor } from '@shared/format';
 import type { PortfolioGreeks } from './exposure';

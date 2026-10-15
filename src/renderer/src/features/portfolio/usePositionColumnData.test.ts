@@ -45,8 +45,8 @@ describe('the extra ticks of the Positions table', () => {
   afterEach(() => vi.useRealTimers());
 
   const row = (symbol: string) => {
-    const p: Position = { account: 'DU1', key: symbol, contract: stock(symbol), quantity: 10, avgPrice: 100, multiplier: 1, updatedAt: 0 };
-    return positionRow(p, 101, 1_000_000, 'Technology', 1);
+    const p: Position = { account: 'DU1', key: symbol, contract: stock(symbol), quantity: 10, averageCost: 100, multiplier: 1, updatedAt: 0 };
+    return positionRow(p, 101, 'Technology', 1);
   };
   const keys = (subs: ReturnType<typeof addOnSubscriptions>) => subs.map((s) => `${contractKey(s.contract)}|${s.profile}`);
 
@@ -72,7 +72,7 @@ describe('the extra ticks of the Positions table', () => {
 
   it('signs only the columns with a profile', () => {
     expect(profileColumns([COLUMNS.symbol, COLUMNS.price, COLUMNS.nextEarnings])).toEqual({ defs: [], sig: '' });
-    expect(profileColumns([COLUMNS.vwap, COLUMNS.symbol, COLUMNS.mark]).sig).toBe('vwap,mark');
+    expect(profileColumns([COLUMNS.vwap, COLUMNS.symbol, COLUMNS.shortable]).sig).toBe('vwap,shortable');
   });
 });
 

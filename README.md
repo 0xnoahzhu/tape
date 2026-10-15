@@ -16,29 +16,32 @@ maintenance margin, IB's leverage and accrued dividends. While Tape is not conne
 stay, dimmed, with when IBKR last sent them (*Disconnected · as of …*). Tabs Positions, Orders and
 Trades (⌘3 / Ctrl+3 opens Orders).
 
-- **Positions**: a table (average cost, price, market value and P&L by default) grouped by **underlying**
-  (a stock with its options; the default), **sector** or not at all. A group row sums market value, % of
-  net liq (highlighted from 20%), unrealized and day P&L, and the other columns where a sum means
-  something (amounts across currencies in the account currency, marked with its code; deltas only within
-  one underlying); groups collapse, and
-  a single position stands on its own without a group row. The next **earnings or ex-dividend date**
-  within two weeks shows as a chip on the group (or the stock's row): *Earnings 10/23 AMC · Est.*, *Ex-div
-  10/15 $0.24*. Option rows read *Call · 12 DTE · 3.2% ITM*, the days to expiry highlighted within a week
-  (days count on New York's calendar, wherever you are).
-  The toolbar shows the top 3 groups' share of net liq (*Top 3 = 41% of net liq*) and, while options are
-  held, the portfolio Greeks (Δ in shares, $Δ, Γ, Θ per day, Vega per point). Every column sorts the
-  groups (by their sum, or their best row) and the rows within them. A **column editor** adds IB's own
-  P&L figures, contract details, quote fields, option greeks, 52-week ranges, volatility, option and
-  trading activity, short-sale data, dividends, earnings dates, ETF NAV, futures open interest and bond
-  details (145 columns; those Tape calculates are marked ƒ and give their formula, those not yet checked
-  against IB's data say so, and the extra quote fields are asked of IB only while their column is shown,
-  on the positions' own quote lines). Drag a header to move its column or its right edge to size it (the
-  columns left of it keep their widths; double-click the edge for the default width); a wide table
-  scrolls sideways with its scrollbar always shown, and Tape remembers the columns, their order and
-  widths, the sort and the grouping per device. Ex-dividend dates and amounts come with IB's quotes.
-  Earnings dates come from Wall Street Horizon when the account has that IBKR subscription; otherwise
-  Tape estimates them from IB's market scanner (US stocks: the date and before the open / after the
-  close, marked *Est.*, since IB marks none as confirmed).
+- **Positions**: a table of IB's own figures, nothing calculated by Tape (by default Symbol, Qty, Avg
+  cost, Price, Value, Unrl. P&L and Day P&L). Where IB sends a figure twice, one column shows it, the
+  real-time source first: Price is IB's mark price (tick 37, which Tape asks for on the quote line of
+  every stock, future, forex, crypto and option position), Value, Unrl. P&L and Realized P&L come from
+  IB's P&L engine (`reqPnLSingle`, about once a second), and each falls back to IB's portfolio update
+  (every 3 minutes) until the real-time one comes, as Price does for bonds, CFDs and warrants, which
+  get no mark; the cell's tooltip says which it shows. Avg cost is IB's average cost as sent (per
+  contract, with commissions). The table is grouped by **underlying** (a stock with its options; the
+  default), **sector** or not at all: a group row shows the group's name, its count and its chip, never
+  a sum; groups collapse, and a single position stands on its own without a group row. The next
+  **earnings or ex-dividend date** within two weeks shows as a chip on the group (or the stock's row):
+  *Earnings 10/23 AMC* (Wall Street Horizon), *Ex-div 10/15 $0.24* (IB's dividend data). Option rows
+  read *Call · 10/16* (the right and the expiry). Every column sorts the groups (by their best row) and
+  the rows within them. A **column editor** adds contract details, quote fields, IB's option model
+  values (IV and greeks), 52-week ranges, volatility, option and trading activity, short-sale data,
+  dividends, earnings dates, ETF NAV, futures open interest and bond details (107 columns, every one
+  IB's data; those not yet checked against IB's data say so, and the extra quote fields are asked of IB
+  only while their column is shown, on the positions' own quote lines). Drag a header to move its
+  column or its right edge to size it (the columns left of it keep their widths; double-click the edge
+  for the default width); a wide table scrolls sideways with its scrollbar always shown, and Tape
+  remembers the columns, their order and widths, the sort and the grouping per device (a column choice
+  stored by an older version keeps IB's columns under their new names; Price, Value, Unrl. P&L and Day
+  P&L stay and now show IB's figures, the per-unit Avg becomes IB's Avg cost, and the other columns
+  Tape calculated are dropped). Ex-dividend dates and amounts come with IB's quotes. Earnings dates
+  come from Wall Street Horizon when the account has that IBKR subscription; without it there are none
+  (Tape does not estimate them).
 - **Orders**: working orders with their attributes and each instrument's last price beside the order price
   (how far the limit or trigger is from it on hover); modify and cancel the orders Tape placed. The cancel
   dialog names the order, the account (paper or live) and what has filled, and for a bracket what cancelling
@@ -68,10 +71,10 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
-  in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity, average
-  cost, value, % of net liquidation, unrealized and day P&L) and open orders (time, side, contract, quantity
-  @ price, last price where the panel is wide enough, status, Modify / Cancel), under column names; a
-  splitter resizes it and it collapses to a bar.
+  in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
+  IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,
+  side, contract, quantity @ price, last price where the panel is wide enough, status, Modify / Cancel),
+  under column names; a splitter resizes it and it collapses to a bar.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
   market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
   on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force

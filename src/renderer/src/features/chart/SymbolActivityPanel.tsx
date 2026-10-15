@@ -2,20 +2,21 @@
 // open orders of the current symbol (the stock and its derivatives), with Modify / Cancel for the
 // orders Tape can cancel (who placed the others, with a "Why?": orders/OrderActions.tsx) and, where
 // the panel is wide enough, each order's last price beside its price.
-// The rows are valued like the Portfolio page (calc.ts → positionRow: one price for value and P&L)
-// from the panel's own quote lines ('symbol-activity', a visible owner; options with their model
-// greeks); the open orders' lines are held only while their tab shows ('symbol-orders').
-// Under the options desk (`options`) the panel adds the underlying's exposure (Δ, $Δ, Γ, Θ, Vega:
-// exposure.ts → portfolioGreeks, as on the Positions toolbar), DTE and Δ cells on the rows, and a
-// click on an option row opens its expiry in the chain. An order just placed from a floating panel
-// flashes in the open orders (activityModel.ts → isFreshOrder).
+// The positions show IB's own figures as the Portfolio page does (calc.ts → positionRow): IB's average
+// cost, and the value, unrealized and day P&L from IB's P&L engine in real time, else its portfolio
+// update (each cell's tooltip says which). The panel's own quote lines ('symbol-activity', a visible
+// owner; options with their model greeks) serve the exposure below; the open orders' lines are held
+// only while their tab shows ('symbol-orders'). Under the options desk (`options`) the panel adds
+// the underlying's exposure (Δ, $Δ, Γ, Θ, Vega: exposure.ts → portfolioGreeks), DTE and Δ cells on
+// the rows, and a click on an option row opens its expiry in the chain. An order just placed from a
+// floating panel flashes in the open orders (activityModel.ts → isFreshOrder).
 
 import { useMemo, useRef } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type ContractRef, type Position, type Quote, type QuoteSubscription, type WorkingOrder } from '@shared/types';
-import { lastPrice, useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
+import { useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useConnectedOrders } from '../../state/connectedLists';
@@ -29,10 +30,11 @@ import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDE
 import { useOrdersMessages } from '../orders/messages';
 import { OrderActions } from '../orders/OrderActions';
 import { modifyOrderInTicket } from '../panels/actions';
-import { livePrice, positionRow, quoteContract, type PositionRow } from '../portfolio/calc';
+import { positionRow, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
 import { useMinute } from '../portfolio/data';
-import { optionLine, portfolioGreeks, positionDelta, underlyingKey } from '../portfolio/exposure';
+import { optionDte, portfolioGreeks, positionDelta, underlyingKey } from '../portfolio/exposure';
 import { GreeksLine } from '../portfolio/GreeksLine';
+import { usePortfolioMessages } from '../portfolio/messages';
 import { showPortfolio } from '../portfolio/uiState';
 import { byInstrument, isFreshOrder } from './activityModel';
 import { useChartPrefs } from './chartPrefs';
@@ -48,9 +50,9 @@ const signed0 = (n: number | undefined) => (n == null ? '—' : sg(n, f0));
 const isOption = (c: ContractRef) => c.secType === 'OPT' || c.secType === 'FOP';
 
 /** Column templates shared by the rows and their header. */
-const POS_GRID = 'minmax(0,2fr) repeat(6,minmax(0,1fr))';
+const POS_GRID = 'minmax(0,2fr) repeat(5,minmax(0,1fr))';
 /** Under the options desk: DTE and Δ after Qty. */
-const POS_GRID_OPT = 'minmax(0,2fr) repeat(8,minmax(0,1fr))';
+const POS_GRID_OPT = 'minmax(0,2fr) repeat(7,minmax(0,1fr))';
 /** With the Last column where it fits (orderModel.ts → orderColumns, lastColumnFits). */
 const orderGrid = (clock: Parameters<typeof timeColumn>[0], withLast: boolean) => orderColumns(timeColumn(clock), withLast);
 /** Where the Last column's name is in orderHeaders. */
@@ -84,10 +86,13 @@ function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Arr
   );
 }
 
-/** Right-aligned number that clips with an ellipsis (full value on hover) instead of overlapping its neighbor. */
-function NumCell({ text, color, cell }: { text: string; color?: string; cell?: string }) {
+/**
+ * Right-aligned number that clips with an ellipsis (full value on hover) instead of overlapping its
+ * neighbor. `source`: which of IB's sources the figure shows, after it in the tooltip.
+ */
+function NumCell({ text, color, cell, source }: { text: string; color?: string; cell?: string; source?: string }) {
   return (
-    <div className="ellipsis" data-cell={cell} title={text || undefined} style={{ textAlign: 'right', color }}>
+    <div className="ellipsis" data-cell={cell} title={[text, source].filter(Boolean).join('\n') || undefined} style={{ textAlign: 'right', color }}>
       {text}
     </div>
   );
@@ -103,11 +108,11 @@ interface OptionCells {
   expiry?: string;
 }
 
-function HoldingRow({ r, netLiq, opt }: { r: PositionRow; netLiq: number | undefined; opt?: OptionCells }) {
+function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
   const m = useChartMessages();
+  const sources = usePortfolioMessages().words.sources;
+  const source = (s: FigureSource | undefined) => (s ? sources[s] : undefined);
   const p = r.position;
-  const mv = r.value;
-  const weight = mv != null && netLiq ? `${mv < 0 ? MINUS : ''}${((Math.abs(mv) / netLiq) * 100).toFixed(1)}%` : '—';
   const expiry = opt?.expiry;
   return (
     <div
@@ -140,11 +145,10 @@ function HoldingRow({ r, netLiq, opt }: { r: PositionRow; netLiq: number | undef
           <NumCell cell="delta" text={signed0(opt.delta)} />
         </>
       )}
-      <NumCell text={px(p.avgPrice)} color="var(--mu)" />
-      <NumCell text={f0(mv)} />
-      <NumCell text={weight} color="var(--mu)" />
-      <NumCell text={signed0(r.unrealized)} color={signColor(r.unrealized)} />
-      <NumCell text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} />
+      <NumCell cell="averageCost" text={px(p.averageCost)} color="var(--mu)" />
+      <NumCell cell="value" text={f0(r.value)} source={source(r.valueSource)} />
+      <NumCell cell="unrealized" text={signed0(r.unrealized)} color={signColor(r.unrealized)} source={source(r.unrealizedSource)} />
+      <NumCell cell="dayPnl" text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} source={r.dayPnl === undefined ? undefined : sources.pnl} />
     </div>
   );
 }
@@ -257,13 +261,12 @@ function useSymbolActivity() {
 }
 
 /**
- * The positions as rows valued like the Portfolio page, with the quotes they read: each position's
- * own and an option's underlying's. Subscribes every position: an option with its model greeks
- * (the options risk watcher already holds those lines in the background, and the chart or the desk
- * the stock's, so this mostly raises their priority).
+ * The positions as rows with IB's figures (as on the Portfolio page), with the quotes the exposure
+ * reads: each position's own and an option's underlying's. Subscribes every position: an option with
+ * its model greeks (the options risk watcher already holds those lines in the background, and the
+ * chart or the desk the stock's, so this mostly raises their priority).
  */
-function useActivityRows(positions: Position[]): { rows: PositionRow[]; quotes: Record<string, Quote>; netLiq: number | undefined } {
-  const netLiq = useStore((s) => s.account?.netLiquidation);
+function useActivityRows(positions: Position[]): { rows: PositionRow[]; quotes: Record<string, Quote> } {
   const subs = useMemo(() => {
     const seen = new Set<string>();
     const out: QuoteSubscription[] = [];
@@ -278,15 +281,8 @@ function useActivityRows(positions: Position[]): { rows: PositionRow[]; quotes: 
   useQuoteSubscriptionList(QUOTE_OWNER, subs);
   const keys = useMemo(() => [...new Set(positions.flatMap((p) => (isOption(p.contract) ? [contractKey(p.contract), underlyingKey(p.contract)] : [contractKey(p.contract)])))], [positions]);
   const quotes = useQuotesByKey(keys);
-  const rows = useMemo(
-    () =>
-      positions.map((p) => {
-        const q = quotes[contractKey(p.contract)];
-        return positionRow(p, livePrice(p.contract.secType, q, lastPrice(q)), netLiq, '');
-      }),
-    [positions, quotes, netLiq],
-  );
-  return { rows, quotes, netLiq };
+  const rows = useMemo(() => positions.map((p) => positionRow(p, quotes[contractKey(p.contract)]?.mark, '')), [positions, quotes]);
+  return { rows, quotes };
 }
 
 /** 28px icon button in the panel's header and bar. */
@@ -344,15 +340,14 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
   const tab = useChartPrefs((s) => s.activityTab);
   const setTab = useChartPrefs((s) => s.setActivityTab);
   const { sym, positions, orders } = useSymbolActivity();
-  const { rows, quotes, netLiq } = useActivityRows(positions);
+  const { rows, quotes } = useActivityRows(positions);
   const minute = useMinute();
-  // As the Positions toolbar: shown while the symbol's rows hold an option.
+  // Shown while the symbol's rows hold an option.
   const greeks = useMemo(() => (options ? portfolioGreeks(rows, quotes) : null), [options, rows, quotes]);
   const optionCells = (r: PositionRow): OptionCells => {
     const c = r.position.contract;
-    const line = optionLine(r, quotes, rows, new Date(minute));
     const expiry = isOption(c) && /^\d{8}/.test(c.lastTradeDate ?? '') ? c.lastTradeDate!.slice(0, 8) : undefined;
-    return { dte: line?.dte != null ? { days: line.dte, soon: line.soon } : undefined, delta: positionDelta(r, quotes), expiry };
+    return { dte: optionDte(r, new Date(minute)), delta: positionDelta(r, quotes), expiry };
   };
   const posHeaders = options ? [m.posHeaders[0], m.posHeaders[1], m.dteHeader, m.deltaHeader, ...m.posHeaders.slice(2)] : m.posHeaders;
   const clock = useClock();
@@ -410,7 +405,7 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
           <div>
             <HeaderRow grid={options ? POS_GRID_OPT : POS_GRID} headers={posHeaders} right={(i) => i > 0} />
             {rows.map((r) => (
-              <HoldingRow key={r.key} r={r} netLiq={netLiq} opt={options ? optionCells(r) : undefined} />
+              <HoldingRow key={r.key} r={r} opt={options ? optionCells(r) : undefined} />
             ))}
           </div>
         ) : (

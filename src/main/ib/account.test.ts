@@ -76,14 +76,15 @@ describe('account service', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('keeps IB’s average cost as sent next to the per-unit price', async () => {
+  it('keeps IB’s average cost as sent, per contract', async () => {
     const t = setup();
     await vi.advanceTimersByTimeAsync(0);
     t.emit('updatePortfolio', aapl, 100, 227.5, 22_750, 200.5, 2_700, 0, 'DU1');
     t.emit('updatePortfolio', call, 10, 3.2, 3_200, 310, 100, 0, 'DU1');
     const [stk, opt] = t.svc.getPositions();
-    expect(stk).toMatchObject({ avgPrice: 200.5, averageCost: 200.5, marketPrice: 227.5 });
-    expect(opt).toMatchObject({ avgPrice: 3.1, averageCost: 310, multiplier: 100 });
+    expect(stk).toMatchObject({ averageCost: 200.5, marketPrice: 227.5 });
+    expect(opt).toMatchObject({ averageCost: 310, multiplier: 100 });
+    expect(opt).not.toHaveProperty('avgPrice');
     // A position message without a cost keeps the last one.
     t.emit('position', 'DU1', aapl, 100, undefined);
     expect(t.svc.getPositions()[0].averageCost).toBe(200.5);
@@ -109,6 +110,14 @@ describe('account service', () => {
     expect(after).toMatchObject({ dailyPnL: 160, pnlValue: 22_765 });
     expect(after.pnlUnrealized).toBeUndefined();
     expect(after.pnlRealized).toBeUndefined();
+    // The same for the daily P&L and the value: one rule for every reqPnLSingle figure.
+    t.emit('pnlSingle', reqId, 100, 1.7976931348623157e308, 2_706, 12.5, 1.7976931348623157e308);
+    const unset = t.svc.getPositions()[0];
+    expect(unset).toMatchObject({ pnlUnrealized: 2_706, pnlRealized: 12.5 });
+    expect(unset.dailyPnL).toBeUndefined();
+    expect(unset.pnlValue).toBeUndefined();
+    // The portfolio update's figures stay: the table falls back to them.
+    expect(unset).toMatchObject({ marketValue: 22_760, unrealizedPnL: 2_710 });
   });
 
   it('asks for IB’s Cushion and Leverage and keeps them as sent', async () => {

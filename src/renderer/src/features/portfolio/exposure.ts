@@ -1,13 +1,13 @@
-// The holdings' option exposure (pure): the portfolio greeks on the Positions toolbar (and, for one
-// underlying, in the Trade page's activity panel under the options desk, with each row's delta and
-// days to expiry) and the line under an option row's symbol ("Call · 12 DTE · 3.2% ITM"). No React
-// and no store access; every value comes from the position rows (valued by the one-price rule,
-// calc.ts) and quotes: the options' own lines (IB's model greeks, tick 13) and their underlyings'
-// (data.ts → useUnderlyingQuotes; the activity panel's own subscription).
+// One underlying's option exposure (pure), for the Trade page's activity panel under the options
+// desk: the greeks of the symbol's stock and options together (Δ, $Δ, Γ, Θ, Vega), each row's share
+// of the delta and its days to expiry. These add up IB's per-share model greeks (tick 13) of the
+// options' own lines; the Positions page shows none of them (it shows IB's figures only). No React
+// and no store access; every value comes from the position rows and quotes: the options' own lines
+// and the underlying's.
 
 import { contractKey, multiplierOf } from '@shared/contract';
 import { nyDaysUntil } from '@shared/orderTiming';
-import type { ContractRef, OptionRight, Quote } from '@shared/types';
+import type { ContractRef, Quote } from '@shared/types';
 import { underlyingOf, type PositionRow } from './calc';
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -26,14 +26,14 @@ export function lastQuotePrice(q: Quote | undefined): number | undefined {
 export const underlyingKey = (c: ContractRef): string => contractKey(underlyingOf(c));
 
 /**
- * Price of a position's underlying: the option's own model underlying price, else the
- * underlying's quote, else a stock row of it. A futures option is not tied to its future
- * (underlyingOf returns the option itself), so only its model underlying price counts: its own
- * quote is the premium.
+ * Price of a position's underlying: a stock's own quote, else its row's price (IB's mark or
+ * portfolio price); an option's model underlying price, else the underlying's quote, else a stock
+ * row of it. A futures option is not tied to its future (underlyingOf returns the option itself),
+ * so only its model underlying price counts: its own quote is the premium.
  */
 export function underlyingPrice(row: PositionRow, quotes: Readonly<Record<string, Quote>>, rows: readonly PositionRow[]): number | undefined {
   const c = row.position.contract;
-  if (c.secType === 'STK') return row.last;
+  if (c.secType === 'STK') return lastQuotePrice(quotes[contractKey(c)]) ?? row.price;
   const self = contractKey(c);
   const own = quotes[self]?.undPrice;
   if (finite(own) && own > 0) return own;
@@ -42,11 +42,11 @@ export function underlyingPrice(row: PositionRow, quotes: Readonly<Record<string
   const quoted = lastQuotePrice(quotes[key]);
   if (quoted !== undefined) return quoted;
   const held = rows.find((r) => r.position.contract.secType === 'STK' && contractKey(r.position.contract) === key);
-  return held?.last;
+  return held && underlyingPrice(held, quotes, rows);
 }
 
 // ---------------------------------------------------------------------------
-// Portfolio greeks
+// Greeks
 
 export interface PortfolioGreeks {
   /** Share-equivalent delta (stocks count their shares). */
@@ -65,8 +65,9 @@ export interface PortfolioGreeks {
 }
 
 /**
- * Greeks over all stock and option positions. IB's model greeks (tick 13) are per share, so an
- * option adds greek × quantity × multiplier; a stock adds its quantity to delta. Totals that
+ * Greeks over the rows' stocks and options (the activity panel passes one underlying's). IB's model
+ * greeks (tick 13) are per share, so an option adds greek × quantity × multiplier; a stock adds its
+ * quantity to delta. Totals that
  * would leave out an option still waiting for its greeks are undefined, never a partial sum;
  * the dollar delta also needs every underlying price.
  */
@@ -84,7 +85,8 @@ export function portfolioGreeks(rows: readonly PositionRow[], quotes: Readonly<R
     const qty = r.position.quantity;
     if (c.secType === 'STK') {
       delta += qty;
-      if (finite(r.last)) dollar += qty * r.last;
+      const S = underlyingPrice(r, quotes, rows);
+      if (finite(S)) dollar += qty * S;
       else dollarKnown = false;
       continue;
     }
@@ -122,40 +124,18 @@ export function positionDelta(row: PositionRow, quotes: Readonly<Record<string, 
 }
 
 // ---------------------------------------------------------------------------
-// An option row's line
+// Days to expiry
 
 /** Days to expiry at or below which an option's DTE is highlighted. */
 export const SOON_DAYS = 7;
 
-/** What the line under an option row's symbol says: "Call · 12 DTE · 3.2% ITM". */
-export interface OptionLine {
-  right?: OptionRight;
-  /** Calendar days to expiry (New York's calendar), never negative; undefined without an expiry date. */
-  dte?: number;
-  /** At most SOON_DAYS to expiry. */
-  soon: boolean;
-  /** In / out of the money and the distance |S − K| / S in percent; undefined without the underlying price. */
-  moneyness?: { itm: boolean; pct: number };
-}
-
 /**
- * The line of an option or futures option row (undefined for other instruments). The underlying
- * price is underlyingPrice's: a futures option's only from IB's model, never its premium.
+ * An option or futures option row's calendar days to expiry on New York's calendar (never negative)
+ * and whether that is SOON_DAYS or fewer; undefined for other instruments and without an expiry date.
  */
-export function optionLine(row: PositionRow, quotes: Readonly<Record<string, Quote>>, rows: readonly PositionRow[], now: Date): OptionLine | undefined {
-  if (!isOption(row)) return undefined;
+export function optionDte(row: PositionRow, now: Date): { days: number; soon: boolean } | undefined {
   const c = row.position.contract;
-  const dte = /^\d{8}$/.test(c.lastTradeDate ?? '') ? Math.max(0, nyDaysUntil(c.lastTradeDate!, now)) : undefined;
-  const S = underlyingPrice(row, quotes, rows);
-  const K = c.strike;
-  const moneyness = finite(S) && S > 0 && finite(K) ? { itm: c.right === 'P' ? S < K : S > K, pct: (Math.abs(S - K) / S) * 100 } : undefined;
-  return { right: c.right, dte, soon: dte !== undefined && dte <= SOON_DAYS, moneyness };
-}
-
-/** Whether two lines read the same (the distance to a tenth of a percent, as written). */
-export function sameOptionLine(a: OptionLine | undefined, b: OptionLine | undefined): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const pct = (l: OptionLine) => (l.moneyness ? Math.round(l.moneyness.pct * 10) : undefined);
-  return a.right === b.right && a.dte === b.dte && a.soon === b.soon && a.moneyness?.itm === b.moneyness?.itm && pct(a) === pct(b);
+  if (!isOption(row) || !/^\d{8}$/.test(c.lastTradeDate ?? '')) return undefined;
+  const days = Math.max(0, nyDaysUntil(c.lastTradeDate!, now));
+  return { days, soon: days <= SOON_DAYS };
 }

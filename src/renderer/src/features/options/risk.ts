@@ -2,7 +2,7 @@
 
 import { contractKey, daysToExpiry, stock } from '@shared/contract';
 import type { ContractRef, Position, Quote, Watchlist } from '@shared/types';
-import { livePrice, positionRow } from '../portfolio/calc';
+import { positionRow } from '../portfolio/calc';
 import { markOf } from './chain';
 
 /** IB position contracts may lack an exchange; market data requests need one. */
@@ -92,12 +92,13 @@ export function computeRiskAlerts(
       out.push({ id: `move:${p.account}:${c.symbol}`, rule: 'move', severity: 'info', position: p, movePct: chg });
     }
 
-    // The positions table's P&L: the live mark (IB's mark, else the midpoint), else IB's portfolio
-    // figures. livePrice ignores `last` for options, so none is passed.
-    const row = positionRow(p, livePrice(c.secType, q, undefined), undefined, '');
-    // unrealizedPct is in percent of |cost| (quantity × average price × multiplier).
-    if (row.unrealized != null && row.unrealized < 0 && row.unrealizedPct != null) {
-      const lossPct = -row.unrealizedPct;
+    // The positions table's unrealized P&L (IB's: reqPnLSingle in real time, else the portfolio
+    // update), against the premium paid or received: quantity × IB's average cost per contract. The
+    // percent is the rule's own threshold, never shown in the table.
+    const unrealized = positionRow(p, undefined, '').unrealized;
+    const premium = p.averageCost != null ? Math.abs(p.quantity * p.averageCost) : 0;
+    if (unrealized != null && unrealized < 0 && premium > 0) {
+      const lossPct = (-unrealized / premium) * 100;
       if (lossPct >= (short ? 100 : 50)) out.push({ id: `loss:${id}`, rule: 'loss', severity: short ? 'warn' : 'info', position: p, lossPct });
     }
   }

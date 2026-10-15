@@ -41,9 +41,8 @@ describe('demo quotes', () => {
     }
   });
 
-  it('gives each symbol a fixed next earnings date, some pre-open ones with an exact time', () => {
+  it('gives each symbol a fixed next earnings date and time of day', () => {
     const m = new DemoMarket(() => OPEN);
-    // The dates of the simulator before exact times existed.
     expect(m.earnings('AAPL')).toEqual({ date: '20261128', time: 'amc' });
     expect(m.earnings('NVDA').date).toBe('20261130');
     expect(m.earnings('XOM').date).toBe('20261106');
@@ -53,13 +52,9 @@ describe('demo quotes', () => {
     expect(syms.map((s) => m.earnings(s))).toEqual(all);
     for (const e of all) {
       expect(e.date >= '20261009' && e.date <= '20270104').toBe(true);
-      if (e.minutes !== undefined) {
-        expect(e.time).toBe('bmo');
-        expect([420, 450, 480, 510, 540]).toContain(e.minutes);
-      }
+      expect(['bmo', 'amc']).toContain(e.time);
     }
-    expect(all.some((e) => e.minutes !== undefined)).toBe(true);
-    expect(all.some((e) => e.time === 'bmo' && e.minutes === undefined)).toBe(true);
+    expect(all.some((e) => e.time === 'bmo')).toBe(true);
   });
 
   it('adds underlying statistics only for that profile', () => {
@@ -72,7 +67,7 @@ describe('demo quotes', () => {
     expect(u.putOpenInterest).toBeGreaterThan(0);
   });
 
-  it('adds each add-on profile’s values only for that profile and the types it applies to', () => {
+  it('adds each add-on profile’s values, and the position mark, only for that profile and the types it applies to', () => {
     const m = new DemoMarket(() => OPEN);
     const basic = m.quote(stock('AAPL'), ['basic'])!;
     for (const k of ['week13Low', 'rtHistVol', 'avgOptionVolume', 'tradeCount', 'vwap', 'auctionPrice', 'mark', 'shortable', 'etfNav'] as const) expect(basic[k], k).toBeUndefined();
@@ -97,6 +92,8 @@ describe('demo quotes', () => {
     expect(m.quote(bond)).toMatchObject({ bidYield: 4.212, askYield: 4.198, lastYield: 4.205 });
     expect(m.quote(bond)!.bondFactor).toBeUndefined();
     expect(m.quote(bond, ['bondFactor'])!.bondFactor).toBe(1);
+    // The mark as the 'mark' profile asks for it: not on bonds.
+    expect(m.quote(bond, ['mark'])!.mark).toBeUndefined();
     // The underlying profile brings the real-time HV next to tick 23's.
     const u = m.quote(stock('NVDA'), ['underlying'])!;
     expect(u.rtHistVol).toBeGreaterThan(0);

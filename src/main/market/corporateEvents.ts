@@ -1,18 +1,14 @@
 // Corporate events of the holdings: upcoming earnings from Wall Street Horizon (WSH), which IB
-// serves only to accounts with the WSH subscription, and when IB refuses WSH, estimated from IB's
-// market scanner (see earningsScanner.ts). Dividends do not come from here: they are IB's
+// serves only to accounts with the WSH subscription. Dividends do not come from here: they are IB's
 // dividend tick on the holdings' quotes (generic tick 456, see subscriptions.ts).
 //
 // IB requires reqWshMetaData once per connection before reqWshEventData. Event requests go one
 // at a time (one per underlying conId, today to EARNINGS_DAYS ahead) and their results are kept
 // per conId for the New York day and the connection. Without the subscription IB refuses the
 // meta data request (error 10276 "News feed is not allowed" on the paper account): the refusal is
-// remembered for the connection and the New York day, and those stocks go to the scanner, whose
-// searches run in the background (the answer says `pending` while they do, and `retryInMs` when a
-// stock waits to be searched again). The scanner covers US dollar stocks only: with others left
-// over the answer is `partial`, and with nothing else `unsubscribed`. A refusal of one event
-// request keeps the events WSH already gave and sends the rest to the scanner. Demo mode answers
-// from the simulator, as scanner estimates.
+// remembered for the connection and the New York day, and the answer is `unsubscribed` (Tape does
+// not estimate dates of its own). A refusal of one event request keeps the events WSH already gave.
+// Demo mode answers from the simulator.
 //
 // IB did not document the event JSON beyond examples and the paper account cannot receive any,
 // so parseWshEarnings reads it defensively (see there); a shape it cannot read is logged once.
@@ -22,7 +18,6 @@ import { contractKey, contractLabel } from '@shared/contract';
 import type { ContractRef, CorporateEarnings, EarningsEvent } from '@shared/types';
 import type { CorporateEventsService, MainContext } from '../context';
 import { demoMarket } from './demo';
-import { createEarningsScanner } from './earningsScanner';
 import { IbRequestError, ibRequest, isIbConnected, Limiter } from './ibRequest';
 import { addDays, nyDay, yyyymmdd } from './nyTime';
 
@@ -142,7 +137,6 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
   /** The conId each contract key was asked by (option underlyings carry none), for cachedWsh. */
   const conIds = new Map<string, number>();
   const queue = new Limiter(1);
-  const scanner = createEarningsScanner(ctx);
   let warnedShape = false;
 
   const reset = () => {
@@ -208,28 +202,30 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
     return events;
   }
 
-  /** The events WSH gave today for stocks with a known conId; the others are returned as `rest`. */
-  function cachedWsh(stocks: ContractRef[], today: string): { events: EarningsEvent[]; answered: number; rest: ContractRef[] } {
+  /** The events WSH gave today for stocks with a known conId, and how many of the stocks it answered. */
+  function cachedWsh(stocks: ContractRef[], today: string): { events: EarningsEvent[]; answered: number } {
     const events: EarningsEvent[] = [];
-    const rest: ContractRef[] = [];
     let answered = 0;
     for (const und of stocks) {
       // As eventsOf found it: an option underlying's conId was resolved there.
       const conId = und.conId ?? conIds.get(contractKey(und));
       const hit = conId !== undefined ? cache.get(conId) : undefined;
-      if (hit?.day !== today) {
-        rest.push(und);
-        continue;
-      }
+      if (hit?.day !== today) continue;
       events.push(...hit.events.map((e) => ({ ...e, key: contractKey(und) })));
       answered++;
     }
-    return { events, answered, rest };
+    return { events, answered };
+  }
+
+  /** What WSH answered today, or `unsubscribed` when it answered none of the stocks. */
+  function afterRefusal(stocks: ContractRef[], today: string): CorporateEarnings {
+    const cached = cachedWsh(stocks, today);
+    return cached.answered ? { status: 'ok', events: sortEvents(cached.events) } : { status: 'unsubscribed', events: [] };
   }
 
   function demoEarnings(underlyings: ContractRef[]): CorporateEarnings {
-    const events = underlyings.map((u) => ({ key: contractKey(u), ...demoMarket().earnings(u.symbol), estimated: true }));
-    return { status: 'ok', events: sortEvents(events), source: 'scanner' };
+    const events = underlyings.map((u) => ({ key: contractKey(u), ...demoMarket().earnings(u.symbol) }));
+    return { status: 'ok', events: sortEvents(events) };
   }
 
   return {
@@ -248,62 +244,30 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
       if (!isIbConnected(ctx)) return { status: 'unavailable', events: [] };
       if (!stocks.length) return { status: 'ok', events: [] };
       const today = todayYmd(Date.now());
-      const wshEvents: EarningsEvent[] = [];
-      let wshAnswered = 0;
-      let rest = stocks;
-      if (wshRefusedDay !== today) {
+      // WSH refused earlier today: stocks it answered before keep that answer.
+      if (wshRefusedDay === today) return afterRefusal(stocks, today);
+      try {
+        await requestMeta();
+      } catch (err) {
+        if (!refusal(err)) return { status: 'unavailable', events: [] };
+        wshRefusedDay = today;
+        return afterRefusal(stocks, today);
+      }
+      const events: EarningsEvent[] = [];
+      let answered = 0;
+      for (const und of stocks) {
         try {
-          await requestMeta();
+          events.push(...(await queue.run(() => eventsOf(und, today))));
+          answered++;
         } catch (err) {
-          if (!refusal(err)) return { status: 'unavailable', events: [] };
+          if (!refusal(err)) continue;
+          // The events WSH gave (cached by eventsOf) are kept; the refused stock and those after it have none.
           wshRefusedDay = today;
+          return afterRefusal(stocks, today);
         }
       }
-      if (wshRefusedDay !== today) {
-        let refusedAt = -1;
-        for (let i = 0; i < stocks.length; i++) {
-          try {
-            wshEvents.push(...(await queue.run(() => eventsOf(stocks[i], today))));
-            wshAnswered++;
-          } catch (err) {
-            if (refusal(err)) {
-              wshRefusedDay = today;
-              refusedAt = i;
-              break;
-            }
-          }
-        }
-        if (refusedAt < 0) {
-          if (!wshAnswered) return { status: 'unavailable', events: [] };
-          return { status: 'ok', events: sortEvents(wshEvents), source: 'wsh' };
-        }
-        // The events WSH gave are kept; the refused stock and those after it go to the scanner.
-        rest = stocks.slice(refusedAt);
-      } else {
-        // WSH refused earlier today: stocks it answered before keep that answer.
-        const cached = cachedWsh(stocks, today);
-        wshEvents.push(...cached.events);
-        wshAnswered = cached.answered;
-        rest = cached.rest;
-      }
-      const s = scanner.lookup(rest, today);
-      /** Stocks that went to the scanner and that it can look up (US dollar ones). */
-      const scanned = rest.length - s.uncovered;
-      const retry = s.retryInMs !== undefined ? { retryInMs: s.retryInMs } : {};
-      if (!wshAnswered && !s.answered && !s.pending) {
-        // Nothing else than stocks the scanner does not cover: they need WSH.
-        if (s.refused || !scanned) return { status: 'unsubscribed', events: [] };
-        return { status: 'unavailable', events: [], ...retry };
-      }
-      const events = sortEvents([...wshEvents, ...s.events]);
-      return {
-        status: 'ok',
-        events,
-        source: scanned ? 'scanner' : 'wsh',
-        ...(s.uncovered ? { partial: true } : {}),
-        ...(s.pending ? { pending: true } : {}),
-        ...retry,
-      };
+      if (!answered) return { status: 'unavailable', events: [] };
+      return { status: 'ok', events: sortEvents(events) };
     },
   };
 }

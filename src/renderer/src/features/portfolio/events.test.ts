@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { contractKey, index, option, stock } from '@shared/contract';
-import { createClock } from '@shared/timeFormat';
 import type { ContractRef, Position } from '@shared/types';
 import { positionRow, type PositionRow } from './calc';
-import { EVENT_WINDOW_DAYS, earningsState, etClock, eventLabel, eventSig, holdingUnderlyings, monthDay, nextEvents, type CorporateEvent, type EventWords } from './events';
+import { EVENT_WINDOW_DAYS, earningsState, eventLabel, eventSig, holdingUnderlyings, monthDay, nextEvents, type CorporateEvent, type EventWords } from './events';
 import { usePortfolioMessages } from './messages';
 
 function row(contract: ContractRef, quantity = 1): PositionRow {
-  const p: Position = { account: 'DU1', key: contractKey(contract), contract, quantity, avgPrice: 1, multiplier: contract.secType === 'OPT' ? 100 : 1, updatedAt: 0 };
-  return positionRow(p, undefined, 1_000_000, 'x');
+  const p: Position = { account: 'DU1', key: contractKey(contract), contract, quantity, multiplier: contract.secType === 'OPT' ? 100 : 1, updatedAt: 0 };
+  return positionRow(p, undefined, 'x');
 }
 
 // Tuesday 2026-10-06, 11:00 in New York (days count on New York's calendar, whatever the machine's zone).
@@ -74,42 +73,34 @@ describe('next events', () => {
     expect(events.size).toBe(3);
   });
 
-  it('passes the scanner’s estimates and exact times through', () => {
+  it('passes Wall Street Horizon’s time of day through, and nothing else', () => {
     const events = nextEvents(
       und,
       {},
       {
         status: 'ok',
-        source: 'scanner',
         events: [
-          { key: 'STK:AAPL', date: '20261016', time: 'amc', estimated: true },
-          { key: 'STK:TSLA', date: '20261014', time: 'bmo', minutes: 510, estimated: true },
+          { key: 'STK:AAPL', date: '20261016', time: 'amc' },
+          { key: 'STK:TSLA', date: '20261014' },
         ],
       },
       NOW,
     );
-    expect([...events.values()].map((e) => [e.symbol, e.time, e.minutes, e.estimated])).toEqual([
-      ['AAPL', 'amc', undefined, true],
-      ['TSLA', 'bmo', 510, true],
+    expect([...events.values()].map((e) => [e.symbol, e.time])).toEqual([
+      ['AAPL', 'amc'],
+      ['TSLA', undefined],
     ]);
-    expect('minutes' in events.get('STK:AAPL')!).toBe(false);
+    expect(Object.keys(events.get('STK:TSLA')!).sort()).toEqual(['date', 'days', 'key', 'kind', 'symbol', 'underlying']);
   });
 
-  it('writes New York times for the clock and the date as month/day', () => {
-    expect(etClock(510)).toBe('08:30');
-    expect(etClock(960)).toBe('16:00');
-    expect(etClock(0)).toBe('00:00');
+  it('writes the date as month/day', () => {
     expect(monthDay('20261023')).toBe('10/23');
     expect(monthDay('20260105')).toBe('01/05');
   });
 
-  it('says where earnings dates come from, or why there are none', () => {
+  it('says why there are no earnings dates', () => {
     expect(earningsState(undefined, true)).toBe('ok');
-    expect(earningsState({ status: 'ok', events: [], source: 'wsh' }, true)).toBe('ok');
-    expect(earningsState({ status: 'ok', events: [], source: 'scanner' }, true)).toBe('estimated');
-    expect(earningsState({ status: 'ok', events: [], source: 'scanner', pending: true }, true)).toBe('searching');
-    expect(earningsState({ status: 'ok', events: [], source: 'scanner', partial: true }, true)).toBe('estimatedUs');
-    expect(earningsState({ status: 'ok', events: [], source: 'scanner', retryInMs: 300_000 }, true)).toBe('estimated');
+    expect(earningsState({ status: 'ok', events: [] }, true)).toBe('ok');
     expect(earningsState({ status: 'unsubscribed', events: [] }, true)).toBe('unsubscribed');
     expect(earningsState({ status: 'unavailable', events: [] }, true)).toBe('unavailable');
     // Not connected: the table says so itself.
@@ -120,28 +111,23 @@ describe('next events', () => {
 describe('event chips', () => {
   const words = (lang: 'en' | 'zh'): EventWords => {
     const m = usePortfolioMessages.for(lang);
-    return { earnings: m.earnings, exDiv: m.exDiv, estimated: m.estimated, times: m.words.earningsTimes, atEt: m.atEt };
+    return { earnings: m.earnings, exDiv: m.exDiv, times: m.words.earningsTimes };
   };
   const ev = (over: Partial<CorporateEvent>): CorporateEvent => ({ key: 'STK:AAPL', symbol: 'AAPL', underlying: stock('AAPL'), kind: 'earnings', date: '20261023', days: 17, ...over });
-  const en = createClock('12h', 'en');
-  const zh = createClock('12h', 'zh');
 
-  it('reads the earnings date, its time of day and whether it is estimated', () => {
-    expect(eventLabel(ev({ time: 'amc', estimated: true }), words('en'), en.wall)).toBe('Earnings 10/23 AMC · Est.');
-    expect(eventLabel(ev({ time: 'bmo' }), words('en'), en.wall)).toBe('Earnings 10/23 BMO');
-    expect(eventLabel(ev({}), words('en'), en.wall)).toBe('Earnings 10/23');
-    // An exact time wins over before the open.
-    expect(eventLabel(ev({ date: '20261021', time: 'bmo', minutes: 510, estimated: true }), words('en'), en.wall)).toBe('Earnings 10/21 08:30 AM ET · Est.');
-    expect(eventLabel(ev({ time: 'amc', estimated: true }), words('zh'), zh.wall)).toBe('财报 10/23 盘后 · 预估');
-    expect(eventLabel(ev({ minutes: 510 }), words('zh'), zh.wall)).toBe('财报 10/23 美东 上午 08:30');
+  it('reads the earnings date and its time of day (Wall Street Horizon)', () => {
+    expect(eventLabel(ev({ time: 'amc' }), words('en'))).toBe('Earnings 10/23 AMC');
+    expect(eventLabel(ev({ time: 'bmo' }), words('en'))).toBe('Earnings 10/23 BMO');
+    expect(eventLabel(ev({}), words('en'))).toBe('Earnings 10/23');
+    expect(eventLabel(ev({ time: 'amc' }), words('zh'))).toBe('财报 10/23 盘后');
   });
 
   it('reads the ex-dividend date and the amount in the underlying’s currency', () => {
-    expect(eventLabel(ev({ kind: 'dividend', date: '20261015', amount: 0.24 }), words('en'), en.wall)).toBe('Ex-div 10/15 $0.24');
-    expect(eventLabel(ev({ kind: 'dividend', date: '20261015' }), words('en'), en.wall)).toBe('Ex-div 10/15');
+    expect(eventLabel(ev({ kind: 'dividend', date: '20261015', amount: 0.24 }), words('en'))).toBe('Ex-div 10/15 $0.24');
+    expect(eventLabel(ev({ kind: 'dividend', date: '20261015' }), words('en'))).toBe('Ex-div 10/15');
     const sap = ev({ kind: 'dividend', date: '20261015', amount: 2.2, underlying: { ...stock('SAP'), currency: 'EUR' } });
-    expect(eventLabel(sap, words('en'), en.wall)).toBe('Ex-div 10/15 2.20 EUR');
-    expect(eventLabel(ev({ kind: 'dividend', date: '20261015', amount: 0.24 }), words('zh'), zh.wall)).toBe('除息 10/15 $0.24');
+    expect(eventLabel(sap, words('en'))).toBe('Ex-div 10/15 2.20 EUR');
+    expect(eventLabel(ev({ kind: 'dividend', date: '20261015', amount: 0.24 }), words('zh'))).toBe('除息 10/15 $0.24');
   });
 
   it('tells chips apart by what they show', () => {

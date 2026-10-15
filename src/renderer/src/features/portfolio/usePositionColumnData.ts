@@ -1,9 +1,9 @@
 // What the Positions table's shown columns read beyond the position rows: the positions' own
 // quotes (subscribed by the 'portfolio' owner, usePositionRows), their contract details (fetched by
-// the main process for every position, so getContractInfo answers from its cache), the gross value
-// of all rows and the holdings' earnings (the Positions tab's one useEarnings, shared with the event
-// chips: PositionsView.tsx). Each is read only while a shown column needs it, so the rows are not
-// redrawn for changes no shown column reads.
+// the main process for every position, so getContractInfo answers from its cache) and the holdings'
+// earnings (the Positions tab's one useEarnings, shared with the event chips: PositionsView.tsx).
+// Each is read only while a shown column needs it, so the rows are not redrawn for changes no shown
+// column reads.
 //
 // Columns with a `profile` need more generic ticks on the positions' lines: the 'positions-table'
 // owner asks for them, on the portfolio's own contracts (no new line), only while such a column is
@@ -179,8 +179,6 @@ export interface PositionColumnData {
   quotes: Readonly<Record<string, Quote>>;
   /** Contract details by row id (empty while no shown column reads them). */
   infos: ReadonlyMap<string, ContractInfo | null>;
-  /** Σ |value in the account currency| of all rows; undefined while a row's is unknown (or no shown column reads it). */
-  grossBase?: number;
   /** The next earnings by the underlying's contract key (empty while no shown column reads them). */
   earnings: ReadonlyMap<string, EarningsEvent>;
 }
@@ -189,7 +187,6 @@ export interface PositionColumnData {
 export function usePositionColumnData(rows: readonly PositionRow[], columns: readonly ColumnDef[], corporate: CorporateEarnings | undefined): PositionColumnData {
   const needQuotes = columns.some((c) => c.needs === 'quote');
   const needDetails = columns.some((c) => c.needs === 'details');
-  const needGross = columns.some((c) => c.needs === 'gross');
   const needEarnings = columns.some((c) => c.needs === 'earnings');
   const keySig = needQuotes ? rows.map((r) => r.key).join(',') : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,8 +194,9 @@ export function usePositionColumnData(rows: readonly PositionRow[], columns: rea
   const quotes = useQuotesByKey(keys);
   const infos = usePositionDetails(rows, needDetails);
 
-  // The extra generic ticks of the shown columns (none for the default columns). Only a change of
-  // the shown columns waits; the rows go straight through (profileColumns).
+  // The extra generic ticks of the shown columns (none for the default columns: the mark Price shows
+  // is on the positions' lines already, usePositionRows). Only a change of the shown columns waits;
+  // the rows go straight through (profileColumns).
   const profiled = useMemo(() => profileColumns(columns), [columns]);
   const shown = useLatestAfter(profiled.defs, profiled.sig, ADD_ON_DEBOUNCE_MS);
   const subs: readonly QuoteSubscription[] = useMemo(() => addOnSubscriptions(rows, shown), [rows, shown]);
@@ -211,15 +209,5 @@ export function usePositionColumnData(rows: readonly PositionRow[], columns: rea
     for (const e of corporate.events) if (!out.has(e.key)) out.set(e.key, e);
     return out;
   }, [needEarnings, corporate]);
-
-  const grossBase = useMemo(() => {
-    if (!needGross) return undefined;
-    let sum = 0;
-    for (const r of rows) {
-      if (r.valueBase === undefined || !Number.isFinite(r.valueBase)) return undefined;
-      sum += Math.abs(r.valueBase);
-    }
-    return sum;
-  }, [rows, needGross]);
-  return { quotes, infos, grossBase, earnings };
+  return { quotes, infos, earnings };
 }

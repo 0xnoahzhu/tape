@@ -116,10 +116,12 @@ export type MarketDataType = 1 | 2 | 3 | 4; // live, frozen, delayed, delayed-fr
  *               (indices: without 318 and 456)
  * - option:     option contract quotes with model greeks, volume and open interest
  * - dividends:  basic + IB's dividend summary (generic tick 456, stocks only; live data only)
+ * - mark:       basic + IB's mark price (generic tick 221 → tick 37), the base profile of every
+ *               position's line (the Portfolio page's Price column); options carry it in basic already
  * - add-ons:    basic + the extra ticks of one column family (shared/quoteProfiles.ts), asked for
  *               only while a column shows them
  */
-export type QuoteProfile = 'basic' | 'underlying' | 'option' | 'dividends' | AddOnProfile;
+export type QuoteProfile = 'basic' | 'underlying' | 'option' | 'dividends' | 'mark' | AddOnProfile;
 
 export interface QuoteSubscription {
   contract: ContractRef;
@@ -331,12 +333,11 @@ export interface QuoteDividends {
 }
 
 // ---------------------------------------------------------------------------
-// Corporate events (Wall Street Horizon, else estimated from IB's market scanner)
+// Corporate events (Wall Street Horizon)
 
 /**
  * - ok: IB answered (the list may be empty)
  * - unsubscribed: the account has no Wall Street Horizon subscription (IB error 10276 and kin)
- *   and IB refused its market scanner too
  * - unavailable: not connected, or IB did not answer
  */
 export type CorporateEventsStatus = 'ok' | 'unsubscribed' | 'unavailable';
@@ -348,24 +349,12 @@ export interface EarningsEvent {
   date: string;
   /** Before market open, after market close, during market hours; absent when unknown. */
   time?: 'bmo' | 'amc' | 'dmh';
-  /** The release time in minutes after midnight New York, only when pinned exactly. */
-  minutes?: number;
-  /** Inferred from IB's market scanner; IB marks no date as confirmed. */
-  estimated?: boolean;
 }
 
 export interface CorporateEarnings {
   status: CorporateEventsStatus;
-  /** Upcoming earnings, soonest first (empty unless status is 'ok'). */
+  /** Upcoming earnings from Wall Street Horizon, soonest first (empty unless status is 'ok'). */
   events: EarningsEvent[];
-  /** Where the dates come from: Wall Street Horizon, or (for some or all stocks) IB's market scanner. */
-  source?: 'wsh' | 'scanner';
-  /** The scanner is still looking up some stocks; ask again shortly. */
-  pending?: boolean;
-  /** Some stocks have no source: IB refused WSH and the scanner covers US dollar stocks only. */
-  partial?: boolean;
-  /** Some stocks are looked up again after this many ms (a failed scan, no price yet): ask again then. */
-  retryInMs?: number;
 }
 
 /**
@@ -517,23 +506,21 @@ export interface Position {
   contract: ContractRef;
   /** Signed quantity (negative = short). */
   quantity: number;
-  /** Average price per unit (IB avgCost divided by the multiplier). */
-  avgPrice: number;
-  /** IB's average cost as sent (per contract: the multiplier is included). */
+  /** IB's average cost as sent (per contract: the multiplier is included; IB includes commissions). */
   averageCost?: number;
+  /** IB's multiplier, else the instrument's usual one (multiplierOf). */
   multiplier: number;
+  /** updatePortfolio's figures, as IB sends them (pushed when the position changes, else every 3 minutes). */
   marketPrice?: number;
   marketValue?: number;
   unrealizedPnL?: number;
   realizedPnL?: number;
   /**
-   * From reqPnLSingle. IB's P&L engine values the position at its own mark (`pnlValue`), which outside
-   * regular hours can differ from the portfolio update's `marketPrice`; the portfolio view re-marks it.
+   * reqPnLSingle's figures, as IB sends them (real time, about once a second): the daily P&L, the
+   * market value and the unrealized and realized P&L. IB's "no value" clears them.
    */
   dailyPnL?: number;
-  /** reqPnLSingle's market value: the mark `dailyPnL` was computed at. */
   pnlValue?: number;
-  /** reqPnLSingle's unrealized and realized P&L, as IB sends them (real time). */
   pnlUnrealized?: number;
   pnlRealized?: number;
   /** Industry from contract details; used for the sector allocation chart. */

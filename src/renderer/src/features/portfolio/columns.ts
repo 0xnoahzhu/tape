@@ -1,28 +1,28 @@
 // The Positions table's column catalog (pure): every column the table can show, grouped as in the
 // column editor, with where its value comes from, which instruments it applies to, how it is
-// formatted and how it sorts. Labels, IB sources and formulas are in messages.ts.
+// formatted and how it sorts. Labels and IB sources are in messages.ts.
 //
-// The rule behind the catalog: a column shows IB's own data ('ib') or a calculation by Tape
-// ('calc'), and a calculated column reads as one (a dim ƒ after its header, a tooltip giving the
-// formula). A cell is empty when the column does not apply to the instrument, and "—" when it
-// applies but IB has not sent the value. Most columns are computed from data Tape already receives:
-// the position and portfolio updates, reqPnLSingle, the account's exchange rates, the contract
-// details fetched once per position and the ticks of the position's own quote line. A column with a
-// `profile` needs more generic ticks on that line: they are asked for only while the column is
-// shown, and only for the positions it applies to (addOnSubscriptions, the 'positions-table' quote
-// owner). The earnings columns read the holdings' earnings dates (getEarnings). A column whose unit
-// or source a live check has not confirmed yet is `unverified`, which its tooltip says. A column
-// whose rows add up (`agg`) shows their sum on a group row (groups.ts).
+// Every column shows IB's own data as IB sends it: Tape calculates none. Where IB sends a datum
+// twice (the P&L engine in real time and the portfolio update every 3 minutes; the quote line's mark
+// and the portfolio update's price), one column shows it, the real-time source first
+// (calc.ts → positionRow), and the cell's tooltip says which source it shows. A cell is empty when
+// the column does not apply to the instrument, and "—" when it applies but IB has not sent the value.
+// The columns read data Tape already receives: the position and portfolio updates, reqPnLSingle, the
+// account's exchange rates, the contract details fetched once per position and the ticks of the
+// position's own quote line. A column with a `profile` needs more generic ticks on that line: they
+// are asked for only while the column is shown, and only for the positions it applies to
+// (addOnSubscriptions, the 'positions-table' quote owner). The earnings column reads the holdings'
+// Wall Street Horizon dates (getEarnings). A column whose unit or source a live check has not
+// confirmed yet is `unverified`, which its tooltip says.
 
 import { contractKey, contractLabel } from '@shared/contract';
-import { nyDaysUntil } from '@shared/orderTiming';
 import { addOnApplies, type AddOnProfile } from '@shared/quoteProfiles';
 import { wallClockAt } from '@shared/timeFormat';
 import type { ContractInfo, ContractRef, EarningsEvent, Quote, QuoteDividends, QuoteSubscription, SecType } from '@shared/types';
 import type { CellWords } from './cells';
-import { isExchangeTraded, livePrice, quoteContract, underlyingOf, type PositionRow } from './calc';
+import { isExchangeTraded, quoteContract, underlyingOf, type FigureSource, type PositionRow } from './calc';
 
-export const COLUMN_GROUPS = ['position', 'ibPnl', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other'] as const;
+export const COLUMN_GROUPS = ['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other'] as const;
 export type ColumnGroup = (typeof COLUMN_GROUPS)[number];
 
 /** Every column id in catalog order (the editor's order within each group). */
@@ -32,30 +32,15 @@ export const COLUMN_IDS = [
   'name',
   'secType',
   'quantity',
-  'avgPrice',
   'averageCost',
-  'costBasis',
   'price',
   'value',
-  'weight',
   'unrealized',
-  'unrealizedPct',
+  'realized',
   'dayPnl',
   'currency',
   'fxRate',
-  'valueBase',
-  'pctGross',
   'account',
-  // IB P&L
-  'marketPriceIb',
-  'marketValueIb',
-  'unrealizedIb',
-  'realizedIb',
-  'dailyPnlIb',
-  'unrealizedPnlIb',
-  'realizedPnlIb',
-  'valuePnlIb',
-  'totalPnl',
   // Contract
   'conId',
   'localSymbol',
@@ -63,7 +48,6 @@ export const COLUMN_IDS = [
   'tradingClass',
   'multiplier',
   'expiry',
-  'daysToExpiry',
   'strike',
   'right',
   'underlying',
@@ -88,17 +72,11 @@ export const COLUMN_IDS = [
   'ask',
   'bidSize',
   'askSize',
-  'mid',
-  'spread',
-  'spreadPct',
   'close',
-  'change',
-  'changePct',
   'open',
   'high',
   'low',
   'volume',
-  'mark',
   'lastRthTrade',
   'halted',
   'dataType',
@@ -106,14 +84,11 @@ export const COLUMN_IDS = [
   // Statistics
   'high52w',
   'low52w',
-  'from52wHigh',
-  'from52wLow',
   'high26w',
   'low26w',
   'high13w',
   'low13w',
   'avgVolume',
-  'relVolume',
   'impliedVol30',
   'rtHistVol',
   'callVolume',
@@ -141,11 +116,7 @@ export const COLUMN_IDS = [
   'divNext12m',
   'divNextDate',
   'divNextAmount',
-  'divYield',
-  'annualDividends',
-  'daysToDividend',
   'nextEarnings',
-  'nextEarningsEst',
   // Options
   'optIv',
   'delta',
@@ -156,20 +127,10 @@ export const COLUMN_IDS = [
   'optModelPrice',
   'pvDividend',
   'openInterest',
-  'moneyness',
-  'intrinsic',
-  'extrinsic',
-  'breakEven',
-  'positionDelta',
-  'deltaDollars',
-  'positionGamma',
-  'positionTheta',
-  'positionVega',
   // ETF NAV, futures and bonds
   'etfNav',
   'etfNavHigh',
   'etfNavLow',
-  'navPremium',
   'futuresOpenInterest',
   'bidYield',
   'askYield',
@@ -184,8 +145,8 @@ export const COLUMN_IDS = [
 ] as const;
 export type ColumnId = (typeof COLUMN_IDS)[number];
 
-/** Today's table: Symbol, Qty, Avg, Price, Value, % NLV, Unrl. P&L (with %), Day P&L. */
-export const DEFAULT_COLUMNS: readonly ColumnId[] = ['symbol', 'quantity', 'avgPrice', 'price', 'value', 'weight', 'unrealized', 'dayPnl'];
+/** The table by default: Symbol, Qty, Avg cost, Price, Value, Unrl. P&L and Day P&L, all IB's. */
+export const DEFAULT_COLUMNS: readonly ColumnId[] = ['symbol', 'quantity', 'averageCost', 'price', 'value', 'unrealized', 'dayPnl'];
 
 /** Always shown, always first, and sticky when the table scrolls sideways. */
 export const PINNED: ColumnId = 'symbol';
@@ -193,33 +154,26 @@ export const PINNED: ColumnId = 'symbol';
 export const isColumnId = (v: unknown): v is ColumnId => typeof v === 'string' && (COLUMN_IDS as readonly string[]).includes(v);
 
 /**
- * How a value is written (cells.ts): qty = position size, px = price, pnl = signed money, chg =
- * signed price, pctS = signed percent, pctU = unsigned percent (shares), pctFine = unsigned percent
- * of small ratios (3 decimals below 1 %: a spread), vol = a volatility fraction as percent, big = compact count (12.4K), dec = as many decimals as it has, id = a
- * plain integer, kind / right / halt / dataType / shortable = IB codes as words, hours = today's
- * sessions, month = YYYYMM, stamp = "YYYYMMDD HH:MM" (a date and a wall time), earn = an earnings
- * date and its time of day ("YYYYMMDD|amc"), ratio = a multiple (1.25×), features = a bond's
- * features as words.
+ * How a value is written (cells.ts): qty = position size, px = price, pnl = signed money, num0 /
+ * num3 / num4 = a number with 0, 3 or 4 decimals, vol = a volatility fraction as percent, big =
+ * compact count (12.4K), dec = as many decimals as it has, id = a plain integer, kind / right /
+ * halt / dataType / shortable = IB codes as words, hours = today's sessions, month = YYYYMM, stamp
+ * = "YYYYMMDD HH:MM" (a date and a wall time), earn = an earnings date and its time of day
+ * ("YYYYMMDD|amc"), features = a bond's features as words.
  */
 export type Fmt =
   | 'text'
   | 'qty'
   | 'px'
   | 'num0'
-  | 'num2'
   | 'num3'
   | 'num4'
   | 'dec'
   | 'id'
   | 'pnl'
-  | 'chg'
-  | 'pctS'
-  | 'pctU'
-  | 'pctFine'
   | 'vol'
   | 'big'
   | 'date'
-  | 'days'
   | 'time'
   | 'greek3'
   | 'greek4'
@@ -232,7 +186,6 @@ export type Fmt =
   | 'stamp'
   | 'shortable'
   | 'earn'
-  | 'ratio'
   | 'features';
 
 /** A cell's raw value: what sorts and what is formatted (never the formatted label). */
@@ -245,11 +198,9 @@ export interface CellCtx {
   q?: Quote;
   /** Contract details: undefined while unknown, null when IB has none. */
   info?: ContractInfo | null;
-  /** Σ |value in the account currency| of all rows; undefined while a row's is unknown. */
-  grossBase?: number;
   /** The next earnings of the position's underlying (undefined while unknown or while no shown column reads them). */
   earnings?: EarningsEvent;
-  /** Unix ms (days to expiry, today's trading hours). */
+  /** Unix ms (today's trading hours, a time's date). */
   now: number;
 }
 
@@ -259,12 +210,10 @@ export type ColumnNote = 'options' | 'derivatives' | 'stocks' | 'stocksOptions' 
 export interface ColumnDef {
   id: ColumnId;
   group: ColumnGroup;
-  /** 'ib': a value IB sends, shown as sent; 'calc': calculated by Tape (marked ƒ, with its formula). */
-  kind: 'ib' | 'calc';
   align: 'left' | 'right';
   /**
-   * Minimum width in px, wide enough for the header in either language with its ƒ and a sort arrow;
-   * columns share the spare width (Symbol twice as much as the others).
+   * Minimum width in px, wide enough for the header in either language with a sort arrow; columns
+   * share the spare width (Symbol twice as much as the others).
    */
   width: number;
   /** Compare values as numbers or as text. */
@@ -274,8 +223,8 @@ export interface ColumnDef {
   /** A narrower test within `types` (ETF columns: stocks IB types as exchange-traded). */
   when?(row: PositionRow): boolean;
   note?: ColumnNote;
-  /** Data beyond the position row: the position's quote, its contract details, the rows' gross value, or the holdings' earnings. */
-  needs?: 'quote' | 'details' | 'gross' | 'earnings';
+  /** Data beyond the position row: the position's quote, its contract details, or the holdings' earnings. */
+  needs?: 'quote' | 'details' | 'earnings';
   /**
    * Generic ticks the column needs beyond the position's basic line: asked for, on the positions it
    * applies to, only while it is shown (addOnSubscriptions).
@@ -288,18 +237,7 @@ export interface ColumnDef {
   value(c: CellCtx): CellValue;
   /** Sort key when it is not the value (Symbol: stocks, then their options by expiry and strike). */
   sortValue?(c: CellCtx): CellValue;
-  /** A second, smaller line (Unrealized P&L: its percent). */
-  sub?: { value(c: CellCtx): number | undefined; fmt: Fmt };
-  /**
-   * What a group row shows in the column (groups.ts → aggregate): 'sum' adds the rows up (a share of
-   * net liquidation, or an amount in the account currency); 'money' adds them up in their currency
-   * when they share one, else in the account currency, each × its FX rate (an amount in the
-   * contract's currency); 'units' only when they share one underlying (share equivalents). Absent: the group's cell is empty (prices, quantities that mix
-   * shares with contracts, percentages of the row's own cost, quote fields, dates, text). A sub line
-   * is never summed.
-   */
-  agg?: 'sum' | 'money' | 'units';
-  /** The cell's tooltip (a status message, the zone of trading hours). */
+  /** The cell's tooltip (which of IB's sources it shows, a status message, the zone of trading hours). */
   title?(c: CellCtx, w: CellWords): string | undefined;
 }
 
@@ -321,7 +259,6 @@ const TRADED: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'BOND', 'WAR', '
 const SESSIONED: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'CASH', 'WAR', 'CFD', 'CRYPTO'];
 const WITH_CLOSE: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'CASH', 'CFD', 'CRYPTO'];
 const HALTABLE: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP', 'WAR'];
-const DELTA: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP'];
 /**
  * Instruments whose contract details carry IB's own name and minimum tick (a bond's arrive whole
  * from bondContractDetails, contracts.ts).
@@ -329,8 +266,6 @@ const DELTA: readonly SecType[] = ['STK', 'OPT', 'FUT', 'FOP'];
 const NAMED: readonly SecType[] = ['STK', 'OPT', 'IND', 'FUT', 'FOP', 'CASH', 'BAG', 'CFD', 'WAR', 'CRYPTO', 'BOND'];
 /** Instruments IB has contract details of (a combo has none of its own). */
 const DETAILED: readonly SecType[] = NAMED.filter((t) => t !== 'BAG');
-
-export const isOptionType = (t: SecType): boolean => t === 'OPT' || t === 'FOP';
 
 /** A stock IB types as exchange-traded (ETF, ETN, ETC, ETP): the ETF NAV columns apply to it. */
 const isEtf = (row: PositionRow): boolean => row.position.contract.secType === 'STK' && isExchangeTraded(row.position.stockType);
@@ -343,8 +278,8 @@ export function applies(def: ColumnDef, row: PositionRow): boolean {
 /**
  * The extra generic ticks the shown columns need: one subscription per position's quote contract
  * (the same keys as the 'portfolio' owner, so no new line opens) and profile, for the positions a
- * column applies to and whose type the profile has ticks for ('dividends': stocks). Option lines
- * carry the mark already. Sorted, so the list is the same for the same columns and positions.
+ * column applies to and whose type the profile has ticks for ('dividends': stocks). Sorted, so the
+ * list is the same for the same columns and positions.
  */
 export function addOnSubscriptions(rows: readonly PositionRow[], defs: readonly ColumnDef[]): QuoteSubscription[] {
   const out = new Map<string, QuoteSubscription>();
@@ -354,7 +289,6 @@ export function addOnSubscriptions(rows: readonly PositionRow[], defs: readonly 
     for (const row of rows) {
       const secType = row.position.contract.secType;
       if (!applies(def, row) || (profile === 'dividends' ? secType !== 'STK' : !addOnApplies(profile, secType))) continue;
-      if (profile === 'mark' && isOptionType(secType)) continue;
       const contract = quoteContract(row.position.contract);
       const k = `${contractKey(contract)}|${profile}`;
       if (!out.has(k)) out.set(k, { contract, profile });
@@ -378,61 +312,6 @@ const TYPE_RANK: Partial<Record<SecType, number>> = { STK: 0, OPT: 1, FUT: 2, FO
 export function contractOrderKey(c: ContractRef): string {
   const strike = finite(c.strike) ? c.strike.toFixed(4).padStart(14, '0') : '';
   return [underlyingOf(c).symbol, TYPE_RANK[c.secType] ?? 4, c.lastTradeDate ?? '', strike, c.right ?? ''].join(' ');
-}
-
-/** Units of the underlying a position moves with: quantity × multiplier. */
-const size = (r: PositionRow): number => r.position.quantity * (r.position.multiplier || 1);
-
-const twoSided = (q: Quote | undefined, option: boolean): q is Quote & { bid: number; ask: number } =>
-  !!q && pos(q.ask) && finite(q.bid) && (option ? q.bid >= 0 : q.bid > 0) && q.ask >= q.bid;
-
-function midOf(c: CellCtx): number | undefined {
-  return twoSided(c.q, isOptionType(c.row.position.contract.secType)) ? (c.q.bid + c.q.ask) / 2 : undefined;
-}
-
-function spreadOf(c: CellCtx): number | undefined {
-  return twoSided(c.q, isOptionType(c.row.position.contract.secType)) ? c.q.ask - c.q.bid : undefined;
-}
-
-/**
- * The quote's own price, never IB's portfolio mark or the previous close (so a change is today's):
- * options the mark, else the midpoint (as the row is valued); others the last trade, else the
- * midpoint, else the mark.
- */
-export function quotePrice(c: CellCtx): number | undefined {
-  const q = c.q;
-  if (!q) return undefined;
-  const secType = c.row.position.contract.secType;
-  if (isOptionType(secType)) return livePrice(secType, q, undefined);
-  if (pos(q.last)) return q.last;
-  return midOf(c) ?? (pos(q.mark) ? q.mark : undefined);
-}
-
-/** IB's model underlying price of an option (tick 13). */
-const undPx = (c: CellCtx): number | undefined => (pos(c.q?.undPrice) ? c.q.undPrice : undefined);
-
-function intrinsic(c: CellCtx): number | undefined {
-  const S = undPx(c);
-  const K = c.row.position.contract.strike;
-  if (S === undefined || !finite(K)) return undefined;
-  return Math.max(0, c.row.position.contract.right === 'P' ? K - S : S - K);
-}
-
-/** Option greek × quantity × multiplier; undefined until IB sends the greek. */
-function scaled(c: CellCtx, greek: number | undefined): number | undefined {
-  return finite(greek) ? greek * size(c.row) : undefined;
-}
-
-function positionDelta(c: CellCtx): number | undefined {
-  const r = c.row;
-  switch (r.position.contract.secType) {
-    case 'STK':
-      return r.position.quantity;
-    case 'FUT':
-      return size(r);
-    default:
-      return scaled(c, c.q?.delta);
-  }
 }
 
 /**
@@ -503,9 +382,31 @@ function lastTradeStamp(c: CellCtx): string | undefined {
 
 type Def = Omit<ColumnDef, 'id' | 'group'>;
 
+/** The cell's tooltip: which of IB's sources the row's figure shows (calc.ts → positionRow). */
+const sourceTitle = (src: (r: PositionRow) => FigureSource | undefined) => (c: CellCtx, w: CellWords) => {
+  const s = src(c.row);
+  return s ? w.sources[s] : undefined;
+};
+
+/** A figure of the row from IB (calc.ts → positionRow), with its source in the tooltip. */
+const figure = (
+  fmt: Fmt,
+  width: number,
+  read: (r: PositionRow) => number | undefined,
+  src: (r: PositionRow) => FigureSource | undefined,
+  color?: ColumnDef['color'],
+): Def => ({
+  align: 'right',
+  width,
+  sort: 'num',
+  fmt,
+  ...(color ? { color } : {}),
+  value: (c) => read(c.row),
+  title: sourceTitle(src),
+});
+
 const POSITION: Partial<Record<ColumnId, Def>> = {
   symbol: {
-    kind: 'ib',
     align: 'left',
     width: 200,
     sort: 'text',
@@ -513,85 +414,25 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
     value: (c) => contractLabel(c.row.position.contract),
     sortValue: (c) => contractOrderKey(c.row.position.contract),
   },
-  name: { kind: 'ib', align: 'left', width: 160, sort: 'text', fmt: 'text', needs: 'details', types: NAMED, value: (c) => text(c.info?.longName) },
-  secType: { kind: 'ib', align: 'left', width: 72, sort: 'text', fmt: 'kind', value: (c) => c.row.position.contract.secType },
-  quantity: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'qty', value: (c) => c.row.position.quantity },
-  avgPrice: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'px', color: 'muted', value: (c) => c.row.position.avgPrice },
-  averageCost: { kind: 'ib', align: 'right', width: 92, sort: 'num', fmt: 'px', value: (c) => c.row.position.averageCost },
-  costBasis: {
-    kind: 'calc',
-    align: 'right',
-    width: 96,
-    sort: 'num',
-    fmt: 'num0',
-    agg: 'money',
-    value: (c) => {
-      const p = c.row.position;
-      return p.quantity * (p.averageCost ?? p.avgPrice * (p.multiplier || 1));
-    },
-  },
-  price: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'px', value: (c) => c.row.last },
-  value: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.value },
-  weight: { kind: 'calc', align: 'right', width: 72, sort: 'num', fmt: 'pctU', color: 'muted', agg: 'sum', value: (c) => c.row.weight },
-  unrealized: {
-    kind: 'calc',
-    align: 'right',
-    width: 104,
-    sort: 'num',
-    fmt: 'pnl',
-    color: 'sign',
-    agg: 'money',
-    value: (c) => c.row.unrealized,
-    sub: { value: (c) => c.row.unrealizedPct, fmt: 'pctS' },
-  },
-  unrealizedPct: { kind: 'calc', align: 'right', width: 80, sort: 'num', fmt: 'pctS', color: 'sign', value: (c) => c.row.unrealizedPct },
-  dayPnl: { kind: 'calc', align: 'right', width: 96, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.dayPnl },
-  currency: { kind: 'ib', align: 'left', width: 64, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.currency) },
-  fxRate: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'num4', value: (c) => c.row.fx },
-  valueBase: { kind: 'calc', align: 'right', width: 112, sort: 'num', fmt: 'num0', agg: 'sum', value: (c) => c.row.valueBase },
-  pctGross: {
-    kind: 'calc',
-    align: 'right',
-    width: 72,
-    sort: 'num',
-    fmt: 'pctU',
-    color: 'muted',
-    needs: 'gross',
-    agg: 'sum',
-    value: (c) => (finite(c.row.valueBase) && pos(c.grossBase) ? (Math.abs(c.row.valueBase) / c.grossBase) * 100 : undefined),
-  },
-  account: { kind: 'ib', align: 'left', width: 96, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.account) },
-};
-
-const IB_PNL: Partial<Record<ColumnId, Def>> = {
-  marketPriceIb: { kind: 'ib', align: 'right', width: 88, sort: 'num', fmt: 'px', value: (c) => c.row.position.marketPrice },
-  marketValueIb: { kind: 'ib', align: 'right', width: 96, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.position.marketValue },
-  unrealizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.unrealizedPnL },
-  realizedIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.realizedPnL },
-  dailyPnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.dailyPnL },
-  unrealizedPnlIb: { kind: 'ib', align: 'right', width: 124, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.pnlUnrealized },
-  realizedPnlIb: { kind: 'ib', align: 'right', width: 108, sort: 'num', fmt: 'pnl', color: 'sign', agg: 'money', value: (c) => c.row.position.pnlRealized },
-  valuePnlIb: { kind: 'ib', align: 'right', width: 104, sort: 'num', fmt: 'num0', agg: 'money', value: (c) => c.row.position.pnlValue },
-  totalPnl: {
-    kind: 'calc',
-    align: 'right',
-    width: 104,
-    sort: 'num',
-    fmt: 'pnl',
-    color: 'sign',
-    agg: 'money',
-    value: (c) => {
-      const { pnlUnrealized: u, pnlRealized: r } = c.row.position;
-      return finite(u) && finite(r) ? u + r : undefined;
-    },
-  },
+  name: { align: 'left', width: 160, sort: 'text', fmt: 'text', needs: 'details', types: NAMED, value: (c) => text(c.info?.longName) },
+  secType: { align: 'left', width: 72, sort: 'text', fmt: 'kind', value: (c) => c.row.position.contract.secType },
+  quantity: { align: 'right', width: 72, sort: 'num', fmt: 'qty', value: (c) => c.row.position.quantity },
+  // As IB sends it: per contract (an option's includes its multiplier), commissions included.
+  averageCost: { align: 'right', width: 84, sort: 'num', fmt: 'px', color: 'muted', value: (c) => c.row.position.averageCost },
+  price: figure('px', 84, (r) => r.price, (r) => r.priceSource),
+  value: figure('num0', 96, (r) => r.value, (r) => r.valueSource),
+  unrealized: figure('pnl', 104, (r) => r.unrealized, (r) => r.unrealizedSource, 'sign'),
+  realized: figure('pnl', 104, (r) => r.realized, (r) => r.realizedSource, 'sign'),
+  dayPnl: figure('pnl', 96, (r) => r.dayPnl, (r) => (r.dayPnl === undefined ? undefined : 'pnl'), 'sign'),
+  currency: { align: 'left', width: 64, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.currency) },
+  fxRate: { align: 'right', width: 72, sort: 'num', fmt: 'num4', value: (c) => c.row.fx },
+  account: { align: 'left', width: 96, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.account) },
 };
 
 const CONTRACT: Partial<Record<ColumnId, Def>> = {
-  conId: { kind: 'ib', align: 'right', width: 88, sort: 'num', fmt: 'id', value: (c) => c.row.position.contract.conId },
-  localSymbol: { kind: 'ib', align: 'left', width: 120, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.localSymbol) },
+  conId: { align: 'right', width: 88, sort: 'num', fmt: 'id', value: (c) => c.row.position.contract.conId },
+  localSymbol: { align: 'left', width: 120, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.localSymbol) },
   exchange: {
-    kind: 'ib',
     align: 'left',
     width: 80,
     sort: 'text',
@@ -605,7 +446,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     },
   },
   tradingClass: {
-    kind: 'ib',
     align: 'left',
     width: 72,
     sort: 'text',
@@ -616,7 +456,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
   // IB's own multiplier, not Position.multiplier (which falls back to 100 for options); IB leaves out
   // a stock's 1.
   multiplier: {
-    kind: 'ib',
     align: 'right',
     width: 56,
     sort: 'num',
@@ -627,7 +466,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     },
   },
   expiry: {
-    kind: 'ib',
     align: 'left',
     width: 92,
     sort: 'text',
@@ -636,25 +474,11 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     note: 'derivatives',
     value: (c) => (/^\d{8}$/.test(c.row.position.contract.lastTradeDate ?? '') ? c.row.position.contract.lastTradeDate : undefined),
   },
-  daysToExpiry: {
-    kind: 'calc',
-    align: 'right',
-    width: 76,
-    sort: 'num',
-    fmt: 'days',
-    types: EXPIRING,
-    note: 'derivatives',
-    value: (c) => {
-      const d = c.row.position.contract.lastTradeDate;
-      return d && /^\d{8}$/.test(d) ? nyDaysUntil(d, new Date(c.now)) : undefined;
-    },
-  },
-  strike: { kind: 'ib', align: 'right', width: 72, sort: 'num', fmt: 'px', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.strike },
-  right: { kind: 'ib', align: 'left', width: 68, sort: 'text', fmt: 'right', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.right },
+  strike: { align: 'right', width: 72, sort: 'num', fmt: 'px', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.strike },
+  right: { align: 'left', width: 68, sort: 'text', fmt: 'right', types: OPTIONS_WAR, note: 'options', value: (c) => c.row.position.contract.right },
   // IB's underSymbol (a futures option's is its future, 'ESZ6'); an option's or warrant's own symbol
   // until the details come.
   underlying: {
-    kind: 'ib',
     align: 'left',
     width: 80,
     sort: 'text',
@@ -673,7 +497,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     },
   },
   industry: {
-    kind: 'ib',
     align: 'left',
     width: 120,
     sort: 'text',
@@ -683,7 +506,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     value: (c) => text(c.row.position.industry ?? c.info?.industry),
   },
   category: {
-    kind: 'ib',
     align: 'left',
     width: 120,
     sort: 'text',
@@ -693,7 +515,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     value: (c) => text(c.row.position.category ?? c.info?.category),
   },
   subcategory: {
-    kind: 'ib',
     align: 'left',
     width: 120,
     sort: 'text',
@@ -704,7 +525,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     value: (c) => text(c.info?.subcategory),
   },
   stockType: {
-    kind: 'ib',
     align: 'left',
     width: 80,
     sort: 'text',
@@ -714,7 +534,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     value: (c) => text(c.row.position.stockType ?? c.info?.stockType),
   },
   minTick: {
-    kind: 'ib',
     align: 'right',
     width: 64,
     sort: 'num',
@@ -723,9 +542,8 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     types: NAMED,
     value: (c) => (pos(c.info?.minTick) ? c.info.minTick : undefined),
   },
-  timeZone: { kind: 'ib', align: 'left', width: 96, sort: 'text', fmt: 'text', needs: 'details', value: (c) => text(c.info?.timeZoneId) },
+  timeZone: { align: 'left', width: 96, sort: 'text', fmt: 'text', needs: 'details', value: (c) => text(c.info?.timeZoneId) },
   tradingHours: {
-    kind: 'ib',
     align: 'left',
     width: 112,
     sort: 'text',
@@ -735,7 +553,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     title: (c) => text(c.info?.timeZoneId),
   },
   liquidHours: {
-    kind: 'ib',
     align: 'left',
     width: 112,
     sort: 'text',
@@ -745,7 +562,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     title: (c) => text(c.info?.timeZoneId),
   },
   contractMonth: {
-    kind: 'ib',
     align: 'left',
     width: 104,
     sort: 'text',
@@ -758,7 +574,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
   // The last trading day and time, in the instrument's zone (the cell's tooltip); sorts by the
   // instant, so 08:30 US/Central comes after 09:00 US/Eastern.
   lastTradeTime: {
-    kind: 'ib',
     align: 'left',
     width: 148,
     sort: 'num',
@@ -774,7 +589,6 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     title: (c) => text(c.info?.lastTradeZone),
   },
   realExpiration: {
-    kind: 'ib',
     align: 'left',
     width: 92,
     sort: 'text',
@@ -784,13 +598,12 @@ const CONTRACT: Partial<Record<ColumnId, Def>> = {
     needs: 'details',
     value: (c) => (/^\d{8}$/.test(c.info?.realExpirationDate ?? '') ? c.info!.realExpirationDate : undefined),
   },
-  isin: { kind: 'ib', align: 'left', width: 100, sort: 'text', fmt: 'text', types: ['STK', 'BOND'], needs: 'details', value: (c) => text(c.info?.isin) },
-  marketName: { kind: 'ib', align: 'left', width: 72, sort: 'text', fmt: 'text', types: DETAILED, needs: 'details', value: (c) => text(c.info?.marketName) },
+  isin: { align: 'left', width: 100, sort: 'text', fmt: 'text', types: ['STK', 'BOND'], needs: 'details', value: (c) => text(c.info?.isin) },
+  marketName: { align: 'left', width: 72, sort: 'text', fmt: 'text', types: DETAILED, needs: 'details', value: (c) => text(c.info?.marketName) },
 };
 
 /** A quote field as IB sent it. */
 const tick = (fmt: Fmt, read: (q: Quote) => number | undefined, types?: readonly SecType[], note?: ColumnNote): Def => ({
-  kind: 'ib',
   align: 'right',
   width: fmt === 'big' ? 80 : 84,
   sort: 'num',
@@ -809,56 +622,11 @@ const QUOTE: Partial<Record<ColumnId, Def>> = {
   ask: tick('px', (q) => q.ask),
   bidSize: tick('big', (q) => q.bidSize),
   askSize: tick('big', (q) => q.askSize),
-  mid: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'px', needs: 'quote', value: midOf },
-  spread: { kind: 'calc', align: 'right', width: 72, sort: 'num', fmt: 'px', needs: 'quote', value: spreadOf },
-  spreadPct: {
-    kind: 'calc',
-    align: 'right',
-    width: 84,
-    sort: 'num',
-    fmt: 'pctFine',
-    needs: 'quote',
-    value: (c) => {
-      const spread = spreadOf(c);
-      const mid = midOf(c);
-      return spread !== undefined && pos(mid) ? (spread / mid) * 100 : undefined;
-    },
-  },
   close: tick('px', (q) => q.close, [...WITH_CLOSE, 'WAR']),
-  change: {
-    kind: 'calc',
-    align: 'right',
-    width: 80,
-    sort: 'num',
-    fmt: 'chg',
-    color: 'sign',
-    needs: 'quote',
-    types: WITH_CLOSE,
-    value: (c) => {
-      const p = quotePrice(c);
-      return p !== undefined && pos(c.q?.close) ? p - c.q.close : undefined;
-    },
-  },
-  changePct: {
-    kind: 'calc',
-    align: 'right',
-    width: 80,
-    sort: 'num',
-    fmt: 'pctS',
-    color: 'sign',
-    needs: 'quote',
-    types: WITH_CLOSE,
-    value: (c) => {
-      const p = quotePrice(c);
-      return p !== undefined && pos(c.q?.close) ? (p / c.q.close - 1) * 100 : undefined;
-    },
-  },
   open: tick('px', (q) => q.open, SESSIONED),
   high: tick('px', (q) => q.high, SESSIONED),
   low: tick('px', (q) => q.low, SESSIONED),
   volume: tick('big', (q) => q.volume, TRADED),
-  // Option lines always ask for the mark (generic tick 221); the others while the column is shown.
-  mark: { ...tick('px', (q) => q.mark, ['STK', 'OPT', 'FOP', 'FUT', 'CASH', 'CRYPTO']), profile: 'mark' },
   lastRthTrade: { ...tick('px', (q) => q.lastRthTrade, STOCKS, 'stocks'), width: 100 },
   halted: {
     ...tick('halt', (q) => q.haltCode ?? (q.halted == null ? undefined : q.halted ? 1 : 0), HALTABLE),
@@ -882,45 +650,14 @@ const extra = (profile: ColumnDef['profile'], fmt: Fmt, read: (q: Quote) => numb
   ...(width ? { width } : {}),
 });
 
-/** A calculation on the quote (with an add-on profile's ticks): `f(quote, row)`. */
-const calcQ = (profile: ColumnDef['profile'], fmt: Fmt, f: (q: Quote, c: CellCtx) => number | undefined, types: readonly SecType[], note: ColumnNote, width: number): Def => ({
-  kind: 'calc',
-  align: 'right',
-  width,
-  sort: 'num',
-  fmt,
-  needs: 'quote',
-  types,
-  note,
-  profile,
-  value: (c) => (c.q ? f(c.q, c) : undefined),
-});
-
-/**
- * Relative difference below which a reference counts as the price itself: IB sends the week ranges
- * (ticks 15–20) as 32-bit floats (a 52-week high of 345.34 arrives as 345.33999634), whose rounding
- * error is under 2⁻²⁴ of the value.
- */
-const FLOAT32_EPS = 2 ** -23;
-
-/** (Price ÷ ref − 1) × 100, at the row's valuation price; 0 when they differ only by the float32 noise. */
-function fromRef(c: CellCtx, ref: number | undefined): number | undefined {
-  if (!pos(c.row.last) || !pos(ref)) return undefined;
-  const r = c.row.last / ref - 1;
-  return Math.abs(r) < FLOAT32_EPS ? 0 : r * 100;
-}
-
 const STATS: Partial<Record<ColumnId, Def>> = {
   high52w: extra('range', 'px', (q) => q.week52High, STOCKS, 'stocks'),
   low52w: extra('range', 'px', (q) => q.week52Low, STOCKS, 'stocks'),
-  from52wHigh: { ...calcQ('range', 'pctS', (q, c) => fromRef(c, q.week52High), STOCKS, 'stocks', 112), color: 'sign' },
-  from52wLow: { ...calcQ('range', 'pctS', (q, c) => fromRef(c, q.week52Low), STOCKS, 'stocks', 112), color: 'sign' },
   high26w: extra('range', 'px', (q) => q.week26High, STOCKS, 'stocks'),
   low26w: extra('range', 'px', (q) => q.week26Low, STOCKS, 'stocks'),
   high13w: extra('range', 'px', (q) => q.week13High, STOCKS, 'stocks'),
   low13w: extra('range', 'px', (q) => q.week13Low, STOCKS, 'stocks'),
   avgVolume: extra('range', 'big', (q) => q.avgVolume, STOCKS, 'stocks', 84),
-  relVolume: { ...calcQ('range', 'ratio', (q) => (finite(q.volume) && pos(q.avgVolume) ? q.volume / q.avgVolume : undefined), STOCKS, 'stocks', 92), unverified: true },
   impliedVol30: extra('volatility', 'vol', (q) => q.impliedVol, STOCKS_FUTURES, 'stocksFutures', 104),
   rtHistVol: { ...extra('volatility', 'vol', (q) => q.rtHistVol, STOCKS, 'stocks', 104), unverified: true },
   callVolume: extra('optionFlow', 'big', (q) => q.callVolume, STOCKS, 'stocks', 100),
@@ -974,9 +711,8 @@ const div = (fmt: Fmt, read: (d: NonNullable<ReturnType<typeof dividendsOf>>) =>
     width,
   );
 
-/** An earnings date as 'YYYYMMDD|time' (the earn format), from IB's Wall Street Horizon or Tape's estimate. */
-const earningsOf = (e: EarningsEvent | undefined, estimated: boolean): string | undefined =>
-  e && !!e.estimated === estimated && /^\d{8}$/.test(e.date) ? `${e.date}|${e.time ?? ''}` : undefined;
+/** An earnings date as 'YYYYMMDD|time' (the earn format), from IB's Wall Street Horizon. */
+const earningsOf = (e: EarningsEvent | undefined): string | undefined => (e && /^\d{8}$/.test(e.date) ? `${e.date}|${e.time ?? ''}` : undefined);
 
 /**
  * Where a release of each time of day falls within its date, in minutes after midnight New York (for
@@ -984,18 +720,16 @@ const earningsOf = (e: EarningsEvent | undefined, estimated: boolean): string | 
  */
 const EARNINGS_MINUTES: Record<NonNullable<EarningsEvent['time']>, number> = { bmo: 9 * 60 + 29, dmh: 16 * 60 - 1, amc: 24 * 60 - 2 };
 
-/** An earnings column's sort key: the date, then the release time (IB's exact one when pinned), as a number. */
-function earningsOrder(e: EarningsEvent | undefined, estimated: boolean): number | undefined {
-  if (!e || !earningsOf(e, estimated)) return undefined;
-  const minutes = e.minutes ?? (e.time ? EARNINGS_MINUTES[e.time] : 24 * 60 - 1);
-  return Number(e.date) * 1440 + minutes;
+/** The earnings column's sort key: the date, then the time of day, as a number. */
+function earningsOrder(e: EarningsEvent | undefined): number | undefined {
+  if (!e || !earningsOf(e)) return undefined;
+  return Number(e.date) * 1440 + (e.time ? EARNINGS_MINUTES[e.time] : 24 * 60 - 1);
 }
 
 const INCOME: Partial<Record<ColumnId, Def>> = {
   divPast12m: div('px', (d) => d.past12m, 92),
   divNext12m: div('px', (d) => d.next12m, 92),
   divNextDate: {
-    kind: 'ib',
     align: 'left',
     width: 92,
     sort: 'text',
@@ -1007,36 +741,7 @@ const INCOME: Partial<Record<ColumnId, Def>> = {
     value: (c) => c.q?.dividends?.nextDate,
   },
   divNextAmount: div('px', (d) => d.nextAmount, 72),
-  divYield: calcQ(
-    'dividends',
-    'pctFine',
-    (q, c) => {
-      const next12m = dividendsOf(q)?.next12m;
-      return finite(next12m) && pos(c.row.last) ? (next12m / c.row.last) * 100 : undefined;
-    },
-    STOCKS,
-    'stocks',
-    80,
-  ),
-  annualDividends: {
-    ...calcQ(
-      'dividends',
-      'pnl',
-      (q, c) => {
-        const next12m = dividendsOf(q)?.next12m;
-        // None for a stock that pays none, short or long (never −0).
-        return finite(next12m) ? (next12m ? next12m * c.row.position.quantity : 0) : undefined;
-      },
-      STOCKS,
-      'stocks',
-      124,
-    ),
-    color: 'sign',
-    agg: 'money',
-  },
-  daysToDividend: calcQ('dividends', 'days', (q, c) => (/^\d{8}$/.test(q.dividends?.nextDate ?? '') ? nyDaysUntil(q.dividends!.nextDate!, new Date(c.now)) : undefined), STOCKS, 'stocks', 92),
   nextEarnings: {
-    kind: 'ib',
     align: 'left',
     width: 120,
     sort: 'num',
@@ -1045,20 +750,8 @@ const INCOME: Partial<Record<ColumnId, Def>> = {
     note: 'stocksOptions',
     needs: 'earnings',
     unverified: true,
-    value: (c) => earningsOf(c.earnings, false),
-    sortValue: (c) => earningsOrder(c.earnings, false),
-  },
-  nextEarningsEst: {
-    kind: 'calc',
-    align: 'left',
-    width: 120,
-    sort: 'num',
-    fmt: 'earn',
-    types: STOCKS_OPTIONS,
-    note: 'stocksOptions',
-    needs: 'earnings',
-    value: (c) => earningsOf(c.earnings, true),
-    sortValue: (c) => earningsOrder(c.earnings, true),
+    value: (c) => earningsOf(c.earnings),
+    sortValue: (c) => earningsOrder(c.earnings),
   },
 };
 
@@ -1072,107 +765,6 @@ const OPTION: Partial<Record<ColumnId, Def>> = {
   optModelPrice: { ...tick('px', (q) => q.optPrice, OPTIONS, 'options'), width: 80 },
   pvDividend: { ...tick('px', (q) => q.pvDividend, OPTIONS, 'options'), width: 88 },
   openInterest: { ...tick('big', (q) => q.openInterest, OPTIONS, 'options'), width: 72 },
-  moneyness: {
-    kind: 'calc',
-    align: 'right',
-    width: 72,
-    sort: 'num',
-    fmt: 'pctS',
-    color: 'sign',
-    needs: 'quote',
-    types: OPTIONS,
-    note: 'options',
-    value: (c) => {
-      const S = undPx(c);
-      const K = c.row.position.contract.strike;
-      if (S === undefined || !pos(K)) return undefined;
-      return ((c.row.position.contract.right === 'P' ? K - S : S - K) / K) * 100;
-    },
-  },
-  intrinsic: { kind: 'calc', align: 'right', width: 80, sort: 'num', fmt: 'px', needs: 'quote', types: OPTIONS, note: 'options', value: intrinsic },
-  extrinsic: {
-    kind: 'calc',
-    align: 'right',
-    width: 80,
-    sort: 'num',
-    fmt: 'px',
-    needs: 'quote',
-    types: OPTIONS,
-    note: 'options',
-    value: (c) => {
-      const p = quotePrice(c);
-      const i = intrinsic(c);
-      return p !== undefined && i !== undefined ? p - i : undefined;
-    },
-  },
-  breakEven: {
-    kind: 'calc',
-    align: 'right',
-    width: 92,
-    sort: 'num',
-    fmt: 'px',
-    types: OPTIONS,
-    note: 'options',
-    value: (c) => {
-      const { contract: k, avgPrice } = c.row.position;
-      if (!finite(k.strike) || !finite(avgPrice)) return undefined;
-      return k.right === 'P' ? k.strike - avgPrice : k.strike + avgPrice;
-    },
-  },
-  positionDelta: { kind: 'calc', align: 'right', width: 84, sort: 'num', fmt: 'num0', needs: 'quote', types: DELTA, agg: 'units', value: positionDelta },
-  deltaDollars: {
-    kind: 'calc',
-    align: 'right',
-    width: 104,
-    sort: 'num',
-    fmt: 'num0',
-    needs: 'quote',
-    types: DELTA,
-    agg: 'money',
-    value: (c) => {
-      const d = positionDelta(c);
-      const S = isOptionType(c.row.position.contract.secType) ? undPx(c) : c.row.last;
-      return finite(d) && finite(S) ? d * S : undefined;
-    },
-  },
-  positionGamma: {
-    kind: 'calc',
-    align: 'right',
-    width: 96,
-    sort: 'num',
-    fmt: 'num2',
-    needs: 'quote',
-    types: OPTIONS,
-    note: 'options',
-    agg: 'units',
-    value: (c) => scaled(c, c.q?.gamma),
-  },
-  positionTheta: {
-    kind: 'calc',
-    align: 'right',
-    width: 88,
-    sort: 'num',
-    fmt: 'pnl',
-    color: 'sign',
-    needs: 'quote',
-    types: OPTIONS,
-    note: 'options',
-    agg: 'money',
-    value: (c) => scaled(c, c.q?.theta),
-  },
-  positionVega: {
-    kind: 'calc',
-    align: 'right',
-    width: 88,
-    sort: 'num',
-    fmt: 'pnl',
-    color: 'sign',
-    needs: 'quote',
-    types: OPTIONS,
-    note: 'options',
-    agg: 'money',
-    value: (c) => scaled(c, c.q?.vega),
-  },
 };
 
 /** An ETF's NAV field (generic ticks 577, 614, 623); the frozen NAV stands in for the live one. */
@@ -1180,7 +772,6 @@ const nav = (read: (q: Quote) => number | undefined, width?: number): Def => ({ 
 
 /** A bond's details field (bondContractDetails). */
 const bond = (fmt: Fmt, read: (b: NonNullable<ContractInfo['bond']>) => string | number | undefined, width: number, align: 'left' | 'right' = 'left'): Def => ({
-  kind: 'ib',
   align,
   width,
   sort: align === 'left' ? 'text' : 'num',
@@ -1199,7 +790,6 @@ const OTHER: Partial<Record<ColumnId, Def>> = {
   etfNav: nav((q) => q.etfNav),
   etfNavHigh: nav((q) => q.etfNavHigh),
   etfNavLow: nav((q) => q.etfNavLow),
-  navPremium: { ...calcQ('etfNav', 'pctS', (q, c) => fromRef(c, q.etfNav), STOCKS, 'etfs', 92), color: 'sign', when: isEtf, unverified: true },
   futuresOpenInterest: extra('futuresOi', 'big', (q) => q.futuresOpenInterest, FUTURES, 'futures'),
   // Bond lines carry the yields with their prices (ticks 50–52, delayed 103 / 104): as sent.
   bidYield: { ...tick('num3', (q) => q.bidYield, BONDS, 'bonds'), width: 80, unverified: true },
@@ -1225,7 +815,6 @@ const OTHER: Partial<Record<ColumnId, Def>> = {
 
 const BY_GROUP: Record<ColumnGroup, Partial<Record<ColumnId, Def>>> = {
   position: POSITION,
-  ibPnl: IB_PNL,
   contract: CONTRACT,
   quote: QUOTE,
   stats: STATS,

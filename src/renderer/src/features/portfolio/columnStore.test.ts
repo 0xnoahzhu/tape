@@ -114,8 +114,8 @@ describe('remembered columns and sort', () => {
     const storage = memoryStorage();
     vi.stubGlobal('localStorage', storage);
     let store = await freshStore();
-    // Symbol and Qty took a share of the spare width; Avg is at its minimum.
-    store.getState().setWidth('price', 140.4, { symbol: 340.2, quantity: 110, avgPrice: 84 });
+    // Symbol and Qty took a share of the spare width; Avg cost is at its minimum.
+    store.getState().setWidth('price', 140.4, { symbol: 340.2, quantity: 110, averageCost: 84 });
     expect(JSON.parse(storage.data.get(KEY)!).widths).toEqual({ symbol: 340, quantity: 110, price: 140 });
     store = await freshStore();
     expect(store.getState().widths).toEqual({ symbol: 340, quantity: 110, price: 140 });

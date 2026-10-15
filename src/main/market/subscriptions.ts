@@ -96,14 +96,23 @@ export const NEVER_REQUESTED: ReadonlySet<number> = new Set([232, 258, 292, 375,
 
 /**
  * How much of a line's generic tick list IB gets (market/quotes.ts steps down on error 321):
- * 'full' every profile, 'core' without the add-on profiles, 'none' no generic tick at all.
+ * 'full' every profile, 'core' without the add-on profiles (the base profiles stay, a position's
+ * mark included), 'none' no generic tick at all.
  */
 export type TickLevel = 'full' | 'core' | 'none';
 
-const BASE_PROFILES: ReadonlySet<string> = new Set(['basic', 'underlying', 'option', 'dividends']);
+const BASE_PROFILES: ReadonlySet<string> = new Set(['basic', 'underlying', 'option', 'dividends', 'mark']);
 
 /** A profile the main process knows (profiles come over IPC). */
 export const isQuoteProfile = (v: unknown): v is QuoteProfile => (typeof v === 'string' && BASE_PROFILES.has(v)) || isAddOnProfile(v);
+
+/**
+ * Instrument types the 'mark' profile adds generic tick 221 to: those a live probe of the paper
+ * account saw a mark on (October 2026), options aside (their basic list has it). Bonds and CFDs are
+ * not among them and warrants take no generic tick (LEGAL_GENERIC_TICKS), so the Price of those
+ * positions is the portfolio update's.
+ */
+const MARK_TYPES: ReadonlySet<SecType> = new Set(['STK', 'FUT', 'CASH', 'CRYPTO']);
 
 /**
  * Generic ticks per instrument type and base profile:
@@ -115,10 +124,14 @@ export const isQuoteProfile = (v: unknown): v is QuoteProfile => (typeof v === '
  * - indices: no generic ticks for plain quotes; the underlying profile adds the option statistics
  * - dividends (stocks only): basic + 456, IB's dividend summary (tick 59). IB sends it on live
  *   lines only (a delayed line gets none); other instruments get their basic ticks
+ * - mark: basic + 221 (IB's mark price, tick 37), the Portfolio page's position lines (MARK_TYPES;
+ *   options carry it in basic already). A base profile rather than an add-on: the 'core' level keeps
+ *   it, so a line IB refused a column's add-on on (321) still brings the Price column its mark
  * An add-on profile is the type's basic ticks plus its own (shared/quoteProfiles.ts → ADD_ON_TICKS).
  */
 function ticksFor(secType: SecType, profile: QuoteProfile): readonly number[] {
   if (isAddOnProfile(profile)) return [...ticksFor(secType, 'basic'), ...(ADD_ON_TICKS[profile][secType] ?? [])];
+  if (profile === 'mark') return [...ticksFor(secType, 'basic'), ...(MARK_TYPES.has(secType) ? [221] : [])];
   switch (secType) {
     case 'STK':
       // The stock lists nest (basic ⊂ dividends ⊂ underlying), so a line switched between the

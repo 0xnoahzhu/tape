@@ -19,7 +19,7 @@ const future: ContractRef = { symbol: 'ES', secType: 'FUT', exchange: 'CME', cur
 const forex: ContractRef = { symbol: 'EUR', secType: 'CASH', exchange: 'IDEALPRO', currency: 'USD' };
 const bond: ContractRef = { symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD', conId: 1 };
 const ALL_TYPES: SecType[] = ['STK', 'OPT', 'IND', 'FUT', 'FOP', 'CASH', 'BAG', 'CFD', 'BOND', 'WAR', 'CRYPTO'];
-const BASE_PROFILES: QuoteProfile[] = ['basic', 'underlying', 'option', 'dividends'];
+const BASE_PROFILES: QuoteProfile[] = ['basic', 'underlying', 'option', 'dividends', 'mark'];
 
 describe('the legal generic ticks', () => {
   // IB's 321 "Legal ones" list, the same for every type the probe asked about (paper account, server 193).
@@ -81,11 +81,9 @@ describe('genericTicksFor', () => {
     expect(genericTicksFor(stock('SPY'), ['etfNav'])).toBe('318,577,614,623');
     expect(genericTicksFor(future, ['futuresOi'])).toBe('588');
     expect(genericTicksFor(future, ['optionFlow', 'activity'])).toBe('101,295');
-    expect(genericTicksFor(forex, ['mark'])).toBe('221');
     expect(genericTicksFor(bond, ['bondFactor'])).toBe('460');
-    // A profile with nothing for the type adds nothing; options carry the mark already.
+    // A profile with nothing for the type adds nothing.
     expect(genericTicksFor(forex, ['range'])).toBe('');
-    expect(genericTicksFor(option('AAPL', '20261016', 230, 'C'), ['option', 'mark'])).toBe('100,101,106,221');
     // Each add-on list contains the basic one, so a line with add-ons covers the basic profile.
     for (const p of ADD_ON_PROFILES) for (const t of Object.keys(ADD_ON_TICKS[p]) as SecType[]) expect(coversTicks(genericTicksFor({ secType: t }, [p]), genericTicksFor({ secType: t }, ['basic']))).toBe(true);
   });
@@ -96,7 +94,22 @@ describe('genericTicksFor', () => {
     expect(genericTicksFor(stock('AAPL'), profiles, 'core')).toBe('318,456');
     expect(genericTicksFor(stock('AAPL'), ['underlying', 'vwap'], 'core')).toBe('100,101,106,165,318,411,456');
     expect(genericTicksFor(stock('AAPL'), profiles, 'none')).toBe('');
-    expect(genericTicksFor(forex, ['mark'], 'core')).toBe('');
+  });
+
+  it('asks for the mark on the position lines of the types the probe saw one on, add-ons refused or not', () => {
+    expect(genericTicksFor(stock('AAPL'), ['mark'])).toBe('221,318');
+    expect(genericTicksFor(future, ['mark'])).toBe('221');
+    expect(genericTicksFor(forex, ['mark'])).toBe('221');
+    expect(genericTicksFor({ secType: 'CRYPTO' }, ['mark'])).toBe('221');
+    // Options carry it in their basic list already; bonds, CFDs and warrants get none.
+    expect(genericTicksFor(option('AAPL', '20261016', 230, 'C'), ['option', 'mark'])).toBe('100,101,106,221');
+    for (const t of ['BOND', 'CFD', 'WAR'] as const) expect(genericTicksFor({ secType: t }, ['mark']), t).toBe('');
+    // A base profile: the core level (IB refused an add-on, 321) keeps it.
+    expect(genericTicksFor(forex, ['mark'], 'core')).toBe('221');
+    expect(genericTicksFor(stock('AAPL'), ['mark', 'shortSale'])).toBe('221,236,318,499');
+    expect(genericTicksFor(stock('AAPL'), ['mark', 'shortSale'], 'core')).toBe('221,318');
+    expect(genericTicksFor(future, ['mark', 'futuresOi'], 'core')).toBe('221');
+    expect(genericTicksFor(stock('AAPL'), ['mark'], 'none')).toBe('');
   });
 
   it('nests the stock profiles, so a line covers every narrower one', () => {

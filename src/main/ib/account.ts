@@ -162,17 +162,14 @@ export function createAccountService(ctx: MainContext): AccountService {
     }
     const prev = positions.get(id);
     const contract = positionContract(c, prev);
-    const multiplier = multiplierOf(contract);
-    const cost = num(avgCost);
     const info = details.get(id);
     const next: Position = {
       account: account || activeAccount(),
       key: contractKey(contract),
       contract,
       quantity: qty,
-      avgPrice: cost != null ? cost / multiplier : (prev?.avgPrice ?? 0),
-      averageCost: cost ?? prev?.averageCost,
-      multiplier,
+      averageCost: num(avgCost) ?? prev?.averageCost,
+      multiplier: multiplierOf(contract),
       marketPrice: market ? market.marketPrice : prev?.marketPrice,
       marketValue: market ? market.marketValue : prev?.marketValue,
       unrealizedPnL: market ? market.unrealizedPnL : prev?.unrealizedPnL,
@@ -351,25 +348,21 @@ export function createAccountService(ctx: MainContext): AccountService {
       patchSummary({ dailyPnL: num(dailyPnL), unrealizedPnL: num(unrealizedPnL), realizedPnL: num(realizedPnL) });
     });
 
-    // The P&L engine marks positions at its own price, which outside regular hours differs from the
-    // portfolio update's marketPrice: its value is kept apart (pnlValue) so a row's price, value and
-    // unrealized P&L stay from one source and the daily P&L can be re-marked to it. Its unrealized
-    // and realized P&L are kept as IB sends them (the positions table's IB columns): IB's "no value"
-    // clears them rather than keeping an older figure.
+    // The P&L engine's figures are kept apart from the portfolio update's (the positions table shows
+    // them first: they are real time) and as IB sends them: IB's "no value" (Double.MAX) clears each
+    // of them, the daily P&L too, rather than keeping an older figure as IB's current one.
     ib.on(EventName.pnlSingle, (reqId: number, _pos: number, dailyPnL: number, unrealized?: number, realized?: number, value?: number) => {
       const conId = conIdByPnlReq.get(reqId);
       if (conId == null) return;
       const id = String(conId);
       const cur = positions.get(id);
       if (!cur) return;
-      const daily = num(dailyPnL);
-      const pnlValue = num(value);
       positions.set(
         id,
         stripUndefined({
           ...cur,
-          dailyPnL: daily ?? cur.dailyPnL,
-          pnlValue: pnlValue ?? cur.pnlValue,
+          dailyPnL: num(dailyPnL),
+          pnlValue: num(value),
           pnlUnrealized: num(unrealized),
           pnlRealized: num(realized),
           updatedAt: Date.now(),

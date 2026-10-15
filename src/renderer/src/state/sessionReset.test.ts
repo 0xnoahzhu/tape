@@ -8,7 +8,7 @@ import { initialTicket, useStore } from './store';
 const request: OrderRequest = { contract: stock('AAPL'), action: 'BUY', orderType: 'LMT', quantity: 1, limitPrice: 1, tif: 'DAY', outsideRth: false };
 const order = { orderId: 40, clientId: 7, key: '7:40', account: 'DUP899854', contract: stock('AAPL'), status: 'Submitted' } as WorkingOrder;
 const fill = { execId: 'e1', orderId: 40, account: 'DUP899854', key: 'STK:AAPL', contract: stock('AAPL'), side: 'BUY', shares: 1, price: 1, time: 0 } as Execution;
-const position = { account: 'DUP899854', key: 'STK:AAPL', contract: stock('AAPL'), quantity: 100, avgPrice: 1, multiplier: 1, updatedAt: 0 } as Position;
+const position = { account: 'DUP899854', key: 'STK:AAPL', contract: stock('AAPL'), quantity: 100, multiplier: 1, updatedAt: 0 } as Position;
 
 /** The paper session (0) with an order review, a cancel confirmation, a modify and a panel strip open. */
 function paperSession(): ConnectionState {

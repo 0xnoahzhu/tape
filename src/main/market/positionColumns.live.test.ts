@@ -4,8 +4,9 @@
 //   TAPE_LIVE_IB=127.0.0.1:4002 TAPE_CLIENT_ID=917 pnpm vitest run src/main/market/positionColumns.live.test.ts
 //
 // Through the real quote and contract services: the 'portfolio' owner's lines for a stock, an ETF, a
-// future, a forex pair and a crypto, then the 'positions-table' owner with every add-on profile each
-// of them has ticks for. Every generic tick list sent stays within LEGAL_GENERIC_TICKS minus
+// future, a forex pair and a crypto (with the mark, generic tick 221, as the Portfolio page asks for
+// it: the Price column), then the 'positions-table' owner with every add-on profile each of them has
+// ticks for. Every generic tick list sent stays within LEGAL_GENERIC_TICKS minus
 // NEVER_REQUESTED, IB answers no 321, and the add-ons re-request each line once without opening a
 // new one. Paper accounts only (every managed account must start with DU); market data and contract
 // details only, no orders. Use a client id no other program uses. The future is ESZ6 (December 2026).
@@ -108,10 +109,11 @@ describe.skipIf(!live)('Positions table columns against a live IB Gateway', { ti
     }) as typeof api.reqMktData;
   });
 
-  it('opens one line per held instrument with its basic ticks', async () => {
-    ctx.quotes.setRendererSubscriptions('portfolio', HELD.map((contract) => ({ contract, profile: 'basic' as const })));
+  it('opens one line per held instrument with its basic ticks and the mark', async () => {
+    ctx.quotes.setRendererSubscriptions('portfolio', HELD.map((contract) => ({ contract, profile: 'mark' as const })));
     await sleep(6000);
     expect(mktData).toBe(HELD.length);
+    expect(lists.every((l) => l.ticks.split(',').includes('221'))).toBe(true);
     for (const c of HELD) console.log('[live] portfolio', contractKey(c), JSON.stringify(ctx.quotes.getQuote(contractKey(c))));
   });
 

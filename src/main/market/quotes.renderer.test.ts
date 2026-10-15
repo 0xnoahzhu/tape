@@ -198,7 +198,7 @@ describe('renderer quotes', () => {
 
   it('keep what the options risk watcher reads while the watchlist lets it go', async () => {
     const call = option('TSLA', '20261016', 380, 'C');
-    const position: Position = { account: 'DU1', key: 'TSLA-C', contract: call, quantity: 1, avgPrice: 5, multiplier: 100, updatedAt: 0 };
+    const position: Position = { account: 'DU1', key: 'TSLA-C', contract: call, quantity: 1, multiplier: 100, updatedAt: 0 };
     const { renderer: r, image, trade, resends } = await setup({ positions: [position] });
     r.startRiskWatcher();
     await r.watch(['TSLA', 'AAPL']);

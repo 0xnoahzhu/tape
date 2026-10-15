@@ -1,7 +1,8 @@
-// Pure portfolio computations: sectors, position rows, the header's figures (IB's own, as sent) and
-// whether they are live. No React and no store access, so everything is unit tested.
+// Pure portfolio helpers: sectors, position rows (IB's own figures, the real-time source first), the
+// header's figures and whether they are live. No React and no store access, so everything is unit
+// tested.
 
-import { index, multiplierOf, stock } from '@shared/contract';
+import { index, stock } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
 import type { AccountSummary, ConnectionStatus, ContractRef, Position, Quote, SecType } from '@shared/types';
@@ -93,51 +94,47 @@ export function sectorOf(underlyingSecType: SecType, info: Classification | unde
 // ---------------------------------------------------------------------------
 // Positions
 
+/**
+ * Where a row's figure comes from: 'mark' IB's mark price on the position's own quote line (tick 37,
+ * real time), 'pnl' IB's P&L engine (reqPnLSingle, real time), 'portfolio' IB's portfolio update
+ * (updatePortfolio, pushed when the position changes, else every 3 minutes).
+ */
+export type FigureSource = 'mark' | 'pnl' | 'portfolio';
+
+/**
+ * A position with IB's own figures, one per datum: the real-time source when IB sends it, else
+ * the portfolio update. Nothing here is computed by Tape.
+ */
 export interface PositionRow {
   key: string;
   position: Position;
   /** Sector key (see sectorOf). */
   sector: string;
-  /** Price the row is valued at: the live price (see livePrice), else IB's mark from the portfolio update. */
-  last?: number;
+  /** IB's mark price (tick 37), else the portfolio update's marketPrice. */
+  price?: number;
+  priceSource?: FigureSource;
+  /** reqPnLSingle's value, else the portfolio update's marketValue. */
   value?: number;
+  valueSource?: FigureSource;
+  /** reqPnLSingle's unrealized P&L, else the portfolio update's unrealizedPNL. */
   unrealized?: number;
-  /** Percent of cost basis, sign-adjusted for shorts. */
-  unrealizedPct?: number;
+  unrealizedSource?: FigureSource;
+  /** reqPnLSingle's realized P&L, else the portfolio update's realizedPNL. */
+  realized?: number;
+  realizedSource?: FigureSource;
+  /** reqPnLSingle's daily P&L (IB sends it nowhere else). */
   dayPnl?: number;
   /**
    * Units of the account currency per unit of the position's currency (IB's ExchangeRate; 1 for the
    * account currency); undefined while IB has not sent the rate.
    */
   fx?: number;
-  /** `value` in the account currency (value × fx). */
-  valueBase?: number;
-  /** Signed percent of net liquidation (from the value in the account currency). */
-  weight?: number;
 }
 
-const pos = (n: number | undefined): n is number => finite(n) && n > 0;
-
-/**
- * Live price a position is valued at. Options use the mark (IB's mark, else the bid/ask
- * midpoint): their last trade is often hours old. Other instruments use `last`, the quote's
- * best last price. Undefined when there is none, so the row keeps IB's portfolio values.
- */
-export function livePrice(secType: SecType, q: Quote | undefined, last: number | undefined): number | undefined {
-  if (secType !== 'OPT' && secType !== 'FOP') return last;
-  if (!q) return undefined;
-  if (pos(q.mark)) return q.mark;
-  if (pos(q.ask) && finite(q.bid) && q.bid >= 0) return (q.bid + q.ask) / 2;
-  return undefined;
-}
-
-/**
- * Difference between the value a row shows and the value IB's P&L engine used for its daily P&L
- * (reqPnLSingle marks at its own price, which outside regular hours differs from the last price and
- * from the portfolio update). Adding it to IB's daily or unrealized P&L re-marks them to the row.
- */
-export function remark(p: Position, value: number | undefined): number {
-  return finite(value) && finite(p.pnlValue) ? value - p.pnlValue : 0;
+/** IB's real-time figure when it sent one, else its periodic one, with where it came from. */
+function firstOf(live: number | undefined, liveSource: FigureSource, periodic: number | undefined): { v?: number; src?: FigureSource } {
+  if (finite(live)) return { v: live, src: liveSource };
+  return finite(periodic) ? { v: periodic, src: 'portfolio' } : {};
 }
 
 /**
@@ -151,34 +148,41 @@ export function fxRate(currency: string | undefined, account: Pick<AccountSummar
   return finite(rate) && rate > 0 ? rate : null;
 }
 
-/** `fx`: see fxRate (null = unknown, so the base-currency value and the weight are too). */
-export function positionRow(p: Position, livePx: number | undefined, netLiq: number | undefined, sector: string, fx: number | null = 1): PositionRow {
-  const mult = p.multiplier || multiplierOf(p.contract);
-  const live = pos(livePx);
-  const last = live ? livePx : finite(p.marketPrice) ? p.marketPrice : undefined;
-  const cost = p.quantity * p.avgPrice * mult;
-  let value: number | undefined;
-  let unrealized: number | undefined;
-  if (live) {
-    value = p.quantity * livePx * mult;
-    unrealized = value - cost;
-  } else {
-    value = finite(p.marketValue) ? p.marketValue : finite(last) ? p.quantity * last * mult : undefined;
-    unrealized = finite(p.unrealizedPnL) ? p.unrealizedPnL : finite(value) ? value - cost : undefined;
-  }
-  const valueBase = finite(value) && fx != null ? value * fx : undefined;
+/**
+ * The mark of a position's quote line while the line sends data. A line that no longer does (a final
+ * error: its slot went to a visible view at the line limit, or IB ended it) keeps its last mark,
+ * which is not real time any more: none then, so the row shows the portfolio update's price.
+ */
+export function liveMark(q: Pick<Quote, 'mark' | 'error'> | undefined): number | undefined {
+  return q?.error?.final ? undefined : q?.mark;
+}
+
+/**
+ * A position's row. `mark`: IB's mark price (tick 37) from the position's own quote line (liveMark),
+ * which the Portfolio page asks for on its positions' lines (not bonds, CFDs or warrants:
+ * usePositionRows); `fx`: see fxRate (null = unknown).
+ */
+export function positionRow(p: Position, mark: number | undefined, sector: string, fx: number | null = 1): PositionRow {
+  // A mark that is not positive counts as none (IB marks a missing price -1): the portfolio update's
+  // price shows instead, which says 0 for an option worth nothing.
+  const price = firstOf(finite(mark) && mark > 0 ? mark : undefined, 'mark', p.marketPrice);
+  const value = firstOf(p.pnlValue, 'pnl', p.marketValue);
+  const unrealized = firstOf(p.pnlUnrealized, 'pnl', p.unrealizedPnL);
+  const realized = firstOf(p.pnlRealized, 'pnl', p.realizedPnL);
   return {
     key: p.key,
     position: p,
     sector,
-    last,
-    value,
-    unrealized,
-    unrealizedPct: finite(unrealized) && cost !== 0 ? (unrealized / Math.abs(cost)) * 100 : undefined,
-    dayPnl: finite(p.dailyPnL) ? p.dailyPnL + remark(p, value) : undefined,
+    price: price.v,
+    priceSource: price.src,
+    value: value.v,
+    valueSource: value.src,
+    unrealized: unrealized.v,
+    unrealizedSource: unrealized.src,
+    realized: realized.v,
+    realizedSource: realized.src,
+    dayPnl: finite(p.dailyPnL) ? p.dailyPnL : undefined,
     fx: fx ?? undefined,
-    valueBase,
-    weight: finite(valueBase) && finite(netLiq) && netLiq !== 0 ? (valueBase / netLiq) * 100 : undefined,
   };
 }
 
@@ -187,10 +191,18 @@ export function qtyLabel(n: number | undefined): string {
   return finite(n) && !Number.isInteger(n) ? f2(n, 4).replace(/\.?0+$/, '') : f0(n);
 }
 
-/** Rows with the largest absolute market value first; unknown values last. */
+/**
+ * How large a row is, for the default order only (never shown): |Value| in the account currency at
+ * IB's exchange rate, so a HKD position does not outrank a larger USD one (the value as it is while
+ * the rate is unknown); -1 without a value.
+ */
+export function rowSize(r: PositionRow): number {
+  return finite(r.value) ? Math.abs(r.value * (r.fx ?? 1)) : -1;
+}
+
+/** Rows with the largest absolute market value first (rowSize); unknown values last. */
 export function sortRows(rows: PositionRow[]): PositionRow[] {
-  const size = (r: PositionRow) => (finite(r.value) ? Math.abs(r.value) : -1);
-  return rows.slice().sort((a, b) => size(b) - size(a) || a.key.localeCompare(b.key));
+  return rows.slice().sort((a, b) => rowSize(b) - rowSize(a) || a.key.localeCompare(b.key));
 }
 
 // ---------------------------------------------------------------------------

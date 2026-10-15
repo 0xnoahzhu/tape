@@ -44,15 +44,14 @@ through the shared `MainContext` (never inside their factory).
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary (with IB's own `Cushion` and `Leverage` tags), positions/portfolio (IB's average cost kept as sent; the `positions` event's `loaded` says IB has listed them since the last handshake, `positionEnd`), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates and the stock / option market values from the account updates (their `BASE` row, the account-currency total) |
+| `ib/account.ts` | Account summary (with IB's own `Cushion` and `Leverage` tags), positions/portfolio (IB's average cost kept as sent; the `positions` event's `loaded` says IB has listed them since the last handshake, `positionEnd`), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value, each cleared by IB's "no value"), exchange rates and the stock / option market values from the account updates (their `BASE` row, the account-currency total) |
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, Cancel all (IB's global cancel), reconciliation with IB's lists, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
-| `market/corporateEvents.ts` | Upcoming earnings of the holdings: Wall Street Horizon, else estimated from IB's market scanner (see *Corporate events*) |
-| `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
+| `market/corporateEvents.ts` | Upcoming earnings of the holdings from Wall Street Horizon (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |
 | `market/alerts.ts` | The alerts engine: the alert list (main is its only writer), the alert lines, evaluation, notifications (see *Alerts*) |
 | `market/news.ts` | `ctx.news`: the login's API news providers (once per session) and the background headline checks of news alerts (see *Alerts › News*) |
@@ -260,15 +259,16 @@ reason, and a request is announced as rejected once (the order IB reported, or e
 
 **Last price.** Portfolio › Orders and the Trade page's activity panel show the current price of
 each order's instrument in a Last column beside the order price (`orders/lastPrice.ts`): an
-option's mark, else its midpoint (as the Positions tab values it), else its last trade; a combo's
-net midpoint, else its last; anything else its last trade, else `lastPrice`'s fallbacks; "—"
-without a quote. Its tooltip has the price in full (a narrow cell cuts it) and how far the limit or
-trigger (a trailing order's current stop) is from it, in percent of it ("Limit −0.43% from last";
-nothing for market and offset-priced orders, or when either price is not positive, as a combo's net
-can be), or, without a price, the line's error (`lastCellTitle`). The orders' own instruments are
-quoted (an option its own quote, a combo its combo quote, a pair its rate; one line per instrument,
-shared with any other owner) only while the list shows, under the owners `orders` and
-`symbol-orders` (the panel's Open orders tab), which count as visible (`subscriptions.ts`).
+option's mark, else its bid / ask midpoint (`options/chain.ts → markOf`: an option's last trade is
+often hours old), else its last trade; a combo's net midpoint, else its last; anything else its last
+trade, else `lastPrice`'s fallbacks; "—" without a quote. Its tooltip has the price in full (a narrow
+cell cuts it) and how far the limit or trigger (a trailing order's current stop) is from it, in
+percent of it ("Limit −0.43% from last"; nothing for market and offset-priced orders, or when either
+price is not positive, as a combo's net can be), or, without a price, the line's error
+(`lastCellTitle`). The orders' own instruments are quoted (an option its own quote, a combo its combo
+quote, a pair its rate; one line per instrument, shared with any other owner) only while the list
+shows, under the owners `orders` and `symbol-orders` (the panel's Open orders tab), which count as
+visible (`subscriptions.ts`).
 
 #### Order types and attributes
 
@@ -451,7 +451,8 @@ names and listener arguments), built on `node:net` and `node:events` only.
   row) emits `scannerData` per row, then `scannerDataEnd`; IB has no end message of its own and an
   empty answer is a count of 0. The scanner parameters (19, 24) are not implemented. In the API log
   165 ("N items retrieved", before a scan's rows) is a notice and IB's 162 acknowledging a scanner
-  cancel ("API scanner subscription cancelled") is not shown as an error; other 162s still are.
+  cancel ("API scanner subscription cancelled") is not shown as an error; other 162s still are. No
+  feature sends a scan (earnings come from Wall Street Horizon only).
 * `pacing.ts` — per-request rules checked when a frame is written (the moment IB counts it):
   `reqMatchingSymbols` at most 1 per second; `reqHistoricalData` no identical request within
   15 s, at most 5 per contract + exchange + tick type within 2 s, at most 60 per 10 minutes
@@ -630,6 +631,14 @@ FUND and an unresolved BOND, so the table only rules out ids illegal everywhere 
 292, 375, 586, 587 and 619, which describe no holding. A test checks every type × profile × level
 against both tables.
 
+**The position mark.** The `mark` profile is a base profile, not an add-on: the type's basic ticks
+plus 221 (→ tick 37, IB's mark price) on stocks, futures, forex and crypto
+(`subscriptions.ts → MARK_TYPES`, the types the probe saw a mark on; options carry 221 in their basic
+list). The Portfolio page wants every position's line with it while it is open (the `portfolio`
+owner: the Price column, IB's mark first); bonds, CFDs and warrants get none. As a base profile it
+stays at the `core` level (see Error 321), so a column whose add-on IB refuses does not cost the Price
+column its mark.
+
 **Add-on profiles** (`shared/quoteProfiles.ts`) are a type's basic ticks plus those of one family of
 Positions columns, asked for only while such a column is shown. Their lists name only the types the
 probe saw data for (a legal id is not always one IB answers on a type):
@@ -642,7 +651,6 @@ probe saw data for (a legal id is not always one IB answers on a type):
 | `activity` | 293 / 294 / 295 → 54 / 55 / 56, 595 → 63–65 | STK; FUT 295 only |
 | `auction` | 225 → 34, 35, 36, 61 | STK |
 | `vwap` | 233 → 48 (RTVolume) | STK |
-| `mark` | 221 → 37 | STK, FUT, CASH, CRYPTO (OPT and FOP carry it in their basic list) |
 | `shortSale` | 236 → 46, 89; 499 → 111 | STK |
 | `etfNav` | 577 → 96, 614 → 98 / 99, 623 → 97 | STK (the table asks for ETFs only) |
 | `futuresOi` | 588 → 86 | FUT |
@@ -655,13 +663,14 @@ as sent, zero and negative ones too.
 
 **Error 321.** Should IB still refuse a line's list, it has dropped the request (no cancel, which would
 only answer 300), and the line is requested again one level lower: `full` → `core` (without the add-on
-profiles; dividends and underlying stay) → `none` (no generic tick). A 321 naming the generic tick list
-is remembered for the app's run per type and list, so other lines of that type skip straight to the
-next level; any other 321 is remembered for that contract. Neither is forgotten on a reconnect (IB's
-refusal is not repeated after every 1101), and each is logged once. The quote's `ticksRefused`
-(`'addOns'` / `'all'`) says what the line runs without, which the Positions table's Quote status column
-shows as 321; it clears once the line holds every tick wanted again (the add-on columns went). Prices
-keep coming throughout: only a 321 on a line without generic ticks ends it, as before.
+profiles; dividends, underlying and the position mark stay) → `none` (no generic tick). A 321 naming
+the generic tick list is remembered for the app's run per type and list, so other lines of that type
+skip straight to the next level; any other 321 is remembered for that contract. Neither is forgotten
+on a reconnect (IB's refusal is not repeated after every 1101), and each is logged once. The quote's
+`ticksRefused` (`'addOns'` / `'all'`) says what the line runs without, which the Positions table's
+Quote status column shows as 321; it clears once the line holds every tick wanted again (the add-on
+columns went). Prices keep coming throughout: only a 321 on a line without generic ticks ends it, as
+before.
 
 **A line's generic values never outlive it.** Every new line (a request, a 321 or close re-request, a
 resolved retry, a reconnect, a route switch of the primary-exchange fallback) starts without the fields
@@ -842,70 +851,22 @@ asks for Level 2 when that needs a test (main runs it right after); a check that
 ### Corporate events
 
 `getEarnings(underlyings)` (`market/corporateEvents.ts`) answers with the holdings' next earnings
-dates. Wall Street Horizon comes first: `reqWshMetaData` once per connection (IB wants it first),
-then one `reqWshEventData` per conId from today to 90 days ahead, one at a time, cached per conId
-for the New York day and the connection (a 1101 keeps the cache). Option-only underlyings are
-resolved to their conId first. IB documents the event JSON only by example and the paper account
-cannot receive any, so `parseWshEarnings` reads it defensively (an array, `{ events }` or arrays
-keyed by event type; earnings types `wshe_ed` / `earnings`; yyyy-mm-dd or yyyyMMdd dates; before /
-after the session); an answer it cannot read is logged once. Dividends do not come from WSH but from
-the dividend tick above.
+dates from Wall Street Horizon: `reqWshMetaData` once per connection (IB wants it first), then one
+`reqWshEventData` per conId from today to 90 days ahead, one at a time, cached per conId for the New
+York day and the connection (a 1101 keeps the cache). Option-only underlyings are resolved to their
+conId first. IB documents the event JSON only by example and the paper account cannot receive any,
+so `parseWshEarnings` reads it defensively (an array, `{ events }` or arrays keyed by event type;
+earnings types `wshe_ed` / `earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an
+answer it cannot read is logged once. Dividends do not come from WSH but from the dividend tick above.
 
 Without the WSH subscription IB refuses with 10276 "News feed is not allowed" (the paper account) or
-10277. The refusal is remembered for the connection and the New York day, so WSH is asked again on
-the next connection or day. The stocks then go to IB's market scanner (`market/earningsScanner.ts`);
-a refusal of one event request keeps the events WSH already gave and sends that stock and the rest
-there. A meta data failure other than a refusal (a timeout, 10279) answers `unavailable`. WSH
-answers stay in use for the rest of the day after a later refusal, option-only underlyings too
-(by the conId resolved for their contract key).
-
-The scanner fallback. `SCAN_nextEarningsDateTime_ASC` on `STK` / `STK.US.MAJOR` with the filter
-`nextEarningsDateTimeAbove=X;nextEarningsDateTimeBelow=Y;` works without WSH. X and Y are epoch
-seconds, inclusive, always both sent (without them stocks that report no earnings are listed too).
-The rows carry no date, so the date is inferred: a stock listed for a window reports in it. Windows
-are New York wall time (`nyWallToEpochMs`, midnight to midnight, so 23- and 25-hour days are right).
-A scan answers at most 50 rows, soonest first: a stock in a cut answer is in the window for sure,
-its absence proves nothing. 165 says whether an answer was cut ("50 out of 435 items retrieved");
-without a 165, 50 rows count as cut. Each scan is narrowed to the stock's price, ± 3 % around the
-lowest and highest of its quote's last, close, mark and last RTH trade and its position's market
-price (Tape knows no market cap), read when the scan is sent (a search may wait minutes for its
-turn). A cut answer without the stock is asked again at ± 1.5 %, then ± 0.75 %, and the narrower
-band stays for the rest of that stock's search. A window still cut is split, and a cut single day
-gives no date rather than a wrong one.
-
-The search per stock (`searchEarnings`): bisection, earliest first, over today .. today + 120 New
-York days (1 + 7 scans; a half known from the other costs none; nothing within 120 days: no
-earnings). Then 16:00:00 ET exactly (IB's stamp for after the close: `amc`, 9 scans in all), then
-09:30:00 exactly (before the open: `bmo`, 10), then 00:00:00 exactly (a date without a time, which
-TWS shows without one: the date only, 11). Otherwise the whole day is checked once more (a day the
-stock is not listed for, its price having left the band, gives no date), then the half-hour slot
-(6 scans) and its first minute: `minutes` when the release is exactly there (CAT 08:30), else the
-slot's side of the session (before 09:30 `bmo`, from 16:00 `amc`, else `dmh`); about 19 scans. A
-stock's search stops after 24 scans: the date without a time once the day was confirmed, else no
-date. IB marks no date confirmed, so every scanner event carries `estimated: true`.
-
-Searches run in the background, at most 3 at a time with one scan each, so at most 3 scans are open
-(IB allows 10). Every scan is cancelled however it ends: rows, an IB error, the 10 s timeout
-(counted from the write) or an abort (`ibRequest`'s `cancelWhenDone`), not after the connection
-closed; late rows and IB's 162 acknowledgement find no listener, and request ids are never reused.
-Typical cost for 40 holdings is about 400 scans (960 at worst): about 75 s at about 0.55 s per scan
-three at a time, about 5.5 requests and 5.5 cancels per second (of the 45 sent at most), once per
-New York day per connection plus new holdings. ETFs (`ContractInfo.stockType`) and non-USD stocks
-cost no scans. A stock without any price waits up to 10 s for a quote (the Positions tab's
-`positions-div` line), else, like a timeout or another IB error, it is tried again after 5 minutes. Results, none
-and unknown too, are kept per stock for the New York day and dropped when the connection closes;
-a none or unknown reached with a narrowed band (the stock's price may have moved away from Tape's)
-is asked once more after 5 minutes before it holds for the day. 162 (other than pacing or a limit)
-or 321 means IB refuses the scanner itself: no more scans on this connection that day.
-
-`getEarnings` never waits for the scanner: it answers with what is known and `pending: true` while
-searches run (the Positions tab asks again every 3 s), and `retryInMs` while a stock waits to be
-tried again (the Positions tab asks again then). The answer has a status: `ok` (with `source: 'wsh'`, or
-`'scanner'` when some stocks went to the scanner; `partial` when some of those are not US dollar
-stocks, which the scanner cannot look up: the note then says US stocks only), `unsubscribed` (IB
-refused WSH and the scanner, or only stocks the scanner does not cover are left) or `unavailable`
-(not connected, a timeout or another error). Demo mode answers from the simulator, as scanner
-estimates.
+10277. The refusal is remembered for the connection and the New York day, so WSH is asked again on the
+next connection or day; meanwhile the answer is `unsubscribed`, and the Positions tab has no earnings
+dates (Tape does not estimate them). A refusal of one event request keeps the events WSH already gave;
+WSH answers stay in use for the rest of the day after a later refusal, option-only underlyings too (by
+the conId resolved for their contract key). A meta data failure other than a refusal (a timeout, 10279)
+answers `unavailable`. The answer's status: `ok` (the events, soonest first), `unsubscribed` or
+`unavailable` (not connected, a timeout or another error). Demo mode answers from the simulator.
 
 ### Alerts
 
@@ -1313,24 +1274,25 @@ above it differs: 200px of chart, 320px under the options desk (its header, tabs
 **Activity panel.** The current symbol's positions (the stock and its derivatives: stock first, then
 options by expiry, strike and right, `activityModel.ts → byInstrument`) and its open orders (newest
 first), each under column names, with Modify / Cancel for the orders Tape can cancel and, for the
-others, who placed them with a "Why?" (`orders/OrderActions.tsx`, as on Portfolio › Orders), and
-"All orders ›" (Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price" where
-contract and status keep 200px between them beside it (`orderModel.ts → lastColumnFits`: from about
-758px of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window while the
-watchlist is open); narrower, the column and its name are left out and the last price is in the
-tooltip of "qty @ price". Rows are
-valued like the Portfolio page (`portfolio/calc.ts → positionRow`, one price for value and P&L) from
-the panel's own quote owner, `symbol-activity` (visible; options with the `option` profile: their
-lines are mostly open already for the options risk watcher, and the stock's for the chart or the
-desk). Under the options desk it adds the underlying's exposure in its header while an option is
-held (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`, as on the
-Positions toolbar: Δ sh, $Δ, Γ, Θ/day, Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New
-York days, `optionLine`, in the accent within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares,
-so the column adds up to the exposure's Δ) after Qty, and a click on an option row selects its expiry
-and the Chain tab (`useDesk`). Modify from the options view switches to the chart, where the ticket is.
-An order just placed from a floating panel flashes for 15 s from IB's acceptance
-(`activityModel.ts → isFreshOrder`, `state/orderFeedback.ts`). The options desk itself has the tabs
-Chain and Volatility.
+others, who placed them with a "Why?" (`orders/OrderActions.tsx`, as on Portfolio › Orders), and "All
+orders ›" (Portfolio › Orders). An order's Last cell (see Orders › Last price) follows "qty @ price"
+where contract and status keep 200px between them beside it (`orderModel.ts → lastColumnFits`: from
+about 758px of panel with the 12-hour clock, so not beside the docked ticket in a 1180px window while
+the watchlist is open); narrower, the column and its name are left out and the last price is in the
+tooltip of "qty @ price". The positions show IB's figures as Portfolio › Positions does
+(`portfolio/calc.ts → positionRow`): IB's average cost, the value and unrealized P&L from
+`reqPnLSingle`, else the portfolio update (the cell's tooltip says which), and the day P&L from
+`reqPnLSingle` only (IB sends it nowhere else); no share of net liquidation. The panel's own quote
+owner, `symbol-activity` (visible; options with the `option` profile: their lines are mostly open
+already for the options risk watcher, and the stock's for the chart or the desk), serves the exposure:
+under the options desk the panel adds the underlying's in its header while an option is held
+(`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`: Δ sh, $Δ, Γ, Θ/day,
+Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New York days, `optionDte`, in the accent
+within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares, so the column adds up to the exposure's
+Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Modify
+from the options view switches to the chart, where the ticket is. An order just placed from a floating
+panel flashes for 15 s from IB's acceptance (`activityModel.ts → isFreshOrder`,
+`state/orderFeedback.ts`). The options desk itself has the tabs Chain and Volatility.
 
 ### Order ticket (`features/ticket`)
 
@@ -1642,75 +1604,88 @@ and does nothing while a dialog is open. Portfolio › Orders asks IB for its li
 
 The Positions tab (`PositionsView.tsx`: a toolbar line, `PositionsToolbar.tsx`, over the table,
 `PositionsTable.tsx`) shows the columns the user picks in the column editor (`ColumnEditor.tsx`, the
-"Columns" button on the toolbar), grouped (see Positions grouping below), by default the design's eight: Symbol, Qty, Avg, Price, Value,
-% NLV, Unrl. P&L (with its percent) and Day P&L. `columns.ts` is the catalog (pure; 145 columns in nine
-groups: Position, IB P&L, Contract, Quote, Statistics, Short selling, Dividends & earnings, Options,
-ETF / futures / bonds), with each column's kind, the instrument types it applies to (and, for the ETF
-columns, `when`: a stock IB types as ETF / ETN / ETC / ETP), its minimum width, format, sort type,
-accessor, the add-on quote profile it needs and whether it is verified. `cells.ts` formats the cells,
-`columnsState.ts` holds the pure edits (the order, a dragged header's slot, the widths and the grid
-tracks), the reading of stored preferences, the sort cycle and comparator and the held group and row
-order, and `columnStore.ts` persists them. `usePositionColumnData.ts`
-reads what the shown columns need beyond the rows (the positions' quotes, their contract details, the
-gross value, the holdings' earnings), each only while a shown column needs it, and asks for the shown
-columns' extra generic ticks.
+"Columns" button on the toolbar), grouped (see Positions grouping below), by default Symbol, Qty, Avg
+cost, Price, Value, Unrl. P&L and Day P&L. `columns.ts` is the catalog (pure; 107 columns in eight
+groups: Position, Contract, Quote, Statistics, Short selling, Dividends & earnings, Options, ETF /
+futures / bonds), with the instrument types each column applies to (and, for the ETF columns,
+`when`: a stock IB types as ETF / ETN / ETC / ETP), its minimum width, format, sort type, accessor,
+cell tooltip, the add-on quote profile it needs and whether it is verified. `cells.ts` formats the
+cells, `columnsState.ts` holds the pure edits (the order, a dragged header's slot, the widths and the
+grid tracks), the reading of stored preferences, the sort cycle and comparator and the held group and
+row order, and `columnStore.ts` persists them. `usePositionColumnData.ts` reads what the shown columns
+need beyond the rows (the positions' quotes, their contract details, the holdings' earnings), each
+only while a shown column needs it, and asks for the shown columns' extra generic ticks.
 
-**IB or calculated.** Every column shows IB's own value (`kind: 'ib'`) or a calculation by Tape
-(`'calc'`). A calculated column has a dim ƒ after its header, a "Calc." chip in the editor and a
-tooltip that starts "Calculated by Tape:" and gives the formula (`messages.ts → formulas`); an IB
-column's tooltip names its source ("IB · tick 4 Last (delayed 68)", `sources`). A test keeps both
-tables complete in English and Chinese. A cell is empty when the column does not apply to the
-instrument (Strike on a stock) and "—" when it applies but IB has not sent the value; no value is
-carried over from an older one. The default Price, Value, Unrl. P&L and Day P&L are calculations (the
-one-price rule, `calc.ts`); IB's own portfolio and P&L figures are in the IB P&L group next to them.
-The bell's option risk alerts (`options/risk.ts`) measure a loss against the premium with the same row
-P&L (`positionRow`). Their ids carry the position's account, so a notice given for one account never
-silences the same alert in another, and the notification names the account (paper or live, with its
-id unless account ids are hidden; `options/riskWatcher.ts`). A notice stored under the id it had
-before ids carried the account (`rule:contractKey`, in localStorage `tape.options.riskNotified`)
-counts as given: `dueRiskNotices` moves its stamp to the new id and drops the old key.
+**IB's own data.** Every column shows IB's own value, as IB sends it: Tape calculates none (no
+formula, cost basis, share of net liquidation, change, spread, days to a date, moneyness or position
+greek). Each column's tooltip names its source ("IB · tick 4 Last (delayed 68)", `messages.ts →
+sources`; a test keeps them complete in English and Chinese). Where IB sends one datum twice, one
+column shows it, the real-time source first (`calc.ts → positionRow`, one field per datum on
+`PositionRow` with its `…Source`): Price is IB's mark (tick 37), else the portfolio update's
+`marketPrice`; Value, Unrl. P&L and Realized P&L are `reqPnLSingle`'s `value`, `unrealizedPnL` and
+`realizedPnL`, else the portfolio update's `marketValue`, `unrealizedPNL` and `realizedPNL`; Day P&L is
+`reqPnLSingle`'s `dailyPnL` (IB sends it nowhere else). Each source stands on its own: IB's "no value"
+for one `reqPnLSingle` figure (`account.ts` clears it, the daily P&L and the value too) lets only that
+cell fall back. The cell's tooltip says which source it shows ("IB P&L (real time)", "IB mark price
+(real time)" or "IB portfolio update (every 3 min)", `CellWords.sources`). Avg cost is IB's
+`averageCost` as sent (per contract, the multiplier and commissions included). A cell is empty when
+the column does not apply to the instrument (Strike on a stock) and "—" when it applies but IB has
+not sent the value; no value is carried over from an older one. The mark comes on the position's own
+line: the `portfolio` owner (`usePositionRows`) wants every position with the `mark` profile (generic
+tick 221 on STK, FUT, CASH, CRYPTO, OPT and FOP lines, the types the probe saw a mark on; IB sends it
+on delayed lines too), so Price needs no line of its own. It is a base profile, so a line IB refused a
+column's add-on on (321, `core` level) keeps it. Bonds, CFDs and warrants get no mark, so their Price
+is always the portfolio update's; so is the Price of a line that no longer sends data (a final error:
+its slot went to a visible view at the line limit, or IB ended the line), whose last mark is not real
+time any more (`calc.ts → liveMark`). The bell's option risk alerts (`options/risk.ts`) measure a loss
+with the row's IB unrealized P&L against the premium (quantity × IB's average cost), a threshold of
+the rule itself that no table shows. Their ids carry the position's account, so a notice given for one
+account never silences the same alert in another, and the notification names the account (paper or
+live, with its id unless account ids are hidden; `options/riskWatcher.ts`). A notice stored under the
+id it had before ids carried the account (`rule:contractKey`, in localStorage
+`tape.options.riskNotified`) counts as given: `dueRiskNotices` moves its stamp to the new id and drops
+the old key.
 
 | Group | Columns | Source |
 | --- | --- | --- |
-| Position | Name, Type, Qty, Avg, Avg cost (IB), Cost basis, Price, Value, % NLV, Unrl. P&L and %, Day P&L, Currency, FX rate, Value (base), % Gross, Account | `position` / `updatePortfolio` (`Position.averageCost` is IB's as sent, per contract); contract details; the account updates' `ExchangeRate` (paper accounts: `$LEDGER-ExchangeRate`) per currency, `account.ts → exchangeRateOf`, kept as `AccountSummary.exchangeRates` |
-| IB P&L | Price, Value, Unrl. P&L, Realized (IB); Day P&L, Unrl. P&L, Realized, Value (IB live); Total P&L | `updatePortfolio` as sent (pushed when the position changes, so it can lag); `reqPnLSingle` (`Position.dailyPnL`, `pnlValue`; `pnlUnrealized` and `pnlRealized` as sent, so IB's "no value" clears them and the cell shows "—"); Total = the two `reqPnLSingle` figures |
-| Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, DTE, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours, Contract month, Last trade, Expiration, ISIN, Market | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options). Underlying is IB's `underSymbol` (a futures option's is its future, `ESZ6`; the tooltip has the underlying's type and conId). Last trade is the day and time of `lastTradeDateOrContractMonth` ("20261016 16:00:00 US/Eastern" on server 193), in the user's clock, the zone in the tooltip, sorted by the instant (`zonedInstant`: 08:30 US/Central after 09:00 US/Eastern); ISIN comes from `secIdList` (stocks and ETFs) |
-| Quote | Last, Last size, Last time, Bid, Ask, sizes, Mid, Spread and %, Prev close, Chg and %, Open, High, Low, Volume, Mark, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner, basic profile: stocks 318, options 100, 101, 106 and 221). Mark: options always, stocks, futures, forex and crypto with the `mark` add-on. Chg compares the quote's own price, never the previous close itself; Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
-| Statistics | 52w / 26w / 13w high and low, From 52w high / low, Avg volume, Rel. volume, IV 30d, HV 30d, Call / put volume and OI, Avg opt. volume, Trades, Trades/min, Volume/min, Vol 3m / 5m / 10m, VWAP, Auction price, volume, imbalance and regulatory imbalance | The add-ons `range`, `volatility`, `optionFlow`, `activity`, `vwap`, `auction` (stocks; IV, OI and volume/min also futures). From 52w = (Price ÷ high or low − 1) × 100, 0 when they differ only by IB's float32 rounding of ticks 15–20; Rel. volume = volume (tick 8) ÷ average volume (tick 21) |
+| Position | Name, Type, Qty, Avg cost, Price, Value, Unrl. P&L, Realized P&L, Day P&L, Currency, FX rate, Account | `position` / `updatePortfolio` (`Position.averageCost` is IB's as sent, per contract); the mark (tick 37); `reqPnLSingle`, else `updatePortfolio` (see above); contract details; the account updates' `ExchangeRate` (paper accounts: `$LEDGER-ExchangeRate`) per currency, `account.ts → exchangeRateOf`, kept as `AccountSummary.exchangeRates` |
+| Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours, Contract month, Last trade, Expiration, ISIN, Market | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options). Underlying is IB's `underSymbol` (a futures option's is its future, `ESZ6`; the tooltip has the underlying's type and conId). Last trade is the day and time of `lastTradeDateOrContractMonth` ("20261016 16:00:00 US/Eastern" on server 193), in the user's clock, the zone in the tooltip, sorted by the instant (`zonedInstant`: 08:30 US/Central after 09:00 US/Eastern); ISIN comes from `secIdList` (stocks and ETFs) |
+| Quote | Last, Last size, Last time, Bid, Ask, sizes, Prev close, Open, High, Low, Volume, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner's `mark` profile: the basic ticks, stocks 318, options 100, 101, 106 and 221, plus 221 on stocks, futures, forex and crypto). IB's mark is the Price column (one column per datum). Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
+| Statistics | 52w / 26w / 13w high and low, Avg volume, IV 30d, HV 30d, Call / put volume and OI, Avg opt. volume, Trades, Trades/min, Volume/min, Vol 3m / 5m / 10m, VWAP, Auction price, volume, imbalance and regulatory imbalance | The add-ons `range`, `volatility`, `optionFlow`, `activity`, `vwap`, `auction` (stocks; IV, OI and volume/min also futures) |
 | Short selling | Shortable, Shortable shares, Borrow fee | `shortSale` (stocks): tick 46 as a word (above 2.5 easy, at least 1000 shares; above 1.5 on locate; else no), sorted by IB's value; tick 89; tick 111 as sent |
-| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Div. yield, Div. income 12m, Days to div., Earnings, Earnings est. | The `dividends` profile (tick 59, live lines only); yield = next 12m ÷ Price × 100, income = next 12m × quantity (a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). The earnings columns read `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the event chips: one per Positions tab, cached for the day): Earnings is Wall Street Horizon's date with BMO / AMC / during, Earnings est. Tape's estimate from IB's market scanner where WSH is not available; both sort by date, then before the open, during, after the close, unknown |
-| Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI, ITM %, Intrinsic, Extrinsic, Break-even, position delta, gamma, theta, vega, Delta $ | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28; the position figures are greek × quantity × multiplier, at IB's model underlying price |
-| ETF / futures / bonds | NAV, NAV high / low, Prem./disc., Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Bond type, Features, Description | `etfNav` (ETFs; premium = (Price ÷ NAV − 1) × 100), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
+| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Earnings | The `dividends` profile (tick 59, live lines only; a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). Earnings reads `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the event chips: one per Positions tab, cached for the day): Wall Street Horizon's date with BMO / AMC / during, sorted by date, then before the open, during, after the close, unknown; none without the WSH subscription |
+| Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28, per share as IB sends them |
+| ETF / futures / bonds | NAV, NAV high / low, Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Bond type, Features, Description | `etfNav` (ETFs), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
 
 **Extra market data.** A column with a `profile` needs generic ticks beyond the position's basic line.
 `addOnSubscriptions` lists one subscription per position and profile, for the positions the column
-applies to and whose type the profile has ticks for (option lines carry the mark already), with the
-position's quote contract (`quoteContract`, as the `portfolio` owner), so the keys are the portfolio's
-own: no line opens, and the 95-line budget is unchanged. The renderer owner `positions-table` holds
-them; it stays a background owner (not visible), so no line's priority changes either. The first set
-goes out at once; later changes of the shown columns 500 ms after the last one (`latestAfter`, on the
-profile columns only), while a change of the rows (a fill, an account switch, the first positions) goes
-out at once, in the same commit as the `portfolio` owner's, so a new position's line is requested once,
-with its extra ticks. Leaving the tab releases them at once. The default columns have no profile, so the
-default view asks for nothing new. Turning on such a column costs one cancel and one request per
-affected line (both on the market data lane, so orders still go first); hiding it re-requests nothing
-(the line keeps its wider list, `coversTicks`, until its next request), except VWAP: a line that carries
-RTVolume (233, a message per trade) no owner wants any more is requested again without it
-(`subscriptions.ts → lineServes`).
+applies to and whose type the profile has ticks for, with the position's quote contract
+(`quoteContract`, as the `portfolio` owner), so the keys are the portfolio's own: no line opens, and
+the 95-line budget is unchanged. The renderer owner `positions-table` holds them; it stays a background
+owner (not visible), so no line's priority changes either. The first set goes out at once; later
+changes of the shown columns 500 ms after the last one (`latestAfter`, on the profile columns only),
+while a change of the rows (a fill, an account switch, the first positions) goes out at once, in the
+same commit as the `portfolio` owner's, so a new position's line is requested once, with its extra
+ticks. Leaving the tab releases them at once. The default columns have no profile (Price's mark is on
+the positions' lines already, the `portfolio` owner's `mark` profile), so the default view asks for
+nothing more. Turning on such a column costs one cancel and one request per affected line (both on the
+market data lane, so orders still go first); hiding it re-requests nothing (the line keeps its wider
+list, `coversTicks`, until its next request), except VWAP: a line that carries RTVolume (233, a
+message per trade) no owner wants any more is requested again without it (`subscriptions.ts →
+lineServes`).
 
 **Unverified columns.** The units the probe confirmed: ticks 15–20 are prices (float32-noisy, the price
 format rounds them), 21 shares (IB's average daily volume), 24 an annualized fraction, 27 / 28 and 87
-contracts (27 / 28 summed over the underlying's options), 29 / 30 contracts, 46 IB's code, 89 and
-63–65 shares, 55 trades and 56 shares (futures: contracts) per minute, 37 a price, 86 contracts, 59
-per-share amounts in the contract's currency. A column whose unit or source is not confirmed carries
-`unverified` with the reason in both languages (`messages.ts → unverified`): its tooltip ends with
-"Not yet verified: …" and the editor's note says "Unverified". These are Rel. volume (tick 8 against
-tick 21 during regular hours), HV 30d, VWAP and the auction columns (not delivered outside regular
-hours), Trades (when the count resets), Borrow fee (tick 111 read as an annual rate, not compared with
-TWS), Earnings (the paper account has no WSH), the ETF NAV columns (no NAV tick outside regular hours)
-and every bond column (no bond resolved on the paper account). The editor's note also says "Extra
-market data" for a column with a profile and for the earnings columns (Wall Street Horizon requests,
-else the market scanner, for every stock held).
+contracts (27 / 28 summed over the underlying's options), 29 / 30 contracts, 46 IB's code, 89 and 63–65
+shares, 55 trades and 56 shares (futures: contracts) per minute, 37 a price, 86 contracts, 59 per-share
+amounts in the contract's currency. A column whose unit or source is not confirmed carries `unverified`
+with the reason in both languages (`messages.ts → unverified`): its tooltip ends with "Not yet
+verified: …" and the editor's note says "Unverified". These are HV 30d, VWAP and the auction columns
+(not delivered outside regular hours), Trades (when the count resets), Borrow fee (tick 111 read as an
+annual rate, not compared with TWS), Earnings (the paper account has no WSH), the ETF NAV columns (no
+NAV tick outside regular hours) and every bond column (no bond resolved on the paper account). The
+editor's note also says "Extra market data" for a column with a profile and for the earnings column
+(Wall Street Horizon requests for every stock held).
 
 **Contract details, version 2.** `ContractInfo.v` (`CONTRACT_DETAILS_VERSION`, 2) marks the mapping
 that built an entry: version 2 added the ISIN, market name, contract month, real expiration, last
@@ -1724,22 +1699,21 @@ the columns are shown and market data is available, starting over when it comes 
 those from memory.
 
 Forex rows write their prices to IB's precision (5 decimals, 3 for pairs priced at 10 or more;
-`cells.ts → priceDigits`); others use the shared price format. Spread % keeps 3 decimals below 1 %.
-
-% NLV divides the value in the account currency by the net liquidation: a position in another
-currency is converted with IB's rate (units of the account currency per unit of the position's) and
-shows "—" until the rate has come (`calc.ts → fxRate`).
+`cells.ts → priceDigits`); others use the shared price format. FX rate is IB's rate of the position's
+currency (units of the account currency per unit of the position's; "—" until it has come,
+`calc.ts → fxRate`); it also orders positions in different currencies by size (below), never shown
+as a converted figure.
 
 **Sorting.** A header click sorts ascending, a second one descending, a third one goes back to the
-default order (largest groups first, by Σ |value in the account currency|, and within a group the
-largest absolute value first). Blanks sort last in both directions; text compares by the language's
+default order (the group with the largest position first, by |Value| in the account currency at IB's
+rate, `calc.ts → rowSize`, and within a group the largest position first; never by a sum). Blanks sort last in both directions; text compares by the language's
 collation, numbers in it as numbers; ties keep the conId order. Symbol sorts by underlying, then the
 stock before its options, futures and futures options, then expiry, strike and right
 (`contractOrderKey`). A sort orders the rows within each group, and the groups
 (`groups.ts → orderGroups`): on Symbol by their label (a sector by its name in the user's language), on
-a column that adds up (`agg`) by the group's sum (an empty or "—" sum last), on any other column by
-the group's first row once sorted, its best member (DTE ascending puts the group with the soonest
-expiry first); ties by group key. As values change the order follows at most once a second after the
+any other column by the group's first row once sorted, its best member (Value descending puts the
+group of the largest position first, Expiry ascending the group with the soonest expiry); ties by
+group key. As values change the order follows at most once a second after the
 previous re-sort (`RESORT_MS`), and not while the pointer is over the rows: their values update in
 place, the drawn groups and the rows within each keep their places, new ones come last and closed ones
 go (`heldGroups`, per group; a row that moved to another group shows in its new one); the pointer
@@ -1794,81 +1768,72 @@ does not scroll back under the pointer; it settles on release. A column drawn wi
 
 **Persistence.** `localStorage` `tape.positions.v1` holds `{ columns, sort, widths, groupBy }` per
 device, in the Electron profile, so it outlasts a restart (read and written in try/catch;
-`sanitizePrefs`: renamed ids through `COLUMN_ALIASES`, unknown and repeated ids dropped, Symbol first,
+`sanitizePrefs`: retired ids through `COLUMN_ALIASES`, unknown and repeated ids dropped, Symbol first,
 a sort only on a shown column, a grouping other than `underlying`, `sector` or `none` read as
-`underlying`; `sanitizeWidths`: unknown ids and non-numbers dropped, each width clamped). What 0.8.x
+`underlying`; `sanitizeWidths`: unknown ids and non-numbers dropped, each width clamped, a column's own
+width before a retired one's that maps to it). `COLUMN_ALIASES` maps the columns that showed one of
+IB's figures twice to the one column each has now: `avgPrice` → `averageCost`, `mark` and
+`marketPriceIb` → `price`, `valuePnlIb` and `marketValueIb` → `value`, `unrealizedPnlIb` and
+`unrealizedIb` → `unrealized`, `realizedPnlIb` and `realizedIb` → `realized`, `dailyPnlIb` → `dayPnl`
+(the sort and the widths too). Price, Value, Unrl. P&L and Day P&L keep their ids (`price`, `value`,
+`unrealized`, `dayPnl`), so a stored choice or sort on one stays and now shows IB's figure. Tape's
+other former calculated columns (% NLV, Cost basis, DTE, Mid, Chg, the position greeks, …) have no
+equivalent and are dropped, a sort on one becomes no sort, and a stored list left with Symbol alone
+(it showed only those) reads as the default set; Symbol alone as the user stored it stays. What 0.8.x
 and 0.9 stored, without `widths` or `groupBy`, reads as before, grouped by underlying. The default
 columns are not written out (only a sort, widths and a grouping other than by underlying), so they
 follow later defaults until the user changes them; from then on, columns added to the catalog later
 are not added to their list. A hidden column keeps its width, so showing it again brings the width
 back. Reset to default removes the key (columns, sort, widths and grouping) and expands every group.
 Which groups are collapsed holds for the session only (`collapsed`, by group key: the keys of closed
-positions' groups would pile up in storage); so does the editor's open state, and leaving the page
-and locking close the editor (`state/lockActions.ts`).
+positions' groups would pile up in storage); so does the editor's open state, and leaving the page and
+locking close the editor (`state/lockActions.ts`).
 
-### Positions grouping, option lines, greeks and events (`features/portfolio`)
+### Positions grouping, option lines and events (`features/portfolio`)
 
 **Groups** (`groups.ts`, pure). The toolbar's Group by (the `Segmented` switch) groups the rows by
 underlying (the default; key `u:` + `contractKey(underlyingOf(contract))`: an option under its stock or
 index, a future and a futures option their own group, an option on a non-USD stock under that stock in
 the option's currency, as its quotes, sector and events are), by sector (`s:` + the row's sector: options follow their
-stock's) or not at all. A group of two or more rows draws a group row (44px): a caret, its name, its
-count, its underlying's event chip and, per column, `aggregate`: the sum of the rows the column
-applies to, by the column's `agg` kind. `'sum'` always adds up (% NLV, Value (base), % Gross: a share
-of net liquidation or the account currency); `'money'` in the rows' `contract.currency` when they share
-one, else in the account currency, each × its `PositionRow.fx` (`inAccountCurrency`: the cell is then
-followed by the account currency's code, dimmed, with a tooltip; "—" while a rate is unknown) (Value,
-Cost basis, Unrl. P&L, Day P&L, the IB P&L amounts, Total P&L, Div. income 12m, Delta $, position theta
-and vega), so a sector of USD and HKD stocks still sums and sorts by its size; `'units'` only within one
-underlying (position delta and gamma, share equivalents). Absent (Qty,
-which mixes shares with contracts, Unrl. %, prices, quote and statistics fields, days, text) the cell is
-empty, and a sub line (Unrl. P&L's percent) is never summed. null is an empty cell (no `agg`, no row
-the column applies to, mixed underlyings); undefined is "—" (a contributing row's value
-is unknown: never a partial sum, `sumRows`' rule). A group of one row draws only that row, which
-stands for its group (the chip and the accent are on it), so a stock-only portfolio does not show
-every row twice; without grouping every row stands for itself. % NLV is in the accent with the
-tooltip "Over 20% of net liq" from `CONCENTRATION_FLAG` (20 %, long or short, `isConcentrated`) on a
-group row and on a row that stands for its group; rows inside a group stay muted. A click on a group
-row (or ⏎ / space on its caret button) collapses it for the session (`columnStore.ts → toggleGroup`).
-The toolbar's "Top 3 = 41% of net liq" (`topShare`) adds up the three largest groups' |Σ signed % NLV|
-(net, as the group row shows: a short call against the stock lowers it; the old Concentration widget
-added gross values), each row its own group without grouping; it is hidden while a row's share is
-unknown (net liquidation or its exchange rate missing).
+stock's) or not at all. Groups are structure only: a group of two or more rows draws a group row
+(44px) with a caret, its name, its count and its underlying's event chip in the Symbol cell, and its
+other cells empty. IB sends no group figures and Tape adds none up: no sums or shares of net
+liquidation, and the toolbar holds Group by and Columns only. A group of one row draws only that
+row, which stands for its group (the chip is on it), so a stock-only portfolio does not show every
+row twice; without grouping every row stands for itself. A click on a group row (or ⏎ / space on its caret button) collapses it for the
+session (`columnStore.ts → toggleGroup`).
 
-**Option lines and greeks** (`exposure.ts`, pure). An option or futures option row's second line is
-`optionLine`: the right, the days to expiry (New York's calendar, `shared/orderTiming.ts →
-nyDaysUntil`, as the DTE and Days to div. columns and the event window count: the same in every time
-zone; never negative; in the accent at `SOON_DAYS`, 7, or fewer) and the moneyness, |S − K| / S in percent, in or out of the money, with S from
-`underlyingPrice`: the option's model underlying price (tick 13), else the underlying's quote, else a
-stock row of it (a futures option only the model price: its own quote is the premium). The toolbar's
-portfolio greeks, shown while options are held (`portfolioGreeks`): IB's per-share model greeks of each
-option × quantity × multiplier, stocks count their shares in delta; "Greeks: waiting for IB on N
-options" (dimmed) while an option still waits for its greeks, never a partial sum; dollar delta at the
-same underlying price, "—" without one (`GreeksLine.tsx`). The Trade page's activity panel under the
-options desk reuses `portfolioGreeks`, `optionLine` and `GreeksLine` for one underlying, with
-`positionDelta` (one row's share of the delta) per row.
+**Option lines** (`cells.ts → optionLineText`, pure). An option or futures option row's second line
+reads IB's contract: the right and the expiry, "Call · 10/16" (no days to expiry, no moneyness: IB
+sends neither); other rows' read their type and sector.
+
+**Exposure** (`exposure.ts`, pure), for the Trade page's activity panel under the options desk only
+(see *Trade page*): `portfolioGreeks` adds IB's per-share model greeks of each option × quantity ×
+multiplier, stocks count their shares in delta; "Greeks: waiting for IB on N options" (dimmed) while
+an option still waits for its greeks, never a partial sum; dollar delta at the underlying price
+(`underlyingPrice`: the option's model underlying price, tick 13, else the underlying's quote, else
+a stock row of it; a futures option only the model price: its own quote is the premium), "—" without
+one (`GreeksLine.tsx`). `positionDelta` is one row's share of the delta and `optionDte` its days to
+expiry (New York's calendar, `shared/orderTiming.ts → nyDaysUntil`, the same in every time zone; never
+negative; in the accent at `SOON_DAYS`, 7, or fewer).
 
 **Events** (`events.ts`, pure). `nextEvents` keeps per held underlying the soonest of its earnings
-(`getEarnings`: Wall Street Horizon, else the scanner's estimate) and its ex-dividend date
-(`Quote.dividends`, tick 456, live lines only) from today (New York's) through `EVENT_WINDOW_DAYS`
-(14) ahead, earnings first on the same day; other instruments and past dates are ignored, and without WSH or the
-scanner only dividends remain. The chip reads "Earnings 10/23 AMC · Est." (an exact time wins: "08:30
-AM ET" in the user's clock format; the tooltip says an estimate is not a confirmed date) or "Ex-div
-10/15 $0.24" (`eventLabel`; another currency "0.24 EUR"), a hairline ring (a fill would vanish into the
-hovered row's --p2) that takes only the room the symbol leaves: short of room it is cut with an
-ellipsis (in full in its tooltip), never the symbol. `groups.ts → chipTargets` places it: on the
-group row when grouped by underlying with two or more rows, else on the underlying's stock row, else
-(no stock held) on each of its option rows. Under the rows a quiet line says what the chips cannot,
-only while a stock is held: the scanner is still looking dates up, IB refused WSH and the scanner, or
-the dates are unavailable while connected (`earningsState`).
+(`getEarnings`: Wall Street Horizon) and its ex-dividend date (`Quote.dividends`, tick 456, live lines
+only) from today (New York's) through `EVENT_WINDOW_DAYS` (14) ahead, earnings first on the same day;
+other instruments and past dates are ignored, and without WSH only dividends remain. The chip reads
+"Earnings 10/23 AMC" or "Ex-div 10/15 $0.24" (`eventLabel`; another currency "0.24 EUR"), a hairline
+ring (a fill would vanish into the hovered row's --p2) that takes only the room the symbol leaves:
+short of room it is cut with an ellipsis (in full in its tooltip), never the symbol.
+`groups.ts → chipTargets` places it: on the group row when grouped by underlying with two or more
+rows, else on the underlying's stock row, else (no stock held) on each of its option rows. Under the
+rows a quiet line says what the chips cannot, only while a stock is held: IB refused WSH (the account
+has no subscription), or the dates are unavailable while connected (`earningsState`).
 
 **Data** (`data.ts`). The Positions tab subscribes while it is shown, under its own background quote
-owners: `positions-und` (option underlyings, basic; nothing while no option is held) and
-`positions-div` (the holdings' stocks, `dividends`); option greeks need no line of their own (the
-`portfolio` owner subscribes every position). `useEarnings` asks `getEarnings` once for the tab (the
-chips and the earnings columns), again every hour, every 3 s while the scanner is still searching and
-when a stock is due to be searched again. The Dashboard tab and its widgets are gone; its per-device
-layout key, `tape.dash.v1`, is removed at startup (`lib/retiredKeys.ts`).
+owner `positions-div` (the holdings' stocks, `dividends`); the positions' own lines (with the mark,
+and an option's model greeks) are the `portfolio` owner's. `useEarnings` asks `getEarnings` once for
+the tab (the chips and the earnings column) and again every hour. The Dashboard tab and its widgets
+are gone; its per-device layout key, `tape.dash.v1`, is removed at startup (`lib/retiredKeys.ts`).
 
 ### Watchlists
 

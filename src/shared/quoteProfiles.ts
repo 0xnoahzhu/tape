@@ -2,13 +2,15 @@
 // table's statistics, short-sale, auction, ETF NAV, futures and bond columns). Each one adds its ticks
 // to the instrument's basic list; main/market/subscriptions.ts keeps every list within the ticks IB
 // accepts (LEGAL_GENERIC_TICKS) and leaves the add-ons out again when IB refuses them (error 321).
+// The mark the Price column shows is not one of them: it is a base profile ('mark', subscriptions.ts
+// → ticksFor), so a refused add-on never takes it off a position's line.
 //
 // The tick lists name only the instrument types a live probe of the paper account saw data for
 // (October 2026); a generic tick IB accepts for a type is not always one it answers on it.
 
 import type { SecType } from './types';
 
-export const ADD_ON_PROFILES = ['range', 'volatility', 'optionFlow', 'activity', 'auction', 'vwap', 'mark', 'shortSale', 'etfNav', 'futuresOi', 'bondFactor'] as const;
+export const ADD_ON_PROFILES = ['range', 'volatility', 'optionFlow', 'activity', 'auction', 'vwap', 'shortSale', 'etfNav', 'futuresOi', 'bondFactor'] as const;
 export type AddOnProfile = (typeof ADD_ON_PROFILES)[number];
 
 export const isAddOnProfile = (v: unknown): v is AddOnProfile => typeof v === 'string' && (ADD_ON_PROFILES as readonly string[]).includes(v);
@@ -23,7 +25,6 @@ export const isAddOnProfile = (v: unknown): v is AddOnProfile => typeof v === 's
  *   (3 / 5 / 10-minute volume 63–65)
  * - auction: 225 (auction volume, price, imbalance and regulatory imbalance 34, 35, 36, 61)
  * - vwap: 233 (RTVolume 48, whose fifth field is the day's VWAP)
- * - mark: 221 (mark price 37; option lines carry it already)
  * - shortSale: 236 (shortable 46, shortable shares 89), 499 (borrow fee 111)
  * - etfNav: 577 (NAV 96), 614 (NAV high / low 98 / 99), 623 (frozen NAV 97); ETFs only
  * - futuresOi: 588 (futures open interest 86)
@@ -36,7 +37,6 @@ export const ADD_ON_TICKS: Record<AddOnProfile, Partial<Record<SecType, readonly
   activity: { STK: [293, 294, 295, 595], FUT: [295] },
   auction: { STK: [225] },
   vwap: { STK: [233] },
-  mark: { STK: [221], FUT: [221], CASH: [221], CRYPTO: [221], OPT: [221], FOP: [221] },
   shortSale: { STK: [236, 499] },
   etfNav: { STK: [577, 614, 623] },
   futuresOi: { FUT: [588] },

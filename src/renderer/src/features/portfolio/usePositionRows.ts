@@ -1,12 +1,23 @@
-// Live position rows: IB positions + quote subscriptions + sector classification + exchange rates.
+// Live position rows: IB positions with their quote lines' mark, sector classification and exchange
+// rates.
+//
+// Every position's line (the 'portfolio' owner, background) is wanted with the `mark` profile: the
+// type's basic ticks plus IB's mark price (generic tick 221 → tick 37) on stocks, futures, forex and
+// crypto (option lines carry it anyway), which the Price column shows first: IB's own real-time price
+// of the position, sent on delayed lines too. It asks on the positions' own lines, so no line opens
+// for it. Bonds, CFDs and warrants get no mark (no probe saw one there; warrants take no generic
+// tick), so their Price is the portfolio update's. The mark is a base profile, not an add-on: a line
+// IB refused a column's add-on on (error 321) keeps it. A line that no longer sends data (a final
+// error: the line limit, a dead line) has no mark (calc.ts → liveMark): Price shows the portfolio
+// update's then.
 
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { contractKey } from '@shared/contract';
 import type { ContractRef, Position } from '@shared/types';
-import { lastPrice, useQuoteSubscriptions } from '../../hooks/useQuotes';
+import { useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { useStore } from '../../state/store';
-import { fxRate, livePrice, positionRow, quoteContract, sectorOf, sortRows, underlyingOf, type Classification, type PositionRow } from './calc';
+import { fxRate, liveMark, positionRow, quoteContract, sectorOf, sortRows, underlyingOf, type Classification, type PositionRow } from './calc';
 
 // Contract details of underlyings that IB sent without an industry, fetched once per session.
 // null = IB does not know the contract. Failures (not connected, timeouts) are not cached and
@@ -96,25 +107,19 @@ function useAccountPositions(): Position[] {
   }, [positions, account]);
 }
 
-/** Position rows valued at live prices, largest first. Subscribes to quotes while mounted. */
+/** Position rows with IB's figures, largest first. Subscribes to the positions' lines while mounted. */
 export function usePositionRows(): PositionRow[] {
   const positions = useAccountPositions();
-  const netLiq = useStore((s) => s.account?.netLiquidation);
   // The account's currency and IB's exchange rates (the summary object changes with every P&L update,
   // and so does its rates object, a new copy with every IPC message: compared by its rates).
   const baseCurrency = useStore((s) => s.account?.currency);
   const exchangeRates = useStore(useShallow((s) => s.account?.exchangeRates));
   const contracts = useMemo(() => positions.map((p) => quoteContract(p.contract)), [positions]);
-  useQuoteSubscriptions('portfolio', contracts, 'basic');
+  useQuoteSubscriptions('portfolio', contracts, 'mark');
   const keys = useMemo(() => positions.map((p) => contractKey(p.contract)), [positions]);
-  const prices = useStore(
-    useShallow((s) =>
-      keys.map((k, i) => {
-        const q = s.quotes[k];
-        return livePrice(positions[i].contract.secType, q, lastPrice(q));
-      }),
-    ),
-  );
+  // Only the marks: the rows are not rebuilt for quote fields they do not read. A line that no
+  // longer sends data keeps its last mark, which is not real time any more (liveMark).
+  const marks = useStore(useShallow((s) => keys.map((k) => liveMark(s.quotes[k]))));
   const classes = useClassifications(positions);
 
   return useMemo(() => {
@@ -123,8 +128,8 @@ export function usePositionRows(): PositionRow[] {
       positions.map((p, i) => {
         const und = underlyingOf(p.contract);
         const sector = sectorOf(und.secType, ownClassification(p) ?? classes.get(contractKey(und)));
-        return positionRow(p, prices[i], netLiq, sector, fxRate(p.contract.currency, account));
+        return positionRow(p, marks[i], sector, fxRate(p.contract.currency, account));
       }),
     );
-  }, [positions, prices, netLiq, classes, baseCurrency, exchangeRates]);
+  }, [positions, marks, classes, baseCurrency, exchangeRates]);
 }

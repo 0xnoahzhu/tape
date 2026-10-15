@@ -309,8 +309,8 @@ describe('orders sent from a floating panel', () => {
     useStore.setState((s) => ({
       connection: { ...s.connection, account: 'U111', accounts: ['U111', 'U222'] },
       positions: [
-        { account: 'U111', key: 'U111:AAPL', contract: stock('AAPL'), quantity: 100, avgPrice: 1, multiplier: 1, updatedAt: 0 },
-        { account: 'U222', key: 'U222:AAPL', contract: stock('AAPL'), quantity: 3, avgPrice: 1, multiplier: 1, updatedAt: 0 },
+        { account: 'U111', key: 'U111:AAPL', contract: stock('AAPL'), quantity: 100, multiplier: 1, updatedAt: 0 },
+        { account: 'U222', key: 'U222:AAPL', contract: stock('AAPL'), quantity: 3, multiplier: 1, updatedAt: 0 },
       ],
     }));
     await sendOrder({ ...pending, modifyOrderId: 31, account: 'U222' });
@@ -407,7 +407,7 @@ describe('orders sent from a floating panel', () => {
 
   it('notes the position before the order (the fill line)', async () => {
     placeOrder.mockResolvedValue({ orderId: 31, childOrderIds: [], confirmed: true });
-    useStore.setState({ positions: [{ key: 'p', contract: stock('AAPL'), quantity: 200, avgPrice: 200 } as never] });
+    useStore.setState({ positions: [{ key: 'p', contract: stock('AAPL'), quantity: 200 } as never] });
     await sendOrder(pending);
     expect(useOrderFeedback.getState().sent.ticket?.positionBefore).toBe(200);
   });

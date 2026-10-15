@@ -7,7 +7,7 @@ import { contractKey } from '@shared/contract';
 import { DASH, pct, px } from '@shared/format';
 import type { ContractRef, Quote, WorkingOrder } from '@shared/types';
 import { lastPrice, useQuoteSubscriptions, useQuotesByKey } from '../../hooks/useQuotes';
-import { livePrice } from '../portfolio/calc';
+import { markOf } from '../options/chain';
 import { priceOrUndefined } from './model';
 
 /** Quote owner of Portfolio › Orders (main process: a visible owner). */
@@ -45,9 +45,9 @@ export function orderQuoteContracts(orders: readonly WorkingOrder[]): ContractRe
 const finite = (n: number | undefined): n is number => typeof n === 'number' && Number.isFinite(n);
 
 /**
- * The price the Last column shows for an instrument. Options as the Positions tab values them (the
- * mark, else the bid / ask midpoint: their last trade is often hours old), else their last trade. A
- * combo quotes net prices, which may be zero or negative: its bid / ask midpoint, else its last.
+ * The price the Last column shows for an instrument. Options at IB's mark, else the bid / ask
+ * midpoint (their last trade is often hours old: options/chain.ts → markOf), else their last trade.
+ * A combo quotes net prices, which may be zero or negative: its bid / ask midpoint, else its last.
  * Everything else: the last trade, else the midpoint, the mark or the previous close (lastPrice).
  */
 export function orderLastPrice(c: Pick<ContractRef, 'secType'>, q: Quote | undefined): number | undefined {
@@ -56,7 +56,7 @@ export function orderLastPrice(c: Pick<ContractRef, 'secType'>, q: Quote | undef
     if (finite(q.bid) && finite(q.ask)) return (q.bid + q.ask) / 2;
     return finite(q.last) ? q.last : undefined;
   }
-  if (c.secType === 'OPT' || c.secType === 'FOP') return livePrice(c.secType, q, undefined) ?? lastPrice(q);
+  if (c.secType === 'OPT' || c.secType === 'FOP') return markOf(q) ?? lastPrice(q);
   return lastPrice(q);
 }
 

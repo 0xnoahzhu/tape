@@ -54,12 +54,6 @@ export interface RequestSpec<T> {
   /** Cancels the request at IB when it times out or is aborted (e.g. cancelHistoricalData). */
   cancel?(api: IBApi, reqId: number): void;
   /**
-   * The request opens a subscription IB keeps until it is cancelled (a market scan): cancel() is
-   * sent however the request ends (answer, IB error, timeout, abort), but not when the connection
-   * closed.
-   */
-  cancelWhenDone?: boolean;
-  /**
    * Handlers per IB event; each is called only for this request's reqId (the first callback
    * argument) and receives the remaining arguments.
    */
@@ -97,7 +91,6 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
     const reqId = ctx.ib.nextReqId();
     const subs: Unsubscribe[] = [];
     let settled = false;
-    let closed = false;
     let cancelSent = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -121,13 +114,11 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
       resolve(value) {
         if (settled) return;
         finish();
-        if (spec.cancelWhenDone && !closed) cancelAtIb();
         resolvePromise(value);
       },
       reject(err) {
         if (settled) return;
         finish();
-        if (spec.cancelWhenDone && !closed) cancelAtIb();
         rejectPromise(err);
       },
     };
@@ -152,10 +143,7 @@ export function ibRequest<T>(ctx: MainContext, spec: RequestSpec<T>): Promise<T>
       }),
     );
     subs.push(
-      ctx.ib.onClosed(() => {
-        closed = true;
-        ctl.reject(new Error(`${spec.label}: connection closed`));
-      }),
+      ctx.ib.onClosed(() => ctl.reject(new Error(`${spec.label}: connection closed`))),
     );
     if (signal) {
       const onAbort = () => {

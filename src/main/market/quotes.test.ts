@@ -492,6 +492,37 @@ describe('generic ticks of a line', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a position’s mark on a line IB refused a column’s add-on on (321)', async () => {
+    const { fake, svc } = await setup();
+    const warn = silence();
+    fake.ready();
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'mark' }]);
+    svc.setRendererSubscriptions('positions-table', [{ contract: stock('AAPL'), profile: 'shortSale' }]);
+    reconciled();
+    const first = fake.callsOf('reqMktData')[0];
+    expect(first[2]).toBe('221,236,318,499');
+    fake.emit('marketDataType', first[0], 1);
+    fake.emit('tickPrice', first[0], TICK.MARK_PRICE, 334);
+    fake.error(first[0] as number, 321, 'Incorrect generic tick list of 221,236,318,499.  Legal ones for (STK) are: 100(Option Volume)');
+    // The core level drops the short-sale ticks only: the mark is the position line's own profile.
+    const again = fake.callsOf('reqMktData');
+    expect(again.map((r) => r[2])).toEqual(['221,236,318,499', '221,318']);
+    const q = svc.getQuote('STK:AAPL')!;
+    expect(q.ticksRefused).toBe('addOns');
+    expect(q.mark).toBe(334);
+    fake.emit('tickPrice', again[1][0], TICK.MARK_PRICE, 334.2);
+    expect(svc.getQuote('STK:AAPL')?.mark).toBe(334.2);
+    // Any other 321 steps the contract to core too, which still asks for the mark.
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('XYZ'), profile: 'mark' }]);
+    svc.setRendererSubscriptions('positions-table', [{ contract: stock('XYZ'), profile: 'range' }]);
+    reconciled();
+    const xyz = fake.callsOf('reqMktData').at(-1)!;
+    expect(xyz[2]).toBe('165,221,318');
+    fake.error(xyz[0] as number, 321, 'Error validating request.-cause - Invalid ticker action');
+    expect(fake.callsOf('reqMktData').at(-1)![2]).toBe('221,318');
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   it('steps a contract down to no generic ticks on any other 321, then ends the line', async () => {
     const { fake, svc } = await setup();
     const warn = silence();

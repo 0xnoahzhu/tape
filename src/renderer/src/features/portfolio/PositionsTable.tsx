@@ -1,16 +1,15 @@
-// Positions tab: the columns chosen in the column editor (ColumnEditor.tsx; by default the
-// design's 8), grouped as the toolbar's Group by says (PositionsToolbar.tsx) and sortable by a
-// header click. Rows open the underlying on the Trade page.
+// Positions tab: the columns chosen in the column editor (ColumnEditor.tsx; by default Symbol, Qty,
+// Avg cost, Price, Value, Unrl. P&L and Day P&L), grouped as the toolbar's Group by says
+// (PositionsToolbar.tsx) and sortable by a header click. Rows open the underlying on the Trade page.
+// Every cell is IB's own figure (columns.ts); Tape adds nothing up and derives nothing.
 //
 // Grouped by underlying (the default) or by sector, a group of two or more rows gets a group row
-// over them: a caret that collapses it (for the session), its name and count, its underlying's next
-// corporate event (a chip) and, in each column where a sum means something, the sum of its rows
-// (groups.ts → aggregate; % NLV in the accent from 20 %; an amount over rows in more than one currency
-// in the account currency, its code after it); its rows are indented under it. A group of
-// one row draws only that row, which stands for its group (it carries the chip and the accent), as
-// every row does without grouping. An option row's second line reads "Call · 12 DTE · 3.2% ITM" (the
-// DTE in the accent within a week); other rows' read their type and sector. Under the rows a quiet
-// line says why earnings dates are missing or still coming, while they are.
+// over them: a caret that collapses it (for the session), its name and count and its underlying's
+// next corporate event (a chip); its other cells stay empty (no sums: IB sends no group figures). Its
+// rows are indented under it. A group of one row draws only that row, which stands for its group (it
+// carries the chip), as every row does without grouping. An option row's second line reads IB's
+// contract: "Call · 10/16" (the right and the expiry); other rows' read their type and sector.
+// Under the rows a quiet line says why earnings dates are missing, while they are.
 //
 // The card is its own scroll container, so its header row stays on top and the Symbol column on
 // the left when many columns scroll sideways; while they overflow, its scrollbars are always shown
@@ -19,13 +18,12 @@
 // the column (ResizeHandle; a double-click gives it its default width back). Both follow the pointer
 // on the window from press to release (followPointer), not HTML drag and drop or an element's pointer
 // capture. The editor shares the order, and both are remembered (columnStore.ts). A sort orders the
-// groups (by their sum, their label on Symbol, else by their best row) and the rows within each group
-// (groups.ts → orderGroups). Sorting on a value that moves (a price, a P&L) re-sorts at most once a
-// second, and not while the pointer is over the rows: a row or group never moves away under a click.
-// The values still update in place.
+// groups (by their label on Symbol, else by their best row, never a sum) and the rows within each
+// group (groups.ts → orderGroups). Sorting on a value that moves (a price, a P&L) re-sorts at most
+// once a second, and not while the pointer is over the rows: a row or group never moves away under a
+// click. The values still update in place.
 
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -40,9 +38,8 @@ import {
   type RefObject,
 } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
-import { f2 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { ContractRef, CorporateEarnings, Quote } from '@shared/types';
+import type { ContractRef, CorporateEarnings } from '@shared/types';
 import { useCommon } from '../../i18n/common';
 import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
@@ -50,7 +47,7 @@ import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { positionTarget, underlyingOf, type PositionRow } from './calc';
-import { cellColor, cellText, formatValue, type CellWords } from './cells';
+import { cellColor, cellText, formatValue, optionLineText, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
   dragWidth,
@@ -68,8 +65,7 @@ import {
 } from './columnsState';
 import { usePositionColumns, useShownColumns } from './columnStore';
 import { dividendAmount, eventLabel, eventSig, type CorporateEvent } from './events';
-import { optionLine, sameOptionLine, type OptionLine } from './exposure';
-import { aggregate, chipTargets, groupRows, inAccountCurrency, isConcentrated, orderGroups, type RowGroup } from './groups';
+import { chipTargets, groupRows, orderGroups, type RowGroup } from './groups';
 import { columnTip, sectorLabel, usePortfolioMessages } from './messages';
 import { usePositionColumnData } from './usePositionColumnData';
 
@@ -413,8 +409,6 @@ function stickyCell(scrolled: boolean, zIndex: number): CSSProperties {
 
 interface PositionsTableProps {
   rows: PositionRow[];
-  /** The option positions' and their underlyings' quotes (data.ts → useUnderlyingQuotes), for the option lines. */
-  optionQuotes: Readonly<Record<string, Quote>>;
   /** The holdings' next corporate event by underlying key (events.ts → nextEvents). */
   events: ReadonlyMap<string, CorporateEvent>;
   /** The holdings' earnings (data.ts → useEarnings), for the earnings columns. */
@@ -425,13 +419,12 @@ interface PositionsTableProps {
   now: number;
 }
 
-export function PositionsTable({ rows, optionQuotes, events, earnings: corporate, note, now }: PositionsTableProps) {
+export function PositionsTable({ rows, events, earnings: corporate, note, now }: PositionsTableProps) {
   const m = usePortfolioMessages();
   const common = useCommon();
   const lang = useLang();
   const clock = useClock();
   const connected = useStore((s) => s.connection.status === 'connected');
-  const baseCurrency = useStore((s) => s.account?.currency);
   const openSymbol = useStore((s) => s.openSymbol);
   const shown = useShownColumns();
   const sort = usePositionColumns((s) => s.sort);
@@ -440,7 +433,7 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   const collapsed = usePositionColumns((s) => s.collapsed);
   const toggleGroup = usePositionColumns((s) => s.toggleGroup);
   const defs = useMemo(() => shown.map((id) => COLUMNS[id]), [shown]);
-  const { quotes, infos, grossBase, earnings } = usePositionColumnData(rows, defs, corporate);
+  const { quotes, infos, earnings } = usePositionColumnData(rows, defs, corporate);
   const [hold, setHold] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [live, setLive] = useState<LiveWidth | null>(null);
@@ -457,10 +450,10 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
       const k = row.position.contract;
       // An option shows its underlying's earnings.
       const e = earnings.size ? earnings.get(contractKey(underlyingOf(k))) : undefined;
-      out.set(rowId(row), { row, q: quotes[contractKey(k)], info: infos.get(rowId(row)), grossBase, earnings: e, now });
+      out.set(rowId(row), { row, q: quotes[contractKey(k)], info: infos.get(rowId(row)), earnings: e, now });
     }
     return out;
-  }, [rows, quotes, infos, grossBase, earnings, now]);
+  }, [rows, quotes, infos, earnings, now]);
 
   // The rows come largest absolute value first (calc.ts → sortRows): the order within a group
   // without a sort.
@@ -469,27 +462,7 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   const labelOf = useCallback((g: RowGroup) => (g.kind === 'sector' ? sectorLabel(m, g.label) : g.label), [m]);
   const wanted = useMemo(() => orderGroups(groups, sort, lang, labelOf), [groups, sort, lang, labelOf]);
   const order = useDrawnGroups(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}:${groupBy}`, hold);
-  // What the group rows show in each column, and which sums are in the account currency (an amount
-  // over rows in more than one currency); only groups of two or more rows draw one.
-  const sums = useMemo(() => {
-    const out = new Map<string, { values: Array<number | null | undefined>; base: boolean[] }>();
-    if (groupBy !== 'none') {
-      for (const g of groups) {
-        if (g.ctxs.length > 1) out.set(g.key, { values: defs.map((d) => aggregate(d, g.ctxs)), base: defs.map((d) => inAccountCurrency(d, g.ctxs)) });
-      }
-    }
-    return out;
-  }, [groups, groupBy, defs]);
   const chips = useMemo(() => chipTargets(groups, groupBy, events), [groups, groupBy, events]);
-  const lines = useMemo(() => {
-    const out = new Map<string, OptionLine>();
-    const at = new Date(now);
-    for (const r of rows) {
-      const line = optionLine(r, optionQuotes, rows, at);
-      if (line) out.set(rowId(r), line);
-    }
-    return out;
-  }, [rows, optionQuotes, now]);
 
   // The tracks go to the rows through the table's --pos-cols, so sizing a column redraws no row.
   const sized = useMemo(() => (live ? liveWidths(widths, live.id, live.w, live.left) : widths), [widths, live]);
@@ -510,19 +483,17 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
   const body: ReactNode[] = [];
   for (const og of order) {
     const g = byKey.get(og.key);
-    const sum = sums.get(og.key);
     if (!g) continue;
-    const closed = !!sum && !!collapsed[g.key];
-    if (sum) {
+    // Only a group of two or more rows draws a group row.
+    const headed = groupBy !== 'none' && g.ctxs.length > 1;
+    const closed = headed && !!collapsed[g.key];
+    if (headed) {
       body.push(
         <GroupRowView
           key={`g:${g.key}`}
           id={g.key}
           label={labelOf(g)}
           count={g.ctxs.length}
-          values={sum.values}
-          base={sum.base}
-          currency={baseCurrency}
           collapsed={closed}
           chip={chips.groups.get(g.key)}
           defs={defs}
@@ -538,22 +509,7 @@ export function PositionsTable({ rows, optionQuotes, events, earnings: corporate
     for (const id of og.ids) {
       const c = ctxs.get(id);
       if (!c) continue;
-      body.push(
-        <RowView
-          key={id}
-          c={c}
-          defs={defs}
-          scrolled={scrolled}
-          words={words}
-          clock={clock}
-          nested={!!sum}
-          // A row inside a group leaves the accent to its group row; a row on its own stands for its group.
-          flag={!sum && isConcentrated(c.row.weight)}
-          chip={chips.rows.get(id)}
-          line={lines.get(id)}
-          onOpen={open}
-        />,
-      );
+      body.push(<RowView key={id} c={c} defs={defs} scrolled={scrolled} words={words} clock={clock} nested={headed} chip={chips.rows.get(id)} onOpen={open} />);
     }
   }
 
@@ -726,11 +682,6 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: He
       >
         {right && arrow}
         <span className="ellipsis">{m.columns[def.id][0]}</span>
-        {def.kind === 'calc' && (
-          <span aria-hidden style={{ color: 'var(--dm)', fontStyle: 'italic', flexShrink: 0 }}>
-            ƒ
-          </span>
-        )}
         {!right && arrow}
       </button>
       <ResizeHandle def={def} onLive={onLive} />
@@ -846,12 +797,6 @@ interface GroupRowProps {
   id: string;
   label: string;
   count: number;
-  /** Per shown column: the sum (groups.ts → aggregate), undefined when unknown, null for an empty cell. */
-  values: ReadonlyArray<number | null | undefined>;
-  /** Per shown column: the sum is in the account currency (groups.ts → inAccountCurrency). */
-  base: ReadonlyArray<boolean>;
-  /** The account currency's code, once known. */
-  currency?: string;
   collapsed: boolean;
   chip?: CorporateEvent;
   defs: readonly ColumnDef[];
@@ -874,13 +819,13 @@ const sameGroupProps = (a: GroupRowProps, b: GroupRowProps): boolean =>
   a.words === b.words &&
   a.clock === b.clock &&
   a.now === b.now &&
-  a.onToggle === b.onToggle &&
-  a.currency === b.currency &&
-  a.values.length === b.values.length &&
-  a.values.every((v, i) => Object.is(v, b.values[i]) && a.base[i] === b.base[i]);
+  a.onToggle === b.onToggle;
 
-/** A group's row: a click collapses or expands it (it opens no chart). */
-const GroupRowView = memo(function GroupRowView({ id, label, count, values, base, currency, collapsed, chip, defs, scrolled, words, clock, now, onToggle }: GroupRowProps) {
+/**
+ * A group's row: its caret, name, count and chip in the Symbol cell, the other cells empty (a group
+ * has no figures of its own). A click collapses or expands it (it opens no chart).
+ */
+const GroupRowView = memo(function GroupRowView({ id, label, count, collapsed, chip, defs, scrolled, words, clock, now, onToggle }: GroupRowProps) {
   const m = usePortfolioMessages();
   return (
     <div
@@ -904,54 +849,41 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, values, base
       }}
     >
       {defs.map((d, i) => {
-        if (i === 0) {
-          return (
-            <div key={d.id} role="cell" className="pos-sticky" style={{ ...stickyCell(scrolled, 1), display: 'flex', alignItems: 'center', minWidth: 0, fontFamily: 'var(--sans)' }}>
-              {/* The keyboard's way to the same toggle: its click reaches the row. */}
-              <button
-                type="button"
-                aria-expanded={!collapsed}
-                aria-label={`${collapsed ? m.expand : m.collapse} ${label}`}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: 0,
-                  border: 'none',
-                  background: 'transparent',
-                  font: 'inherit',
-                  color: 'var(--tx)',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
-              >
-                <span aria-hidden style={{ width: 10, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>
-                  {collapsed ? '▶' : '▼'}
-                </span>
-                {/* Name and count on one baseline (14px sans, 11px mono); the caret and the chip stay centred. */}
-                <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-                  <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
-                    {label}
-                  </span>
-                  <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
-                </span>
-                {chip && <EventChip e={chip} words={words} clock={clock} now={now} />}
-              </button>
-            </div>
-          );
-        }
-        const v = values[i];
-        if (v === null) return <div key={d.id} role="cell" />;
-        const accent = d.id === 'weight' && isConcentrated(v);
-        // An amount over rows in more than one currency is in the account currency: its code follows.
-        const inBase = base[i];
-        const title = accent ? m.concentrated : inBase ? m.inAccountCurrency(currency) : undefined;
+        if (i > 0) return <div key={d.id} role="cell" />;
         return (
-          <div key={d.id} role="cell" title={title} style={{ textAlign: 'right', whiteSpace: 'nowrap', color: accent ? 'var(--ac)' : cellColor(d, v) }}>
-            {formatValue(d.fmt, v, words, clock, now)}
-            {inBase && currency && v !== undefined && <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--dm)' }}>{currency}</span>}
+          <div key={d.id} role="cell" className="pos-sticky" style={{ ...stickyCell(scrolled, 1), display: 'flex', alignItems: 'center', minWidth: 0, fontFamily: 'var(--sans)' }}>
+            {/* The keyboard's way to the same toggle: its click reaches the row. */}
+            <button
+              type="button"
+              aria-expanded={!collapsed}
+              aria-label={`${collapsed ? m.expand : m.collapse} ${label}`}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: 0,
+                border: 'none',
+                background: 'transparent',
+                font: 'inherit',
+                color: 'var(--tx)',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <span aria-hidden style={{ width: 10, flexShrink: 0, fontSize: 8, color: 'var(--dm)' }}>
+                {collapsed ? '▶' : '▼'}
+              </span>
+              {/* Name and count on one baseline (14px sans, 11px mono); the caret and the chip stay centred. */}
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+                <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
+                  {label}
+                </span>
+                <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
+              </span>
+              {chip && <EventChip e={chip} words={words} clock={clock} now={now} />}
+            </button>
           </div>
         );
       })}
@@ -960,23 +892,20 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, values, base
 }, sameGroupProps);
 
 /**
- * An underlying's next corporate event: "Earnings 10/23 AMC · Est.", "Ex-div 10/15 $0.24". It takes
- * only the room the symbol beside it leaves (no flex basis, growing up to its own width), so short
- * of room it is cut with an ellipsis (in full in its tooltip) and the symbol stays readable. A
- * hairline ring, not a fill: a fill in --p2 would vanish into a hovered row.
+ * An underlying's next corporate event: "Earnings 10/23 AMC" (Wall Street Horizon), "Ex-div 10/15
+ * $0.24" (IB's dividend tick). It takes only the room the symbol beside it leaves (no flex basis,
+ * growing up to its own width), so short of room it is cut with an ellipsis (in full in its tooltip)
+ * and the symbol stays readable. A hairline ring, not a fill: a fill in --p2 would vanish into a
+ * hovered row.
  */
 function EventChip({ e, words, clock, now }: { e: CorporateEvent; words: CellWords; clock: Clock; now: number }) {
   const m = usePortfolioMessages();
-  const text = eventLabel(e, { earnings: m.earnings, exDiv: m.exDiv, estimated: m.estimated, times: words.earningsTimes, atEt: m.atEt }, clock.wall);
+  const text = eventLabel(e, { earnings: m.earnings, exDiv: m.exDiv, times: words.earningsTimes });
   const date = formatValue('date', e.date, words, clock, now);
-  const detail =
-    e.kind === 'earnings'
-      ? [m.earningsOn(date), e.estimated ? m.estimatedHint : undefined].filter(Boolean).join('\n')
-      : m.exDivOn(date, e.amount != null ? dividendAmount(e.amount, e.underlying.currency) : undefined);
+  const detail = e.kind === 'earnings' ? m.earningsOn(date) : m.exDivOn(date, e.amount != null ? dividendAmount(e.amount, e.underlying.currency) : undefined);
   return (
     <span
       data-pos-chip={e.kind}
-      data-estimated={e.estimated || undefined}
       title={`${text}\n${detail}`}
       className="ellipsis"
       style={{ flex: '1 1 0', maxWidth: 'max-content', padding: '2px 6px', font: '11px/1.3 var(--sans)', boxShadow: 'inset 0 0 0 1px var(--ln)', color: 'var(--mu)' }}
@@ -994,11 +923,7 @@ interface RowProps {
   clock: Clock;
   /** Under a group row: indented. */
   nested: boolean;
-  /** % NLV in the accent (a row that stands for its group, at CONCENTRATION_FLAG or more). */
-  flag: boolean;
   chip?: CorporateEvent;
-  /** The second line of an option row. */
-  line?: OptionLine;
   onOpen: (c: ContractRef) => void;
 }
 
@@ -1023,20 +948,16 @@ const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.defs === b.defs &&
   a.scrolled === b.scrolled &&
   a.nested === b.nested &&
-  a.flag === b.flag &&
   eventSig(a.chip) === eventSig(b.chip) &&
-  sameOptionLine(a.line, b.line) &&
   a.words === b.words &&
   a.clock === b.clock &&
   a.c.q === b.c.q &&
   a.c.info === b.c.info &&
-  a.c.grossBase === b.c.grossBase &&
   a.c.earnings === b.c.earnings &&
   a.c.now === b.c.now &&
   sameRow(a.c.row, b.c.row);
 
-const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, flag, chip, line, onOpen }: RowProps) {
-  const m = usePortfolioMessages();
+const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, chip, onOpen }: RowProps) {
   const p = c.row.position;
   return (
     <div
@@ -1059,11 +980,7 @@ const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested,
       }}
     >
       {defs.map((d, i) =>
-        i === 0 ? (
-          <SymbolCell key={d.id} c={c} scrolled={scrolled} nested={nested} chip={chip} line={line} words={words} clock={clock} />
-        ) : (
-          <Cell key={d.id} def={d} c={c} words={words} clock={clock} accent={flag && d.id === 'weight' ? m.concentrated : undefined} />
-        ),
+        i === 0 ? <SymbolCell key={d.id} c={c} scrolled={scrolled} nested={nested} chip={chip} words={words} clock={clock} /> : <Cell key={d.id} def={d} c={c} words={words} clock={clock} />,
       )}
     </div>
   );
@@ -1071,43 +988,13 @@ const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested,
 
 /**
  * Symbol (with its next-event chip) and, below it, the instrument type and sector (as since the
- * first design); an option's right, days to expiry and moneyness instead (exposure.ts → optionLine).
+ * first design); an option's right and expiry instead (optionLineText).
  */
-function SymbolCell({
-  c,
-  scrolled,
-  nested,
-  chip,
-  line,
-  words,
-  clock,
-}: {
-  c: CellCtx;
-  scrolled: boolean;
-  nested: boolean;
-  chip?: CorporateEvent;
-  line?: OptionLine;
-  words: CellWords;
-  clock: Clock;
-}) {
+function SymbolCell({ c, scrolled, nested, chip, words, clock }: { c: CellCtx; scrolled: boolean; nested: boolean; chip?: CorporateEvent; words: CellWords; clock: Clock }) {
   const m = usePortfolioMessages();
   const k = c.row.position.contract;
-  const kind = m.kinds[k.secType] ?? k.secType;
-  let sub: ReactNode = `${kind} · ${sectorLabel(m, c.row.sector)}`;
-  if (line) {
-    const pct = line.moneyness && `${f2(line.moneyness.pct, 1)}%`;
-    const parts: ReactNode[] = [
-      (line.right && words.rights[line.right]) ?? kind,
-      line.dte !== undefined && <span style={line.soon ? { color: 'var(--ac)' } : undefined}>{m.dte(line.dte)}</span>,
-      line.moneyness && pct && (line.moneyness.itm ? m.itm(pct) : m.otm(pct)),
-    ].filter(Boolean);
-    sub = parts.map((part, i) => (
-      <Fragment key={i}>
-        {i > 0 && ' · '}
-        {part}
-      </Fragment>
-    ));
-  }
+  const line = optionLineText(k, words);
+  const sub = line ?? `${m.kinds[k.secType] ?? k.secType} · ${sectorLabel(m, c.row.sector)}`;
   return (
     <div
       role="cell"
@@ -1136,20 +1023,12 @@ function SymbolCell({
   );
 }
 
-/** `accent`: % NLV highlighted (a lone row at CONCENTRATION_FLAG or more), with this tooltip. */
-function Cell({ def, c, words, clock, accent }: { def: ColumnDef; c: CellCtx; words: CellWords; clock: Clock; accent?: string }) {
+/** A cell; its tooltip says which of IB's sources it shows where IB sends the datum twice (columns.ts → title). */
+function Cell({ def, c, words, clock }: { def: ColumnDef; c: CellCtx; words: CellWords; clock: Clock }) {
   if (!applies(def, c.row)) return <div role="cell" />;
   const text = cellText(def, c, words, clock);
-  const color = accent ? 'var(--ac)' : cellColor(def, def.value(c));
-  const title = accent ?? def.title?.(c, words);
-  if (def.sub) {
-    return (
-      <div role="cell" title={title} style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', color, whiteSpace: 'nowrap' }}>
-        <div>{text}</div>
-        <div style={{ fontSize: 11 }}>{cellText({ ...def, fmt: def.sub.fmt, value: def.sub.value }, c, words, clock)}</div>
-      </div>
-    );
-  }
+  const color = cellColor(def, def.value(c));
+  const title = def.title?.(c, words);
   if (def.align === 'left') return <TextCell text={text} title={title} color={color} />;
   return (
     <div role="cell" title={title} style={{ textAlign: 'right', color, whiteSpace: 'nowrap' }}>

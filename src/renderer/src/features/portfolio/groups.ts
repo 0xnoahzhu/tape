@@ -1,32 +1,24 @@
 // The Positions table's groups (pure): which group a row belongs to (its underlying, so a stock sits
-// with its options, or its sector), what a group row shows in each column (the rows' sum where a
-// sum means something, columns.ts → agg), the order of the groups and of the rows within them, the
-// toolbar's "Top 3 = 41% of net liq" and which row carries an underlying's next-event chip.
+// with its options, or its sector), the order of the groups and of the rows within them, and which
+// row carries an underlying's next-event chip. Groups are structure only: a group row shows its
+// name, its count and its chip, never a sum (IB sends no group figures, and Tape adds none up).
 //
-// A group of one row draws no group row: the position row stands for its group (it carries the chip
-// and the % NLV accent), so a stock-only portfolio does not show every row twice. Without grouping
-// every row stands for itself. Futures and futures options are their own group (underlyingOf
-// returns them); an option on a non-USD stock goes with the stock in its currency.
+// A group of one row draws no group row: the position row stands for its group (it carries the
+// chip), so a stock-only portfolio does not show every row twice. Without grouping every row stands
+// for itself. Futures and futures options are their own group (underlyingOf returns them); an
+// option on a non-USD stock goes with the stock in its currency.
 
 import { contractKey, contractLabel } from '@shared/contract';
 import type { ContractRef, Lang } from '@shared/types';
-import { underlyingOf, type PositionRow } from './calc';
-import { COLUMNS, PINNED, applies, rowId, type CellCtx, type CellValue, type ColumnDef } from './columns';
+import { rowSize, underlyingOf, type PositionRow } from './calc';
+import { COLUMNS, PINNED, applies, rowId, type CellCtx, type CellValue } from './columns';
 import { sortBy, type GroupBy, type OrderGroup, type SortState } from './columnsState';
 import { underlyingKey } from './exposure';
 
-const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
-
-/** Share of net liquidation (%) from which a group's or a lone row's % NLV is highlighted. */
-export const CONCENTRATION_FLAG = 20;
-
-/** A net share of net liquidation at or above CONCENTRATION_FLAG, long or short. */
-export const isConcentrated = (weight: number | null | undefined): boolean => finite(weight) && Math.abs(weight) >= CONCENTRATION_FLAG;
-
 /**
  * The group a row belongs to: 'u:' and its underlying's contract key (an option goes under its
- * stock or index), 's:' and its sector key; without grouping 'r:' and the row's own id (the Top 3
- * and the chips count each row as its own group).
+ * stock or index), 's:' and its sector key; without grouping 'r:' and the row's own id (the chips
+ * count each row as its own group).
  */
 export function groupKey(row: PositionRow, by: GroupBy): string {
   if (by === 'sector') return `s:${row.sector}`;
@@ -65,63 +57,23 @@ export function groupRows(ctxs: readonly CellCtx[], by: GroupBy): RowGroup[] {
   return [...out.values()];
 }
 
-/** Whether rows are in more than one currency. */
-const mixesCurrencies = (ctxs: readonly CellCtx[]): boolean => new Set(ctxs.map((c) => c.row.position.contract.currency ?? '')).size > 1;
-
-/**
- * Whether a group's sum of a column is in the account currency, not the rows' own: a 'money'
- * column over rows in more than one currency (aggregate converts each with its FX rate).
- */
-export function inAccountCurrency(def: ColumnDef, ctxs: readonly CellCtx[]): boolean {
-  return def.agg === 'money' && mixesCurrencies(ctxs.filter((c) => applies(def, c.row)));
-}
-
-/**
- * What a group row shows in a column: the sum of the rows the column applies to (columns.ts →
- * agg); a 'money' column whose rows are in more than one currency adds them up in the account
- * currency, each × its FX rate (inAccountCurrency). null (an empty cell) when the column does not
- * add up, applies to none of the rows, or mixes underlyings ('units'); undefined ("—") while a row's
- * value (or, across currencies, its rate) is unknown, never a partial sum.
- */
-export function aggregate(def: ColumnDef, ctxs: readonly CellCtx[]): number | null | undefined {
-  if (!def.agg) return null;
-  const rows = ctxs.filter((c) => applies(def, c.row));
-  if (!rows.length) return null;
-  if (def.agg === 'units' && new Set(rows.map((c) => underlyingKey(c.row.position.contract))).size > 1) return null;
-  const base = def.agg === 'money' && mixesCurrencies(rows);
-  let sum = 0;
-  for (const c of rows) {
-    const v = def.value(c);
-    if (!finite(v)) return undefined;
-    if (!base) sum += v;
-    else if (finite(c.row.fx)) sum += v * c.row.fx;
-    else return undefined;
-  }
-  return sum;
-}
-
 /** Ties keep IB's contract order (conId), so equal values never swap places. */
 export function byConId(a: CellCtx, b: CellCtx): number {
   return (a.row.position.contract.conId ?? 0) - (b.row.position.contract.conId ?? 0) || a.row.key.localeCompare(b.row.key);
 }
 
-/** Σ |value in the account currency| of a group's rows (the value where the rate is unknown). */
+/** A group's size for the default order: its largest row's (calc.ts → rowSize: |Value| in the account currency). */
 function groupSize(g: RowGroup): number {
-  let sum = 0;
-  for (const c of g.ctxs) {
-    const v = c.row.valueBase ?? c.row.value;
-    if (finite(v)) sum += Math.abs(v);
-  }
-  return sum;
+  return g.ctxs.reduce((most, c) => Math.max(most, rowSize(c.row)), -1);
 }
 
 /**
- * The order to draw groups and rows in. Without a sort the largest groups come first (Σ |value|)
- * and the rows keep the order they came in. A sort orders the rows within each group as the flat
- * table did (blanks last, ties by conId) and the groups: Symbol by their label (`labelOf`: a
- * sector's name in the user's language), a column that adds up by the group's sum (blank, as an
- * empty or "—" group cell, last), any other column by the group's first row once sorted (its best
- * member: by DTE ascending, the group with the soonest expiry first). Ties go by group key.
+ * The order to draw groups and rows in. Without a sort the groups whose largest position is the
+ * largest come first, and the rows keep the order they came in (largest first). A sort orders the
+ * rows within each group as the flat table did (blanks last, ties by conId) and the groups: Symbol by
+ * their label (`labelOf`: a sector's name in the user's language), any other column by the group's
+ * first row once sorted (its best member: Value descending puts the group of the largest position
+ * first, Expiry ascending the group with the soonest expiry). Ties go by group key.
  */
 export function orderGroups(groups: readonly RowGroup[], sort: SortState | null, lang: Lang, labelOf: (g: RowGroup) => string): OrderGroup[] {
   const def = sort ? COLUMNS[sort.id] : null;
@@ -134,38 +86,11 @@ export function orderGroups(groups: readonly RowGroup[], sort: SortState | null,
   const valueOf = (c: CellCtx): CellValue => (applies(def, c.row) ? (def.sortValue ?? def.value)(c) : undefined);
   const sorted = groups.map((g) => ({ g, ctxs: sortBy(g.ctxs, valueOf, def.sort, sort.dir, lang, byConId) }));
   type Sorted = (typeof sorted)[number];
-  const groupValue =
-    def.id === PINNED
-      ? (s: Sorted): CellValue => labelOf(s.g)
-      : def.agg
-        ? (s: Sorted): CellValue => aggregate(def, s.g.ctxs) ?? undefined
-        : (s: Sorted): CellValue => (s.ctxs.length ? valueOf(s.ctxs[0]) : undefined);
+  const groupValue = def.id === PINNED ? (s: Sorted): CellValue => labelOf(s.g) : (s: Sorted): CellValue => (s.ctxs.length ? valueOf(s.ctxs[0]) : undefined);
   return sortBy(sorted, groupValue, def.id === PINNED ? 'text' : def.sort, sort.dir, lang, (a, b) => a.g.key.localeCompare(b.g.key)).map((s) => ({
     key: s.g.key,
     ids: s.ctxs.map((c) => rowId(c.row)),
   }));
-}
-
-/**
- * The toolbar's "Top 3 = 41% of net liq": the `n` largest groups' shares of net liquidation added
- * up, each group's share being |Σ its rows' signed % NLV| (net, as its group row shows: a short call
- * against the stock lowers it). Without grouping each row is its own group. `n` is the number
- * counted (fewer when there are fewer groups); undefined without rows or while a row's share is
- * unknown (net liquidation or its exchange rate missing).
- */
-export function topShare(rows: readonly PositionRow[], by: GroupBy, n = 3): { n: number; pct: number } | undefined {
-  if (!rows.length) return undefined;
-  const sums = new Map<string, number>();
-  for (const r of rows) {
-    if (!finite(r.weight)) return undefined;
-    const key = groupKey(r, by);
-    sums.set(key, (sums.get(key) ?? 0) + r.weight);
-  }
-  const top = [...sums.values()]
-    .map(Math.abs)
-    .sort((a, b) => b - a)
-    .slice(0, n);
-  return { n: top.length, pct: top.reduce((s, v) => s + v, 0) };
 }
 
 /**
