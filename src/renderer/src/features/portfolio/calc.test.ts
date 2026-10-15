@@ -1,29 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { contractKey, option, stock } from '@shared/contract';
 import { createClock } from '@shared/timeFormat';
-import type { Position, Quote } from '@shared/types';
+import type { AccountSummary, Position, Quote } from '@shared/types';
 import {
   ETF_SECTOR,
   MARGIN_CALL_CUSHION,
   OTHER_SECTOR,
-  accountTotals,
   asOfText,
+  cushionBar,
   fxRate,
+  headerFigures,
   headerStale,
-  grossValue,
-  leverage,
   leverageLabel,
   livePrice,
-  marginCushion,
+  pctLabel,
   positionRow,
   positionTarget,
   qtyLabel,
   quoteContract,
   sectorOf,
   sortRows,
-  sumRows,
   underlyingOf,
-  weightLabel,
 } from './calc';
 
 const quote = (over: Partial<Quote>): Quote => ({ key: 'k', updatedAt: 0, ...over });
@@ -41,10 +38,14 @@ function position(over: Partial<Position> = {}): Position {
   };
 }
 describe('labels', () => {
-  it('formats weights with a true minus', () => {
-    expect(weightLabel(12.94)).toBe('12.9%');
-    expect(weightLabel(-1.04)).toBe('−1.0%');
-    expect(weightLabel(undefined)).toBe('—');
+  it('formats percentages and leverage with a true minus', () => {
+    expect(pctLabel(12.94)).toBe('12.9%');
+    expect(pctLabel(-1.04)).toBe('−1.0%');
+    expect(pctLabel(undefined)).toBe('—');
+    expect(leverageLabel(1.3812)).toBe('1.38×');
+    expect(leverageLabel(0)).toBe('0.00×');
+    expect(leverageLabel(undefined)).toBe('—');
+    expect(leverageLabel(NaN)).toBe('—');
   });
 });
 
@@ -132,14 +133,6 @@ describe('positionRow', () => {
     expect(positionRow({ ...overnight, pnlValue: undefined }, undefined, 1e6, 'x').dayPnl).toBeCloseTo(-9.2, 2);
   });
 
-  it('re-marks the account P&L to the rows', () => {
-    const row = positionRow(overnight, undefined, 1e6, 'Technology');
-    const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, updatedAt: 0, dailyPnL: -9.20156484375184, unrealizedPnL: -9.201764843746787 };
-    const t = accountTotals(account, [row]);
-    expect(t.dayPnl).toBeCloseTo(54.8, 2);
-    expect(t.unrealized).toBeCloseTo(54.8, 2);
-  });
-
   it('falls back to IB portfolio values without a quote', () => {
     const r = positionRow(position({ marketPrice: 220, marketValue: 22_000, unrealizedPnL: 2_000 }), undefined, undefined, 'Technology');
     expect(r.last).toBe(220);
@@ -222,104 +215,64 @@ describe('positionRow', () => {
     expect(r.unrealized).toBeUndefined();
   });
 
-  it('sorts by size and sums fields', () => {
-    const a = positionRow(position({ key: 'a', marketValue: -5_000, unrealizedPnL: 1 }), undefined, 1e6, 'x');
-    const b = positionRow(position({ key: 'b', marketValue: 3_000, unrealizedPnL: 2 }), undefined, 1e6, 'x');
+  it('sorts by size', () => {
+    const a = positionRow(position({ key: 'a', marketValue: -5_000 }), undefined, 1e6, 'x');
+    const b = positionRow(position({ key: 'b', marketValue: 3_000 }), undefined, 1e6, 'x');
     const c = positionRow(position({ key: 'c' }), undefined, 1e6, 'x');
     expect(sortRows([c, b, a]).map((r) => r.key)).toEqual(['a', 'b', 'c']);
-    expect(sumRows([a, b], 'value')).toBe(-2_000);
-    expect(sumRows([a, b, c], 'value')).toBeUndefined();
-    expect(sumRows([a, b, c], 'unrealized', (r) => r.key !== 'c')).toBe(3);
-    expect(sumRows([], 'dayPnl')).toBe(0);
-    expect(sumRows([a, b], 'valueBase')).toBe(-2_000);
-    expect(grossValue([a, b])).toBe(8_000);
-    expect(grossValue([a, c])).toBeUndefined();
-  });
-
-  it('falls back to position sums for missing account figures', () => {
-    const stk = positionRow(position({ key: 'a', marketValue: 22_000, unrealizedPnL: 2_000, dailyPnL: 100 }), undefined, 1e6, 'x');
-    const opt = positionRow(
-      position({ key: 'b', contract: option('AAPL', '20261016', 230, 'C'), multiplier: 100, quantity: -2, avgPrice: 3, marketValue: -500, unrealizedPnL: 100 }),
-      undefined,
-      1e6,
-      'x',
-    );
-    const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, updatedAt: 0 };
-    expect(accountTotals(null, [stk])).toEqual({});
-    expect(accountTotals(account, [stk, opt])).toEqual({
-      dayPnl: undefined,
-      unrealized: 2_100,
-      stockValue: 22_000,
-      optionValue: -500,
-      gross: 22_500,
-      realized: undefined,
-    });
-    // Stocks and options come from the rows first (no option rows: 0, not IB's figure).
-    expect(accountTotals({ ...account, dailyPnL: -5, unrealizedPnL: 7, stockMarketValue: 1, optionMarketValue: 2, grossPositionValue: 3, realizedPnL: 4 }, [stk])).toEqual({
-      dayPnl: -5,
-      unrealized: 7,
-      stockValue: 22_000,
-      optionValue: 0,
-      gross: 3,
-      realized: 4,
-    });
-    expect(accountTotals(account, [])).toEqual({ dayPnl: undefined, unrealized: 0, stockValue: 0, optionValue: 0, gross: 0, realized: undefined });
-  });
-
-  it('values stocks and options at the rows, falling back to IB per type', () => {
-    const account = { account: 'DU1', currency: 'USD', netLiquidation: 1e6, stockMarketValue: 20_000, optionMarketValue: -400, updatedAt: 0 };
-    const stk = positionRow(position({ key: 'a', marketValue: 22_000 }), undefined, 1e6, 'x');
-    const unknown = positionRow(position({ key: 'c', marketValue: undefined, marketPrice: undefined }), undefined, 1e6, 'x');
-    const fut = positionRow(position({ key: 'f', contract: { symbol: 'MES', secType: 'FUT', exchange: 'CME', currency: 'USD' }, marketValue: 5 }), undefined, 1e6, 'x');
-    const call = option('AAPL', '20261016', 230, 'C');
-    const unknownOpt = positionRow(position({ key: 'o', contract: call, multiplier: 100, quantity: -1, avgPrice: 3 }), undefined, 1e6, 'x');
-    // Live values of the rows (futures are in neither) …
-    expect(accountTotals(account, [stk, fut])).toMatchObject({ stockValue: 22_000, optionValue: 0 });
-    // … IB's figures when a row of the type has no value.
-    expect(accountTotals(account, [stk, unknown]).stockValue).toBe(20_000);
-    expect(accountTotals(account, [stk, unknownOpt])).toMatchObject({ stockValue: 22_000, optionValue: -400 });
-    expect(accountTotals({ ...account, stockMarketValue: undefined, optionMarketValue: undefined }, [unknown]).stockValue).toBeUndefined();
-    // In the account currency: a EUR stock at IB's rate, IB's figure while the rate is unknown.
-    const eur = (fx: number | null) =>
-      positionRow(position({ key: 'e', contract: { ...stock('SAP'), currency: 'EUR' }, marketValue: 1_000 }), undefined, 1e6, 'x', fx);
-    expect(accountTotals(account, [eur(1.1)]).stockValue).toBeCloseTo(1_100, 9);
-    expect(accountTotals(account, [eur(null)]).stockValue).toBe(20_000);
-  });
-
-  it('takes today’s realized P&L from reqPnL, else from the executions', () => {
-    const account = { account: 'DU1', currency: 'USD', updatedAt: 0 };
-    const fill = (realizedPnL?: number) => ({ execId: String(realizedPnL), orderId: 1, key: 'STK:AAPL', contract: stock('AAPL'), side: 'SELL' as const, shares: 1, price: 1, time: 0, realizedPnL });
-    const executions = [fill(120.5), fill(undefined), fill(-20)];
-    expect(accountTotals({ ...account, realizedPnL: 0 }, [], executions).realized).toBe(0);
-    expect(accountTotals(account, [], executions).realized).toBeCloseTo(100.5);
-    expect(accountTotals(account, [], []).realized).toBe(0);
-    expect(accountTotals(account, []).realized).toBeUndefined();
-  });
-
-  it('computes leverage', () => {
-    expect(leverage(1_772_651, 1_284_530)).toBeCloseTo(1.38, 2);
-    expect(leverage(1, 0)).toBeUndefined();
-    expect(leverage(undefined, 1)).toBeUndefined();
-  });
-
-  it('labels leverage', () => {
-    expect(leverageLabel(leverage(1_772_651, 1_284_530))).toBe('1.38×');
-    expect(leverageLabel(0)).toBe('0.00×');
-    expect(leverageLabel(12.346)).toBe('12.35×');
-    expect(leverageLabel(undefined)).toBe('—');
-    expect(leverageLabel(NaN)).toBe('—');
   });
 });
 
-describe('margin cushion', () => {
-  it('is excess liquidity over net liquidation, red below 10 %', () => {
-    // The paper account: 961,118.10 / 1,019,763.12.
-    expect(marginCushion(961_118.1, 1_019_763.12)).toEqual({ pct: expect.closeTo(94.25, 2), fill: expect.closeTo(94.25, 2), warn: false });
-    expect(marginCushion(9, 100)).toEqual({ pct: 9, fill: 9, warn: true });
-    expect(marginCushion(10, 100)?.warn).toBe(false);
-    expect(marginCushion(-5, 100)).toEqual({ pct: -5, fill: 0, warn: true });
-    expect(marginCushion(undefined, 100)).toBeNull();
-    expect(marginCushion(5, 0)).toBeNull();
+describe('header figures', () => {
+  const summary: AccountSummary = {
+    account: 'DU1',
+    currency: 'USD',
+    netLiquidation: 1_019_763.12,
+    excessLiquidity: 961_118.1,
+    dailyPnL: -9.20156484375184,
+    unrealizedPnL: -9.201764843746787,
+    realizedPnL: 12.5,
+    stockMarketValue: 33_350,
+    optionMarketValue: -400,
+    cushion: 0.942508,
+    leverage: 1.38,
+    updatedAt: 0,
+  };
+
+  it('shows IB’s own figures as sent: reqPnL, StockMarketValue / OptionMarketValue, Leverage and Cushion', () => {
+    expect(headerFigures(summary)).toEqual({
+      dayPnl: -9.20156484375184,
+      unrealized: -9.201764843746787,
+      realized: 12.5,
+      stockValue: 33_350,
+      optionValue: -400,
+      leverage: 1.38,
+      cushionPct: expect.closeTo(94.2508, 9),
+    });
+    expect(headerFigures(null)).toEqual({});
+  });
+
+  it('leaves out what IB has not sent rather than computing it', () => {
+    // No reqPnL, no account updates, no Leverage or Cushion tag: nothing, even with every other figure at hand.
+    const bare = headerFigures({ account: 'DU1', currency: 'USD', netLiquidation: 1e6, excessLiquidity: 9e5, initMarginReq: 1e5, updatedAt: 0 });
+    expect(bare).toEqual({
+      dayPnl: undefined,
+      unrealized: undefined,
+      realized: undefined,
+      stockValue: undefined,
+      optionValue: undefined,
+      leverage: undefined,
+      cushionPct: undefined,
+    });
+  });
+
+  it('draws IB’s cushion as a bar, red below 10 %', () => {
+    expect(cushionBar(headerFigures(summary).cushionPct)).toEqual({ fill: expect.closeTo(94.25, 2), warn: false });
+    expect(cushionBar(9)).toEqual({ fill: 9, warn: true });
+    expect(cushionBar(10)?.warn).toBe(false);
+    expect(cushionBar(-5)).toEqual({ fill: 0, warn: true });
+    expect(cushionBar(120)).toEqual({ fill: 100, warn: false });
+    expect(cushionBar(undefined)).toBeNull();
     expect(MARGIN_CALL_CUSHION).toBe(10);
   });
 });

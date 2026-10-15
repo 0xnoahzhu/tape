@@ -1,10 +1,10 @@
-// Pure portfolio computations: sectors, position rows, account totals, the margin cushion and whether
-// the header's figures are live. No React and no store access, so everything is unit tested.
+// Pure portfolio computations: sectors, position rows, the header's figures (IB's own, as sent) and
+// whether they are live. No React and no store access, so everything is unit tested.
 
 import { index, multiplierOf, stock } from '@shared/contract';
 import { DASH, f0, f2 } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
-import type { AccountSummary, ConnectionStatus, ContractRef, Execution, Position, Quote, SecType } from '@shared/types';
+import type { AccountSummary, ConnectionStatus, ContractRef, Position, Quote, SecType } from '@shared/types';
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -88,11 +88,6 @@ export function sectorOf(underlyingSecType: SecType, info: Classification | unde
   if (underlyingSecType === 'STK' && !industry && !category) return ETF_SECTOR;
   if (/^funds?$/i.test(industry) || /\b(etf|etn|funds?)\b/i.test(category) || /\b(ETF|ETN)\b/.test(info.longName ?? '')) return ETF_SECTOR;
   return industry || OTHER_SECTOR;
-}
-
-/** "12.9%", "−1.0%"; "—" when unknown. */
-export function weightLabel(p: number | undefined): string {
-  return finite(p) ? `${f2(p, 1)}%` : DASH;
 }
 
 // ---------------------------------------------------------------------------
@@ -198,79 +193,35 @@ export function sortRows(rows: PositionRow[]): PositionRow[] {
   return rows.slice().sort((a, b) => size(b) - size(a) || a.key.localeCompare(b.key));
 }
 
-/** Sum of a field over rows; undefined when any contributing row lacks it. 0 for no rows. */
-export function sumRows(rows: readonly PositionRow[], field: 'value' | 'valueBase' | 'unrealized' | 'dayPnl', filter?: (r: PositionRow) => boolean): number | undefined {
-  let sum = 0;
-  for (const r of rows) {
-    if (filter && !filter(r)) continue;
-    const v = r[field];
-    if (!finite(v)) return undefined;
-    sum += v;
-  }
-  return sum;
-}
+// ---------------------------------------------------------------------------
+// Header
 
-/** Sum of absolute market values; undefined when any row has no value. */
-export function grossValue(rows: readonly PositionRow[]): number | undefined {
-  let sum = 0;
-  for (const r of rows) {
-    if (!finite(r.value)) return undefined;
-    sum += Math.abs(r.value);
-  }
-  return sum;
-}
-
-export interface AccountTotals {
+/** The header's figures: IB's own, as sent (nothing summed or derived by Tape). */
+export interface HeaderFigures {
+  /** reqPnL's daily, unrealized and realized P&L. */
   dayPnl?: number;
   unrealized?: number;
-  /**
-   * Stocks and options, shorts negative (the header's Stocks / Options): the rows' values in the
-   * account currency, so they move with the same prices as the positions table; IB's
-   * StockMarketValue / OptionMarketValue when a row has none.
-   */
+  realized?: number;
+  /** IB's StockMarketValue / OptionMarketValue (account updates). */
   stockValue?: number;
   optionValue?: number;
-  gross?: number;
-  /** P&L of positions closed today (the header's Realized Today). */
-  realized?: number;
+  /** IB's Leverage tag (gross position value / net liquidation). */
+  leverage?: number;
+  /** IB's Cushion tag in percent (excess liquidity / net liquidation; IB sends a fraction). */
+  cushionPct?: number;
 }
 
-/**
- * Account figures, falling back to sums over the positions when IB did not report them.
- * `executions` (today's) are the fallback of the realized P&L before reqPnL has answered.
- */
-export function accountTotals(a: AccountSummary | null, rows: readonly PositionRow[], executions?: readonly Execution[]): AccountTotals {
+export function headerFigures(a: AccountSummary | null): HeaderFigures {
   if (!a) return {};
-  const ofType = (t: SecType) => (r: PositionRow) => r.position.contract.secType === t;
-  // IB's account P&L is computed at the P&L engine's marks; re-mark it to the prices the rows show.
-  const adjust = rows.reduce((sum, r) => sum + remark(r.position, r.value), 0);
   return {
-    // Positions closed today only show up in the account figure, so there is no fallback without positions.
-    dayPnl: finite(a.dailyPnL) ? a.dailyPnL + adjust : rows.length ? sumRows(rows, 'dayPnl') : undefined,
-    unrealized: finite(a.unrealizedPnL) ? a.unrealizedPnL + adjust : sumRows(rows, 'unrealized'),
-    stockValue: sumRows(rows, 'valueBase', ofType('STK')) ?? a.stockMarketValue,
-    optionValue: sumRows(rows, 'valueBase', ofType('OPT')) ?? a.optionMarketValue,
-    gross: a.grossPositionValue ?? grossValue(rows),
-    realized: finite(a.realizedPnL) ? a.realizedPnL : executions ? realizedFromExecutions(executions) : undefined,
+    dayPnl: a.dailyPnL,
+    unrealized: a.unrealizedPnL,
+    realized: a.realizedPnL,
+    stockValue: a.stockMarketValue,
+    optionValue: a.optionMarketValue,
+    leverage: a.leverage,
+    cushionPct: finite(a.cushion) ? a.cushion * 100 : undefined,
   };
-}
-
-/**
- * Executions of the current New York day (`dayStart`, `nyDayStart`). The main process keeps
- * every fill of the session, so after New York midnight the list still holds yesterday's.
- */
-export function todaysExecutions(executions: readonly Execution[], dayStart: number): Execution[] {
-  return executions.filter((e) => e.time >= dayStart);
-}
-
-/** Realized P&L of executions (IB's commission reports; opening fills carry none). */
-export function realizedFromExecutions(executions: readonly Execution[]): number {
-  return executions.reduce((sum, e) => sum + (finite(e.realizedPnL) ? e.realizedPnL : 0), 0);
-}
-
-/** Gross position value / net liquidation. */
-export function leverage(gross: number | undefined, netLiq: number | undefined): number | undefined {
-  return finite(gross) && finite(netLiq) && netLiq > 0 ? gross / netLiq : undefined;
 }
 
 /** "1.38×"; "—" when unknown. */
@@ -278,29 +229,25 @@ export function leverageLabel(lev: number | undefined): string {
   return finite(lev) ? `${f2(lev)}×` : DASH;
 }
 
-// ---------------------------------------------------------------------------
-// Margin
+/** "18.4%", "−1.0%"; "—" when unknown. */
+export function pctLabel(p: number | undefined): string {
+  return finite(p) ? `${f2(p, 1)}%` : DASH;
+}
 
-/** Cushion (excess liquidity / net liquidation) below which a margin call is near. */
+/** Cushion below which a margin call is near (percent of net liquidation). */
 export const MARGIN_CALL_CUSHION = 10;
 
-export interface MarginCushion {
-  /** Excess liquidity in percent of net liquidation. */
-  pct: number;
+export interface CushionBar {
   /** Bar fill in percent (0–100). */
   fill: number;
   /** Below MARGIN_CALL_CUSHION. */
   warn: boolean;
 }
 
-/**
- * Excess liquidity / net liquidation: the same fraction as IB's "Cushion" (an account-updates
- * value), computed from the summary values the header already has.
- */
-export function marginCushion(excessLiquidity: number | undefined, netLiq: number | undefined): MarginCushion | null {
-  if (!finite(excessLiquidity) || !finite(netLiq) || netLiq <= 0) return null;
-  const pct = (excessLiquidity / netLiq) * 100;
-  return { pct, fill: Math.min(100, Math.max(0, pct)), warn: pct < MARGIN_CALL_CUSHION };
+/** The bar under Excess Liquidity for IB's cushion in percent; null while IB has not sent it. */
+export function cushionBar(pct: number | undefined): CushionBar | null {
+  if (!finite(pct)) return null;
+  return { fill: Math.min(100, Math.max(0, pct)), warn: pct < MARGIN_CALL_CUSHION };
 }
 
 // ---------------------------------------------------------------------------

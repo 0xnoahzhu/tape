@@ -44,7 +44,7 @@ through the shared `MainContext` (never inside their factory).
 | `ib/tws/` | Dependency-free TWS API client (`IBApi`, see *TWS API client*) |
 | `ib/connection.ts` | `IBApi` lifecycle, handshake, auto-reconnect, heartbeat, request/order id allocation, error routing |
 | `ib/apiLog.ts` | Records every sent/received frame, on-demand streaming to the API log views, daily log files, retention |
-| `ib/account.ts` | Account summary, positions/portfolio (IB's average cost kept as sent; the `positions` event's `loaded` says IB has listed them since the last handshake, `positionEnd`), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates from the account updates |
+| `ib/account.ts` | Account summary (with IB's own `Cushion` and `Leverage` tags), positions/portfolio (IB's average cost kept as sent; the `positions` event's `loaded` says IB has listed them since the last handshake, `positionEnd`), P&L (`reqPnL`; one `reqPnLSingle` per position: daily, unrealized and realized P&L and value), exchange rates and the stock / option market values from the account updates (their `BASE` row, the account-currency total) |
 | `ib/orders.ts` | Open orders of all clients, order status, place/modify/cancel, Cancel all (IB's global cancel), reconciliation with IB's lists, executions and commissions (today's, from `reqExecutions` on every connect) |
 | `market/contracts.ts` | Symbol search, contract details cache |
 | `market/quotes.ts` | Market data subscriptions, tick mapping, batching; demo simulator when `TAPE_DEMO=1` (development builds only) |
@@ -1589,13 +1589,14 @@ own remembered position (first: the bottom-right corner of the content area).
 
 A sticky header over the three tabs (Positions, Orders, Trades) in two tiers. Tier 1 (36 / 22px): net
 liquidation, day P&L, unrealized P&L, realized today, buying power and excess liquidity. Under excess
-liquidity hangs the margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
-`MARGIN_CALL_CUSHION`. It is positioned absolutely under the stat, so tier 1 keeps
-`alignItems: last baseline` and the 36 and 22px values one baseline; the row's bottom padding holds it,
-and excess liquidity stays the last stat so that a wrapped row carries it on its last line. Tier 2 is
-one 13px line of balances and margin that wraps item by item, each label and value on one baseline
-(the sans label and the mono value sit 2px apart otherwise). Totals are `calc.ts → accountTotals`
-(re-marked to the rows' prices). The last account's figures stay while Tape is disconnected or
+liquidity hangs IB's margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
+`MARGIN_CALL_CUSHION` (`calc.ts → cushionBar`). It is positioned absolutely under the stat, so tier 1
+keeps `alignItems: last baseline` and the 36 and 22px values one baseline; the row's bottom padding
+holds it, and excess liquidity stays the last stat so that a wrapped row carries it on its last line.
+Tier 2 is one 13px line of balances and margin that wraps item by item, each label and value on one
+baseline (the sans label and the mono value sit 2px apart otherwise). Every figure is IB's own, as IB
+sends it (`calc.ts → headerFigures`): Tape sums, re-marks and derives none of them, and one IB has not
+sent shows "—". The last account's figures stay while Tape is disconnected or
 (re)connecting (main replaces the summary only once a session is ready, and blanks it on a switch):
 `calc.ts → headerStale` then dims both tiers and a line over them says why and since when, from
 `AccountSummary.updatedAt` ("Disconnected · as of 09:41 AM", "Connecting · …", or "Another account · …"
@@ -1628,12 +1629,13 @@ and does nothing while a dialog is open. Portfolio › Orders asks IB for its li
 
 | Figure | Source |
 | --- | --- |
-| Realized Today | `reqPnL`'s realized P&L, else the sum of today's executions' realized P&L (since New York midnight) |
-| Excess Liquidity, cushion | `ExcessLiquidity`; cushion = `ExcessLiquidity` / `NetLiquidation` (`calc.ts → marginCushion`, the fraction IB's account-updates `Cushion` value holds), red below `MARGIN_CALL_CUSHION` (10 %) |
+| Net liquidation, Buying Power | `NetLiquidation`, `BuyingPower` (account summary) |
+| Day P&L, Unrealized P&L, Realized Today | `reqPnL`'s daily, unrealized and realized P&L, as IB sends them (it marks at its own prices; nothing is re-marked or summed from the rows) |
+| Excess Liquidity, cushion | `ExcessLiquidity`; the cushion is IB's `Cushion` tag (a fraction: 0.942 shows "94.2% cushion"), red below `MARGIN_CALL_CUSHION` (10 %) |
 | Cash / Margin loan | `TotalCashValue`; a negative value reads Margin loan, shown positive |
-| Stocks, Options | The position rows' values in the account currency (`valueBase`, the one-price rule) per type, IB's `StockMarketValue` / `OptionMarketValue` when a row of the type has none; IB's figures are in the tooltip (account updates; paper accounts send them only as `$LEDGER-…` keys, read from their `BASE` row, `account.ts → accountValueField`) |
+| Stocks, Options | IB's `StockMarketValue` / `OptionMarketValue` (account updates, about every 3 minutes; paper accounts send them only as `$LEDGER-…` keys). IB sends one row per currency plus `BASE`, for the plain keys as for the `$LEDGER-…` ones; only the `BASE` row is read (`account.ts → accountValueField`): a currency's own row holds that currency's positions only, the account currency's row too |
 | Init margin, Maint margin | `InitMarginReq`, `MaintMarginReq` |
-| Leverage | Gross position value / net liquidation |
+| Leverage | IB's `Leverage` tag (gross position value / net liquidation; read under `Leverage-S` too, the securities segment's name, `account.ts → summaryField`) |
 | Accrued div | `AccruedDividend` |
 
 ### Portfolio positions table (`features/portfolio`)

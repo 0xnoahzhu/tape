@@ -3,9 +3,11 @@
 // (today's executions); the last two are the orders feature's tables. ⌘1 opens Positions, ⌘3 and
 // the menu's Orders open Orders (uiState.ts → showPortfolio). Each tab fills the page height, so no
 // bare page background shows under short content. The Orders tab's bar holds "Cancel all…" (IB's
-// global cancel, confirmed in its own dialog: layout/Dialogs.tsx → CancelAllDialog). While the
-// figures are not live (disconnected, connecting, another account's summary) the header dims them and
-// says since when they are the last IB sent (calc.ts → headerStale).
+// global cancel, confirmed in its own dialog: layout/Dialogs.tsx → CancelAllDialog). The header's
+// figures are IB's own, as sent (calc.ts → headerFigures: reqPnL, the account summary's tags and
+// the account updates' values); Tape computes none of them. While they are not live (disconnected,
+// connecting, another account's summary) the header dims them and says since when they are the
+// last IB sent (calc.ts → headerStale).
 
 import { useMemo, type ReactNode } from 'react';
 import { DASH, f0, f2, sg, signColor, usd } from '@shared/format';
@@ -21,19 +23,7 @@ import { TabItems } from '../../ui/primitives';
 import { newestExecutions, workingOrders } from '../orders/model';
 import { TradesTable } from '../orders/TradesTable';
 import { WorkingTable } from '../orders/WorkingTable';
-import {
-  MARGIN_CALL_CUSHION,
-  accountTotals,
-  asOfText,
-  headerStale,
-  leverage,
-  leverageLabel,
-  marginCushion,
-  todaysExecutions,
-  weightLabel,
-  type AccountTotals,
-} from './calc';
-import { useNyDayStart } from './data';
+import { MARGIN_CALL_CUSHION, asOfText, cushionBar, headerFigures, headerStale, leverageLabel, pctLabel, type HeaderFigures } from './calc';
 import { usePortfolioMessages } from './messages';
 import { PositionsView } from './PositionsView';
 import { usePortfolioUi, type PortfolioTab } from './uiState';
@@ -59,10 +49,10 @@ function Stat({ label, children, color, big, title, foot }: { label: string; chi
   );
 }
 
-/** Under Excess Liquidity: a 3px bar with the 10% tick (red below it) and "18.4% cushion". */
-function CushionFoot({ account }: { account: AccountSummary | null }) {
+/** Under Excess Liquidity: IB's cushion as a 3px bar with the 10% tick (red below it) and "18.4% cushion". */
+function CushionFoot({ pct }: { pct: number | undefined }) {
   const m = usePortfolioMessages();
-  const c = marginCushion(account?.excessLiquidity, account?.netLiquidation);
+  const c = cushionBar(pct);
   if (!c) return null;
   // The design's red (#d9534f) is the theme's --r.
   const tone = c.warn ? 'var(--r)' : 'var(--ac)';
@@ -72,7 +62,7 @@ function CushionFoot({ account }: { account: AccountSummary | null }) {
         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${c.fill}%`, background: tone }} />
         <div style={{ position: 'absolute', left: `${MARGIN_CALL_CUSHION}%`, top: -2, bottom: -2, width: 1, background: 'var(--mu)' }} />
       </div>
-      <div style={{ font: '11px/1 var(--sans)', color: c.warn ? 'var(--r)' : 'var(--mu)' }}>{m.cushion(weightLabel(c.pct))}</div>
+      <div style={{ font: '11px/1 var(--sans)', color: c.warn ? 'var(--r)' : 'var(--mu)' }}>{m.cushion(pctLabel(pct))}</div>
     </div>
   );
 }
@@ -81,18 +71,18 @@ function CushionFoot({ account }: { account: AccountSummary | null }) {
  * Tier 2: the balances and margin in one 13px line (Cash reads Margin loan when negative). Items
  * wrap whole in a narrow window.
  */
-function AccountStrip({ account, totals }: { account: AccountSummary | null; totals: AccountTotals }) {
+function AccountStrip({ account, figures }: { account: AccountSummary | null; figures: HeaderFigures }) {
   const m = usePortfolioMessages();
   const a = account;
   const cash = a?.totalCashValue;
   const loan = cash != null && cash < 0;
   const items: Array<{ label: string; value: string; title?: string }> = [
     loan ? { label: m.marginLoan, value: f0(-cash), title: m.marginLoanHint } : { label: m.cash, value: f0(cash) },
-    { label: m.stocks, value: f0(totals.stockValue), title: m.stocksHint(f2(a?.stockMarketValue)) },
-    { label: m.options, value: sg(totals.optionValue, f0), title: m.optionsHint(f2(a?.optionMarketValue)) },
+    { label: m.stocks, value: f0(figures.stockValue), title: m.stocksHint },
+    { label: m.options, value: sg(figures.optionValue, f0), title: m.optionsHint },
     { label: m.initMargin, value: f0(a?.initMarginReq) },
     { label: m.maintMargin, value: f0(a?.maintMarginReq) },
-    { label: m.leverage, value: leverageLabel(leverage(totals.gross, a?.netLiquidation)), title: m.leverageHint },
+    { label: m.leverage, value: leverageLabel(figures.leverage), title: m.leverageHint },
     { label: m.accruedDiv, value: f0(a?.accruedDividend) },
   ];
   return (
@@ -167,7 +157,7 @@ function StaleNote({ account }: { account: AccountSummary | null }) {
   );
 }
 
-function Header({ account, totals, counts }: { account: AccountSummary | null; totals: AccountTotals; counts: Counts }) {
+function Header({ account, figures, counts }: { account: AccountSummary | null; figures: HeaderFigures; counts: Counts }) {
   const m = usePortfolioMessages();
   const accountId = useAccountId();
   const tab = usePortfolioUi((s) => s.tab);
@@ -175,7 +165,7 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
   // The last account's figures stay while Tape is not connected to it: dimmed, never shown as live.
   const stale = useStore((s) => headerStale(s.connection.status, account, s.connection.account) != null);
   const a = account;
-  const { dayPnl, unrealized, realized } = totals;
+  const { dayPnl, unrealized, realized } = figures;
   const dim = stale ? { opacity: 0.5 } : undefined;
 
   return (
@@ -186,10 +176,10 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
         <Stat label={accountId === DASH ? m.netLiq : `${m.netLiq} · ${accountId}`} big>
           {money(a?.netLiquidation, a?.currency)}
         </Stat>
-        <Stat label={m.dayPnl} color={signColor(dayPnl)}>
+        <Stat label={m.dayPnl} title={m.pnlHint} color={signColor(dayPnl)}>
           {sg(dayPnl)}
         </Stat>
-        <Stat label={m.unrealizedPnl} color={signColor(unrealized)}>
+        <Stat label={m.unrealizedPnl} title={m.pnlHint} color={signColor(unrealized)}>
           {sg(unrealized)}
         </Stat>
         <Stat label={m.realizedToday} title={m.realizedTodayHint} color={signColor(realized)}>
@@ -197,12 +187,12 @@ function Header({ account, totals, counts }: { account: AccountSummary | null; t
         </Stat>
         <Stat label={m.buyingPower}>{f0(a?.buyingPower)}</Stat>
         {/* Last, so that when the row wraps its foot is on the last line, over the padding. */}
-        <Stat label={m.excessLiquidityHd} title={m.excessLiquidityHint} foot={<CushionFoot account={a} />}>
+        <Stat label={m.excessLiquidityHd} title={m.excessLiquidityHint} foot={<CushionFoot pct={figures.cushionPct} />}>
           {f0(a?.excessLiquidity)}
         </Stat>
       </div>
       <div style={dim}>
-        <AccountStrip account={a} totals={totals} />
+        <AccountStrip account={a} figures={figures} />
       </div>
       <div data-pos="tabs" style={{ height: 46, display: 'flex', alignItems: 'stretch', gap: 28, padding: '0 32px' }}>
         <TabItems<PortfolioTab>
@@ -230,8 +220,7 @@ export function PortfolioPage() {
   // Only the connected login's: another account's never show as this one's (connectedLists.ts).
   const orders = useConnectedOrders();
   const executions = useConnectedExecutions();
-  const dayStart = useNyDayStart();
-  const totals = useMemo(() => accountTotals(account, rows, todaysExecutions(executions, dayStart)), [account, rows, executions, dayStart]);
+  const figures = useMemo(() => headerFigures(account), [account]);
   const working = useMemo(() => workingOrders(orders), [orders]);
   const trades = useMemo(() => newestExecutions(executions), [executions]);
 
@@ -239,7 +228,7 @@ export function PortfolioPage() {
   // their own (scrollGutter.ts); a second one would leave an empty strip beside their scrollbars.
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
-      <Header account={account} totals={totals} counts={{ positions: rows.length, orders: working.length, trades: trades.length }} />
+      <Header account={account} figures={figures} counts={{ positions: rows.length, orders: working.length, trades: trades.length }} />
       {tab === 'pos' && <PositionsView rows={rows} />}
       {tab === 'ord' && (
         <div data-pos="orders" style={TABLE_CARD}>

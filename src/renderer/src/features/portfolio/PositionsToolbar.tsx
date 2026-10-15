@@ -5,7 +5,7 @@
 // The items wrap onto a second line when the numbers do not fit beside the switch.
 
 import { Segmented } from '../../ui/primitives';
-import { weightLabel, type PositionRow } from './calc';
+import { pctLabel, type PositionRow } from './calc';
 import { PositionsControls } from './ColumnEditor';
 import { GROUP_BYS, type GroupBy } from './columnsState';
 import { usePositionColumns } from './columnStore';
@@ -58,7 +58,7 @@ export function PositionsToolbar({
       </div>
       {top && (
         <div data-pos="top" title={m.topHint[groupBy]} style={{ color: 'var(--mu)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
-          {m.top(top.n, weightLabel(top.pct))}
+          {m.top(top.n, pctLabel(top.pct))}
         </div>
       )}
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px 24px' }}>

@@ -17,7 +17,10 @@ import type { AccountSummary, Position } from '@shared/types';
 import type { AccountService, MainContext } from '../context';
 import { fromIbContract, num } from './ibContract';
 
-/** reqAccountSummary tags and the summary fields they fill. */
+/**
+ * reqAccountSummary tags and the summary fields they fill. The header shows IB's own Cushion and
+ * Leverage rather than computing them from the other figures.
+ */
 const SUMMARY_TAGS = {
   NetLiquidation: 'netLiquidation',
   TotalCashValue: 'totalCashValue',
@@ -26,8 +29,9 @@ const SUMMARY_TAGS = {
   ExcessLiquidity: 'excessLiquidity',
   InitMarginReq: 'initMarginReq',
   MaintMarginReq: 'maintMarginReq',
-  GrossPositionValue: 'grossPositionValue',
   AccruedDividend: 'accruedDividend',
+  Cushion: 'cushion',
+  Leverage: 'leverage',
 } as const satisfies Record<string, keyof AccountSummary>;
 
 /** updateAccountValue keys that are not part of the account summary tags. */
@@ -38,20 +42,31 @@ const ACCOUNT_VALUES = {
 
 type NumericField = (typeof SUMMARY_TAGS)[keyof typeof SUMMARY_TAGS] | (typeof ACCOUNT_VALUES)[keyof typeof ACCOUNT_VALUES];
 
+/**
+ * Tags IB may answer under another name: Leverage with its securities segment's suffix
+ * ("Leverage-S"). Only these: another tag's segment row ("NetLiquidation-S") is not the account's total.
+ */
+const SUMMARY_ALIASES: Readonly<Record<string, NumericField>> = { 'Leverage-S': 'leverage' };
+
+/** The summary field an accountSummary tag fills, if any. */
+export function summaryField(tag: string): NumericField | undefined {
+  return (SUMMARY_TAGS as Record<string, NumericField>)[tag] ?? SUMMARY_ALIASES[tag];
+}
+
 const LEDGER_PREFIX = '$LEDGER-';
 
 /**
- * The summary field an updateAccountValue fills, if any. IB sends the market values either as
- * plain keys per currency (taken in the account currency) or, as paper accounts do, only as
- * ledger keys ("$LEDGER-StockMarketValue"); of those the "BASE" row is the account-currency total
- * across ledgers (a currency's own row holds that currency's positions only).
+ * The summary field an updateAccountValue fills, if any. IB sends the market values as plain keys
+ * or, as paper accounts do, only as ledger keys ("$LEDGER-StockMarketValue"), either way one row
+ * per currency plus "BASE". Only the BASE row is the account-currency total: a currency's own row
+ * holds that currency's positions only, so it is never the account's figure, not even the account
+ * currency's row (a USD account holding HKD stocks would show its USD stocks alone). Reading BASE
+ * alone also never depends on the account currency, which is not known before NetLiquidation.
  */
-export function accountValueField(key: string, currency: string, accountCurrency: string | undefined): NumericField | undefined {
-  const ledger = key.startsWith(LEDGER_PREFIX);
-  const field = (ACCOUNT_VALUES as Record<string, NumericField>)[ledger ? key.slice(LEDGER_PREFIX.length) : key];
-  if (!field) return undefined;
-  if (ledger) return currency === 'BASE' ? field : undefined;
-  return accountCurrency && currency && currency !== accountCurrency ? undefined : field;
+export function accountValueField(key: string, currency: string): NumericField | undefined {
+  const name = key.startsWith(LEDGER_PREFIX) ? key.slice(LEDGER_PREFIX.length) : key;
+  const field = (ACCOUNT_VALUES as Record<string, NumericField>)[name];
+  return field && currency === 'BASE' ? field : undefined;
 }
 
 /**
@@ -281,7 +296,7 @@ export function createAccountService(ctx: MainContext): AccountService {
 
     ib.on(EventName.accountSummary, (reqId: number, account: string, tag: string, value: string, currency: string) => {
       if (reqId !== summaryReqId || !isActive(account)) return;
-      const field = (SUMMARY_TAGS as Record<string, NumericField>)[tag];
+      const field = summaryField(tag);
       if (!field) return;
       patchSummary({ [field]: num(value), ...(tag === 'NetLiquidation' && currency ? { currency } : {}) });
     });
@@ -295,7 +310,7 @@ export function createAccountService(ctx: MainContext): AccountService {
         patchSummary({ exchangeRates: { ...summary?.exchangeRates, [rateOf]: rate } });
         return;
       }
-      const field = accountValueField(key, currency, summary?.currency);
+      const field = accountValueField(key, currency);
       if (!field) return;
       patchSummary({ [field]: num(value) });
     });

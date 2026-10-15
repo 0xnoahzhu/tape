@@ -1,14 +1,13 @@
-// Data hooks of the Portfolio page beyond the position rows: the New York day and the current
-// minute, and what the Positions tab reads besides the rows (PositionsView.tsx): its options'
-// underlyings (the option lines and the portfolio greeks), the holdings' dividends and earnings
-// (the event chips, and the earnings columns). Each subscribes while its tab is mounted, under its
-// own quote owner, so the main process unions it with the portfolio's lines (both background):
+// Data hooks of the Portfolio page beyond the position rows: the current minute, and what the
+// Positions tab reads besides the rows (PositionsView.tsx): its options' underlyings (the option
+// lines and the portfolio greeks), the holdings' dividends and earnings (the event chips, and the
+// earnings columns). Each subscribes while its tab is mounted, under its own quote owner, so the
+// main process unions it with the portfolio's lines (both background):
 //   positions-und    option underlyings (moneyness, dollar delta) — basic; none while no option is held
 //   positions-div    the holdings' stocks — 'dividends' (generic tick 456, live lines only)
 
 import { useEffect, useMemo, useState } from 'react';
 import { contractKey } from '@shared/contract';
-import { nyDayStart } from '@shared/session';
 import type { ContractRef, CorporateEarnings, Quote, QuoteDividends } from '@shared/types';
 import { useMarketDataAvailable, useQuoteSubscriptions, useQuotesByKey } from '../../hooks/useQuotes';
 import { underlyingOf, type PositionRow } from './calc';
@@ -18,19 +17,6 @@ const HOUR = 3_600_000;
 /** How soon earnings are asked again while main's scanner is still looking dates up. */
 const PENDING_POLL_MS = 3000;
 const UNAVAILABLE: CorporateEarnings = { status: 'unavailable', events: [] };
-
-/**
- * New York midnight of the current New York day (unix ms), re-checked every minute so the
- * "today" of the fills follows the day while the app runs.
- */
-export function useNyDayStart(): number {
-  const [start, setStart] = useState(() => nyDayStart(Date.now()));
-  useEffect(() => {
-    const timer = setInterval(() => setStart(nyDayStart(Date.now())), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-  return start;
-}
 
 /** Unix ms of the current minute, so days to expiry, the event window and today's hours follow the clock. */
 export function useMinute(): number {

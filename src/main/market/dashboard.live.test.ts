@@ -4,9 +4,9 @@
 //   TAPE_LIVE_IB=127.0.0.1:4002 TAPE_CLIENT_ID=362 pnpm vitest run src/main/market/dashboard.live.test.ts
 //
 // Through the real services: the account values the header reads (net liquidation, excess
-// liquidity, margins, today's realized P&L), the IB dividend tick on a 'dividends' quote line
-// (generic tick 456, the Positions tab's 'positions-div' owner) and earnings (the paper account has
-// no WSH subscription: estimates from IB's market scanner).
+// liquidity, margins, IB's Cushion and Leverage, today's realized P&L), the IB dividend tick on a
+// 'dividends' quote line (generic tick 456, the Positions tab's 'positions-div' owner) and earnings
+// (the paper account has no WSH subscription: estimates from IB's market scanner).
 // Market data and account data only; no orders. Use a client id no other program uses.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -95,23 +95,27 @@ describe.skipIf(!live)('Portfolio data against a live IB Gateway', { timeout: 12
   it('has the account values of the header', async () => {
     const s = await until(() => {
       const a = ctx.account.getSummary();
-      return a?.netLiquidation && a.excessLiquidity !== undefined && a.maintMarginReq !== undefined && a.realizedPnL !== undefined ? a : undefined;
+      return a?.netLiquidation && a.excessLiquidity !== undefined && a.maintMarginReq !== undefined && a.realizedPnL !== undefined && a.cushion !== undefined && a.leverage !== undefined
+        ? a
+        : undefined;
     }, 15_000);
     expect(s).toBeDefined();
-    const cushion = (s!.excessLiquidity! / s!.netLiquidation!) * 100;
     console.log('[live] account', {
       netLiq: s!.netLiquidation,
       excess: s!.excessLiquidity,
       init: s!.initMarginReq,
       maint: s!.maintMarginReq,
-      gross: s!.grossPositionValue,
       realizedToday: s!.realizedPnL,
       stockMV: s!.stockMarketValue,
       optionMV: s!.optionMarketValue,
-      cushion: cushion.toFixed(2),
+      cushion: s!.cushion,
+      leverage: s!.leverage,
     });
-    expect(cushion).toBeGreaterThan(0);
-    expect(cushion).toBeLessThanOrEqual(100.0001);
+    // IB's Cushion is a fraction: excess liquidity / net liquidation.
+    expect(s!.cushion!).toBeGreaterThan(0);
+    expect(s!.cushion!).toBeLessThanOrEqual(1.0001);
+    expect(s!.cushion!).toBeCloseTo(s!.excessLiquidity! / s!.netLiquidation!, 2);
+    expect(s!.leverage!).toBeGreaterThanOrEqual(0);
     const positions = ctx.account.getPositions();
     console.log('[live] positions', positions.map((p) => `${p.contract.secType} ${p.contract.symbol} ${p.quantity}`));
   });

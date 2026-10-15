@@ -5,7 +5,7 @@
 import { compact, DASH, f0, f2, pct, px, sg, signColor } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
 import type { EarningsEvent, MarketDataType, OptionRight, Quote } from '@shared/types';
-import { qtyLabel, weightLabel } from './calc';
+import { pctLabel, qtyLabel } from './calc';
 import { applies, type CellCtx, type CellValue, type ColumnDef, type Fmt } from './columns';
 
 /** Words for IB's codes (messages.ts → cellWords). */
@@ -117,7 +117,7 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
     case 'pctS':
       return pct(v);
     case 'pctU':
-      return weightLabel(v);
+      return pctLabel(v);
     case 'pctFine':
       return `${f2(v, Math.abs(v) < 1 ? 3 : 2)}%`;
     case 'vol':

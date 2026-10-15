@@ -491,11 +491,15 @@ export interface AccountSummary {
   excessLiquidity?: number;
   initMarginReq?: number;
   maintMarginReq?: number;
-  grossPositionValue?: number;
   accruedDividend?: number;
+  /** IB's `Cushion`: excess liquidity / net liquidation, as a fraction (0.942 = 94.2 %). */
+  cushion?: number;
+  /** IB's `Leverage`: gross position value / net liquidation (1.38 = 1.38×). */
+  leverage?: number;
+  /** IB's StockMarketValue / OptionMarketValue (account updates, in the account currency). */
   stockMarketValue?: number;
   optionMarketValue?: number;
-  /** Account-level P&L from reqPnL. */
+  /** Account-level P&L from reqPnL, as IB sends it. */
   dailyPnL?: number;
   unrealizedPnL?: number;
   realizedPnL?: number;

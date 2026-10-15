@@ -111,6 +111,49 @@ describe('account service', () => {
     expect(after.pnlRealized).toBeUndefined();
   });
 
+  it('asks for IB’s Cushion and Leverage and keeps them as sent', async () => {
+    const t = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    t.ready();
+    const req = t.calls.find((c) => c[0] === 'reqAccountSummary')!;
+    const tags = String(req[3]).split(',');
+    expect(tags).toEqual(expect.arrayContaining(['Cushion', 'Leverage', 'NetLiquidation', 'ExcessLiquidity']));
+    // Nothing the header no longer shows (Tape computed leverage from it).
+    expect(tags).not.toContain('GrossPositionValue');
+    const id = req[1];
+    t.emit('accountSummary', id, 'DU1', 'Cushion', '0.942508', '');
+    t.emit('accountSummary', id, 'DU1', 'Leverage', '1.38', '');
+    expect(t.svc.getSummary()).toMatchObject({ cushion: 0.942508, leverage: 1.38 });
+    // Leverage under its securities segment's name; another tag's segment row is not the total.
+    t.emit('accountSummary', id, 'DU1', 'Leverage-S', '1.4', '');
+    t.emit('accountSummary', id, 'DU1', 'NetLiquidation', '100000', 'USD');
+    t.emit('accountSummary', id, 'DU1', 'NetLiquidation-S', '90000', 'USD');
+    expect(t.svc.getSummary()).toMatchObject({ leverage: 1.4, netLiquidation: 100_000 });
+  });
+
+  it('reads Stocks and Options from IB’s BASE row, whatever the order and the account currency', async () => {
+    const t = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    t.ready();
+    // An HKD account holding HKD and USD stocks: IB's alphabetical batch comes before NetLiquidation,
+    // while the summary still has its default currency (USD).
+    t.emit('updateAccountValue', 'ExchangeRate', '0.1282', 'HKD', 'DU1');
+    t.emit('updateAccountValue', 'OptionMarketValue', '-3000', 'BASE', 'DU1');
+    t.emit('updateAccountValue', 'OptionMarketValue', '-385', 'USD', 'DU1');
+    t.emit('updateAccountValue', 'StockMarketValue', '1170000', 'BASE', 'DU1');
+    t.emit('updateAccountValue', 'StockMarketValue', '390000', 'HKD', 'DU1');
+    t.emit('updateAccountValue', 'StockMarketValue', '100000', 'USD', 'DU1');
+    expect(t.svc.getSummary()).toMatchObject({ currency: 'USD', stockMarketValue: 1_170_000, optionMarketValue: -3_000 });
+    // The account currency arrives; a currency's own row still never replaces the total.
+    t.emit('accountSummary', t.calls.find((c) => c[0] === 'reqAccountSummary')![1], 'DU1', 'NetLiquidation', '1500000', 'HKD');
+    t.emit('updateAccountValue', 'StockMarketValue', '395000', 'HKD', 'DU1');
+    expect(t.svc.getSummary()).toMatchObject({ currency: 'HKD', stockMarketValue: 1_170_000, optionMarketValue: -3_000 });
+    // The paper account's ledger keys, the same way.
+    t.emit('updateAccountValue', '$LEDGER-StockMarketValue', '1180000', 'BASE', 'DU1');
+    t.emit('updateAccountValue', '$LEDGER-StockMarketValue', '396000', 'HKD', 'DU1');
+    expect(t.svc.getSummary()?.stockMarketValue).toBe(1_180_000);
+  });
+
   describe('when the account changes', () => {
     async function loaded() {
       const t = setup();
