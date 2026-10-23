@@ -12,7 +12,8 @@
 // they never widen the price range. Coming within a screen of the oldest loaded bar asks for
 // older bars (onNeedOlder), and asks again when a refused or empty page's wait is over, also
 // while the view stays put at the oldest bar; the view is anchored to bar times, so bars added
-// in front do not move it. A range (`fit`) shows the bars from its start to the newest until the
+// in front do not move it. Fewer bars than the screen holds (a contract listed days ago) start at
+// the left edge. A range (`fit`) shows the bars from its start to the newest until the
 // user pans, zooms or returns to the latest bars (onLeaveFit), which start from the fitted view.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';

@@ -181,8 +181,21 @@ describe('view window', () => {
     expect(resolveView({ span: 5000, end: null }, bars, 60).span).toBe(1000);
     expect(resolveView({ span: 5000, end: null }, series(3000), 60).span).toBe(1200);
     expect(resolveView(LATEST_VIEW, series(45), 60)).toEqual({ start: 0, span: 45, latest: true });
-    // A short series is right-aligned: the empty slots are on the left.
-    expect(resolveView(LATEST_VIEW, series(10), 60)).toEqual({ start: -20, span: 30, latest: true });
+    // A short series starts at the left edge: the empty slots are after its newest bar.
+    expect(resolveView(LATEST_VIEW, series(10), 60)).toEqual({ start: 0, span: 30, latest: true });
+    expect(resolveView(fitView(series(5), null), series(5), 60)).toEqual({ start: 0, span: MIN_SPAN, latest: true });
+  });
+
+  it('keeps a short series at the left edge through pans and zooms', () => {
+    const short = series(10);
+    expect(resolveView(panView(LATEST_VIEW, short, 60, -5), short, 60)).toEqual({ start: 0, span: 30, latest: true });
+    expect(resolveView(panView(LATEST_VIEW, short, 60, 5), short, 60)).toEqual({ start: 0, span: 30, latest: true });
+    expect(resolveView(zoomView(LATEST_VIEW, short, 60, 0.7, 0.5), short, 60)).toEqual({ start: 0, span: 21, latest: true });
+    // Zoomed in below the bars it has, a series fills the screen and pans again.
+    const some = series(25);
+    const z = zoomView(LATEST_VIEW, some, 60, 0.7, 0.5);
+    expect(resolveView(z, some, 60)).toMatchObject({ span: 21, latest: true });
+    expect(resolveView(panView(z, some, 60, -2), some, 60)).toMatchObject({ start: 2, span: 21, latest: false });
   });
 
   it('pans by bars and stops at the oldest and the newest bar', () => {
@@ -259,13 +272,13 @@ describe('view window', () => {
     expect(renderRange({ start: 100.5, span: 60, latest: false }, 1000)).toEqual({ from: 99, to: 162 });
     expect(renderRange({ start: 0, span: 60, latest: false }, 1000)).toEqual({ from: 0, to: 61 });
     expect(renderRange({ start: 940, span: 60, latest: true }, 1000)).toEqual({ from: 939, to: 1000 });
-    expect(renderRange({ start: -20, span: 30, latest: true }, 10)).toEqual({ from: 0, to: 10 });
+    expect(renderRange({ start: 0, span: 30, latest: true }, 10)).toEqual({ from: 0, to: 10 });
   });
 
   it('asks for older bars within a screen of the oldest loaded bar', () => {
     expect(nearOldest({ start: 61, span: 60, latest: false })).toBe(false);
     expect(nearOldest({ start: 59, span: 60, latest: false })).toBe(true);
-    expect(nearOldest({ start: -20, span: 30, latest: true })).toBe(true);
+    expect(nearOldest({ start: 0, span: 30, latest: true })).toBe(true);
   });
 });
 
@@ -318,15 +331,15 @@ describe('buildChart', () => {
     expect(g.axis.map((a) => a.frac)).toEqual([0.15, 0.5, 0.85]);
   });
 
-  it('keeps at least 30 slots and right-aligns short series', () => {
+  it('keeps at least 30 slots and starts short series at the left edge', () => {
     const g = buildChart(series(10), { count: 60 })!;
-    expect(g.window).toEqual({ start: -20, span: 30, latest: true });
+    expect(g.window).toEqual({ start: 0, span: 30, latest: true });
     const cw = VB_W / 30;
-    expect(g.candles[0].x).toBeCloseTo(20 * cw + cw * 0.22);
-    expect(g.candles[9].x + g.candles[9].w).toBeLessThan(VB_W);
-    expect(g.indexAt(0.1)).toBeNull();
-    expect(g.indexAt(0.999)).toBe(9);
-    expect(g.centerX(9)).toBeCloseTo(29 * cw + cw / 2);
+    expect(g.candles[0].x).toBeCloseTo(cw * 0.22);
+    expect(g.candles[9].x + g.candles[9].w).toBeLessThan(10 * cw);
+    expect(g.indexAt(0.01)).toBe(0);
+    expect(g.indexAt(0.5)).toBeNull();
+    expect(g.centerX(9)).toBeCloseTo(9 * cw + cw / 2);
   });
 
   it('draws the panned and zoomed window, ranging over the bars in view', () => {
@@ -730,7 +743,7 @@ describe('MA legend', () => {
   it('reads the newest bar in view when nothing is hovered', () => {
     expect(latestInView({ start: 70, span: 30, latest: true }, 100)).toBe(99);
     expect(latestInView({ start: 40.5, span: 30, latest: false }, 100)).toBe(70);
-    expect(latestInView({ start: -20, span: 30, latest: true }, 10)).toBe(9);
+    expect(latestInView({ start: 0, span: 30, latest: true }, 10)).toBe(9);
     // Panned back 10 bars: [60, 90) is in view, the legend reads bar 89.
     const bars = series(100);
     const g = buildChart(bars, { count: 30, view: panView(LATEST_VIEW, bars, 30, -10) })!;

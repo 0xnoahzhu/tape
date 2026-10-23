@@ -576,7 +576,9 @@ an active interval or range without a chip shows on the "▾" button). A range (
 is too narrow for 1.25 px a bar; YTD takes a finer interval in the first weeks of January) loads
 its span with pages sized to what is missing (Max until IB's head timestamp; a refused page is
 asked again after its wait) and fits the view to it (up to 1,200 bars per screen) until the user
-pans or zooms. Between reloads a real-time last price extends the forming bar and starts the next
+pans or zooms. A series shorter than the screen (at least 30 slots at the automatic zoom, 20 when
+zoomed in), such as an option listed days ago, starts at the left edge with the empty slots after
+its newest bar (`chartMath.ts → resolveView`). Between reloads a real-time last price extends the forming bar and starts the next
 ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator
 alerts, see *Alerts*; `chartMath.ts` re-exports it, and the moving averages come from
 `shared/indicators.ts → sma`); the live bars are kept between

@@ -125,10 +125,16 @@ export function anchorIndex(bars: readonly Bar[], a: ViewAnchor): number {
   return firstAtOrAfter(bars, a.t) + a.f;
 }
 
+/**
+ * The window a view shows. A series shorter than the screen (a contract listed days ago) starts at
+ * the left edge, the empty slots after its newest bar, as a newly listed contract's chart does in
+ * Futu or moomoo; it cannot pan then.
+ */
 export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: number): ViewWindow {
   const n = bars.length;
   const { min, max } = spanLimits(n);
   const span = clamp(view.span ?? autoSpan, min, max);
+  if (n < span) return { start: 0, span, latest: true };
   const end = clampEnd(view.end && n ? anchorIndex(bars, view.end) : n, span, n);
   return { start: end - span, span, latest: end >= n };
 }
