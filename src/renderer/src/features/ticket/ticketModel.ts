@@ -1,11 +1,11 @@
 // Pure order ticket math: default prices, tick rounding and the values shown in the ticket.
 // Kept free of React and the store so it can be unit tested.
 
-import { stock } from '@shared/contract';
 import { f2, parseNum, roundToTick, usd } from '@shared/format';
 import { TRAILING_ORDER_TYPES } from '@shared/orderRules';
 import type { ContractRef, OrderType } from '@shared/types';
 import type { TicketState } from '../../state/store';
+import { underlyingOf } from '../portfolio/calc';
 
 /** Market inputs of the ticket. Missing prices stay undefined (never invented). */
 export interface TicketMarket {
@@ -98,9 +98,12 @@ export function stepQty(qty: number, dir: 1 | -1): number {
   return Math.max(1, q - (q > 100 ? 100 : q > 10 ? 10 : 1));
 }
 
-/** The instrument a price condition watches: the underlying stock for options, else the instrument itself. */
+/**
+ * The instrument a price condition watches: an option's underlying (portfolio/calc.ts: an index
+ * option's index, else the stock), else the instrument itself.
+ */
 export function conditionContract(c: ContractRef): ContractRef {
-  return c.secType === 'OPT' ? stock(c.symbol) : c;
+  return c.secType === 'OPT' ? underlyingOf(c) : c;
 }
 
 /**

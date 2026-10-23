@@ -124,6 +124,10 @@ describe('conditionContract', () => {
     expect(conditionContract(stock('TSLA'))).toEqual(stock('TSLA'));
     expect(conditionContract(index('SPX', 'CBOE')).secType).toBe('IND');
   });
+
+  it('watches the index for index options', () => {
+    expect(conditionContract(option('SPX', '20261120', 6000, 'P', { tradingClass: 'SPXW' }))).toEqual(index('SPX', 'CBOE'));
+  });
 });
 
 describe('money', () => {

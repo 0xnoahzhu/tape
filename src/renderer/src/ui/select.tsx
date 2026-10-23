@@ -22,7 +22,9 @@ const editable = (t: EventTarget | null) => {
 
 /**
  * A menu under (or above, when there is no room) an anchor, drawn over everything in a portal so
- * a scrolling body (the ticket's, a dialog's) does not clip it. Clicking outside or Escape closes it.
+ * a scrolling body (the ticket's, a dialog's) does not clip it. Clicking outside or Escape closes it,
+ * and so does locking, which presses the body (lockActions.ts → closeTransientUi): no other press
+ * lands there while the menu's layer covers it.
  *
  * While it is open it owns the keyboard: ↑ / ↓ / Home / End move through the available items,
  * Enter picks the highlighted one, and no key reaches the shortcuts behind it (Enter there would
@@ -69,6 +71,13 @@ export function Dropdown({ anchor, onClose, width, zIndex = 19, children }: { an
     const home = keysHome(anchor);
     return () => void giveKeysBack(home);
   }, [anchor]);
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (e.target === document.body) onClose();
+    };
+    window.addEventListener('mousedown', onDown, true);
+    return () => window.removeEventListener('mousedown', onDown, true);
+  }, [onClose]);
   useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

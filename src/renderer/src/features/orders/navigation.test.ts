@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { useStore } from '../../state/store';
 import { usePortfolioUi } from '../portfolio/uiState';
-import { openNotificationTarget } from './navigation';
+import { openNotificationTarget, openOptionChart } from './navigation';
 
 describe('opening a notification', () => {
   const initial = useStore.getState();
@@ -37,5 +37,20 @@ describe('opening a notification', () => {
     useStore.setState({ page: 'acct', view: 'opt' });
     openNotificationTarget(stock('NVDA'), undefined);
     expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'opt', symbol: stock('NVDA') });
+  });
+});
+
+describe('opening an option chart', () => {
+  const initial = useStore.getState();
+  beforeEach(() => {
+    useStore.setState({ ...initial, page: 'acct', view: 'opt', symbol: stock('AAPL') }, true);
+  });
+
+  it('selects the option itself on Trade › Chart, SMART-routed, with the ticket emptied for it', () => {
+    useStore.getState().patchTicket({ limitPrice: 231.5 });
+    const held = { ...option('AAPL', '20261016', 230, 'C'), exchange: 'AMEX', conId: 7 };
+    openOptionChart(held);
+    expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'chart', symbol: { ...held, exchange: 'SMART' } });
+    expect(useStore.getState().ticket.limitPrice).toBeNull();
   });
 });

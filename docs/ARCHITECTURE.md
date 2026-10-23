@@ -1203,7 +1203,9 @@ delete open files):
   Chip, TabItems, TextInput, Button, Modal, KeyValueRows, AccountTag, Popover, MenuItem).
   `ui/select.tsx` has the drop-down menus (Dropdown, MenuHeading, MenuChoice, and Select, a 34px box
   whose options may carry a `group` heading and, with `showWhy`, show why one is unavailable): the
-  order ticket's and the alert dialog's. Segmented and
+  order ticket's and the alert dialog's, and the context menus of the alerts list, the positions table's
+  option rows, the activity panel's option rows and the chain's cells. A Dropdown also closes on a press
+  on the body, which only locking makes (`state/lockActions.ts → closeTransientUi`). Segmented and
   TabItems items carry `data-key` (and `data-active` on the selected one) for UI tests. `Modal` swallows
   the rest of a double-click that began before it opened (`isCarriedOverClick`: a click with `detail` > 1
   within 500 ms), so the second click of a double-click on Submit neither closes the review on its
@@ -1289,10 +1291,17 @@ under the options desk the panel adds the underlying's in its header while an op
 (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`: Δ sh, $Δ, Γ, Θ/day,
 Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New York days, `optionDte`, in the accent
 within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares, so the column adds up to the exposure's
-Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Modify
+Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Under either
+view an option row's context menu opens the option's own chart (`orders/navigation.ts →
+openOptionChart`: SMART-routed as its quotes are; the option becomes the ticket's instrument). Modify
 from the options view switches to the chart, where the ticket is. An order just placed from a floating
 panel flashes for 15 s from IB's acceptance (`activityModel.ts → isFreshOrder`,
-`state/orderFeedback.ts`). The options desk itself has the tabs Chain and Volatility.
+`state/orderFeedback.ts`). The options desk itself has the tabs Chain and Volatility. A call's or put's
+context menu in the chain (any of its cells) opens that option's chart; back on Options the desk keeps
+the chain it came from (`options/data.ts → underlyingOf` with the desk's current underlying,
+`deskStore.ts`), so the strategy's legs stay. An option selected otherwise maps to its underlying as a
+position does (`portfolio/calc.ts → underlyingOf`: an index option to its index), as does the
+instrument a ticket's price condition watches (`ticket/ticketModel.ts → conditionContract`).
 
 ### Order ticket (`features/ticket`)
 
@@ -1805,7 +1814,10 @@ session (`columnStore.ts → toggleGroup`).
 
 **Option lines** (`cells.ts → optionLineText`, pure). An option or futures option row's second line
 reads IB's contract: the right and the expiry, "Call · 10/16" (no days to expiry, no moneyness: IB
-sends neither); other rows' read their type and sector.
+sends neither); other rows' read their type and sector. A click on a row opens its underlying on the
+Trade page (`calc.ts → positionTarget`: an option's in the option chain); an option row's context menu
+(a `Dropdown` under the cell, headed by the contract) offers the option's own chart as well
+(`orders/navigation.ts → openOptionChart`), and the rows keep their places while it is open.
 
 **Exposure** (`exposure.ts`, pure), for the Trade page's activity panel under the options desk only
 (see *Trade page*): `portfolioGreeks` adds IB's per-share model greeks of each option × quantity ×

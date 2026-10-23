@@ -28,8 +28,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   a sum; groups collapse, and a single position stands on its own without a group row. The next
   **earnings or ex-dividend date** within two weeks shows as a chip on the group (or the stock's row):
   *Earnings 10/23 AMC* (Wall Street Horizon), *Ex-div 10/15 $0.24* (IB's dividend data). Option rows
-  read *Call · 10/16* (the right and the expiry). Every column sorts the groups (by their best row) and
-  the rows within them. A **column editor** adds contract details, quote fields, IB's option model
+  read *Call · 10/16* (the right and the expiry). A click on a row opens its underlying on the Trade
+  page (an option's in the option chain); right-click an option for its own chart. Every column sorts
+  the groups (by their best row) and the rows within them. A **column editor** adds contract details, quote fields, IB's option model
   values (IV and greeks), 52-week ranges, volatility, option and trading activity, short-sale data,
   dividends, earnings dates, ETF NAV, futures open interest and bond details (107 columns, every one
   IB's data; those not yet checked against IB's data say so, and the extra quote fields are asked of IB
@@ -74,7 +75,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,
   side, contract, quantity @ price, last price where the panel is wide enough, status, Modify / Cancel),
-  under column names; a splitter resizes it and it collapses to a bar.
+  under column names; right-click an option position for its own chart. A splitter resizes the panel
+  and it collapses to a bar. An option's chart opens on the Trade page like any instrument's, so the
+  order ticket then trades the option.
 - **Order ticket**: limit, market, stop, stop limit and trailing stop (amount or percent), and under **More**
   market / limit if touched, trailing stop limit, trailing MIT / LIT, market / limit on close, market / limit
   on open, market to limit, midprice, relative, snap to midpoint / market and pegged to midpoint; time in force
@@ -125,7 +128,8 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   open-interest ratios in the desk header; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
   non-guaranteed; tabs Chain / Volatility. Under the desk the same positions and open-orders panel as under
   the chart, with the underlying's exposure (Δ sh, $Δ, Γ, Θ/day, Vega/pt) and DTE and Δ per position; a
-  click on an option opens its expiry in the chain. Option risk alerts are in the bell. Always available:
+  click on an option opens its expiry in the chain. Right-click a call or put in the chain for its own
+  chart (back on Options the chain is the one it came from). Option risk alerts are in the bell. Always available:
   without OPRA the quotes are delayed.
 - **Level 2**: a 5-level book in the order ticket (docked or floating), behind the switch in *Settings ›
   Market Data* (off by default: an open book uses one of the depth lines IB allows per user, 3 by

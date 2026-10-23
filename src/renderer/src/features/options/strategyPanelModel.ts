@@ -21,13 +21,12 @@ export function useStrategyPanelModel(): DeskModel {
   const symbolRef = useStore((s) => s.symbol);
   const symKey = contractKey(symbolRef);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const underlying = useMemo(() => underlyingOf(symbolRef), [symKey]);
-  const uKey = underlying ? contractKey(underlying) : '';
+  const underlying = useMemo(() => underlyingOf(symbolRef, useDesk.getState().underlying), [symKey]);
   const expiry = useDesk((s) => s.expiry);
   const legs = useDesk((s) => s.legs);
   // A new underlying starts a new strategy, as on the desk (idempotent when both run).
   const setUnderlying = useDesk((s) => s.setUnderlying);
-  useEffect(() => setUnderlying(uKey), [uKey, setUnderlying]);
+  useEffect(() => setUnderlying(underlying), [underlying, setUnderlying]);
 
   const underlyingList = useMemo(() => (underlying ? [underlying] : []), [underlying]);
   useQuoteSubscriptions('strategy-panel-underlying', underlyingList, 'underlying');

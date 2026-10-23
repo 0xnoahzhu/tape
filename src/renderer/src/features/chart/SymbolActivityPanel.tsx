@@ -8,10 +8,11 @@
 // owner; options with their model greeks) serve the exposure below; the open orders' lines are held
 // only while their tab shows ('symbol-orders'). Under the options desk (`options`) the panel adds
 // the underlying's exposure (Δ, $Δ, Γ, Θ, Vega: exposure.ts → portfolioGreeks), DTE and Δ cells on
-// the rows, and a click on an option row opens its expiry in the chain. An order just placed from a
-// floating panel flashes in the open orders (activityModel.ts → isFreshOrder).
+// the rows, and a click on an option row opens its expiry in the chain. Under either view an option
+// row's context menu opens the option's own chart (it becomes the ticket's instrument). An order just
+// placed from a floating panel flashes in the open orders (activityModel.ts → isFreshOrder).
 
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
@@ -25,9 +26,11 @@ import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
 import { TabItems } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
+import { Dropdown, MenuChoice } from '../../ui/select';
 import { useDesk } from '../options/deskStore';
 import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
 import { useOrdersMessages } from '../orders/messages';
+import { openOptionChart } from '../orders/navigation';
 import { OrderActions } from '../orders/OrderActions';
 import { modifyOrderInTicket } from '../panels/actions';
 import { positionRow, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
@@ -110,46 +113,72 @@ interface OptionCells {
 
 function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
   const m = useChartMessages();
+  const common = useCommon();
   const sources = usePortfolioMessages().words.sources;
   const source = (s: FigureSource | undefined) => (s ? sources[s] : undefined);
+  const [menu, setMenu] = useState<HTMLElement | null>(null);
   const p = r.position;
   const expiry = opt?.expiry;
   return (
-    <div
-      data-activity="position"
-      data-position={r.key}
-      data-expiry={expiry}
-      onClick={expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : undefined}
-      title={expiry ? m.openExpiry : undefined}
-      className={expiry ? 'hover-p2' : undefined}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: opt ? POS_GRID_OPT : POS_GRID,
-        gap: 12,
-        padding: '0 24px',
-        height: 34,
-        alignItems: 'center',
-        font: '13px/1 var(--num)',
-        fontVariantNumeric: 'tabular-nums',
-        boxShadow: 'inset 0 1px 0 var(--ln2)',
-        cursor: expiry ? 'pointer' : undefined,
-      }}
-    >
-      <div className="ellipsis" style={{ fontFamily: 'var(--sans)' }}>
-        {contractLabel(p.contract)}
+    <>
+      <div
+        data-activity="position"
+        data-position={r.key}
+        data-expiry={expiry}
+        onClick={expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : undefined}
+        onContextMenu={
+          isOption(p.contract)
+            ? (e) => {
+                e.preventDefault();
+                // Under the cell clicked.
+                const row = e.currentTarget;
+                setMenu([...row.children].find((c): c is HTMLElement => c.contains(e.target as Node)) ?? row);
+              }
+            : undefined
+        }
+        title={expiry ? m.openExpiry : undefined}
+        className={expiry ? 'hover-p2' : undefined}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: opt ? POS_GRID_OPT : POS_GRID,
+          gap: 12,
+          padding: '0 24px',
+          height: 34,
+          alignItems: 'center',
+          font: '13px/1 var(--num)',
+          fontVariantNumeric: 'tabular-nums',
+          boxShadow: 'inset 0 1px 0 var(--ln2)',
+          cursor: expiry ? 'pointer' : undefined,
+        }}
+      >
+        <div className="ellipsis" style={{ fontFamily: 'var(--sans)' }}>
+          {contractLabel(p.contract)}
+        </div>
+        <NumCell text={(p.quantity < 0 ? MINUS : '') + f0(Math.abs(p.quantity))} />
+        {opt && (
+          <>
+            <NumCell cell="dte" text={opt.dte ? f0(opt.dte.days) : ''} color={opt.dte?.soon ? 'var(--ac)' : undefined} />
+            <NumCell cell="delta" text={signed0(opt.delta)} />
+          </>
+        )}
+        <NumCell cell="averageCost" text={px(p.averageCost)} color="var(--mu)" />
+        <NumCell cell="value" text={f0(r.value)} source={source(r.valueSource)} />
+        <NumCell cell="unrealized" text={signed0(r.unrealized)} color={signColor(r.unrealized)} source={source(r.unrealizedSource)} />
+        <NumCell cell="dayPnl" text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} source={r.dayPnl === undefined ? undefined : sources.pnl} />
       </div>
-      <NumCell text={(p.quantity < 0 ? MINUS : '') + f0(Math.abs(p.quantity))} />
-      {opt && (
-        <>
-          <NumCell cell="dte" text={opt.dte ? f0(opt.dte.days) : ''} color={opt.dte?.soon ? 'var(--ac)' : undefined} />
-          <NumCell cell="delta" text={signed0(opt.delta)} />
-        </>
+      {/* Beside the row, not in it: a pick would reach the row's click through the portal. */}
+      {menu && (
+        <Dropdown anchor={menu} width={180} onClose={() => setMenu(null)}>
+          <MenuChoice
+            label={common.openChart}
+            onPick={() => {
+              setMenu(null);
+              openOptionChart(p.contract);
+            }}
+          />
+        </Dropdown>
       )}
-      <NumCell cell="averageCost" text={px(p.averageCost)} color="var(--mu)" />
-      <NumCell cell="value" text={f0(r.value)} source={source(r.valueSource)} />
-      <NumCell cell="unrealized" text={signed0(r.unrealized)} color={signColor(r.unrealized)} source={source(r.unrealizedSource)} />
-      <NumCell cell="dayPnl" text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} source={r.dayPnl === undefined ? undefined : sources.pnl} />
-    </div>
+    </>
   );
 }
 

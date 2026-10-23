@@ -54,6 +54,8 @@ export const usePortfolioMessages = createMessages({
     tabPos: 'Positions',
     tabOrders: 'Orders',
     tabTrades: 'Trades',
+    /** An option row's context menu: its underlying's option chain (what a click opens). */
+    optionChain: 'Option chain',
 
     // Positions toolbar
     groupBy: 'Group by',
@@ -448,6 +450,7 @@ export const usePortfolioMessages = createMessages({
     tabPos: '持仓',
     tabOrders: '订单',
     tabTrades: '成交',
+    optionChain: '期权链',
 
     groupBy: '分组',
     groupByOptions: { underlying: '标的', sector: '行业', none: '不分组' } as Record<GroupBy, string>,

@@ -5,6 +5,7 @@ import { contractKey, sameContract, stock } from '@shared/contract';
 import type { NotificationView } from '@shared/ipc';
 import type { ContractRef, LocalizedName } from '@shared/types';
 import { useStore, type TradeView } from '../../state/store';
+import { quoteContract } from '../portfolio/calc';
 import { showPortfolio } from '../portfolio/uiState';
 
 function watchedContracts(): Array<{ contract: ContractRef; name?: LocalizedName }> {
@@ -33,6 +34,14 @@ export function underlyingOf(contract: ContractRef): ContractRef {
 export function openInstrument(contract: ContractRef, view?: TradeView): void {
   const target = view === 'opt' ? underlyingOf(contract) : contract;
   useStore.getState().openSymbol(target, view, knownName(target));
+}
+
+/**
+ * Opens an option's own chart (a context menu of an option position or a chain cell), SMART-routed
+ * as its quotes are. It becomes the selected instrument, so the order ticket trades it.
+ */
+export function openOptionChart(contract: ContractRef): void {
+  openInstrument(quoteContract(contract), 'chart');
 }
 
 /**

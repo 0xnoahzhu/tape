@@ -3,15 +3,21 @@
 import { useMemo } from 'react';
 import { contractKey, stock } from '@shared/contract';
 import type { Bar, ContractRef, HistoryRequest, OptionChainParams } from '@shared/types';
+import { underlyingOf as positionUnderlying } from '../portfolio/calc';
 import { buildChain, type ChainExpiry } from './chain';
 import { ivRank } from './math';
 import { retryRequest, seedRequest, useCachedRequest } from './requests';
 
-/** The instrument whose chain is shown: stocks / ETFs and indices; an option maps to its stock. */
-export function underlyingOf(c: ContractRef): ContractRef | null {
+/**
+ * The instrument whose chain is shown: stocks / ETFs and indices. An option charted from the chain
+ * keeps that chain (`current`, the desk's underlying, when symbol and currency match); another maps
+ * to its underlying as a position does (portfolio/calc.ts: an index option to its index, else the stock).
+ */
+export function underlyingOf(c: ContractRef, current?: ContractRef | null): ContractRef | null {
   if (c.secType === 'STK' || c.secType === 'IND') return c;
-  if (c.secType === 'OPT') return stock(c.symbol);
-  return null;
+  if (c.secType !== 'OPT') return null;
+  if (current && current.symbol === c.symbol && (current.currency || 'USD') === (c.currency || 'USD')) return current;
+  return positionUnderlying(c);
 }
 
 const HOUR = 3_600_000;

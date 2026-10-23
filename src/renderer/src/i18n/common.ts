@@ -23,6 +23,8 @@ export const useCommon = createMessages({
     option: 'Option',
     index: 'Index',
     contract: 'Contract',
+    /** An option's own chart (the context menus of option positions and chain cells). */
+    openChart: 'Open chart',
     side: 'Side',
     qty: 'Qty',
     price: 'Price',
@@ -221,6 +223,7 @@ export const useCommon = createMessages({
     option: '期权',
     index: '指数',
     contract: '合约',
+    openChart: '打开图表',
     side: '方向',
     qty: '数量',
     price: '价格',

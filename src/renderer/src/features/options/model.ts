@@ -75,12 +75,11 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
   const symbolRef = useStore((s) => s.symbol);
   const symKey = contractKey(symbolRef);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const underlying = useMemo(() => underlyingOf(symbolRef), [symKey]);
-  const uKey = underlying ? contractKey(underlying) : '';
+  const underlying = useMemo(() => underlyingOf(symbolRef, useDesk.getState().underlying), [symKey]);
   const marketIssue = useStore((s) => s.connection.marketDataIssue);
   const { tab, range, expiry, legs } = useDesk();
   const setUnderlying = useDesk((s) => s.setUnderlying);
-  useEffect(() => setUnderlying(uKey), [uKey, setUnderlying]);
+  useEffect(() => setUnderlying(underlying), [underlying, setUnderlying]);
 
   const underlyingList = useMemo(() => (underlying ? [underlying] : []), [underlying]);
   useQuoteSubscriptions('options-underlying', underlyingList, 'underlying');

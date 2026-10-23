@@ -1,6 +1,7 @@
 // Positions tab: the columns chosen in the column editor (ColumnEditor.tsx; by default Symbol, Qty,
 // Avg cost, Price, Value, Unrl. P&L and Day P&L), grouped as the toolbar's Group by says
-// (PositionsToolbar.tsx) and sortable by a header click. Rows open the underlying on the Trade page.
+// (PositionsToolbar.tsx) and sortable by a header click. Rows open the underlying on the Trade page;
+// an option row's context menu also opens the option's own chart (it becomes the ticket's instrument).
 // Every cell is IB's own figure (columns.ts); Tape adds nothing up and derives nothing.
 //
 // Grouped by underlying (the default) or by sector, a group of two or more rows gets a group row
@@ -46,6 +47,8 @@ import { useStore } from '../../state/store';
 import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
+import { Dropdown, MenuChoice, MenuHeading } from '../../ui/select';
+import { openOptionChart } from '../orders/navigation';
 import { positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, formatValue, optionLineText, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
@@ -437,6 +440,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const [hold, setHold] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [live, setLive] = useState<LiveWidth | null>(null);
+  const [menu, setMenu] = useState<{ contract: ContractRef; anchor: HTMLElement } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -461,7 +465,8 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const byKey = useMemo(() => new Map(groups.map((g) => [g.key, g])), [groups]);
   const labelOf = useCallback((g: RowGroup) => (g.kind === 'sector' ? sectorLabel(m, g.label) : g.label), [m]);
   const wanted = useMemo(() => orderGroups(groups, sort, lang, labelOf), [groups, sort, lang, labelOf]);
-  const order = useDrawnGroups(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}:${groupBy}`, hold);
+  // An option row's open menu holds the rows too: the pointer has left them for the menu.
+  const order = useDrawnGroups(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}:${groupBy}`, hold || !!menu);
   const chips = useMemo(() => chipTargets(groups, groupBy, events), [groups, groupBy, events]);
 
   // The tracks go to the rows through the table's --pos-cols, so sizing a column redraws no row.
@@ -478,6 +483,11 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const open = (c: ContractRef) => {
     const t = positionTarget(c);
     openSymbol(t.contract, t.view);
+  };
+  const onMenu = (contract: ContractRef, anchor: HTMLElement) => setMenu({ contract, anchor });
+  const pick = (fn: (c: ContractRef) => void) => () => {
+    setMenu(null);
+    if (menu) fn(menu.contract);
   };
 
   const body: ReactNode[] = [];
@@ -509,7 +519,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
     for (const id of og.ids) {
       const c = ctxs.get(id);
       if (!c) continue;
-      body.push(<RowView key={id} c={c} defs={defs} scrolled={scrolled} words={words} clock={clock} nested={headed} chip={chips.rows.get(id)} onOpen={open} />);
+      body.push(<RowView key={id} c={c} defs={defs} scrolled={scrolled} words={words} clock={clock} nested={headed} chip={chips.rows.get(id)} onOpen={open} onMenu={onMenu} />);
     }
   }
 
@@ -581,6 +591,13 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
         <div data-pos="events-note" style={{ position: 'sticky', left: 0, padding: '10px 32px 14px', fontSize: 11, color: 'var(--dm)' }}>
           {note}
         </div>
+      )}
+      {menu && (
+        <Dropdown anchor={menu.anchor} width={200} onClose={() => setMenu(null)}>
+          <MenuHeading>{contractLabel(menu.contract)}</MenuHeading>
+          <MenuChoice label={common.openChart} onPick={pick(openOptionChart)} />
+          <MenuChoice label={m.optionChain} onPick={pick(open)} />
+        </Dropdown>
       )}
     </div>
   );
@@ -925,6 +942,8 @@ interface RowProps {
   nested: boolean;
   chip?: CorporateEvent;
   onOpen: (c: ContractRef) => void;
+  /** An option row's context menu, opened under the cell clicked. */
+  onMenu: (c: ContractRef, anchor: HTMLElement) => void;
 }
 
 /** Own fields equal by identity, leaving out `skip`. */
@@ -957,14 +976,24 @@ const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.c.now === b.c.now &&
   sameRow(a.c.row, b.c.row);
 
-const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, chip, onOpen }: RowProps) {
+const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, chip, onOpen, onMenu }: RowProps) {
   const p = c.row.position;
+  // A click opens an option's chain; its context menu offers the option's own chart too.
+  const menu = p.contract.secType === 'OPT';
   return (
     <div
       role="row"
       data-pos-row={rowId(c.row)}
       data-nested={nested || undefined}
       onClick={() => onOpen(p.contract)}
+      onContextMenu={
+        menu
+          ? (e) => {
+              e.preventDefault();
+              onMenu(p.contract, (e.target as HTMLElement).closest<HTMLElement>('[role="cell"]') ?? e.currentTarget);
+            }
+          : undefined
+      }
       className="hover-p2 pos-row"
       style={{
         display: 'grid',

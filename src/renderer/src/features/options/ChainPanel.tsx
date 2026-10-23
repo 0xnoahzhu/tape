@@ -1,11 +1,16 @@
 // Option chain: column preset / strike range toolbar, CALLS | Strike | PUTS grid.
-// Clicking Bid adds a SELL leg, clicking Ask a BUY leg.
+// Clicking Bid adds a SELL leg, clicking Ask a BUY leg. A call's or put's context menu (any of its
+// cells) opens that option's own chart, which makes it the ticket's instrument.
 
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { contractLabel } from '@shared/contract';
 import { f2 } from '@shared/format';
-import type { OptionRight, OrderAction } from '@shared/types';
+import type { ContractRef, OptionRight, OrderAction } from '@shared/types';
+import { useCommon } from '../../i18n/common';
 import { Segmented } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
+import { Dropdown, MenuChoice, MenuHeading } from '../../ui/select';
+import { openOptionChart } from '../orders/navigation';
 import { revealPanel } from '../panels/actions';
 import { cellColor, COLUMN_PRESETS, formatCell, type ColumnKey, type OptionData } from './chain';
 import { useDesk, type StrikeRange } from './deskStore';
@@ -118,8 +123,10 @@ function ChainHeaders({ keys, widths }: { keys: ColumnKey[]; widths: number[] })
 }
 
 function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnKey[]; onVisible: (r: { from: number; to: number }) => void }) {
+  const common = useCommon();
   const ref = useRef<HTMLDivElement>(null);
   const { range, preset, addLeg } = useDesk();
+  const [menu, setMenu] = useState<{ contract: ContractRef; anchor: HTMLElement } | null>(null);
   const exp = model.exp!;
 
   const head = useRef<HTMLDivElement>(null);
@@ -178,16 +185,28 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
               }}
             >
               {[...keys].reverse().map((k) => (
-                <Cell key={'c' + k} k={k} d={r.call} itm={r.callItm} side="C" onAdd={(s) => add(s, 'C', r.strike)} />
+                <Cell key={'c' + k} k={k} d={r.call} itm={r.callItm} side="C" onAdd={(s) => add(s, 'C', r.strike)} onMenu={(anchor) => setMenu({ contract: r.callContract, anchor })} />
               ))}
               <StrikeCell row={r} />
               {keys.map((k) => (
-                <Cell key={'p' + k} k={k} d={r.put} itm={r.putItm} side="P" onAdd={(s) => add(s, 'P', r.strike)} />
+                <Cell key={'p' + k} k={k} d={r.put} itm={r.putItm} side="P" onAdd={(s) => add(s, 'P', r.strike)} onMenu={(anchor) => setMenu({ contract: r.putContract, anchor })} />
               ))}
             </div>
           ))}
         </div>
       </div>
+      {menu && (
+        <Dropdown anchor={menu.anchor} width={200} onClose={() => setMenu(null)}>
+          <MenuHeading>{contractLabel(menu.contract)}</MenuHeading>
+          <MenuChoice
+            label={common.openChart}
+            onPick={() => {
+              setMenu(null);
+              openOptionChart(menu.contract);
+            }}
+          />
+        </Dropdown>
+      )}
     </div>
   );
 }
@@ -203,7 +222,22 @@ function StrikeCell({ row }: { row: ChainRow }) {
   );
 }
 
-function Cell({ k, d, itm, side, onAdd }: { k: ColumnKey; d: OptionData; itm: boolean; side: OptionRight; onAdd: (s: OrderAction) => void }) {
+function Cell({
+  k,
+  d,
+  itm,
+  side,
+  onAdd,
+  onMenu,
+}: {
+  k: ColumnKey;
+  d: OptionData;
+  itm: boolean;
+  side: OptionRight;
+  onAdd: (s: OrderAction) => void;
+  /** The option's context menu, opened under this cell. */
+  onMenu: (anchor: HTMLElement) => void;
+}) {
   const click = k === 'bid' || k === 'ask';
   const style: CSSProperties = {
     display: 'flex',
@@ -216,7 +250,14 @@ function Cell({ k, d, itm, side, onAdd }: { k: ColumnKey; d: OptionData; itm: bo
     ...(side === 'C' ? { justifyContent: 'flex-end', paddingRight: 10 } : { paddingLeft: 10 }),
   };
   return (
-    <div onClick={click ? () => onAdd(k === 'ask' ? 'BUY' : 'SELL') : undefined} style={style}>
+    <div
+      onClick={click ? () => onAdd(k === 'ask' ? 'BUY' : 'SELL') : undefined}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu(e.currentTarget);
+      }}
+      style={style}
+    >
       {formatCell(k, d)}
     </div>
   );

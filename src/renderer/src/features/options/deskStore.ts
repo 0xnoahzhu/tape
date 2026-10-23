@@ -2,6 +2,8 @@
 // expiry, columns and strategy legs survive switching between the Chart and Options views.
 
 import { create } from 'zustand';
+import { contractKey } from '@shared/contract';
+import type { ContractRef } from '@shared/types';
 import type { ColumnPreset } from './chain';
 import { addLeg, type Leg, type NewLeg, type StrategyKey } from './strategies';
 
@@ -14,6 +16,8 @@ export type StrikeRange = 5 | 12 | 25 | 'all';
 interface DeskState {
   /** contractKey of the underlying the legs belong to. */
   underlyingKey: string;
+  /** That underlying: an option charted from its chain keeps it (data.ts → underlyingOf). */
+  underlying: ContractRef | null;
   tab: DeskTab;
   preset: ColumnPreset;
   range: StrikeRange;
@@ -40,7 +44,7 @@ interface DeskState {
   netPrice: number | null;
 
   /** Resets per-underlying state (legs, expiry) when the instrument changes. */
-  setUnderlying(key: string): void;
+  setUnderlying(underlying: ContractRef | null): void;
   patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed' | 'netPrice'>>): void;
   addLeg(leg: NewLeg): void;
   setLegs(legs: NewLeg[], tmpl: StrategyKey | null): void;
@@ -51,6 +55,7 @@ interface DeskState {
 
 export const useDesk = create<DeskState>()((set) => ({
   underlyingKey: '',
+  underlying: null,
   tab: 'chain',
   preset: 'key',
   range: 12,
@@ -68,8 +73,11 @@ export const useDesk = create<DeskState>()((set) => ({
   nonGuaranteed: false,
   netPrice: null,
 
-  setUnderlying: (key) =>
-    set((s) => (s.underlyingKey === key ? s : { underlyingKey: key, expiry: null, legs: [], tmpl: null, expOpen: false, condPx: null, netPrice: null })),
+  setUnderlying: (underlying) =>
+    set((s) => {
+      const key = underlying ? contractKey(underlying) : '';
+      return s.underlyingKey === key ? s : { underlyingKey: key, underlying, expiry: null, legs: [], tmpl: null, expOpen: false, condPx: null, netPrice: null };
+    }),
   patch: (p) => set(p),
   addLeg: (leg) => set((s) => ({ legs: addLeg(s.legs, leg, s.seq), seq: s.seq + 1, tmpl: null, netPrice: null })),
   setLegs: (legs, tmpl) => set((s) => ({ legs: legs.map((l, i) => ({ ...l, id: s.seq + i })), seq: s.seq + legs.length, tmpl, tmplOpen: false, netPrice: null })),

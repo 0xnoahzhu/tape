@@ -87,7 +87,7 @@ export const useM = createMessages({
     calls: 'CALLS',
     puts: 'PUTS',
     strike: 'Strike',
-    hint: 'Bid = sell · Ask = buy · shaded = ITM · ±1σ = expected move',
+    hint: 'Bid = sell · Ask = buy · shaded = ITM · ±1σ = expected move · right-click = chart',
     // Header metrics
     ivAtm: 'ATM IV',
     ivRank: 'IV Rank',
@@ -207,7 +207,7 @@ export const useM = createMessages({
     calls: '看涨 CALL',
     puts: '看跌 PUT',
     strike: '行权价',
-    hint: 'Bid 卖出 · Ask 买入 · 底色为价内 · ±1σ 预期波动',
+    hint: 'Bid 卖出 · Ask 买入 · 底色为价内 · ±1σ 预期波动 · 右键打开图表',
     ivAtm: '平值 IV',
     ivRank: 'IV Rank',
     ivPct: 'IV 百分位',
