@@ -131,7 +131,7 @@ export function ChartView() {
   const feedIssue = useStore((s) => s.connection.marketDataIssue?.code === 10197);
   const openAlertForm = useStore((s) => s.openAlertForm);
   const alertsAll = useStore((s) => s.priceAlerts);
-  const { timeframe, range, mas, showVol, clearRange, toggleMa, toggleVol } = useChartPrefs();
+  const { timeframe, range, rangePick, mas, showVol, clearRange, toggleMa, toggleVol } = useChartPrefs();
 
   const contracts = useMemo(() => [symbol], [symbol]);
   useQuoteSubscriptions('chart', contracts, 'basic');
@@ -189,7 +189,8 @@ export function ChartView() {
     if (connected && !rangeLoading) void loadOlder(symbol, timeframe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, connected, rangeLoading]);
-  const fit = useMemo(() => (range ? { key: `${range}|${key}`, from: rangeStart ?? null } : null), [range, key, rangeStart]);
+  // Every pick of a range (the active one again too) is a new fit: it also fits the prices again.
+  const fit = useMemo(() => (range ? { key: `${range}|${key}|${rangePick}`, from: rangeStart ?? null } : null), [range, key, rangePick, rangeStart]);
   /** Bumped when a refused page's wait is over, so the range asks again. */
   const [rangeRetry, setRangeRetry] = useState(0);
   useEffect(() => {
@@ -440,6 +441,9 @@ export function ChartView() {
         showVol={showVol}
         minTick={minTick}
         timeZone={chartTimeZone(info?.timeZoneId)}
+        // An option's bars come in its regular hours only (IB's tradingHours add a pre-open from 07:30).
+        tradingHours={(symbol.secType === 'OPT' ? info?.liquidHours : undefined) ?? info?.tradingHours}
+        exchangeTimeZone={info?.timeZoneId}
         older={entry?.older}
         onNeedOlder={needOlder}
         onHover={setHoverBar}

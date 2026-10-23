@@ -578,7 +578,25 @@ its span with pages sized to what is missing (Max until IB's head timestamp; a r
 asked again after its wait) and fits the view to it (up to 1,200 bars per screen) until the user
 pans or zooms. A series shorter than the screen (at least 30 slots at the automatic zoom, 20 when
 zoomed in), such as an option listed days ago, starts at the left edge with the empty slots after
-its newest bar (`chartMath.ts → resolveView`). Between reloads a real-time last price extends the forming bar and starts the next
+its newest bar (`chartMath.ts → resolveView`). Any view pans past the newest bar into empty future
+slots until a tenth of the screen (at least 3 bars) is left to the bars (`futureKeep`), never before
+the first bar; at or past the newest bar the view follows new bars and keeps its empty slots
+(`ChartView.ahead`; Latest brings the newest bar back to the right edge), and a zoom shows no more of
+the future than the view did. The slots' times are projected for the time axis and the crosshair
+(`futureTimes`, stamped as IB stamps its bars) from the instrument's IB trading hours
+(`tradingCalendar` of contract details' tradingHours in its timeZoneId; an option's liquidHours, as
+its bars come in regular hours only): the sessions IB lists for the coming days (lunch breaks,
+overnight futures sessions, holidays and short days included), then the usual trading day (the
+commonest listed, else the longest; a trading day is the day a session ends on) on Monday to Friday
+and on weekend days IB lists sessions on. Intraday bars go on within those sessions on their grid,
+each session's first one at its open; daily bars on the trading days, weeks on their last trading
+day; without the hours, bar after bar and Monday to Friday.
+The price axis fits the bars in view until the user zooms it (a drag or the wheel on the axis,
+`zoomPrice`, bounded by the bars' price level) or moves it (a chart drag that starts up or down,
+`panPrice`; one that starts sideways stays sideways, so a pan never loses the fit, and once moved
+every drag goes both ways); the Auto chip under the axis, a double-click on the axis or picking a
+range (the active one again too: `chartPrefs.rangePick`) fits it again (moving the prices keeps a
+range), and a double-click on the chart resets both directions. Between reloads a real-time last price extends the forming bar and starts the next
 ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator
 alerts, see *Alerts*; `chartMath.ts` re-exports it, and the moving averages come from
 `shared/indicators.ts → sma`); the live bars are kept between

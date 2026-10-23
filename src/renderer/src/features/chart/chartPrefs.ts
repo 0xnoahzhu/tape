@@ -20,6 +20,8 @@ interface ChartPrefs {
   timeframe: Timeframe;
   /** The range the view is fitted to, until the user pans or zooms (null: none). */
   range: ChartRange | null;
+  /** Counts range picks (the active range picked again too): each one fits the chart again. Not stored. */
+  rangePick: number;
   favorites: Favorites;
   /** Moving averages shown, in MA_PERIODS order. */
   mas: readonly MaPeriod[];
@@ -89,13 +91,14 @@ export const useChartPrefs = create<ChartPrefs>()((set, get) => {
   };
   return {
     ...load(),
+    rangePick: 0,
     activityTab: 'pos',
     setTimeframe: (timeframe) => {
       set({ timeframe, range: null });
       persist();
     },
     setRange: (range, nowMs = Date.now(), plotWidth) => {
-      set({ range, timeframe: rangeTimeframe(range, nowMs, plotWidth) });
+      set((s) => ({ range, timeframe: rangeTimeframe(range, nowMs, plotWidth), rangePick: s.rangePick + 1 }));
       persist();
     },
     clearRange: () => {

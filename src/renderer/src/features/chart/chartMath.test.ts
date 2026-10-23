@@ -14,7 +14,10 @@ import {
   extremeLayout,
   firstAtOrAfter,
   fitView,
+  exchangeZone,
   formatBarTime,
+  futureKeep,
+  futureTimes,
   isCurrentBar,
   keepOlderBars,
   labelWidth,
@@ -42,6 +45,7 @@ import {
   movingAverages,
   nearOldest,
   NY_ZONE,
+  panPrice,
   panView,
   pickTimeStep,
   placeExtreme,
@@ -57,9 +61,11 @@ import {
   timeStepSpacing,
   timeTickGap,
   timeTicks,
+  tradingCalendar,
   VB_H,
   VB_W,
   visibleBarCount,
+  zoomPrice,
   zoomView,
   type ChartView,
   type LabelClock,
@@ -186,10 +192,13 @@ describe('view window', () => {
     expect(resolveView(fitView(series(5), null), series(5), 60)).toEqual({ start: 0, span: MIN_SPAN, latest: true });
   });
 
-  it('keeps a short series at the left edge through pans and zooms', () => {
+  it('keeps a short series at the left edge when zoomed, and pans it into the future only', () => {
     const short = series(10);
-    expect(resolveView(panView(LATEST_VIEW, short, 60, -5), short, 60)).toEqual({ start: 0, span: 30, latest: true });
-    expect(resolveView(panView(LATEST_VIEW, short, 60, 5), short, 60)).toEqual({ start: 0, span: 30, latest: true });
+    // Towards older bars it stays put: nothing comes before the first bar.
+    expect(panView(LATEST_VIEW, short, 60, -5)).toEqual(LATEST_VIEW);
+    // Towards the future its bars move left until futureKeep (3) of them are left.
+    expect(resolveView(panView(LATEST_VIEW, short, 60, 5), short, 60)).toEqual({ start: 5, span: 30, latest: true });
+    expect(resolveView(panView(LATEST_VIEW, short, 60, 50), short, 60)).toEqual({ start: 7, span: 30, latest: true });
     expect(resolveView(zoomView(LATEST_VIEW, short, 60, 0.7, 0.5), short, 60)).toEqual({ start: 0, span: 21, latest: true });
     // Zoomed in below the bars it has, a series fills the screen and pans again.
     const some = series(25);
@@ -198,20 +207,60 @@ describe('view window', () => {
     expect(resolveView(panView(z, some, 60, -2), some, 60)).toMatchObject({ start: 2, span: 21, latest: false });
   });
 
-  it('pans by bars and stops at the oldest and the newest bar', () => {
+  it('pans by bars, stops at the oldest bar and goes on into the future', () => {
     const v = panView(LATEST_VIEW, bars, 60, -100);
     expect(v.span).toBeNull();
     expect(resolveView(v, bars, 60)).toEqual({ start: 840, span: 60, latest: false });
     expect(resolveView(panView(v, bars, 60, -10_000), bars, 60)).toMatchObject({ start: 0, latest: false });
     // Back to the newest bar: the view follows new bars again.
-    expect(panView(v, bars, 60, 500)).toEqual(LATEST_VIEW);
-    expect(panView(LATEST_VIEW, bars, 60, 10)).toEqual(LATEST_VIEW);
+    expect(panView(v, bars, 60, 100)).toEqual(LATEST_VIEW);
+    // On past it: empty future slots, until futureKeep (6 of 60) bars are left in view.
+    expect(futureKeep(1000, 60)).toBe(6);
+    expect(resolveView(panView(v, bars, 60, 110), bars, 60)).toEqual({ start: 950, span: 60, latest: true });
+    expect(resolveView(panView(v, bars, 60, 500), bars, 60)).toEqual({ start: 994, span: 60, latest: true });
+    expect(resolveView(panView(LATEST_VIEW, bars, 60, 10), bars, 60)).toEqual({ start: 950, span: 60, latest: true });
     // Fractions of a bar move the view smoothly.
     expect(resolveView(panView(v, bars, 60, 0.25), bars, 60).start).toBeCloseTo(840.25);
   });
 
-  it('cannot pan a series shorter than the screen', () => {
+  it('cannot pan a series shorter than the screen towards older bars', () => {
     expect(panView(LATEST_VIEW, series(10), 60, -5)).toEqual(LATEST_VIEW);
+  });
+
+  it('keeps its empty future slots as new bars come, following them', () => {
+    const v = panView(LATEST_VIEW, bars, 60, 20); // [960, 1020): 20 empty slots
+    expect(v).toEqual({ span: null, end: null, ahead: 20 });
+    expect(resolveView(v, bars, 60)).toEqual({ start: 960, span: 60, latest: true });
+    expect(resolveView(v, [...bars, ...series(1, 1000)], 60)).toEqual({ start: 961, span: 60, latest: true });
+    // A slight overshoot past the newest bar follows too: new bars never walk off the right edge.
+    const over = panView(panView(LATEST_VIEW, bars, 60, -30), bars, 60, 30.4);
+    expect(resolveView(over, [...bars, ...series(2, 1000)], 60).start).toBeCloseTo(942.4);
+    // Back among the bars the view stays on them.
+    expect(resolveView(panView(LATEST_VIEW, bars, 60, -10), [...bars, ...series(2, 1000)], 60)).toEqual({ start: 930, span: 60, latest: false });
+  });
+
+  it('zooms a short series around the pointer once the zoom makes it fill the screen', () => {
+    const s = series(25); // [0, 30) from the left edge
+    const z = resolveView(zoomView(LATEST_VIEW, s, 60, 0.7, 0.1), s, 60);
+    expect(z.span).toBeCloseTo(21);
+    expect(z.start + 0.1 * z.span).toBeCloseTo(3);
+  });
+
+  it('zooms a short series that is ahead of its newest bar around the pointer', () => {
+    const s = series(21);
+    const ahead = panView(LATEST_VIEW, s, 60, 10); // [10, 40)
+    expect(resolveView(ahead, s, 60)).toEqual({ start: 10, span: 30, latest: true });
+    const fx = 6.5 / 30; // over bar position 16.5
+    const z = resolveView(zoomView(ahead, s, 60, 0.8, fx), s, 60);
+    expect(z.start + fx * z.span).toBeCloseTo(16.5);
+  });
+
+  it('zooms no further into the future than the view was', () => {
+    const ahead = panView(LATEST_VIEW, bars, 60, 20); // [960, 1020)
+    const out = resolveView(zoomView(ahead, bars, 60, 2, 0.5), bars, 60);
+    expect(out).toEqual({ start: 900, span: 120, latest: true });
+    const back = resolveView(zoomView(ahead, bars, 60, 0.5, 0.5), bars, 60);
+    expect(back.start + back.span).toBeCloseTo(1005);
   });
 
   it('zooms around the pointer', () => {
@@ -282,6 +331,35 @@ describe('view window', () => {
   });
 });
 
+describe('price axis range', () => {
+  it('zooms around the middle and moves by a share of the height', () => {
+    expect(zoomPrice({ hi: 110, lo: 90 }, 2)).toEqual({ hi: 120, lo: 80 });
+    expect(zoomPrice({ hi: 110, lo: 90 }, 0.5)).toEqual({ hi: 105, lo: 95 });
+    expect(panPrice({ hi: 110, lo: 90 }, 0.25)).toEqual({ hi: 115, lo: 95 });
+    expect(panPrice({ hi: 110, lo: 90 }, -0.5)).toEqual({ hi: 100, lo: 80 });
+  });
+
+  it('keeps the range between a hundred-thousandth and a thousand times its largest price', () => {
+    const tiny = zoomPrice({ hi: 101, lo: 99 }, 1e-9);
+    expect(tiny.hi - tiny.lo).toBeCloseTo(101 * 1e-5);
+    const huge = zoomPrice({ hi: 101, lo: 99 }, 1e9);
+    expect(huge.hi - huge.lo).toBeCloseTo(101 * 1e3);
+    // A range around 0 zooms like any other.
+    expect(zoomPrice({ hi: 1, lo: -1 }, 1.5)).toEqual({ hi: 1.5, lo: -1.5 });
+    // Bounded by the bars' price level, zooming out stops there however often it is repeated.
+    let r = { hi: 101, lo: 99 };
+    for (let i = 0; i < 10_000; i++) r = zoomPrice(r, Math.exp(0.15), 100);
+    expect(r.hi - r.lo).toBeCloseTo(100 * 1e3);
+    expect(zoomPrice({ hi: 101, lo: 99 }, Infinity)).toEqual({ hi: 101, lo: 99 });
+    // A limit never turns a zoom around: out of a range already past it stays as it is.
+    expect(zoomPrice({ hi: 380, lo: -20 }, 1.02, 0.08)).toEqual({ hi: 380, lo: -20 });
+    expect(zoomPrice({ hi: 1e-6, lo: 0 }, 0.98, 180)).toEqual({ hi: 1e-6, lo: 0 });
+    expect(panPrice({ hi: 1e308, lo: -1e308 }, 1)).toEqual({ hi: 1e308, lo: -1e308 });
+    expect(zoomPrice({ hi: 101, lo: 99 }, NaN)).toEqual({ hi: 101, lo: 99 });
+    expect(panPrice({ hi: 101, lo: 99 }, NaN)).toEqual({ hi: 101, lo: 99 });
+  });
+});
+
 describe('older pages', () => {
   it('puts strictly older bars in front', () => {
     const recent = series(5, 10);
@@ -329,6 +407,31 @@ describe('buildChart', () => {
     expect(g.y(g.hi)).toBeCloseTo(0);
     expect(g.y(g.lo)).toBeCloseTo(VB_H);
     expect(g.axis.map((a) => a.frac)).toEqual([0.15, 0.5, 0.85]);
+  });
+
+  it('shows the user\'s price range as it is', () => {
+    const bars = series(100);
+    const g = buildChart(bars, { count: 60, price: { hi: 150, lo: 140 }, include: [500], topClear: 0.3 })!;
+    expect([g.hi, g.lo]).toEqual([150, 140]);
+    expect(g.y(150)).toBeCloseTo(0);
+    expect(g.y(140)).toBeCloseTo(VB_H);
+    expect(g.axis.map((a) => a.value)).toEqual([148.5, 145, 141.5]);
+    // The markers still read the bars in view.
+    expect(g.extremes.high.price).toBe(200);
+    // An empty or broken range is not one: the prices fit the bars.
+    expect(buildChart(bars, { count: 60, price: { hi: 1, lo: 1 } })!.hi).toBeGreaterThan(200);
+    expect(buildChart(bars, { count: 60, price: { hi: Infinity, lo: -Infinity } })!.hi).toBeGreaterThan(200);
+    expect(buildChart(bars, { count: 60, price: { hi: NaN, lo: 1 } })!.hi).toBeGreaterThan(200);
+  });
+
+  it('finds the empty future slot under the pointer', () => {
+    const bars = series(1000);
+    const g = buildChart(bars, { count: 60, view: panView(LATEST_VIEW, bars, 60, 20) })!; // [960, 1020)
+    expect(g.indexAt(0.9)).toBeNull();
+    expect(g.slotAt(0.9)).toBe(1014);
+    expect(g.slotAt(0)).toBe(960);
+    expect(g.candles.at(-1)!.index).toBe(999);
+    expect(g.centerX(1014)).toBeCloseTo(54.5 * (VB_W / 60));
   });
 
   it('keeps at least 30 slots and starts short series at the left edge', () => {
@@ -662,7 +765,8 @@ describe('right axis tags', () => {
 
   it('leaves distant tags alone and keeps tags inside the chart', () => {
     expect(spreadAlertTags([20, 250], 100, 300)).toEqual([20, 250]);
-    expect(spreadAlertTags([5], 15, 300)).toEqual([8.5]);
+    // No room above a last-price tag at the top edge: the alert goes below it.
+    expect(spreadAlertTags([5], 15, 300)).toEqual([34.5]);
     expect(spreadAlertTags([50, 55], null, 300)).toEqual([50, 68]);
   });
 
@@ -1170,6 +1274,124 @@ function hkBars(y: number, m: number, d: number, days: number): Bar[] {
   }
   return out;
 }
+
+describe('future slots', () => {
+  const date = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d) / 1000;
+  const utc = (y: number, m: number, d: number, h: number, min = 0) => Date.UTC(y, m - 1, d, h, min) / 1000;
+  const days = (times: number[]) => times.map(barDay);
+  /** IB's trading hours as it lists them for AAPL, its option and ES (2026-10-23, from TWS). */
+  const US = tradingCalendar('20261023:0400-20261023:2000;20261024:CLOSED;20261025:CLOSED;20261026:0400-20261026:2000;20261027:0400-20261027:2000;20261028:0400-20261028:2000', 'US/Eastern')!;
+  const ES = tradingCalendar('20261022:1700-20261023:1600;20261024:CLOSED;20261025:1700-20261026:1600;20261026:1700-20261027:1600;20261027:1700-20261028:1600;20261028:1700-20261029:1600', 'US/Central')!;
+
+  it('goes on with daily bars on weekdays, and on weekends where the series has them', () => {
+    const week = [19, 20, 21, 22, 23].map((d) => bar(date(2026, 10, d), 1, 1, 1, 1)); // Mon .. Fri
+    expect(days(futureTimes(week, '1D', 4))).toEqual(['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29']);
+    const crypto = Array.from({ length: 14 }, (_, i) => bar(date(2026, 10, 10 + i), 1, 1, 1, 1)); // Sat 10/10 .. Fri 10/23
+    expect(days(futureTimes(crypto, '1D', 2))).toEqual(['2026-10-24', '2026-10-25']);
+    expect(futureTimes([], '1D', 3)).toEqual([]);
+    expect(futureTimes(week, '1D', 0)).toEqual([]);
+  });
+
+  it('skips the holidays IB lists for daily bars, and trades the weekday again after its list', () => {
+    const cal = tradingCalendar('20261125:0930-20261125:1600;20261126:CLOSED;20261127:0930-20261127:1300;20261128:CLOSED;20261129:CLOSED;20261130:0930-20261130:1600', 'US/Eastern');
+    const bars = [23, 24, 25].map((d) => bar(date(2026, 11, d), 1, 1, 1, 1));
+    expect(days(futureTimes(bars, '1D', 6, cal))).toEqual(['2026-11-27', '2026-11-30', '2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04']);
+  });
+
+  it('steps weeks on their last trading day, months on their last weekday, quarters and years on their first day', () => {
+    expect(days(futureTimes([bar(date(2026, 10, 23), 1, 1, 1, 1)], '1W', 2))).toEqual(['2026-10-30', '2026-11-06']);
+    // A forming week is stamped with its last day so far (Wednesday); the next ones end on Fridays.
+    const weeks = [[10, 2], [10, 9], [10, 16], [10, 21]].map(([m, d]) => bar(date(2026, m, d), 1, 1, 1, 1));
+    expect(days(futureTimes(weeks, '1W', 2))).toEqual(['2026-10-30', '2026-11-06']);
+    expect(days(futureTimes([bar(date(2026, 10, 30), 1, 1, 1, 1)], '1M', 3))).toEqual(['2026-11-30', '2026-12-31', '2027-01-29']);
+    expect(days(futureTimes([bar(date(2026, 10, 1), 1, 1, 1, 1)], '1Q', 2))).toEqual(['2027-01-01', '2027-04-01']);
+    expect(days(futureTimes([bar(date(2026, 1, 1), 1, 1, 1, 1)], '1Y', 2))).toEqual(['2027-01-01', '2028-01-01']);
+  });
+
+  it('goes on with intraday bars within the sessions IB lists', () => {
+    const ext = sessionBars(2026, 10, 19, 5, 5, true); // Mon 10/19 .. Fri 10/23, 04:00–20:00 EDT
+    // After Friday's last bar: Monday's first, 04:00 EDT.
+    expect(futureTimes(ext, '5m', 3, US)).toEqual([utc(2026, 10, 26, 8), utc(2026, 10, 26, 8, 5), utc(2026, 10, 26, 8, 10)]);
+    // Within a session: the next bars of the day.
+    const morning = ext.filter((b) => b.time <= utc(2026, 10, 23, 14));
+    expect(futureTimes(morning, '5m', 2, US)).toEqual([utc(2026, 10, 23, 14, 5), utc(2026, 10, 23, 14, 10)]);
+    // Without IB's hours, bar after bar (a seconds window goes on by the second).
+    const secs = Array.from({ length: 1800 }, (_, i) => bar(utc(2026, 10, 20, 14) + i, 1, 1, 1, 1));
+    expect(futureTimes(secs, '1s', 2)).toEqual([utc(2026, 10, 20, 14, 30), utc(2026, 10, 20, 14, 30) + 1]);
+  });
+
+  it('repeats IB\'s week after its list, across a DST change, and skips listed holidays', () => {
+    // US lists Fri 10/23 .. Wed 10/28: Thursday opens like Wednesday, Friday as listed, the weekend stays closed,
+    // and Monday 11/02 opens at 04:00 EST (09:00 UTC).
+    const wed = sessionBars(2026, 10, 26, 3, 60, true); // Mon .. Wed, hourly 04:00–19:00 EDT
+    expect(futureTimes(wed, '1h', 2, US)).toEqual([utc(2026, 10, 29, 8), utc(2026, 10, 29, 9)]);
+    const fri = [bar(utc(2026, 10, 30, 23), 1, 1, 1, 1)]; // Fri 19:00 EDT
+    expect(futureTimes(fri, '1h', 1, US)).toEqual([utc(2026, 11, 2, 9)]);
+    // Thanksgiving: Wednesday's close, then Friday; after the list Thursdays open again, and the
+    // usual day is the full one, not Friday's half day.
+    const cal = tradingCalendar('20261125:0400-20261125:2000;20261126:CLOSED;20261127:0400-20261127:1700', 'US/Eastern')!;
+    expect(futureTimes([bar(utc(2026, 11, 26, 0), 1, 1, 1, 1)], '1h', 1, cal)).toEqual([utc(2026, 11, 27, 9)]);
+    expect(futureTimes([bar(utc(2026, 12, 3, 0), 1, 1, 1, 1)], '1h', 1, cal)).toEqual([utc(2026, 12, 3, 9)]);
+    expect(futureTimes([bar(utc(2026, 12, 4, 21), 1, 1, 1, 1)], '1h', 1, cal)).toEqual([utc(2026, 12, 4, 22)]);
+  });
+
+  it('keeps lunch breaks, daily halts and weekend closes of the listed sessions', () => {
+    // Hong Kong: 09:30–12:00 and 13:00–16:10; after 11:55 comes 13:00.
+    const HK = tradingCalendar('20261024:CLOSED;20261025:CLOSED;20261026:0930-20261026:1200;20261026:1300-20261026:1610;20261027:0930-20261027:1200;20261027:1300-20261027:1610', 'Hongkong')!;
+    const hk = hkBars(2026, 10, 26, 1).filter((b) => b.time <= utc(2026, 10, 26, 3, 55));
+    expect(futureTimes(hk, '5m', 2, HK)).toEqual([utc(2026, 10, 26, 5), utc(2026, 10, 26, 5, 5)]);
+    // ES: Friday 15:00 CT → Sunday's 17:00 open; Monday 15:00 → past the 16:00–17:00 halt.
+    expect(futureTimes([bar(utc(2026, 10, 23, 20), 1, 1, 1, 1)], '1h', 2, ES)).toEqual([utc(2026, 10, 25, 22), utc(2026, 10, 25, 23)]);
+    expect(futureTimes([bar(utc(2026, 10, 26, 20), 1, 1, 1, 1)], '1h', 1, ES)).toEqual([utc(2026, 10, 26, 22)]);
+    // After IB's list a Friday starts no session; Thursday's runs into it.
+    expect(futureTimes([bar(utc(2026, 10, 30, 20), 1, 1, 1, 1)], '1h', 1, ES)).toEqual([utc(2026, 11, 1, 23)]);
+    // A list read on a Saturday (no Friday in it) and Christmas week (a half day, Friday closed) repeat the usual day.
+    const sat = tradingCalendar('20261031:CLOSED;20261101:1700-20261102:1600;20261102:1700-20261103:1600;20261103:1700-20261104:1600;20261104:1700-20261105:1600;20261105:1700-20261106:1600', 'US/Central')!;
+    expect(futureTimes([bar(utc(2026, 11, 6, 21), 1, 1, 1, 1)], '1h', 1, sat)).toEqual([utc(2026, 11, 8, 23)]);
+    const xmas = tradingCalendar('20261222:1700-20261223:1600;20261223:1700-20261224:1215;20261225:CLOSED;20261226:CLOSED;20261227:1700-20261228:1600;20261228:1700-20261229:1600', 'US/Central')!;
+    expect(futureTimes([bar(utc(2026, 12, 29, 21), 1, 1, 1, 1)], '1h', 1, xmas)).toEqual([utc(2026, 12, 29, 23)]);
+    expect(futureTimes([bar(utc(2026, 12, 30, 21), 1, 1, 1, 1)], '1h', 1, xmas)).toEqual([utc(2026, 12, 30, 23)]);
+  });
+
+  it('starts a partial bar at every opening, after a halt or a lunch break too', () => {
+    // ES 4h: Monday 15:00 CT, the 16:00 close, then 17:00 (22:00 UTC) before the grid's 00:00.
+    expect(futureTimes([bar(utc(2026, 10, 26, 20), 1, 1, 1, 1)], '4h', 2, ES)).toEqual([utc(2026, 10, 26, 22), utc(2026, 10, 27, 0)]);
+    // A 24-hour market listed to 2359 has no hole before midnight.
+    const day = tradingCalendar('20261023:0000-20261023:2359;20261024:0000-20261024:2359', 'US/Central')!;
+    expect(futureTimes([bar(utc(2026, 10, 24, 4, 57), 1, 1, 1, 1)], '1m', 3, day)).toEqual([utc(2026, 10, 24, 4, 58), utc(2026, 10, 24, 4, 59), utc(2026, 10, 24, 5)]);
+  });
+
+  it('places coarse bars on their grid within the sessions, across a DST change', () => {
+    // Regular-hours 2h bars (UTC grid, a partial first bar at the open): Friday in EDT, Monday in EST.
+    const cal = tradingCalendar('20261030:0930-20261030:1600;20261031:CLOSED;20261101:CLOSED;20261102:0930-20261102:1600', 'US/Eastern')!;
+    const fri = [utc(2026, 10, 30, 13, 30), utc(2026, 10, 30, 14), utc(2026, 10, 30, 16), utc(2026, 10, 30, 18)].map((t) => bar(t, 1, 1, 1, 1));
+    expect(futureTimes(fri, '2h', 5, cal)).toEqual([utc(2026, 11, 2, 14, 30), utc(2026, 11, 2, 16), utc(2026, 11, 2, 18), utc(2026, 11, 2, 20), utc(2026, 11, 3, 14, 30)]);
+  });
+
+  it('labels the future slots on the time axis', () => {
+    const bars = sessionBars(2026, 9, 28, 5, 5); // Mon 09/28 .. Fri 10/02, regular hours
+    const cal = tradingCalendar('20261002:0930-20261002:1600;20261003:CLOSED;20261004:CLOSED;20261005:0930-20261005:1600', 'US/Eastern');
+    const axis = [...bars, ...futureTimes(bars, '5m', 200, cal).map((time) => ({ time }))];
+    const ls = timeAxisLabels(axis, '5m', view(bars.length - 20, 78), 1000, EN24);
+    // The first future slot opens Monday 10/05, then its hours follow.
+    expect(ls.find((l) => l.index === bars.length)?.label).toBe('10/05');
+    expect(ls.filter((l) => l.index > bars.length).map((l) => l.label)).toContain('10:00');
+  });
+
+  it('reads IB\'s time zone ids and both of its hours formats', () => {
+    expect(exchangeZone('US/Eastern')).toBe('US/Eastern');
+    expect(exchangeZone('EST')).toBe(NY_ZONE);
+    expect(exchangeZone('Nowhere/Land')).toBeUndefined();
+    expect(tradingCalendar(undefined, 'US/Eastern')).toBeNull();
+    expect(tradingCalendar('20261023:CLOSED', 'US/Eastern')).toBeNull();
+    // Older servers: "date:start-end,start-end".
+    const old = tradingCalendar('20261026:0930-1200,1300-1610', 'Hongkong')!;
+    expect(old.sessions).toEqual([
+      { s: utc(2026, 10, 26, 1, 30), e: utc(2026, 10, 26, 4) },
+      { s: utc(2026, 10, 26, 5), e: utc(2026, 10, 26, 8, 10) },
+    ]);
+  });
+});
 
 describe('exchange time', () => {
   it('maps IB time zone ids, with New York for US exchanges and unknown ids', () => {

@@ -70,7 +70,10 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   merged from 15-second bars), minutes (1m 3m 5m 10m 15m 30m), hours (1h 2h 3h 4h) and D / W / M / Q / Y,
   plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
-  through older bars (seconds bars up to six months), live bars from real-time quotes (a note says when
+  through older bars (seconds bars up to six months; nothing before the first one), dragging on past the newest
+  bar into empty future time (its dates and hours on the time axis), zooming the price axis by dragging or
+  scrolling on it and moving it with a chart drag that starts up or down (**Auto**, or a double-click on the
+  axis, fits it to the bars again), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,

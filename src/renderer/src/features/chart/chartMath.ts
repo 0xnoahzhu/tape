@@ -1,6 +1,7 @@
-// Pure chart geometry: the pan / zoom window over the bars, which bars are visible,
-// candle/volume/moving-average coordinates in the design's SVG spaces (price 800×300, volume
-// 800×56), axis values, time axis ticks, the MA legend, merging of older pages, and hover lookup.
+// Pure chart geometry: the pan / zoom window over the bars (and the empty future slots after
+// them), the price axis's range, candle/volume/moving-average coordinates in the design's SVG
+// spaces (price 800×300, volume 800×56), axis values, time axis ticks (and the future slots'
+// times), the MA legend, merging of older pages, and hover lookup.
 // The moving average (shared/indicators.ts) and the live price merge (shared/liveBars.ts) are
 // shared with the main process's indicator alerts and re-exported here.
 // No React or store imports so it can be unit tested in node.
@@ -8,7 +9,7 @@
 import { sma } from '@shared/indicators';
 import { barDay, quarterOf } from '@shared/liveBars';
 import { clockText, type Clock } from '@shared/timeFormat';
-import { barSeconds, isIntraday, isSecondsTimeframe, TIMEFRAMES } from '@shared/timeframes';
+import { barEndSec, barSeconds, isIntraday, isSecondsTimeframe, TIMEFRAMES } from '@shared/timeframes';
 import type { Bar, Timeframe } from '@shared/types';
 
 export { isIntraday, TIMEFRAMES };
@@ -78,17 +79,22 @@ export interface ViewAnchor {
 export interface ChartView {
   /** Bars per screen; null: automatic from the chart width (visibleBarCount). */
   span: number | null;
-  /** Right edge; null follows the newest bar. */
+  /** Right edge, back among the bars; null follows the newest bar. */
   end: ViewAnchor | null;
+  /** While following: empty future slots kept after the newest bar (beyond where the view starts out). */
+  ahead?: number;
 }
 
 export const LATEST_VIEW: ChartView = { span: null, end: null };
 
-/** A view in bar units of the full series: it shows bar positions [start, start + span). */
+/**
+ * A view in bar units of the full series: it shows bar positions [start, start + span), where
+ * positions from the series' length on are empty future slots.
+ */
 export interface ViewWindow {
   start: number;
   span: number;
-  /** The newest bar is at the right edge. */
+  /** The view follows the newest bar (at the right edge, before the empty slots it keeps, or a short series from the left edge). */
   latest: boolean;
 }
 
@@ -111,8 +117,26 @@ export function spanLimits(n: number): { min: number; max: number } {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** Right edges allowed for `n` bars: the oldest bar stays at or right of the left edge, nothing beyond the newest. */
-const clampEnd = (end: number, span: number, n: number) => clamp(end, Math.min(n, span), n);
+/**
+ * Panned past the newest bar, the view shows empty future slots until this share of the screen
+ * (at least FUTURE_KEEP_MIN bars, or the whole series) is left to the bars.
+ */
+export const FUTURE_KEEP = 0.1;
+export const FUTURE_KEEP_MIN = 3;
+
+/** Bars of `n` that stay in view however far the view is panned into the future. */
+export function futureKeep(n: number, span: number): number {
+  return Math.min(n, Math.max(FUTURE_KEEP_MIN, Math.ceil(span * FUTURE_KEEP)));
+}
+
+/**
+ * Right edges allowed for `n` bars: the oldest bar never leaves the left edge (nothing before the
+ * first bar), and the newest may go left until futureKeep bars are left in view.
+ */
+const clampEnd = (end: number, span: number, n: number) => clamp(end, span, Math.max(span, n - futureKeep(n, span) + span));
+/** Where the right edge starts out: at the newest bar, or after the empty slots of a series shorter than the screen. */
+const defaultEnd = (span: number, n: number) => Math.max(n, span);
+const SAME = 1e-9;
 
 /** An anchor for bar position `end` (inside the series). */
 export function anchorAt(bars: readonly Bar[], end: number): ViewAnchor {
@@ -128,15 +152,15 @@ export function anchorIndex(bars: readonly Bar[], a: ViewAnchor): number {
 /**
  * The window a view shows. A series shorter than the screen (a contract listed days ago) starts at
  * the left edge, the empty slots after its newest bar, as a newly listed contract's chart does in
- * Futu or moomoo; it cannot pan then.
+ * Futu or moomoo. Any series may be panned into the future (clampEnd), never before its first bar.
  */
 export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: number): ViewWindow {
   const n = bars.length;
   const { min, max } = spanLimits(n);
   const span = clamp(view.span ?? autoSpan, min, max);
-  if (n < span) return { start: 0, span, latest: true };
-  const end = clampEnd(view.end && n ? anchorIndex(bars, view.end) : n, span, n);
-  return { start: end - span, span, latest: end >= n };
+  const following = !view.end || !n;
+  const end = clampEnd(following ? defaultEnd(span, n) + (view.ahead ?? 0) : anchorIndex(bars, view.end!), span, n);
+  return { start: end - span, span, latest: following };
 }
 
 /**
@@ -148,21 +172,29 @@ export function fitView(bars: readonly Bar[], from: number | null): ChartView {
   return { span: Math.max(1, bars.length - i), end: null };
 }
 
-/** `span` with the right edge at bar position `end` (clamped); at the newest bar the view follows new bars. */
-function withEnd(span: number | null, end: number, bars: readonly Bar[]): ChartView {
-  return { span, end: end >= bars.length ? null : anchorAt(bars, end) };
+/**
+ * `span` (resolved to `shown` bars) with the right edge at bar position `end` (clamped): at the
+ * newest bar or past it the view follows new bars, keeping the empty slots it shows; back among the
+ * bars it stays at its bar time.
+ */
+function withEnd(span: number | null, shown: number, end: number, bars: readonly Bar[]): ChartView {
+  const ahead = end - defaultEnd(shown, bars.length);
+  if (ahead > -SAME) return ahead > SAME ? { span, end: null, ahead } : { span, end: null };
+  return { span, end: anchorAt(bars, end) };
 }
 
-/** Pans by `delta` bars (positive: towards newer bars). */
+/** Pans by `delta` bars (positive: towards newer bars, and on into the future). */
 export function panView(view: ChartView, bars: readonly Bar[], autoSpan: number, delta: number): ChartView {
   if (!bars.length || !delta) return view;
   const w = resolveView(view, bars, autoSpan);
-  return withEnd(view.span, clampEnd(w.start + w.span + delta, w.span, bars.length), bars);
+  return withEnd(view.span, w.span, clampEnd(w.start + w.span + delta, w.span, bars.length), bars);
 }
 
 /**
  * Zooms by `factor` (< 1 zooms in) around the point at fraction `fx` of the width: the bar under
- * that point stays in place unless the view has to be clamped.
+ * that point stays in place unless the view has to be clamped. A zoom never shows more of the
+ * future than the view did (at the newest bar it stays there), and a series shorter than the
+ * screen, shown from the left edge, stays there.
  */
 export function zoomView(view: ChartView, bars: readonly Bar[], autoSpan: number, factor: number, fx: number): ChartView {
   const n = bars.length;
@@ -171,9 +203,12 @@ export function zoomView(view: ChartView, bars: readonly Bar[], autoSpan: number
   const { min, max } = spanLimits(n);
   const span = clamp(w.span * factor, min, max);
   if (span === w.span) return view;
+  const short = w.latest && n < w.span && w.start < SAME;
+  if (short && n <= span) return { span, end: null };
   const at = clamp(Number.isFinite(fx) ? fx : 1, 0, 1);
   const pivot = w.start + at * w.span;
-  return withEnd(span, clampEnd(pivot + (1 - at) * span, span, n), bars);
+  const end = Math.min(clampEnd(pivot + (1 - at) * span, span, n), short ? n : Math.max(span, n, w.start + w.span));
+  return withEnd(span, span, end, bars);
 }
 
 /** The view is within one screen of the oldest loaded bar: time to load older ones. */
@@ -279,6 +314,8 @@ export interface ChartGeometry {
   priceAt(fracY: number): number;
   /** Fraction of the width (0 = left) → index into the full series, or null where there is no bar. */
   indexAt(fracX: number): number | null;
+  /** Fraction of the width → bar position, the series' length and on for the empty future slots. */
+  slotAt(fracX: number): number;
   /** viewBox x of the center of a bar (full-series index). */
   centerX(index: number): number;
 }
@@ -305,6 +342,42 @@ export interface ChartOptions {
    * high marker under it); the range's top padding grows to it when the usual 8 % is less.
    */
   topClear?: number;
+  /** The price axis's range set by the user (zoomed or moved); null or omitted: fitted to the bars in view. */
+  price?: PriceRange | null;
+}
+
+/** The prices the plot shows, top (hi) to bottom (lo). */
+export interface PriceRange {
+  hi: number;
+  lo: number;
+}
+
+/** Smallest and largest range a price axis zoom reaches, as factors of the largest price it shows. */
+const PRICE_RANGE_MIN = 1e-5;
+const PRICE_RANGE_MAX = 1e3;
+
+/**
+ * The range scaled by `factor` (> 1 shows more prices, < 1 fewer) around its middle, within
+ * PRICE_RANGE_MIN to PRICE_RANGE_MAX of `level`: the price level of the bars (it does not move
+ * with the zoom, so neither zooming out nor a range around 0 runs away).
+ */
+export function zoomPrice(r: PriceRange, factor: number, level: number = Math.max(Math.abs(r.hi), Math.abs(r.lo))): PriceRange {
+  if (!(factor > 0) || !Number.isFinite(factor)) return r;
+  const mid = (r.hi + r.lo) / 2;
+  const scale = Math.max(Number.isFinite(level) ? Math.abs(level) : 0, 1e-6);
+  const [cur, want] = [(r.hi - r.lo) / 2, ((r.hi - r.lo) * factor) / 2];
+  // Only towards the zoom: a limit never turns a zoom out into a zoom in or back.
+  const half = factor > 1 ? Math.max(cur, Math.min(want, (scale * PRICE_RANGE_MAX) / 2)) : Math.min(cur, Math.max(want, (scale * PRICE_RANGE_MIN) / 2));
+  const out = { hi: mid + half, lo: mid - half };
+  return Number.isFinite(out.hi) && Number.isFinite(out.lo) && out.hi > out.lo ? out : r;
+}
+
+/** The range moved by `frac` of its height: positive when the bars are dragged down (higher prices come into view). */
+export function panPrice(r: PriceRange, frac: number): PriceRange {
+  if (!Number.isFinite(frac) || !frac) return r;
+  const d = (r.hi - r.lo) * frac;
+  const out = { hi: r.hi + d, lo: r.lo + d };
+  return Number.isFinite(out.hi) && Number.isFinite(out.lo) ? out : r;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -338,22 +411,29 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
   }
   // Extremes of the bars themselves, before the live price may widen the range.
   const extremes = { high: { index: hiIndex, price: hi }, low: { index: loIndex, price: lo } };
-  if (v1 >= n) {
-    for (const p of opts.include ?? []) {
-      if (!finite(p) || p <= 0) continue;
-      if (p > hi) hi = p;
-      if (p < lo) lo = p;
+  const manual = opts.price && Number.isFinite(opts.price.hi) && Number.isFinite(opts.price.lo) && opts.price.hi > opts.price.lo ? opts.price : null;
+  if (manual) {
+    // The user's range as it is: no live price, padding or legend room.
+    hi = manual.hi;
+    lo = manual.lo;
+  } else {
+    if (v1 >= n) {
+      for (const p of opts.include ?? []) {
+        if (!finite(p) || p <= 0) continue;
+        if (p > hi) hi = p;
+        if (p < lo) lo = p;
+      }
     }
+    if (!(hi >= lo)) hi = lo = all[n - 1].close;
+    const raw = hi - lo;
+    let pad = raw * 0.08;
+    if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
+    // The top pad is `clear` of the padded range: pad / (raw + pad + bottom pad) = clear.
+    const clear = clamp(opts.topClear ?? 0, 0, 0.5);
+    const padTop = Math.max(pad, (clear * (raw + pad)) / (1 - clear));
+    hi += padTop;
+    lo -= pad;
   }
-  if (!(hi >= lo)) hi = lo = all[n - 1].close;
-  const raw = hi - lo;
-  let pad = raw * 0.08;
-  if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
-  // The top pad is `clear` of the padded range: pad / (raw + pad + bottom pad) = clear.
-  const clear = clamp(opts.topClear ?? 0, 0, 0.5);
-  const padTop = Math.max(pad, (clear * (raw + pad)) / (1 - clear));
-  hi += padTop;
-  lo -= pad;
   const range = hi - lo;
   const y = (v: number) => ((hi - v) / range) * VB_H;
 
@@ -420,6 +500,7 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
       const i = Math.floor(start + clamp(fracX, 0, 0.999999) * span);
       return i < 0 || i >= n ? null : i;
     },
+    slotAt: (fracX) => Math.max(0, Math.floor(start + clamp(fracX, 0, 0.999999) * span)),
     centerX: (index) => (index - start + 0.5) * cw,
   };
 }
@@ -463,8 +544,11 @@ export function spreadAlertTags(ys: number[], lastY: number | null, height: numb
     return out;
   }
   const clear = (LAST_TAG_H + SMALL_TAG_H) / 2 + TAG_GAP;
-  up(idx.filter((i) => ys[i] < lastY).sort((a, b) => ys[b] - ys[a]), lastY - clear);
-  down(idx.filter((i) => ys[i] >= lastY).sort((a, b) => ys[a] - ys[b]), lastY + clear);
+  // A last-price tag at an edge (the prices moved by the user) leaves no room on that side: all go to the other.
+  const [roomUp, roomDown] = [lastY - clear >= half, lastY + clear <= height - half];
+  const above = (i: number) => (roomUp && roomDown ? ys[i] < lastY : roomUp);
+  up(idx.filter(above).sort((a, b) => ys[b] - ys[a]), lastY - clear);
+  down(idx.filter((i) => !above(i)).sort((a, b) => ys[a] - ys[b]), lastY + clear);
   return out;
 }
 
@@ -886,6 +970,207 @@ export function formatBarTime(time: number, tf: Timeframe, clock: LabelClock, zo
 }
 
 // ---------------------------------------------------------------------------
+// Future slots
+
+const DAY_SEC = 86_400;
+/** Days since 1970-01-01 → weekday (0 = Sunday; the epoch was a Thursday). */
+const weekdayOf = (day: number) => (((day + 4) % 7) + 7) % 7;
+const isWeekday = (wd: number) => wd >= 1 && wd <= 5;
+
+/**
+ * Unix s of wall-clock time `sec` seconds into day `day` (days since 1970-01-01) in time zone
+ * `zone`. A time the clock skips (spring forward) is read as the clock reads after the change.
+ */
+function zonedTime(zone: string, day: number, sec: number): number {
+  const wall = day * DAY_SEC + sec;
+  const t = wall - zoneOffset(zone, wall - zoneOffset(zone, wall));
+  return t + zoneOffset(zone, t) === wall ? t : wall - zoneOffset(zone, t - 3 * 3600);
+}
+
+/** The IANA zone IB's timeZoneId names ("US/Eastern", "Hongkong", "MET", "EST"), to read its trading hours in; undefined when unknown. */
+export function exchangeZone(timeZoneId: string | undefined): string | undefined {
+  const id = timeZoneId?.trim();
+  if (!id) return undefined;
+  const zone = IB_ZONES[id.toUpperCase()] ?? id;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return zone;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A trading session, unix s: [s, e). */
+export interface Session {
+  s: number;
+  e: number;
+}
+
+/** A session of a trading day in wall-clock time: days from the trading day and seconds into them. */
+interface DaySession {
+  s0: number;
+  s: number;
+  e0: number;
+  e: number;
+}
+
+/**
+ * An instrument's trading calendar from IB's trading hours (contract details' tradingHours, in its
+ * timeZoneId): the sessions IB lists for the coming days, holidays and short days included, then
+ * its usual trading day repeated on the weekdays it trades (Monday to Friday, and weekend days IB
+ * lists sessions on, e.g. crypto). A trading day is the day a session ends on (a futures session
+ * from Sunday 17:00 trades Monday), and the usual one is the commonest among those listed.
+ */
+export interface TradingCalendar {
+  zone: string;
+  sessions: Session[];
+  /** The last day IB lists (days since 1970-01-01, exchange time); the usual day repeats after it. */
+  lastDay: number;
+  usual: DaySession[];
+  /** Trading days IB lists, and the weekdays that trade after them. */
+  tradingDays: Set<number>;
+  tradingWeekdays: Set<number>;
+}
+
+const ymdDay = (ymd: string) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8))) / 1000 / DAY_SEC;
+/** Seconds into a day of IB's "HHMM"; its 2359 closes a day that runs to midnight. */
+const hhmmSec = (hh: string, mm: string) => (hh === '23' && mm === '59' ? DAY_SEC : Number(hh) * 3600 + Number(mm) * 60);
+
+/**
+ * IB's trading hours as a calendar ("20261023:0400-20261023:2000;20261024:CLOSED", sessions crossing
+ * midnight "20261025:1700-20261026:1600", two a day "20261026:0930-20261026:1200;20261026:1300-…",
+ * older servers "20261023:0930-1200,1300-1600"); null without hours or a known zone.
+ */
+export function tradingCalendar(hours: string | undefined, timeZoneId: string | undefined): TradingCalendar | null {
+  const zone = exchangeZone(timeZoneId);
+  if (!hours || !zone) return null;
+  const sessions: Session[] = [];
+  let lastDay = -Infinity;
+  for (const entry of hours.split(';')) {
+    const head = /^\s*(\d{8}):/.exec(entry);
+    if (!head) continue;
+    const day = ymdDay(head[1]);
+    lastDay = Math.max(lastDay, day);
+    if (/CLOSED/i.test(entry)) continue;
+    for (const range of entry.slice(head[0].length).split(',')) {
+      const m = /^(?:(\d{8}):)?(\d{2})(\d{2})-(?:(\d{8}):)?(\d{2})(\d{2})$/.exec(range.trim());
+      if (!m) continue;
+      const startDay = m[1] ? ymdDay(m[1]) : day;
+      const [startSec, endSec] = [hhmmSec(m[2], m[3]), hhmmSec(m[5], m[6])];
+      // An older server's session past midnight ends the next day.
+      const endDay = m[4] ? ymdDay(m[4]) : endSec <= startSec ? day + 1 : day;
+      const s = zonedTime(zone, startDay, startSec);
+      const e = zonedTime(zone, endDay, endSec);
+      if (e > s) sessions.push({ s, e });
+    }
+  }
+  if (!sessions.length) return null;
+  sessions.sort((a, b) => a.s - b.s);
+  const fields = (t: number) => barFields(t, true, zone);
+  // Each trading day's sessions, in wall-clock time from the day.
+  const days = new Map<number, DaySession[]>();
+  for (const x of sessions) {
+    const trade = fields(x.e - 1).day;
+    const [fs, fe] = [fields(x.s), fields(x.e)];
+    const list = days.get(trade) ?? [];
+    list.push({ s0: fs.day - trade, s: fs.sec, e0: fe.day - trade, e: fe.sec });
+    days.set(trade, list);
+  }
+  // The usual day: the commonest pattern, else the longest (a half day before a holiday is shorter).
+  const counts = new Map<string, { n: number; len: number; day: DaySession[] }>();
+  for (const [trade, list] of days) {
+    const key = JSON.stringify(list);
+    const len = sessions.filter((x) => fields(x.e - 1).day === trade).reduce((sum, x) => sum + x.e - x.s, 0);
+    counts.set(key, { n: (counts.get(key)?.n ?? 0) + 1, len, day: list });
+  }
+  let usual: DaySession[] = [];
+  let best = { n: 0, len: 0 };
+  for (const c of counts.values()) {
+    if (c.n > best.n || (c.n === best.n && c.len > best.len)) [best, usual] = [c, c.day];
+  }
+  const tradingDays = new Set(days.keys());
+  const tradingWeekdays = new Set([1, 2, 3, 4, 5, ...[...tradingDays].map(weekdayOf)]);
+  return { zone, sessions, lastDay: Math.max(lastDay, ...tradingDays), usual, tradingDays, tradingWeekdays };
+}
+
+/** The calendar's sessions that end after `t`: IB's, then its usual day repeated. */
+function* sessionsFrom(cal: TradingCalendar, t: number): Generator<Session> {
+  for (const x of cal.sessions) if (x.e > t) yield x;
+  for (let day = cal.lastDay + 1; day < cal.lastDay + 4000; day++) {
+    if (!cal.tradingWeekdays.has(weekdayOf(day))) continue;
+    for (const w of cal.usual) {
+      const x = { s: zonedTime(cal.zone, day + w.s0, w.s), e: zonedTime(cal.zone, day + w.e0, w.e) };
+      if (x.e > t && x.e > x.s) yield x;
+    }
+  }
+}
+
+/**
+ * Times of the `count` empty slots after the newest bar (the view panned into the future), for the
+ * time axis and the crosshair: the interval's next bars, stamped as IB stamps its bars. Intraday
+ * bars go on within the sessions of `calendar` (tradingCalendar: lunch breaks, overnight sessions
+ * and listed holidays included), or bar after bar without one. Daily bars go on on its trading days
+ * (without one: Monday to Friday, and weekend days the recent bars show, e.g. crypto), weeks on their
+ * last trading day, months on their last weekday, quarters and years on their first day.
+ */
+export function futureTimes(bars: readonly Bar[], tf: Timeframe, count: number, calendar: TradingCalendar | null = null): number[] {
+  const n = bars.length;
+  if (!n || !(count > 0)) return [];
+  const out: number[] = [];
+  const last = bars[n - 1].time;
+  if (isIntraday(tf)) {
+    const barSec = barSeconds(tf)!;
+    if (!calendar) {
+      for (let t = last; out.length < count; ) out.push((t = barEndSec(t, barSec)));
+      return out;
+    }
+    let prev = last;
+    for (const x of sessionsFrom(calendar, last)) {
+      // A session's first bar starts at its open (a partial bar on a coarse grid), the rest on the grid.
+      for (let c = prev < x.s ? x.s : barEndSec(prev, barSec); c < x.e && out.length < count; c = barEndSec(c, barSec)) {
+        out.push(c);
+        prev = c;
+      }
+      if (out.length >= count) break;
+    }
+    return out;
+  }
+  const weekdays = calendar?.tradingWeekdays ?? new Set([1, 2, 3, 4, 5]);
+  if (!calendar) for (let i = Math.max(0, n - 400); i < n; i++) weekdays.add(barFields(bars[i].time, false, NY_ZONE).wd);
+  const trades = (day: number) => (calendar && day <= calendar.lastDay ? calendar.tradingDays.has(day) : weekdays.has(weekdayOf(day)));
+  const day0 = Math.floor((last + 12 * 3600) / DAY_SEC);
+  const d0 = new Date(day0 * DAY_SEC * 1000);
+  const [y, m] = [d0.getUTCFullYear(), d0.getUTCMonth()];
+  const utcDay = (yy: number, mm: number, dd: number) => Date.UTC(yy, mm, dd) / 1000 / DAY_SEC;
+  const monday = day0 - ((weekdayOf(day0) + 6) % 7);
+  for (let k = 1, day = day0; out.length < count; k++) {
+    switch (tf) {
+      case '1W':
+        // The week's last trading day (IB stamps a forming week with its last day so far).
+        day = monday + 7 * k + 6;
+        while (!weekdays.has(weekdayOf(day)) && day > monday + 7 * k) day--;
+        break;
+      case '1M':
+        // The month's last weekday it trades (day 0 of the next month is its last day).
+        day = utcDay(y, m + k + 1, 0);
+        while (!weekdays.has(weekdayOf(day))) day--;
+        break;
+      case '1Q':
+        day = utcDay(y, Math.floor(m / 3) * 3 + 3 * k, 1);
+        break;
+      case '1Y':
+        day = utcDay(y + k, 0, 1);
+        break;
+      default:
+        do day++;
+        while (!trades(day));
+    }
+    out.push(day * DAY_SEC);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Time axis
 
 /** Minimum distance (px) between the centers of two time axis labels (more for wide clock labels, see timeTickGap). */
@@ -914,7 +1199,7 @@ export type TimeTickKind = 'time' | 'day' | 'month' | 'year';
 const KIND_RANK: Record<TimeTickKind, number> = { time: 0, day: 1, month: 2, year: 3 };
 
 export interface TimeTick {
-  /** Index into the full bar series. */
+  /** Index into the full bar series (from its length on: an empty future slot, see futureTimes). */
   index: number;
   kind: TimeTickKind;
   label: string;
@@ -1034,7 +1319,7 @@ const SPACING_QUANTILE = 0.5;
  * there. It only changes with the series (and its time zone, see chartTimeZone), not with the view,
  * so the step stays put while panning; callers keep it per series.
  */
-export function timeStepSpacing(bars: readonly Bar[], tf: Timeframe, zone: string = NY_ZONE): number[] {
+export function timeStepSpacing(bars: readonly Pick<Bar, 'time'>[], tf: Timeframe, zone: string = NY_ZONE): number[] {
   const steps = TIME_STEPS[tf];
   const from = Math.max(0, bars.length - SPACING_SAMPLE);
   const n = bars.length - from;
@@ -1123,7 +1408,7 @@ function tickLabel(kind: TimeTickKind, f: BarFields, clock: LabelClock): string 
  * and are labelled in `clock`'s format.
  */
 export function timeTicks(
-  bars: readonly Bar[],
+  bars: readonly Pick<Bar, 'time'>[],
   tf: Timeframe,
   step: number,
   from: number,
@@ -1183,7 +1468,7 @@ export function labelWidth(text: string): number {
  * series in that zone.
  */
 export function timeAxisLabels(
-  bars: readonly Bar[],
+  bars: readonly Pick<Bar, 'time'>[],
   tf: Timeframe,
   win: ViewWindow,
   widthPx: number,
