@@ -167,7 +167,8 @@ export function OptionRow<K extends string>({
   disabled?: boolean;
 }) {
   return (
-    <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(disabled) }}>
+    // At least 60px; a longer description grows the row rather than running into its divider.
+    <div style={{ minHeight: 60, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(disabled) }}>
       <LabelBlock label={label} desc={desc} />
       <Segmented options={options} value={value} onChange={(k) => k !== value && onChange(k)} itemStyle={{ padding: '7px 14px', fontSize: 13, gap: 10 }} />
     </div>

@@ -93,6 +93,7 @@ export function App() {
   const ready = useStore((s) => s.ready);
   const page = useStore((s) => s.page);
   const upColor = useStore((s) => s.settings.appearance.upColor);
+  const colorBlind = useStore((s) => s.settings.appearance.colorBlind);
   const lang = useStore((s) => s.settings.appearance.language);
   const covered = useStore(isCovered);
   const lockSeq = useStore((s) => s.lockSeq);
@@ -103,8 +104,9 @@ export function App() {
     root.dataset.th = dark ? 'dark' : 'light';
     root.dataset.sk = 'a';
     root.dataset.cv = upColor;
+    root.dataset.cb = colorBlind;
     root.lang = lang === 'zh' ? 'zh-CN' : 'en';
-  }, [dark, upColor, lang]);
+  }, [dark, upColor, colorBlind, lang]);
 
   useEffect(() => onCommand((c) => runCommand(c, dark)), [dark]);
 

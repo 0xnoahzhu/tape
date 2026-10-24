@@ -583,7 +583,8 @@ describe('buildChart', () => {
   it('builds one path per kind and direction', () => {
     const bars = [bar(1, 10, 11, 9, 11), bar(2, 11, 12, 10, 10), bar(3, 10, 12, 9, 11)];
     const g = buildChart(bars, { count: 30 })!;
-    expect(g.paths.upWicks.match(/M/g)).toHaveLength(2);
+    // An up wick stops at its body (drawn hollow in a color-blind mode): two moves per candle.
+    expect(g.paths.upWicks.match(/M/g)).toHaveLength(4);
     expect(g.paths.upBodies.match(/z/g)).toHaveLength(2);
     expect(g.paths.dnWicks.match(/M/g)).toHaveLength(1);
     expect(g.paths.dnBodies.match(/z/g)).toHaveLength(1);
@@ -593,6 +594,8 @@ describe('buildChart', () => {
     const r2 = (v: number) => Math.round(v * 100) / 100;
     expect(g.paths.dnBodies).toBe(`M${r2(c.x)} ${r2(c.top)}h${r2(c.w)}v${r2(c.h)}h${r2(-c.w)}z`);
     expect(g.paths.dnWicks).toBe(`M${r2(c.cx)} ${r2(c.yh)}V${r2(c.yl)}`);
+    const u = g.candles[0];
+    expect(g.paths.upWicks.startsWith(`M${r2(u.cx)} ${r2(u.yh)}V${r2(u.top)}M${r2(u.cx)} ${r2(u.top + u.h)}V${r2(u.yl)}`)).toBe(true);
   });
 
   it('handles a flat series', () => {

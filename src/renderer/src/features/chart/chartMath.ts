@@ -478,7 +478,8 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
     const h = Math.max(1, Math.abs(y(b.open) - y(b.close)));
     const c: Candle = { index: i, up, x, w: bw, cx, top, h, yh: y(b.high), yl: y(b.low) };
     candles.push(c);
-    const wick = `M${r2(cx)} ${r2(c.yh)}V${r2(c.yl)}`;
+    // An up candle's wick stops at its body, which a color-blind mode draws hollow (tokens.css → --upBody).
+    const wick = up ? `M${r2(cx)} ${r2(c.yh)}V${r2(top)}M${r2(cx)} ${r2(top + h)}V${r2(c.yl)}` : `M${r2(cx)} ${r2(c.yh)}V${r2(c.yl)}`;
     const body = `M${r2(x)} ${r2(top)}h${r2(bw)}v${r2(h)}h${r2(-bw)}z`;
     if (up) {
       upWicks += wick;

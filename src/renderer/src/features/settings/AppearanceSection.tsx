@@ -1,7 +1,8 @@
-// Settings › General: language, time format, theme, up/down color convention.
+// Settings › General: language, time format, theme, up/down color convention and color-blind mode
+// (red–green set further apart, or blue and orange, for up / down: tokens.css, data-cb).
 
 import type { TimeFormat } from '@shared/timeFormat';
-import type { Lang, ThemeSetting, UpColor } from '@shared/types';
+import type { ColorBlind, Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
 import { useSettingsMessages } from './messages';
 import { OptionRow, SectionHeader, saveSettings } from './parts';
@@ -14,12 +15,28 @@ export function AppearanceSection() {
   // under the current convention, expressed through var(--up) / var(--dn).
   const red = a.upColor === 'cn' ? 'var(--up)' : 'var(--dn)';
   const green = a.upColor === 'cn' ? 'var(--dn)' : 'var(--up)';
+  const hollow = a.colorBlind !== 'off';
   const colorLabel = (k: UpColor, text: string) => (
     <>
-      <CandleIcon up={k === 'cn' ? red : green} down={k === 'cn' ? green : red} />
+      <CandleIcon up={k === 'cn' ? red : green} down={k === 'cn' ? green : red} hollow={hollow} />
       <div>{text}</div>
     </>
   );
+  // Each color-blind option previews its own colors in the current convention ("green" first).
+  const palettes: Record<ColorBlind, [string, string]> = {
+    off: ['var(--g)', 'var(--r)'],
+    redGreen: ['var(--rgGreen)', 'var(--rgRed)'],
+    blueOrange: ['var(--cbBlue)', 'var(--cbOrange)'],
+  };
+  const modeLabel = (k: ColorBlind, text: string) => {
+    const [g, r] = palettes[k];
+    return (
+      <>
+        <CandleIcon up={a.upColor === 'cn' ? r : g} down={a.upColor === 'cn' ? g : r} hollow={k !== 'off'} />
+        <div>{text}</div>
+      </>
+    );
+  };
 
   return (
     <>
@@ -56,25 +73,40 @@ export function AppearanceSection() {
       <OptionRow<UpColor>
         label={m.upColors}
         options={[
-          { key: 'cn', label: colorLabel('cn', m.cn) },
-          { key: 'us', label: colorLabel('us', m.us) },
+          // In blue–orange the conventions are named by the colors they show.
+          { key: 'cn', label: colorLabel('cn', a.colorBlind === 'blueOrange' ? m.cnColorBlind : m.cn) },
+          { key: 'us', label: colorLabel('us', a.colorBlind === 'blueOrange' ? m.usColorBlind : m.us) },
         ]}
         value={a.upColor}
         onChange={(upColor) => saveSettings({ appearance: { upColor } })}
+      />
+      <OptionRow<ColorBlind>
+        label={m.colorBlind}
+        desc={m.colorBlindDesc}
+        options={[
+          { key: 'off', label: modeLabel('off', m.off) },
+          { key: 'redGreen', label: modeLabel('redGreen', m.redGreen) },
+          { key: 'blueOrange', label: modeLabel('blueOrange', m.blueOrange) },
+        ]}
+        value={a.colorBlind}
+        onChange={(colorBlind) => saveSettings({ appearance: { colorBlind } })}
       />
     </>
   );
 }
 
-/** Four little bars and ▲▼ in the convention's up / down colors. */
-function CandleIcon({ up, down }: { up: string; down: string }) {
+/** Four little bars and ▲▼ in the convention's up / down colors; up bars outlined when `hollow` (color-blind modes). */
+function CandleIcon({ up, down, hollow }: { up: string; down: string; hollow?: boolean }) {
+  const bar = (color: string, h: number, isUp: boolean) => (
+    <div style={{ width: 4, height: h, boxSizing: 'border-box', ...(isUp && hollow ? { boxShadow: `inset 0 0 0 1px ${color}` } : { background: color }) }} />
+  );
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 16 }}>
-        <div style={{ width: 4, height: 9, background: up }} />
-        <div style={{ width: 4, height: 14, background: up }} />
-        <div style={{ width: 4, height: 6, background: down }} />
-        <div style={{ width: 4, height: 11, background: up }} />
+        {bar(up, 9, true)}
+        {bar(up, 14, true)}
+        {bar(down, 6, false)}
+        {bar(up, 11, true)}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, font: '600 9px/1 var(--num)' }}>
         <div style={{ color: up }}>▲</div>

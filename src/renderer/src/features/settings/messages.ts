@@ -301,6 +301,14 @@ const en = {
   upColors: 'Up / down colors',
   cn: 'Red up, green down',
   us: 'Green up, red down',
+  /** The conventions in blue–orange colors (blue in green's place, orange in red's). */
+  cnColorBlind: 'Orange up, blue down',
+  usColorBlind: 'Blue up, orange down',
+  colorBlind: 'Color-blind mode',
+  colorBlindDesc: 'Red–green: set further apart. Blue–orange: for red–green color blindness. Up candles hollow.',
+  off: 'Off',
+  redGreen: 'Red–green',
+  blueOrange: 'Blue–orange',
 
   // Privacy & Security
   privacy: 'Privacy',
@@ -664,6 +672,13 @@ const zh: typeof en = {
   upColors: '涨跌颜色',
   cn: '红涨绿跌',
   us: '绿涨红跌',
+  cnColorBlind: '橙涨蓝跌',
+  usColorBlind: '蓝涨橙跌',
+  colorBlind: '色盲模式',
+  colorBlindDesc: '红绿增强：保留红绿，拉开区别，适合色弱；蓝橙：区别最大，适合红绿色盲。两种都把上涨的 K 线画成空心。',
+  off: '关闭',
+  redGreen: '红绿增强',
+  blueOrange: '蓝橙',
 
   privacy: '隐私',
   lockScreen: '锁屏',

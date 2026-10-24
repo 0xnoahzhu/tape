@@ -134,6 +134,15 @@ describe('loadSettings', () => {
     expect(loadSettings({ appearance: { language: 'zh', upColor: 'us' } }, defaults).appearance.upColor).toBe('us');
   });
 
+  it('color-blind mode is off until chosen, and stays as saved', () => {
+    expect(defaultSettings('en').appearance.colorBlind).toBe('off');
+    expect(loadSettings({ appearance: { language: 'zh' } }, defaultSettings('zh')).appearance.colorBlind).toBe('off');
+    expect(loadSettings({ appearance: { colorBlind: 'redGreen' } }, defaults).appearance.colorBlind).toBe('redGreen');
+    expect(loadSettings({ appearance: { colorBlind: 'blueOrange' } }, defaults).appearance.colorBlind).toBe('blueOrange');
+    expect(loadSettings({ appearance: { colorBlind: true } }, defaults).appearance.colorBlind).toBe('off');
+    expect(applySettingsPatch(defaults, { appearance: { colorBlind: 'redGreen' } }).appearance.colorBlind).toBe('redGreen');
+  });
+
   it('tells whether the removed read-only setting was on', () => {
     expect(hadReadOnlyMode({ connection: { readOnly: true } })).toBe(true);
     // Coerced like the setting was.

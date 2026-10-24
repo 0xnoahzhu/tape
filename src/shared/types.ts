@@ -1271,6 +1271,12 @@ export interface AppNotification {
 export type ThemeSetting = 'system' | 'dark' | 'light';
 /** cn = red up / green down, us = green up / red down. */
 export type UpColor = 'cn' | 'us';
+/**
+ * Color-blind mode: off; redGreen keeps red and green, set further apart (a teal-leaning green,
+ * lighter in dark, an orange-leaning red in light) for color weakness; blueOrange puts blue in
+ * green's place and orange in red's for red–green color blindness. Both draw up candles hollow.
+ */
+export type ColorBlind = 'off' | 'redGreen' | 'blueOrange';
 /** Auto-lock after this many idle minutes; 'custom' uses `lock.customMinutes`. */
 export type AutoLock = '15' | '30' | '60' | 'custom' | 'never';
 
@@ -1293,6 +1299,7 @@ export interface Settings {
     /** Clock times: '12h' "09:41 AM" (the default) or '24h' "09:41" (shared/timeFormat.ts). */
     timeFormat: TimeFormat;
     upColor: UpColor;
+    colorBlind: ColorBlind;
     showAccountId: boolean;
   };
   /** Features that depend on extra market data subscriptions. */

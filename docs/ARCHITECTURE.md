@@ -1241,7 +1241,15 @@ delete open files):
   Always use `var(--up)` / `var(--dn)` for price direction, never raw red/green. A new profile
   gets cn in Chinese and us otherwise (`defaults.ts → defaultUpColor`, set with the language at first
   launch, and for a settings file without it, such as the one a Forgot-PIN reset writes); a saved
-  choice is never changed.
+  choice is never changed. Color-blind mode (Settings › General, `appearance.colorBlind`: off,
+  redGreen or blueOrange) sets `data-cb`, which maps `--up` / `--dn` per theme to `--rgGreen` /
+  `--rgRed` (red and green set further apart: a lighter, teal-leaning green in dark, a teal green and
+  an orange-leaning red in light) or `--cbBlue` / `--cbOrange` (blue in green's place, orange in red's),
+  in either convention, and draws up candle bodies hollow (`--upBody` / `--upEdge`; up wicks stop at
+  the body, `chartMath.ts → buildChart`), so up and down differ by shape too. The pairs were checked
+  with the dataviz validator (OKLab dE under protanopia and deuteranopia: red–green 20 in dark and 10
+  in light, blue–orange 23 and 25, where green / red have 7.9 and 2.3; text contrast and the moving
+  averages are noted in tokens.css). Only up / down change: `--r` (errors, live) and the accent stay.
 * `ConfirmRequest` (the shared confirmation dialog, `layout/Dialogs.tsx`) takes optional `warnings`,
   red lines after the note: what the action costs or why it may fail (a stop-loss left without
   protection, Read-Only API on, and IB's live trading port in Settings › Connection's reconnect and

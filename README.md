@@ -236,7 +236,10 @@ already recorded are still written).
 
 **General** — dark, light or system theme (the dock / window icon follows the theme, and on macOS so does
 Tape's icon in Finder), red-up / green-down (CN) or green-up / red-down (US) color convention (a new
-profile starts with CN in Chinese and US otherwise), English and
+profile starts with CN in Chinese and US otherwise), a **color-blind mode**: *Red–green* keeps red and
+green but sets them further apart (a teal-leaning green; for color weakness), *Blue–orange* shows blue in
+green's place and orange in red's (for red–green color blindness); both keep the convention and draw up
+candles hollow, so up and down differ by shape too. English and
 中文, and 12-hour ("09:41 AM", "上午 09:41"; the default) or 24-hour ("09:41") clock times everywhere you
 read them; the API log and what is sent to IB stay 24-hour.
 

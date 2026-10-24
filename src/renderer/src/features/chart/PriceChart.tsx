@@ -681,7 +681,7 @@ export const PriceChart = memo(function PriceChart({
             {paths && (
               <>
                 <path d={paths.upWicks} style={line({ stroke: 'var(--up)', fill: 'none' })} />
-                <path d={paths.upBodies} style={{ fill: 'var(--up)' }} />
+                <path d={paths.upBodies} style={line({ fill: 'var(--upBody)', stroke: 'var(--upEdge)' })} />
                 <path d={paths.dnWicks} style={line({ stroke: 'var(--dn)', fill: 'none' })} />
                 <path d={paths.dnBodies} style={{ fill: 'var(--dn)' }} />
               </>

@@ -126,6 +126,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     language: oneOf(['en', 'zh']),
     timeFormat: oneOf(TIME_FORMATS),
     upColor: oneOf(['cn', 'us']),
+    colorBlind: oneOf(['off', 'redGreen', 'blueOrange']),
     showAccountId: bool,
   },
   features: { depth: bool, depthSetByUser: bool },

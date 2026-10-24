@@ -1,5 +1,6 @@
 /* Design tokens from "Trading Client v5" (skin "a": square, dense, monospace numbers).
-   The root element carries data-th (dark | light), data-sk (a) and data-cv (cn | us). */
+   The root element carries data-th (dark | light), data-sk (a), data-cv (cn | us) and data-cb
+   (off | redGreen | blueOrange: color-blind mode). */
 
 :root {
   --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Segoe UI', sans-serif;
@@ -40,6 +41,15 @@
   --ma20: #928700;
   --ma50: #1c81ff;
   --ma200: #ec39b8;
+  /* Color-blind modes' up / down, checked with the dataviz validator on --p (OKLab dE, normal /
+     protanopia and deuteranopia; green / red have 7.9 under CVD). Red–green: a lighter, teal-leaning
+     green with the same red, dE 20 under CVD and 37 under tritanopia, >= 15 / 8 to every moving
+     average, 11.8:1 / 5.2:1 as text. Blue–orange (blue in green's place, orange in red's): dE 23
+     under CVD and 24 under tritanopia, >= 17 / 12 to every moving average, 15 to --r, >= 8:1 as text. */
+  --rgGreen: #86ead3;
+  --rgRed: #e06a6e;
+  --cbBlue: #8fc3ff;
+  --cbOrange: #f5a04a;
   color-scheme: dark;
 }
 
@@ -68,6 +78,16 @@
   --ma20: #7c4b02;
   --ma50: #1b3acf;
   --ma200: #8d187d;
+  /* Color-blind modes, with the same checks (green / red have 2.3 under CVD here). Red–green: a
+     teal-leaning green and an orange-leaning red, dE 10 under CVD and 32 under tritanopia,
+     5.2:1 / 3.6:1 as text. Blue–orange: dE 25 under CVD and 28 under tritanopia, >= 3.2:1 as
+     text on every panel and selected row (3.6:1 on the page, as green; red: 4.0). Both greens and the blue sit 9–11 from the MA10 cyan in normal
+     vision: darker ones meet the moving averages' blues, lighter ones lose the text contrast;
+     candles are bodies (up ones hollow in these modes) and the averages thin lines. */
+  --rgGreen: #0e7468;
+  --rgRed: #d65a1a;
+  --cbBlue: #4682d0;
+  --cbOrange: #c4620e;
   color-scheme: light;
 }
 
@@ -79,4 +99,33 @@
 [data-cv='cn'] {
   --up: var(--r);
   --dn: var(--g);
+}
+/* Color-blind modes keep the convention: their green (or blue) where it has green, their red (or
+   orange) where it has red. */
+[data-cb='redGreen'][data-cv='us'] {
+  --up: var(--rgGreen);
+  --dn: var(--rgRed);
+}
+[data-cb='redGreen'][data-cv='cn'] {
+  --up: var(--rgRed);
+  --dn: var(--rgGreen);
+}
+[data-cb='blueOrange'][data-cv='us'] {
+  --up: var(--cbBlue);
+  --dn: var(--cbOrange);
+}
+[data-cb='blueOrange'][data-cv='cn'] {
+  --up: var(--cbOrange);
+  --dn: var(--cbBlue);
+}
+/* Up candle bodies: filled, or hollow (outlined) in a color-blind mode, so up and down differ by
+   shape as well as color. */
+:root {
+  --upBody: var(--up);
+  --upEdge: none;
+}
+[data-cb='redGreen'],
+[data-cb='blueOrange'] {
+  --upBody: none;
+  --upEdge: var(--up);
 }
