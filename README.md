@@ -545,7 +545,10 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
 - **Lock** with ⌘L / Ctrl+L, the padlock in the top bar or *Tape › Lock Tape*. The first time, Tape asks for
   a PIN and locks once it is saved. *Settings › Privacy & Security* sets the idle time (15 / 30 / 60 minutes,
   custom or never; no keyboard or mouse input on the computer, checked every 15 s), the unlock method, the
-  unlock sound, and changes or removes the PIN. Tape starts locked whenever a PIN is set.
+  lock sound, and changes or removes the PIN. Tape starts locked whenever a PIN is set (silently).
+- **Lock sound**: a soft two-part click on unlock (high, then low), and the same click backwards when Tape
+  locks (low, then high), however it locked: the padlock, ⌘L, the menu or the idle time. One switch, *Lock
+  sound*, turns both off.
 - **Weakening the lock needs the PIN**: a longer idle time (or never), and Touch ID / Windows Hello where
   *PIN only* was chosen, are saved only after the current PIN is entered (the main process checks it; Touch
   ID cannot stand in here). A shorter idle time, *PIN only* and the sound change at once. This keeps a

@@ -344,8 +344,8 @@ const en = {
             ? 'Touch ID is not available on this Mac or not set up (a closed lid also turns it off)'
             : 'This PC has no Windows Hello camera or fingerprint reader, or it is not set up'
           : `${BIO[b.kind]} is not available right now`,
-  unlockSound: 'Unlock sound',
-  unlockSoundD: 'Play a soft click when unlocked',
+  lockSound: 'Lock sound',
+  lockSoundD: 'Play a soft click when Tape locks and unlocks',
   pinL: 'Lock PIN',
   pinD: '6 characters (letters, digits or symbols). Only unlocks Tape; separate from your IBKR login',
   pinSet: 'Set',
@@ -712,8 +712,8 @@ const zh: typeof en = {
             ? '这台 Mac 无法使用 Touch ID 或尚未设置（合上屏幕时也无法使用）'
             : '这台电脑没有 Windows Hello 摄像头或指纹识别器，或尚未设置'
           : `${BIO[b.kind]} 暂时不可用`,
-  unlockSound: '解锁音效',
-  unlockSoundD: '解锁成功时播放一声轻响',
+  lockSound: '锁屏音效',
+  lockSoundD: '锁定和解锁时各播放一声轻响',
   pinL: '锁屏 PIN',
   pinD: '6 位字符（字母、数字、符号均可），只用于解锁 Tape，与 IBKR 登录密码无关',
   pinSet: '设置',

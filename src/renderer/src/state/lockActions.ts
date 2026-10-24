@@ -2,8 +2,13 @@
 // (dialogs, the bell, popovers, the search dropdown, the positions table's column editor) and drops
 // a pending order review, which is never sent: after unlocking, the user starts again from a clean
 // screen. Floating panels collapse to their bars (and stay so after the unlock).
+//
+// Every lock (the lock button, ⌘L, the menu, the idle auto-lock and its check on sleep and wake)
+// arrives here as main's `lock` event, so the lock sound plays here. The snapshot at launch does not
+// come through: starting locked is silent.
 
 import type { LockState } from '@shared/types';
+import { lockClack } from '../features/lock/clack';
 import { usePanels } from '../features/panels/panelStore';
 import { usePositionColumns } from '../features/portfolio/columnStore';
 import { useStore } from './store';
@@ -11,6 +16,7 @@ import { useStore } from './store';
 export function applyLockState(state: LockState): void {
   const prev = useStore.getState().lock;
   if (state.locked && !prev.locked) {
+    if (useStore.getState().settings.lock.sound) lockClack();
     closeTransientUi();
     usePanels.getState().collapseAll();
     // Locked again while the unlock animation was still playing: that screen (fading out) is replaced.

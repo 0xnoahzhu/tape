@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stock } from '@shared/contract';
-import type { LockState } from '@shared/types';
+import type { TapeEvent } from '@shared/ipc';
+import type { AppSnapshot, LockState } from '@shared/types';
 import { newAlertForm } from '../features/alerts/model';
 import { requestLock } from '../features/lock/actions';
 import { usePanels } from '../features/panels/panelStore';
 import { usePositionColumns } from '../features/portfolio/columnStore';
+import { startBridge } from './bridge';
 import { applyLockState } from './lockActions';
 import { isCovered, useStore } from './store';
+
+const sounds = vi.hoisted(() => ({ clack: vi.fn(), lockClack: vi.fn() }));
+vi.mock('../features/lock/clack', () => sounds);
 
 const state = (patch: Partial<LockState>): LockState => ({ hasPin: true, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null, ...patch });
 
@@ -16,6 +21,7 @@ describe('lock state in the renderer', () => {
   beforeEach(() => {
     useStore.setState(initial, true);
     lock.mockClear();
+    sounds.lockClack.mockClear();
     vi.stubGlobal('window', { tape: { lock } });
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -95,5 +101,74 @@ describe('lock state in the renderer', () => {
     useStore.setState({ lock: state({ locked: true }) });
     requestLock();
     expect(lock).toHaveBeenCalledTimes(1);
+  });
+
+  it('plays the lock sound each time Tape locks, whatever locked it, and not on unlock or a refresh', () => {
+    // Every lock path (button, ⌘L, menu, idle auto-lock, its sleep / wake check) is main's `lock` event.
+    applyLockState(state({ locked: true }));
+    expect(sounds.lockClack).toHaveBeenCalledTimes(1);
+    // Still locked (e.g. biometrics availability changed): no second sound.
+    applyLockState(state({ locked: true, failures: 1 }));
+    expect(sounds.lockClack).toHaveBeenCalledTimes(1);
+    applyLockState(state({ locked: false }));
+    expect(sounds.lockClack).toHaveBeenCalledTimes(1);
+    applyLockState(state({ locked: true }));
+    expect(sounds.lockClack).toHaveBeenCalledTimes(2);
+    expect(sounds.clack).not.toHaveBeenCalled();
+  });
+
+  it('plays the lock sound when Tape locks again during the unlock animation', () => {
+    useStore.setState({ lock: state({ locked: true }), unlocking: true });
+    applyLockState(state({ locked: false }));
+    applyLockState(state({ locked: true }));
+    expect(sounds.lockClack).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows the same switch as the unlock sound', () => {
+    useStore.setState((s) => ({ settings: { ...s.settings, lock: { ...s.settings.lock, sound: false } } }));
+    applyLockState(state({ locked: true }));
+    expect(useStore.getState().lock.locked).toBe(true);
+    expect(sounds.lockClack).not.toHaveBeenCalled();
+  });
+
+  it('is silent when Tape starts locked, and sounds on the next lock', async () => {
+    const s0 = useStore.getState();
+    const snapshot: AppSnapshot = {
+      platform: 'darwin',
+      appVersion: '0.0.0',
+      demo: false,
+      settings: s0.settings,
+      dark: false,
+      connection: s0.connection,
+      account: null,
+      positions: [],
+      positionsLoaded: false,
+      orders: [],
+      executions: [],
+      watchlists: [],
+      priceAlerts: [],
+      alertStatuses: [],
+      notifications: [],
+      logFilePath: '',
+      lock: state({ locked: true }),
+      afterReset: false,
+      marketDataCheck: s0.marketDataCheck,
+    };
+    let emit: (e: TapeEvent) => void = () => undefined;
+    vi.stubGlobal('window', {
+      tape: {
+        onEvent: (cb: (e: TapeEvent) => void) => {
+          emit = cb;
+          return () => undefined;
+        },
+        getSnapshot: () => Promise.resolve(snapshot),
+      },
+    });
+    await startBridge();
+    expect(useStore.getState().lock.locked).toBe(true);
+    expect(sounds.lockClack).not.toHaveBeenCalled();
+    emit({ type: 'lock', state: state({}) });
+    emit({ type: 'lock', state: state({ locked: true }) });
+    expect(sounds.lockClack).toHaveBeenCalledTimes(1);
   });
 });

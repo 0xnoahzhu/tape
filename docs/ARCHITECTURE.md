@@ -1199,6 +1199,15 @@ Main is the only authority on whether Tape is locked; the renderer draws `LockSt
   locking, and collapses floating panels to their bars (they stay collapsed after the unlock); a capture key listener (`features/lock/actions.ts → installLockKeyGuard`) keeps every shortcut
   from running and sends typed keys to the PIN input. The store's `unlocking` keeps the screen up while the
   unlock animation plays after main has already unlocked.
+* Sounds (`features/lock/clack.ts`, Web Audio, no audio file): each is two hits of band-passed noise over a
+  falling sine. `UNLOCK_HITS` is 3200 Hz (30 ms), then 1900 Hz (50 ms) 75 ms after the start, played by
+  the lock screen as its success animation starts (`unlockTimeline().sound`). `LOCK_HITS = reversed(UNLOCK_HITS)`
+  mirrors it in time: the same two hits with the same 45 ms gap, 1900 Hz first. `applyLockState` plays it
+  when a `lock` event turns `locked` from false to true, so every lock path sounds (the lock button / ⌘L /
+  *Lock Tape* through `lock()`, the idle auto-lock and its suspend / resume check, a new PIN with
+  `lockAfter`, a lock during the unlock animation); a repeated locked state does not, and neither does
+  starting locked (the snapshot sets `lock` directly). Both follow `settings.lock.sound` (*Lock sound* in
+  Privacy & Security).
 
 **Forgot PIN → Reset** (`reset.ts`) runs in two phases, so nothing still running can write a file after it
 was deleted (pending JSON writes, window bounds, API log appends, the SQLite worker; Windows refuses to

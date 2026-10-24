@@ -114,7 +114,7 @@ export function PrivacySection() {
         onClick={() => saveSettings({ lock: { sound: !lock.sound } })}
         style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, cursor: 'pointer', boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(noPin) }}
       >
-        <LabelBlock label={m.unlockSound} desc={m.unlockSoundD} />
+        <LabelBlock label={m.lockSound} desc={m.lockSoundD} />
         <Toggle on={lock.sound} />
       </div>
       <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>

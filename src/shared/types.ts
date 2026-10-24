@@ -1336,6 +1336,7 @@ export interface Settings {
     customMinutes: number;
     /** 'biometric' = Touch ID / Windows Hello when available, PIN otherwise. */
     unlockWith: 'biometric' | 'pin';
+    /** Play the clack when Tape locks and unlocks (`features/lock/clack.ts`). */
     sound: boolean;
   };
 }

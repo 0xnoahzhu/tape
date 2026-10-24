@@ -240,6 +240,39 @@ describe('lock service', () => {
     }
   });
 
+  it('announces each lock once, whatever locked Tape (the renderer plays the lock sound on it)', async () => {
+    vi.useFakeTimers();
+    try {
+      let idle = 0;
+      const t = setup(await withPin('111111'), { idleSeconds: () => idle, idleTickMs: 15_000, lock: { autoLock: '15' } });
+      /** Changes from unlocked to locked, as the renderer's applyLockState sees them. */
+      const locks = () => t.states.filter((s, i) => s.locked && i > 0 && !t.states[i - 1].locked).length;
+      const unlock = async () => {
+        idle = 0;
+        expect(await t.svc.unlockWithPin('111111')).toEqual({ ok: true });
+      };
+      await unlock();
+      // The lock button, ⌘L and Tape › Lock Tape (IPC `lock`, the menu); locking again changes nothing.
+      expect(t.svc.lock()).toBe(true);
+      expect(t.svc.lock()).toBe(true);
+      expect(locks()).toBe(1);
+      // The idle auto-lock.
+      await unlock();
+      t.svc.startAutoLock();
+      idle = 15 * 60;
+      vi.advanceTimersByTime(15_000);
+      expect(locks()).toBe(2);
+      // The check on sleep and wake.
+      await unlock();
+      idle = 15 * 60;
+      t.svc.checkIdle();
+      expect(locks()).toBe(3);
+      t.svc.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('never auto-locks with Never or without a PIN', async () => {
     vi.useFakeTimers();
     try {
