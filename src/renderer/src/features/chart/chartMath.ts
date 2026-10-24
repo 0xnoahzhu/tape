@@ -297,6 +297,8 @@ export interface MaLine {
 export interface ChartGeometry {
   hi: number;
   lo: number;
+  /** The range fitted to the bars in view (padded, with the live price and legend room): the least a user's range shows. */
+  fit: PriceRange;
   window: ViewWindow;
   /** Drawn bars: the ones in view plus one on each side. */
   candles: Candle[];
@@ -342,7 +344,10 @@ export interface ChartOptions {
    * high marker under it); the range's top padding grows to it when the usual 8 % is less.
    */
   topClear?: number;
-  /** The price axis's range set by the user (zoomed or moved); null or omitted: fitted to the bars in view. */
+  /**
+   * The price axis's range set by the user (zoomed or moved), kept holding the fitted range
+   * (keepBarsInRange); null or omitted: fitted to the bars in view.
+   */
   price?: PriceRange | null;
 }
 
@@ -373,19 +378,14 @@ export function zoomPrice(r: PriceRange, factor: number, level: number = Math.ma
 }
 
 /**
- * Share of the plot's height the bars in view keep on it: their highest high stays at least this far
- * above the bottom and their lowest low this far below the top, however the prices are moved.
+ * The user's range kept around `fit`, the range fitted to the bars in view, so every bar in view
+ * stays whole on the plot: no tighter than it (a zoom in stops there), and moved as little as
+ * needed to hold it (a move stops where a bar would reach the top or the bottom).
  */
-export const PRICE_KEEP = 0.15;
-
-/**
- * The user's range moved as little as needed so the bars in view (highest high `barsHi`, lowest low
- * `barsLo`) stay on the plot by PRICE_KEEP: they never leave it entirely.
- */
-export function keepBarsInRange(r: PriceRange, barsHi: number, barsLo: number): PriceRange {
-  if (!(barsHi >= barsLo) || !Number.isFinite(barsHi) || !Number.isFinite(barsLo)) return r;
-  const edge = (r.hi - r.lo) * PRICE_KEEP;
-  const d = barsHi < r.lo + edge ? barsHi - (r.lo + edge) : barsLo > r.hi - edge ? barsLo - (r.hi - edge) : 0;
+export function keepBarsInRange(r: PriceRange, fit: PriceRange): PriceRange {
+  if (!(fit.hi > fit.lo) || !Number.isFinite(fit.hi) || !Number.isFinite(fit.lo)) return r;
+  if (r.hi - r.lo <= fit.hi - fit.lo) return { hi: fit.hi, lo: fit.lo };
+  const d = r.hi < fit.hi ? fit.hi - r.hi : r.lo > fit.lo ? fit.lo - r.lo : 0;
   return d ? { hi: r.hi + d, lo: r.lo + d } : r;
 }
 
@@ -428,29 +428,29 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
   }
   // Extremes of the bars themselves, before the live price may widen the range.
   const extremes = { high: { index: hiIndex, price: hi }, low: { index: loIndex, price: lo } };
+  if (v1 >= n) {
+    for (const p of opts.include ?? []) {
+      if (!finite(p) || p <= 0) continue;
+      if (p > hi) hi = p;
+      if (p < lo) lo = p;
+    }
+  }
+  if (!(hi >= lo)) hi = lo = all[n - 1].close;
+  const raw = hi - lo;
+  let pad = raw * 0.08;
+  if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
+  // The top pad is `clear` of the padded range: pad / (raw + pad + bottom pad) = clear.
+  const clear = clamp(opts.topClear ?? 0, 0, 0.5);
+  const padTop = Math.max(pad, (clear * (raw + pad)) / (1 - clear));
+  hi += padTop;
+  lo -= pad;
+  const fit = { hi, lo };
   const manual = opts.price && Number.isFinite(opts.price.hi) && Number.isFinite(opts.price.lo) && opts.price.hi > opts.price.lo ? opts.price : null;
   if (manual) {
-    // The user's range as it is (no live price, padding or legend room), kept on the bars in view.
-    const kept = keepBarsInRange(manual, hi, lo);
+    // The user's range, holding the fitted one: every bar in view stays whole on the plot.
+    const kept = keepBarsInRange(manual, fit);
     hi = kept.hi;
     lo = kept.lo;
-  } else {
-    if (v1 >= n) {
-      for (const p of opts.include ?? []) {
-        if (!finite(p) || p <= 0) continue;
-        if (p > hi) hi = p;
-        if (p < lo) lo = p;
-      }
-    }
-    if (!(hi >= lo)) hi = lo = all[n - 1].close;
-    const raw = hi - lo;
-    let pad = raw * 0.08;
-    if (!(pad > 0)) pad = Math.abs(hi) * 0.01 || 1;
-    // The top pad is `clear` of the padded range: pad / (raw + pad + bottom pad) = clear.
-    const clear = clamp(opts.topClear ?? 0, 0, 0.5);
-    const padTop = Math.max(pad, (clear * (raw + pad)) / (1 - clear));
-    hi += padTop;
-    lo -= pad;
   }
   const range = hi - lo;
   const y = (v: number) => ((hi - v) / range) * VB_H;
@@ -505,6 +505,7 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
   return {
     hi,
     lo,
+    fit,
     window: win,
     candles,
     volumes,

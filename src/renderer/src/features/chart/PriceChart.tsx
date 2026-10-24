@@ -11,8 +11,9 @@
 // nothing comes before the first bar. The price axis fits the bars in view until the user moves
 // it: dragging or scrolling on the axis zooms the prices, and a drag that starts up or down moves
 // them with the bars (one that starts sideways stays sideways, so a pan never loses the fit; once
-// moved, every drag goes both ways), never so far that the bars in view leave the plot
-// (chartMath.ts → keepBarsInRange). The Auto chip under the axis, a double-click on it, or picking
+// moved, every drag goes both ways). Every bar in view stays whole on the plot: the prices zoom in
+// no further than they fit the bars, and once zoomed out they move only until a bar reaches the top
+// or the bottom (chartMath.ts → keepBarsInRange); back at the fit, they fit the bars again. The Auto chip under the axis, a double-click on it, or picking
 // a range fits the prices again; moving them keeps a range. Only the bars
 // in view are drawn, as one path per kind and direction, and pointer input is applied once per
 // animation frame. The moving averages are computed over the full series once per change of
@@ -239,9 +240,9 @@ export const PriceChart = memo(function PriceChart({
   const ptRef = useRef(pt);
   const priceRef = useRef(price);
   // The range the plot shows now (fitted or the user's), where moving or zooming the prices starts,
-  // and the highest high and lowest low of the bars in view, which bound a move and a zoom.
+  // and the range fitted to the bars in view, which a moved or zoomed one always holds.
   const shownRangeRef = useRef<PriceRange | null>(null);
-  const barsRef = useRef<PriceRange | null>(null);
+  const fittedRef = useRef<PriceRange | null>(null);
   const frameRef = useRef(0);
   const live = useRef({ bars, count, w: size.w, h: size.h });
   // The fitted view of a range, while one is shown (the view state is not used meanwhile).
@@ -317,20 +318,25 @@ export const PriceChart = memo(function PriceChart({
     });
   const zoomAt = (factor: number, fx: number) => update((v, b, c) => zoomView(v, b, c, factor, fx));
   const reset = (keepZoom: boolean) => update((v) => (keepZoom ? { span: v.span, end: null } : LATEST_VIEW));
-  /** Moves or zooms the price axis from the range shown now; the bars in view never leave the plot (keepBarsInRange). */
+  /**
+   * Moves or zooms the price axis from the range shown now, holding the fitted range so every bar in
+   * view stays whole on the plot (keepBarsInRange); back at the fitted range, the prices fit again.
+   */
   const updatePrice = (fn: (r: PriceRange) => PriceRange) => {
-    const b = barsRef.current;
-    const keep = (r: PriceRange) => (b ? keepBarsInRange(r, b.hi, b.lo) : r);
+    const fit = fittedRef.current;
+    const keep = (r: PriceRange) => (fit ? keepBarsInRange(r, fit) : r);
     const r = priceRef.current ? keep(priceRef.current) : shownRangeRef.current;
     if (!r || !(live.current.h > 0)) return;
-    priceRef.current = keep(fn(r));
+    const next = keep(fn(r));
+    const fitted = !!fit && Math.abs(next.hi - fit.hi) + Math.abs(next.lo - fit.lo) <= (fit.hi - fit.lo) * 1e-9;
+    priceRef.current = fitted ? null : next;
     commit();
   };
   /** Moves the prices with a drag of `dy` px (down: the bars follow it down). */
   const panPricePx = (dy: number) => updatePrice((r) => panPrice(r, dy / live.current.h));
   const zoomPriceBy = (factor: number) => {
-    const b = barsRef.current;
-    updatePrice((r) => zoomPrice(r, factor, b ? Math.max(Math.abs(b.hi), Math.abs(b.lo)) : undefined));
+    const fit = fittedRef.current;
+    updatePrice((r) => zoomPrice(r, factor, fit ? Math.max(Math.abs(fit.hi), Math.abs(fit.lo)) : undefined));
   };
   const fitPrices = () => {
     priceRef.current = null;
@@ -522,7 +528,7 @@ export const PriceChart = memo(function PriceChart({
   const win = geo?.window;
   useLayoutEffect(() => {
     shownRangeRef.current = geo ? { hi: geo.hi, lo: geo.lo } : null;
-    barsRef.current = geo ? { hi: geo.extremes.high.price, lo: geo.extremes.low.price } : null;
+    fittedRef.current = geo ? geo.fit : null;
   });
 
   // Empty future slots in view (panned past the newest bar) and their projected times, for the time

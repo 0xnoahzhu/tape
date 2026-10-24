@@ -72,8 +72,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months; nothing before the first one), dragging on past the newest
   bar into empty future time (its dates and hours on the time axis), zooming the price axis by dragging or
-  scrolling on it and moving it with a chart drag that starts up or down, never so far that the candles leave
-  the chart (**Auto**, or a double-click on the axis, fits it to the bars again), live bars from real-time quotes (a note says when
+  scrolling on it and moving it with a chart drag that starts up or down; every candle in view stays whole on
+  the chart, so the prices zoom in no further than they fit and move only within room a zoom out left
+  (**Auto**, or a double-click on the axis, fits it to the bars again), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,

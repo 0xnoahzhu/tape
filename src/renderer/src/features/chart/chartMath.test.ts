@@ -44,7 +44,6 @@ import {
   withLiveBars,
   MIN_SPAN,
   movingAverages,
-  PRICE_KEEP,
   nearOldest,
   NY_ZONE,
   panPrice,
@@ -341,21 +340,20 @@ describe('price axis range', () => {
     expect(panPrice({ hi: 110, lo: 90 }, -0.5)).toEqual({ hi: 100, lo: 80 });
   });
 
-  it('keeps the bars in view on the plot however far the prices are moved', () => {
-    expect(PRICE_KEEP).toBe(0.15);
-    // Bars above the range: their lowest low comes down to 15 % below the top.
-    expect(keepBarsInRange({ hi: 110, lo: 90 }, 150, 140)).toEqual({ hi: 143, lo: 123 });
-    // Bars below: their highest high comes up to 15 % above the bottom.
-    expect(keepBarsInRange({ hi: 210, lo: 190 }, 150, 140)).toEqual({ hi: 167, lo: 147 });
-    // On the plot already, or none: as it is.
-    expect(keepBarsInRange({ hi: 150, lo: 130 }, 149, 135)).toEqual({ hi: 150, lo: 130 });
-    expect(keepBarsInRange({ hi: 150, lo: 130 }, -Infinity, Infinity)).toEqual({ hi: 150, lo: 130 });
-    // A drag that goes on stops there: moved further, the range comes back to the same place.
-    let r = { hi: 110, lo: 90 };
-    for (let i = 0; i < 50; i++) r = keepBarsInRange(panPrice(r, -0.5), 105, 95);
-    expect(r).toEqual(keepBarsInRange({ hi: -1000, lo: -1020 }, 105, 95));
-    // Dragged up past the top: their lowest low stays 15 % below it.
-    expect(r.hi - (r.hi - r.lo) * PRICE_KEEP).toBeCloseTo(95);
+  it('holds the fitted range: no tighter, and moved only as far as it stays inside', () => {
+    const fit = { hi: 105, lo: 95 };
+    // Room around it: as it is.
+    expect(keepBarsInRange({ hi: 110, lo: 90 }, fit)).toEqual({ hi: 110, lo: 90 });
+    // Tighter (a zoom in past the fit): the fit itself.
+    expect(keepBarsInRange({ hi: 104, lo: 99 }, fit)).toEqual(fit);
+    // Moved past it: back until the bars' top or bottom is at the edge.
+    expect(keepBarsInRange({ hi: 130, lo: 100 }, fit)).toEqual({ hi: 125, lo: 95 });
+    expect(keepBarsInRange({ hi: 100, lo: 70 }, fit)).toEqual({ hi: 105, lo: 75 });
+    // A drag that goes on stops there: the bars dragged up stop with their top at the top.
+    let r = { hi: 120, lo: 80 };
+    for (let i = 0; i < 50; i++) r = keepBarsInRange(panPrice(r, -0.5), fit);
+    expect(r).toEqual({ hi: 105, lo: 65 });
+    expect(keepBarsInRange({ hi: 1, lo: 0 }, { hi: NaN, lo: 0 })).toEqual({ hi: 1, lo: 0 });
   });
 
   it('keeps the range between a hundred-thousandth and a thousand times its largest price', () => {
@@ -428,26 +426,33 @@ describe('buildChart', () => {
     expect(g.axis.map((a) => a.frac)).toEqual([0.15, 0.5, 0.85]);
   });
 
-  it('shows the user\'s price range as it is', () => {
+  it('shows the user\'s price range as it is while it holds the fitted one', () => {
     const bars = series(100);
-    const g = buildChart(bars, { count: 60, price: { hi: 150, lo: 140 }, include: [500], topClear: 0.3 })!;
-    expect([g.hi, g.lo]).toEqual([150, 140]);
-    expect(g.y(150)).toBeCloseTo(0);
-    expect(g.y(140)).toBeCloseTo(VB_H);
-    expect(g.axis.map((a) => a.value)).toEqual([148.5, 145, 141.5]);
+    // Bars 40..99 in view, lows 139..198, highs 141..200: fitted to 204.88 / 134.12.
+    const g = buildChart(bars, { count: 60, price: { hi: 260, lo: 100 } })!;
+    expect(g.fit.hi).toBeCloseTo(204.88);
+    expect(g.fit.lo).toBeCloseTo(134.12);
+    expect([g.hi, g.lo]).toEqual([260, 100]);
+    expect(g.y(260)).toBeCloseTo(0);
+    expect(g.y(100)).toBeCloseTo(VB_H);
+    expect(g.axis.map((a) => a.value)).toEqual([236, 180, 124]);
     // The markers still read the bars in view.
     expect(g.extremes.high.price).toBe(200);
     // An empty or broken range is not one: the prices fit the bars.
-    expect(buildChart(bars, { count: 60, price: { hi: 1, lo: 1 } })!.hi).toBeGreaterThan(200);
-    expect(buildChart(bars, { count: 60, price: { hi: Infinity, lo: -Infinity } })!.hi).toBeGreaterThan(200);
-    expect(buildChart(bars, { count: 60, price: { hi: NaN, lo: 1 } })!.hi).toBeGreaterThan(200);
+    expect(buildChart(bars, { count: 60, price: { hi: 1, lo: 1 } })!.hi).toBeCloseTo(204.88);
+    expect(buildChart(bars, { count: 60, price: { hi: Infinity, lo: -Infinity } })!.hi).toBeCloseTo(204.88);
+    expect(buildChart(bars, { count: 60, price: { hi: NaN, lo: 1 } })!.hi).toBeCloseTo(204.88);
   });
 
-  it('moves a range the bars in view have left back onto them', () => {
-    // Bars 40..99 in view: lows 139..198. A range far below them comes up to their lowest low.
-    const g = buildChart(series(100), { count: 60, price: { hi: 20, lo: 10 } })!;
-    expect(g.hi - g.lo).toBeCloseTo(10);
-    expect(g.y(139)).toBeCloseTo(PRICE_KEEP * VB_H);
+  it('keeps every bar in view whole on the plot, however the range was set', () => {
+    // A range far below the bars and tighter than the fit: the fit itself.
+    const tight = buildChart(series(100), { count: 60, price: { hi: 20, lo: 10 } })!;
+    expect([tight.hi, tight.lo]).toEqual([tight.fit.hi, tight.fit.lo]);
+    // A wider one below them: moved up until the bars' top is at the top.
+    const wide = buildChart(series(100), { count: 60, price: { hi: 100, lo: -100 } })!;
+    expect(wide.hi).toBeCloseTo(wide.fit.hi);
+    expect(wide.hi - wide.lo).toBeCloseTo(200);
+    expect(wide.y(200)).toBeGreaterThan(0);
   });
 
   it('finds the empty future slot under the pointer', () => {
