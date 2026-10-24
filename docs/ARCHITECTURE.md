@@ -594,7 +594,9 @@ day; without the hours, bar after bar and Monday to Friday.
 The price axis fits the bars in view until the user zooms it (a drag or the wheel on the axis,
 `zoomPrice`, bounded by the bars' price level) or moves it (a chart drag that starts up or down,
 `panPrice`; one that starts sideways stays sideways, so a pan never loses the fit, and once moved
-every drag goes both ways); the Auto chip under the axis, a double-click on the axis or picking a
+every drag goes both ways). The bars in view never leave the plot: their highest high stays at least
+15 % of its height above the bottom and their lowest low 15 % below the top, the range moved as
+little as needed after every move, zoom or pan (`keepBarsInRange`); the Auto chip under the axis, a double-click on the axis or picking a
 range (the active one again too: `chartPrefs.rangePick`) fits it again (moving the prices keeps a
 range), and a double-click on the chart resets both directions. Between reloads a real-time last price extends the forming bar and starts the next
 ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator

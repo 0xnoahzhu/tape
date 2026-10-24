@@ -19,6 +19,7 @@ import {
   futureKeep,
   futureTimes,
   isCurrentBar,
+  keepBarsInRange,
   keepOlderBars,
   labelWidth,
   latestButtonSpot,
@@ -43,6 +44,7 @@ import {
   withLiveBars,
   MIN_SPAN,
   movingAverages,
+  PRICE_KEEP,
   nearOldest,
   NY_ZONE,
   panPrice,
@@ -339,6 +341,23 @@ describe('price axis range', () => {
     expect(panPrice({ hi: 110, lo: 90 }, -0.5)).toEqual({ hi: 100, lo: 80 });
   });
 
+  it('keeps the bars in view on the plot however far the prices are moved', () => {
+    expect(PRICE_KEEP).toBe(0.15);
+    // Bars above the range: their lowest low comes down to 15 % below the top.
+    expect(keepBarsInRange({ hi: 110, lo: 90 }, 150, 140)).toEqual({ hi: 143, lo: 123 });
+    // Bars below: their highest high comes up to 15 % above the bottom.
+    expect(keepBarsInRange({ hi: 210, lo: 190 }, 150, 140)).toEqual({ hi: 167, lo: 147 });
+    // On the plot already, or none: as it is.
+    expect(keepBarsInRange({ hi: 150, lo: 130 }, 149, 135)).toEqual({ hi: 150, lo: 130 });
+    expect(keepBarsInRange({ hi: 150, lo: 130 }, -Infinity, Infinity)).toEqual({ hi: 150, lo: 130 });
+    // A drag that goes on stops there: moved further, the range comes back to the same place.
+    let r = { hi: 110, lo: 90 };
+    for (let i = 0; i < 50; i++) r = keepBarsInRange(panPrice(r, -0.5), 105, 95);
+    expect(r).toEqual(keepBarsInRange({ hi: -1000, lo: -1020 }, 105, 95));
+    // Dragged up past the top: their lowest low stays 15 % below it.
+    expect(r.hi - (r.hi - r.lo) * PRICE_KEEP).toBeCloseTo(95);
+  });
+
   it('keeps the range between a hundred-thousandth and a thousand times its largest price', () => {
     const tiny = zoomPrice({ hi: 101, lo: 99 }, 1e-9);
     expect(tiny.hi - tiny.lo).toBeCloseTo(101 * 1e-5);
@@ -422,6 +441,13 @@ describe('buildChart', () => {
     expect(buildChart(bars, { count: 60, price: { hi: 1, lo: 1 } })!.hi).toBeGreaterThan(200);
     expect(buildChart(bars, { count: 60, price: { hi: Infinity, lo: -Infinity } })!.hi).toBeGreaterThan(200);
     expect(buildChart(bars, { count: 60, price: { hi: NaN, lo: 1 } })!.hi).toBeGreaterThan(200);
+  });
+
+  it('moves a range the bars in view have left back onto them', () => {
+    // Bars 40..99 in view: lows 139..198. A range far below them comes up to their lowest low.
+    const g = buildChart(series(100), { count: 60, price: { hi: 20, lo: 10 } })!;
+    expect(g.hi - g.lo).toBeCloseTo(10);
+    expect(g.y(139)).toBeCloseTo(PRICE_KEEP * VB_H);
   });
 
   it('finds the empty future slot under the pointer', () => {

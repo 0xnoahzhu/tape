@@ -372,6 +372,23 @@ export function zoomPrice(r: PriceRange, factor: number, level: number = Math.ma
   return Number.isFinite(out.hi) && Number.isFinite(out.lo) && out.hi > out.lo ? out : r;
 }
 
+/**
+ * Share of the plot's height the bars in view keep on it: their highest high stays at least this far
+ * above the bottom and their lowest low this far below the top, however the prices are moved.
+ */
+export const PRICE_KEEP = 0.15;
+
+/**
+ * The user's range moved as little as needed so the bars in view (highest high `barsHi`, lowest low
+ * `barsLo`) stay on the plot by PRICE_KEEP: they never leave it entirely.
+ */
+export function keepBarsInRange(r: PriceRange, barsHi: number, barsLo: number): PriceRange {
+  if (!(barsHi >= barsLo) || !Number.isFinite(barsHi) || !Number.isFinite(barsLo)) return r;
+  const edge = (r.hi - r.lo) * PRICE_KEEP;
+  const d = barsHi < r.lo + edge ? barsHi - (r.lo + edge) : barsLo > r.hi - edge ? barsLo - (r.hi - edge) : 0;
+  return d ? { hi: r.hi + d, lo: r.lo + d } : r;
+}
+
 /** The range moved by `frac` of its height: positive when the bars are dragged down (higher prices come into view). */
 export function panPrice(r: PriceRange, frac: number): PriceRange {
   if (!Number.isFinite(frac) || !frac) return r;
@@ -413,9 +430,10 @@ export function buildChart(all: readonly Bar[], opts: ChartOptions): ChartGeomet
   const extremes = { high: { index: hiIndex, price: hi }, low: { index: loIndex, price: lo } };
   const manual = opts.price && Number.isFinite(opts.price.hi) && Number.isFinite(opts.price.lo) && opts.price.hi > opts.price.lo ? opts.price : null;
   if (manual) {
-    // The user's range as it is: no live price, padding or legend room.
-    hi = manual.hi;
-    lo = manual.lo;
+    // The user's range as it is (no live price, padding or legend room), kept on the bars in view.
+    const kept = keepBarsInRange(manual, hi, lo);
+    hi = kept.hi;
+    lo = kept.lo;
   } else {
     if (v1 >= n) {
       for (const p of opts.include ?? []) {
