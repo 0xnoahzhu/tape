@@ -130,7 +130,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type; ATM IV, IV
   rank and percentile, expected move and put / call volume (call and put volume on hover) and
   open-interest ratios in the desk header; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
-  non-guaranteed; tabs Chain / Volatility. Under the desk the same positions and open-orders panel as under
+  non-guaranteed; tabs Chain / Volatility (HV, IV / HV and skew; the smile by strike with the spot price,
+  the ATM term structure by days to expiry and the 52-week IV history by month, each with an IV % axis).
+  Under the desk the same positions and open-orders panel as under
   the chart, with the underlying's exposure (Δ sh, $Δ, Γ, Θ/day, Vega/pt) and DTE and Δ per position; a
   click on an option opens its expiry in the chain. Right-click a call or put in the chain for its own
   chart (back on Options the chain is the one it came from). Option risk alerts are in the bell. Always available:

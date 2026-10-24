@@ -1320,7 +1320,12 @@ view an option row's context menu opens the option's own chart (`orders/navigati
 openOptionChart`: SMART-routed as its quotes are; the option becomes the ticket's instrument). Modify
 from the options view switches to the chart, where the ticket is. An order just placed from a floating
 panel flashes for 15 s from IB's acceptance (`activityModel.ts → isFreshOrder`,
-`state/orderFeedback.ts`). The options desk itself has the tabs Chain and Volatility. A call's or put's
+`state/orderFeedback.ts`). The options desk itself has the tabs Chain and Volatility. The Volatility
+tab's charts (`VolatilityTab.tsx`) share one frame (`Plot`): IV % at round values on the left with
+faint gridlines (`options/svg.ts → niceTicks`) and x labels under the plot at their places, those that
+would touch dropped (`fitLabels`, the spot price first): strikes for the smile, expiries placed by
+days to expiry for the ATM term structure, months and years for the 52-week IV history (the price
+chart's daily ticks, `chart/chartMath.ts → timeTicks`, over the IV bars' dates). A call's or put's
 context menu in the chain (any of its cells) opens that option's chart; back on Options the desk keeps
 the chain it came from (`options/data.ts → underlyingOf` with the desk's current underlying,
 `deskStore.ts`), so the strategy's legs stay. An option selected otherwise maps to its underlying as a

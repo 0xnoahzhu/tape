@@ -45,14 +45,19 @@ export function useChain(underlying: ContractRef | null): ChainData {
   return { status: 'empty', expiries, retry };
 }
 
-/** Daily closes of the underlying's 30-day implied volatility (IB's OPTION_IMPLIED_VOLATILITY bars). Null while unavailable. */
-function useIvCloses(underlying: ContractRef | null): { closes: number[] | null; error?: string } {
+/**
+ * Daily closes of the underlying's 30-day implied volatility (IB's OPTION_IMPLIED_VOLATILITY bars)
+ * and their dates (bar times). Null while unavailable.
+ */
+function useIvCloses(underlying: ContractRef | null): { closes: number[] | null; times: number[] | null; error?: string } {
   const key = underlying ? ivHistoryKey(underlying) : null;
   const req: HistoryRequest | null = underlying ? { contract: underlying, timeframe: '1D', whatToShow: 'OPTION_IMPLIED_VOLATILITY' } : null;
   const entry = useCachedRequest<Bar[]>(key, () => window.tape.getHistory(req!), HOUR / 6, (d) => !d.length);
   const bars = entry?.data;
-  const closes = useMemo(() => (bars && bars.length ? bars.map((b) => b.close).filter((c) => Number.isFinite(c) && c > 0) : null), [bars]);
-  return { closes: closes && closes.length ? closes : null, error: entry?.error };
+  const valid = useMemo(() => (bars ? bars.filter((b) => Number.isFinite(b.close) && b.close > 0) : []), [bars]);
+  const closes = useMemo(() => (valid.length ? valid.map((b) => b.close) : null), [valid]);
+  const times = useMemo(() => (valid.length ? valid.map((b) => b.time) : null), [valid]);
+  return { closes, times, error: entry?.error };
 }
 
 /**
@@ -60,11 +65,13 @@ function useIvCloses(underlying: ContractRef | null): { closes: number[] | null;
  * with IV rank / percentile of `current` (the underlying's 30-day IV, else the last bar).
  */
 export function useIvHistory(underlying: ContractRef | null, current: number | undefined) {
-  const { closes, error } = useIvCloses(underlying);
+  const { closes, times: allTimes, error } = useIvCloses(underlying);
   const hist = useMemo(() => (closes ? closes.slice(-252) : null), [closes]);
+  // The dates of `hist`'s closes (bar times: dates at 00:00 UTC).
+  const times = useMemo(() => (allTimes ? allTimes.slice(-252) : null), [allTimes]);
   const now = current != null && current > 0 ? current : hist?.[hist.length - 1];
   const stats = hist && now != null ? ivRank(hist, now) : null;
-  return { hist, current: now, stats, error };
+  return { hist, times, current: now, stats, error };
 }
 
 // ---------------------------------------------------------------------------
