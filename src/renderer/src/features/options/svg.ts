@@ -66,8 +66,8 @@ export interface XLabel {
   strong?: boolean;
 }
 
-/** Approximate width (px) of a 10px monospace label: 0.6em a character. */
-const labelPx = (text: string) => text.length * 6;
+/** Approximate width (px) of a 10px monospace label: 0.6em a character, 1.2em a CJK one ("除息"). */
+export const labelPx = (text: string) => [...text].reduce((w, ch) => w + (ch.codePointAt(0)! >= 0x2e80 ? 12 : 6), 0);
 /** Space (px) kept between two x labels. */
 const LABEL_GAP = 8;
 
@@ -85,4 +85,26 @@ export function fitLabels(labels: readonly XLabel[], width: number): Array<XLabe
     kept.push({ ...l, x });
   }
   return kept.sort((a, b) => a.x - b.x);
+}
+
+/**
+ * Labels over a plot `width` px wide, each at its x (px) kept inside the plot (`left`: its left
+ * edge, clamped) and on the first row where it touches none of the others: close ones stack
+ * instead of overlapping (the term chart's ex-dividend and earnings dates under its axis). Labels
+ * outside the plot are left out.
+ */
+export function stackLabels(labels: readonly XLabel[], width: number): Array<XLabel & { x: number; left: number; row: number }> {
+  if (!(width > 0)) return [];
+  const rows: Array<Array<{ left: number; right: number }>> = [];
+  const out: Array<XLabel & { x: number; left: number; row: number }> = [];
+  for (const l of [...labels].filter((l) => l.at >= -1e-9 && l.at <= 1 + 1e-9).sort((a, b) => a.at - b.at)) {
+    const [x, w] = [l.at * width, labelPx(l.label)];
+    const left = Math.max(0, Math.min(width - w, x - w / 2));
+    const free = (r: Array<{ left: number; right: number }>) => r.every((k) => left >= k.right + LABEL_GAP || left + w + LABEL_GAP <= k.left);
+    let row = rows.findIndex(free);
+    if (row < 0) row = rows.push([]) - 1;
+    rows[row].push({ left, right: left + w });
+    out.push({ ...l, x, left, row });
+  }
+  return out;
 }

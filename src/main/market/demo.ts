@@ -105,6 +105,8 @@ interface Listing {
   avgVolume?: number;
   industry?: string;
   category?: string;
+  /** An exchange-traded fund: no earnings reports. */
+  etf?: boolean;
 }
 
 const stk = (symbol: string, primaryExchange: string, name: string, extra: Partial<Listing> = {}): Listing => ({
@@ -129,8 +131,8 @@ const LISTINGS: Listing[] = [
   stk('NVDA', 'NASDAQ', 'NVIDIA CORP', { price: 118.62, change: -2.14, vol: 0.48, avgVolume: 245e6, industry: 'Technology', category: 'Semiconductors' }),
   stk('TSLA', 'NASDAQ', 'TESLA INC', { price: 251.03, change: 3.87, vol: 0.55, avgVolume: 88e6, industry: 'Consumer, Cyclical', category: 'Auto Manufacturers' }),
   stk('MSFT', 'NASDAQ', 'MICROSOFT CORP', { price: 417.15, change: 0.42, vol: 0.22, avgVolume: 19e6, industry: 'Technology', category: 'Software' }),
-  stk('SPY', 'ARCA', 'SPDR S&P 500 ETF TRUST', { price: 571.3, change: -0.31, vol: 0.14, avgVolume: 46e6 }),
-  stk('QQQ', 'NASDAQ', 'INVESCO QQQ TRUST SERIES 1', { price: 487.92, change: -0.58, vol: 0.18, avgVolume: 34e6 }),
+  stk('SPY', 'ARCA', 'SPDR S&P 500 ETF TRUST', { price: 571.3, change: -0.31, vol: 0.14, avgVolume: 46e6, etf: true }),
+  stk('QQQ', 'NASDAQ', 'INVESCO QQQ TRUST SERIES 1', { price: 487.92, change: -0.58, vol: 0.18, avgVolume: 34e6, etf: true }),
   stk('AMD', 'NASDAQ', 'ADVANCED MICRO DEVICES', { price: 162.45, change: 1.96, vol: 0.44, avgVolume: 42e6, industry: 'Technology', category: 'Semiconductors' }),
   stk('META', 'NASDAQ', 'META PLATFORMS INC-CLASS A', { price: 582.1, change: 0.88, vol: 0.32, avgVolume: 13e6, industry: 'Communications', category: 'Internet' }),
   stk('AMZN', 'NASDAQ', 'AMAZON.COM INC', { price: 186.33, change: -0.74, vol: 0.3, avgVolume: 41e6, industry: 'Communications', category: 'Internet' }),
@@ -138,8 +140,8 @@ const LISTINGS: Listing[] = [
   stk('NFLX', 'NASDAQ', 'NETFLIX INC', { industry: 'Communications', category: 'Internet' }),
   stk('AVGO', 'NASDAQ', 'BROADCOM INC', { industry: 'Technology', category: 'Semiconductors' }),
   stk('JPM', 'NYSE', 'JPMORGAN CHASE & CO', { industry: 'Financial', category: 'Banks' }),
-  stk('IWM', 'ARCA', 'ISHARES RUSSELL 2000 ETF'),
-  stk('DIA', 'ARCA', 'SPDR DJIA TRUST'),
+  stk('IWM', 'ARCA', 'ISHARES RUSSELL 2000 ETF', { etf: true }),
+  stk('DIA', 'ARCA', 'SPDR DJIA TRUST', { etf: true }),
   ind('SPX', 'CBOE', 'S&P 500 Stock Index', { price: 5712.3, change: -0.28, vol: 0.15, avgVolume: 3e6 }),
   ind('NDX', 'NASDAQ', 'NASDAQ 100 Stock Index', { price: 20104.55, change: -0.47, vol: 0.19, avgVolume: 4e5 }),
   ind('INDU', 'CME', 'Dow Jones Industrial Average', { price: 42011.6, change: -0.12, vol: 0.14, avgVolume: 0 }),
@@ -418,8 +420,9 @@ export class DemoMarket {
       Object.assign(q, this.ranges(inst));
       if (c.secType !== 'IND') q.avgVolume = inst.avgVolume;
     }
-    if (has('underlying') || ((stk || fut) && has('volatility'))) q.impliedVol = round(smileVol(inst.vol, 1, 1, 30), 4);
-    if (has('underlying')) q.histVol = inst.histVol;
+    // IV30 (tick 24) holds a stock's earnings within 30 days. No tick 23: generic tick 104 is not
+    // asked for (IB refuses it in a list), so live IB never sends it either.
+    if (has('underlying') || ((stk || fut) && has('volatility'))) q.impliedVol = round(this.withEarnings(c.symbol, inst, smileVol(inst.vol, 1, 1, 30), this.clock() + 30 * 86_400_000), 4);
     if (has('underlying') || (stk && has('volatility'))) q.rtHistVol = round(inst.histVol * 1.03, 4);
     if (has('underlying') || (stk && has('optionFlow'))) Object.assign(q, { callVolume: inst.callVolume, putVolume: inst.putVolume });
     if (has('underlying') || ((stk || fut) && has('optionFlow'))) Object.assign(q, { callOpenInterest: inst.callOpenInterest, putOpenInterest: inst.putOpenInterest });
@@ -492,8 +495,12 @@ export class DemoMarket {
     return out;
   }
 
-  /** The next earnings date (YYYYMMDD, 3 to 90 days ahead) and its time of day, per symbol, as WSH gives them. */
-  earnings(symbol: string): { date: string; time: 'bmo' | 'amc' } {
+  /**
+   * The next earnings date (YYYYMMDD, 3 to 90 days ahead) and its time of day, per symbol, as WSH
+   * gives them; none for an ETF.
+   */
+  earnings(symbol: string): { date: string; time: 'bmo' | 'amc' } | null {
+    if (BY_SYMBOL.get(symbol.toUpperCase())?.etf) return null;
     const r = new Rng(hashString(symbol.toUpperCase() + ':earnings'));
     const day = addDays(nyDay(this.clock()), 3 + Math.floor(r.next() * 88));
     return { date: yyyymmdd(day), time: r.next() < 0.6 ? 'amc' : 'bmo' };
@@ -529,8 +536,23 @@ export class DemoMarket {
     const expiresAt = nyWallToEpochMs(exp, RTH_CLOSE);
     const years = Math.max(0, (expiresAt - this.clock()) / (365 * 86_400_000)) + extraDays / 365;
     const dte = years * 365;
-    const iv = smileVol(und.vol, S, K, dte) + (right === 'P' ? 0.004 : 0);
+    // One IV per strike for the call and the put (put–call parity); the skew is in the smile.
+    const iv = this.withEarnings(c.symbol, und, smileVol(und.vol, S, K, dte), expiresAt, years);
     return { und, S, K, right, years, iv, model: blackScholes(S, K, years, iv, right) } as const;
+  }
+
+  /**
+   * A stock's volatility to a time `until` (`years` from now) with its next earnings (this.earnings)
+   * when they fall before it: a 3 to 7% move per symbol added to the variance, so the term
+   * structure prices the report as IB's quotes do before one.
+   */
+  private withEarnings(symbol: string, inst: Instrument, vol: number, until: number, years = (until - this.clock()) / (365 * 86_400_000)): number {
+    const next = inst.secType === 'STK' ? this.earnings(symbol) : null;
+    if (!next || !(years > 0)) return vol;
+    const at = nyWallToEpochMs(parseYyyymmdd(next.date), next.time === 'bmo' ? RTH_OPEN : RTH_CLOSE);
+    if (at <= this.clock() || at >= until) return vol;
+    const move = 0.03 + 0.04 * new Rng(hashString(symbol.toUpperCase() + ':earnings-move')).next();
+    return Math.sqrt(vol * vol + (move * move) / years);
   }
 
   private optionQuote(c: ContractRef): Omit<Quote, 'key' | 'updatedAt'> {
@@ -616,7 +638,8 @@ export class DemoMarket {
     const series = this.seriesFor(c);
     if (opts.whatToShow === 'OPTION_IMPLIED_VOLATILITY' || opts.whatToShow === 'HISTORICAL_VOLATILITY') {
       const inst = this.instrument(c.symbol);
-      const target = opts.whatToShow === 'HISTORICAL_VOLATILITY' ? inst.histVol : smileVol(inst.vol, 1, 1, 30);
+      // The IV series ends at today's IV30, earnings included, as tick 24 is.
+      const target = opts.whatToShow === 'HISTORICAL_VOLATILITY' ? inst.histVol : this.withEarnings(c.symbol, inst, smileVol(inst.vol, 1, 1, 30), now + 30 * 86_400_000);
       const days = isIntraday(timeframe) ? 252 : 504;
       return volatilityBars(c.symbol + opts.whatToShow, target, days, now);
     }

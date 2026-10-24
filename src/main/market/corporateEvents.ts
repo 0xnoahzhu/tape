@@ -224,7 +224,10 @@ export function createCorporateEventsService(ctx: MainContext): CorporateEventsS
   }
 
   function demoEarnings(underlyings: ContractRef[]): CorporateEarnings {
-    const events = underlyings.map((u) => ({ key: contractKey(u), ...demoMarket().earnings(u.symbol) }));
+    const events = underlyings.flatMap((u) => {
+      const next = demoMarket().earnings(u.symbol);
+      return next ? [{ key: contractKey(u), ...next }] : [];
+    });
     return { status: 'ok', events: sortEvents(events) };
   }
 

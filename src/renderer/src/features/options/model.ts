@@ -1,17 +1,18 @@
 // Composes everything the full desk shows from the store, the chain parameters and
 // the quote subscriptions it owns. Kept in one hook so every tab sees the same numbers.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { contractKey, daysToExpiry } from '@shared/contract';
 import type { ContractRef, Quote } from '@shared/types';
 import { lastPrice, useQuote, useQuoteSubscriptions, useQuotesByKey } from '../../hooks/useQuotes';
 import { useStore } from '../../state/store';
-import { atmIv, chainContract, nearestIndex, optionData, strikeWindow, termExpiries, type ChainExpiry, type OptionData } from './chain';
+import { atmIv, chainContract, markOf, nearestIndex, optionData, strikeWindow, termExpiries, type ChainExpiry, type OptionData } from './chain';
 import { useChain, underlyingOf, type ChainData } from './data';
 import { useDesk } from './deskStore';
 import { dropUnlisted, useUnlisted, useUnlistedProbe } from './listing';
 import { expectedMove, yearsToExpiry } from './math';
 import { legContract } from './strategies';
+import { wingStrikes } from './vol';
 
 /** IB allows ~100 market data lines by default; the chain uses at most this many. */
 export const MAX_CHAIN_CONTRACTS = 60;
@@ -35,7 +36,21 @@ export interface ChainRow {
 export interface TermPoint {
   expiry: string;
   dte: number;
+  /** Years to the expiry close. */
+  t: number;
+  /** The ATM strike: the listed one nearest the price. */
+  strike: number;
   iv?: number;
+  /** Marks of the ATM call and put. */
+  callMark?: number;
+  putMark?: number;
+}
+
+/** An out-of-the-money option of the selected expiry at a 25Δ strike beyond the quoted rows (useDeskModel → wings). */
+export interface WingQuote {
+  strike: number;
+  right: 'C' | 'P';
+  data: OptionData;
 }
 
 export interface DeskModel {
@@ -60,8 +75,10 @@ export interface DeskModel {
   /** Where ivAtm comes from: the chain's ATM options or the underlying's 30-day IV. */
   ivAtmSource?: 'chain' | 'underlying';
   em?: number;
-  /** Rows whose quotes are subscribed (the visible part of windows over the line budget). */
+  /** Rows whose quotes are subscribed (the visible part of windows over the line budget, around ATM on the Vol tab). */
   quotedRows: ChainRow[];
+  /** The Vol tab's 25Δ options beyond quotedRows, for the skew. */
+  wings: WingQuote[];
   term: TermPoint[];
   quotes: Record<string, Quote>;
   /** First market data error among the desk's subscriptions. */
@@ -111,8 +128,11 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
     return exp.strikes.slice(win.from, win.to).map((k) => ({ strike: k, call: chainContract(symbol, exp, k, 'C'), put: chainContract(symbol, exp, k, 'P') }));
   }, [exp, symbol, win.from, win.to]);
 
-  // Subscribe the window (or, when it exceeds the line budget, the rows in view), capped at the budget.
-  const subRange = visible && rowContracts.length > MAX_CHAIN_ROWS ? visible : { from: 0, to: rowContracts.length };
+  // Subscribe the window (or, when it exceeds the line budget, the rows in view; on the Vol tab, which
+  // has no chain to scroll, the rows around ATM), capped at the budget.
+  const atmFrom = Math.max(0, Math.min(rowContracts.length - MAX_CHAIN_ROWS, centerIdx - win.from - MAX_CHAIN_ROWS / 2));
+  const subRange =
+    rowContracts.length <= MAX_CHAIN_ROWS ? { from: 0, to: rowContracts.length } : tab === 'vol' ? { from: atmFrom, to: atmFrom + MAX_CHAIN_ROWS } : (visible ?? { from: 0, to: rowContracts.length });
   const subFrom = Math.max(0, subRange.from);
   const subTo = Math.min(rowContracts.length, subRange.to, subFrom + MAX_CHAIN_ROWS);
   const chainSubs = useMemo(() => rowContracts.slice(subFrom, subTo).flatMap((r) => [r.call, r.put]), [rowContracts, subFrom, subTo]);
@@ -121,9 +141,10 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
   const legSubs = useMemo(() => (underlying ? legs.filter((l) => l.right !== 'S').map((l) => legContract(l, underlying)) : []), [legs, underlying]);
   useQuoteSubscriptions('options-legs', legSubs, 'option');
 
-  // Term structure: ATM call + put of up to 8 expirations, one per monthly cycle. The ATM strike
-  // moves to the next-nearest one when IB reports it as not listed in that expiry.
-  const termExps = useMemo(() => termExpiries(expiries, TERM_EXPIRIES), [expiries]);
+  // Term structure: ATM call + put of up to 8 expirations (the selected one, the near weeks, the
+  // monthly cycles). The ATM strike moves to the next-nearest one when IB reports it as not listed
+  // in that expiry.
+  const termExps = useMemo(() => termExpiries(expiries, TERM_EXPIRIES, exp?.expiry), [expiries, exp?.expiry]);
   const ref = spot ?? centerStrike;
   const termContracts = useMemo(() => {
     if (ref == null) return [];
@@ -136,11 +157,22 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
   }, [termExps, symbol, ref != null ? Math.round(ref) : null]);
   useQuoteSubscriptions('options-term', tab === 'vol' ? termContracts : [], 'option');
 
-  const probed = useMemo(() => [...chainSubs, ...legSubs, ...termContracts], [chainSubs, legSubs, termContracts]);
+  // The Vol tab's 25Δ wings: an index's tight strikes put the selected expiry's 25Δ put and call
+  // beyond the quoted rows. The OTM options at the three listed strikes nearest each 25Δ strike
+  // (vol.ts → wingStrikes) are subscribed too, those the rows lack: at most 6 lines. The strikes,
+  // "expiry|P5600,C5850,…", are solved from the quotes after each render (below).
+  const [wingKey, setWingKey] = useState('');
+  const wingContracts = useMemo(() => {
+    const [forExpiry, list] = wingKey.split('|');
+    return exp && list && forExpiry === exp.expiry ? list.split(',').map((w) => chainContract(symbol, exp, Number(w.slice(1)), w[0] as 'C' | 'P')) : [];
+  }, [exp, symbol, wingKey]);
+  useQuoteSubscriptions('options-wings', wingContracts, 'option');
+
+  const probed = useMemo(() => [...chainSubs, ...legSubs, ...termContracts, ...wingContracts], [chainSubs, legSubs, termContracts, wingContracts]);
   // Only the quotes the desk shows: unrelated quote updates (e.g. the watchlist) do not re-render it.
   const quoteKeys = useMemo(
-    () => [...rowContracts.flatMap((r) => [r.call, r.put]), ...legSubs, ...termContracts].map(keyOf),
-    [rowContracts, legSubs, termContracts],
+    () => [...rowContracts.flatMap((r) => [r.call, r.put]), ...legSubs, ...termContracts, ...wingContracts].map(keyOf),
+    [rowContracts, legSubs, termContracts, wingContracts],
   );
   const quotes = useQuotesByKey(quoteKeys);
   useUnlistedProbe(probed, quotes);
@@ -181,11 +213,35 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
   const term: TermPoint[] = useMemo(() => {
     const out: TermPoint[] = [];
     for (let i = 0; i < termContracts.length; i += 2) {
-      const c = termContracts[i];
-      out.push({ expiry: c.lastTradeDate!, dte: daysToExpiry(c.lastTradeDate!), iv: atmIv(quotes[keyOf(c)], quotes[keyOf(termContracts[i + 1])]) });
+      const [c, p] = [termContracts[i], termContracts[i + 1]];
+      const [cq, pq] = [quotes[keyOf(c)], quotes[keyOf(p)]];
+      const expiry = c.lastTradeDate!;
+      out.push({ expiry, dte: daysToExpiry(expiry), t: yearsToExpiry(expiry, minute), strike: c.strike!, iv: atmIv(cq, pq), callMark: markOf(cq), putMark: markOf(pq) });
     }
     return out;
-  }, [termContracts, quotes]);
+  }, [termContracts, quotes, minute]);
+
+  const wings: WingQuote[] = useMemo(
+    () => wingContracts.map((c) => ({ strike: c.strike!, right: c.right as 'C' | 'P', data: optionData(quotes[keyOf(c)], c.strike!, c.right as 'C' | 'P', spot, t) })),
+    [wingContracts, quotes, spot, t],
+  );
+  // The wings wanted now: solved at the IVs of the OTM options quoted so far, rows and wings.
+  const wantedWings = (() => {
+    const atm = ivAtm;
+    if (tab !== 'vol' || !exp || spot == null || atm == null || !(t > 0)) return '';
+    const otm = [
+      ...baseRows.slice(subFrom, subTo).flatMap((r) => [
+        { strike: r.strike, right: 'P', iv: r.put.iv },
+        { strike: r.strike, right: 'C', iv: r.call.iv },
+      ]),
+      ...wings.map((w) => ({ strike: w.strike, right: w.right, iv: w.data.iv })),
+    ].filter((p): p is { strike: number; right: string; iv: number } => p.iv != null && (p.right === 'P' ? p.strike <= spot : p.strike >= spot));
+    const quoted = new Set(baseRows.slice(subFrom, subTo).map((r) => r.strike));
+    const k = wingStrikes(exp.strikes, quoted, { puts: otm.filter((p) => p.right === 'P'), calls: otm.filter((p) => p.right === 'C') }, spot, atm, t);
+    const list = [...k.puts.map((s) => `P${s}`), ...k.calls.map((s) => `C${s}`)].join(',');
+    return list && `${exp.expiry}|${list}`;
+  })();
+  useEffect(() => setWingKey(wantedWings), [wantedWings]);
 
   const quotedRows = rows.slice(subFrom, subTo);
   // Strikes from reqSecDefOptParams are a union over expiries; 200 "no security definition"
@@ -213,6 +269,7 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
     ivAtmSource,
     em,
     quotedRows,
+    wings,
     term,
     quotes,
     dataError,

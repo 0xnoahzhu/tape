@@ -643,8 +643,10 @@ includes 456 too, so the stock tick lists nest (basic ⊂ dividends ⊂ underlyi
 open for a stock is requested again once with the wider tick list and then kept when a page with a
 narrower profile takes over (options view ↔ Positions tab). Its historical volatility is the real-time
 one, generic tick 411 (tick 58, `Quote.rtHistVol`): IB refuses 104 (tick 23) in a generic tick list,
-so `underlying` is `100,101,106,165,318,411,456` for stocks and `100,101,106,165,411` for indices,
-and the options desk's HV reads `histVol ?? rtHistVol`.
+so `underlying` is `100,101,106,165,318,411,456` for stocks and `100,101,106,165,411` for indices.
+IB stops sending tick 58 outside regular hours, so the options desk's HV is computed from the daily
+closes instead (`options/vol.ts → realizedVol`), with `rtHistVol ?? histVol` only without them; the demo
+sends no tick 23 either.
 
 **Legal generic ticks.** Every list is built from `LEGAL_GENERIC_TICKS` (`subscriptions.ts`): the ids
 IB's error 321 names as legal ("Legal ones for (STK) are: …", probed on the paper account, server 193,
@@ -1333,7 +1335,47 @@ tab's charts (`VolatilityTab.tsx`) share one frame (`Plot`): IV % at round value
 faint gridlines (`options/svg.ts → niceTicks`) and x labels under the plot at their places, those that
 would touch dropped (`fitLabels`, the spot price first): strikes for the smile, expiries placed by
 days to expiry for the ATM term structure, months and years for the 52-week IV history (the price
-chart's daily ticks, `chart/chartMath.ts → timeTicks`, over the IV bars' dates). A call's or put's
+chart's daily ticks, `chart/chartMath.ts → timeTicks`, over the IV bars' dates); the term chart's
+ex-dividend and earnings lines are labelled in a row under its axis, stacked when close
+(`stackLabels`), and the smile and the history read out the values under the pointer (`Readout`).
+Its analytics are pure functions in `options/vol.ts`. HV comes from the underlying's daily TRADES bars
+(`data.ts → useDailyCloses`, the price chart's 2 years, today's bar only after 16:00 New York): close
+to close over 21 sessions for HV 30 (IV30's 30 calendar days), 10 / 20 / 60 too; on the IV bars' dates
+it gives IV / HV's place in its year (rich ≥ 80th percentile, cheap ≤ 20th; without bars the fixed
+1.2 / 0.9 cut-offs) and the history's HV line. IV30 / HV30 uses the underlying's 30-day IV (tick 24,
+else its last daily IV bar, the same "now" as the history's IV − HV), not the selected expiry's ATM IV.
+The skew is the selected expiry's 25Δ put IV − 25Δ call IV with the butterfly against ATM,
+interpolated in delta over the OTM options (puts at or below the price, calls at or above, none bid
+at 0). The Vol tab subscribes the rows around ATM (it has no chain to scroll), and when an index's
+tight strikes put a 25Δ strike beyond them, the OTM options at the three listed strikes nearest it as
+`options-wings` (`model.ts → wings`, at most 6 lines). That strike is Black–Scholes 25Δ solved at the
+smile's own IV there (`vol.ts → wingStrikes`, `smileIv` over the OTM IVs quoted so far, flat beyond
+the farthest): OTM puts trade above the ATM IV, which puts 25Δ farther out, so at the ATM IV the
+wings would miss it. The strikes are solved again after each render from the quotes (an effect sets
+`wingKey`), and move out as the wings' own IVs come in until they bracket 25Δ. The smile draws the
+OTM IV of the rows and the wings, one curve (puts below the price, calls above); its y range spans at
+least 2 vol points (the term chart's 1), so a flat smile is not stretched into the quotes' rounding. The term structure
+samples 8 expirations (16 lines, `chain.ts → termExpiries`): the selected one, one a week for the 3
+nearest weeks (a week's third Friday, else its last date: Friday among daily expirations), then one
+per monthly cycle, leaving out any past its close (today's after 16:00 New York); each point keeps its
+ATM strike, IV, the call's and put's marks and years to expiry. From them the expected-move table: ±1σ
+= price × IV × √t with its range, the ATM straddle, the forward vol from the previous expiry
+(`forwardVariance`: below zero shown as "<0"), the ATM IV at 30, 60 and 90 days linear in total
+variance (`ivAt`) and the curve's shape (`termShape`, 90 vs 30 days by 3%). The event move is the
+variance an expiry holds beyond the base around it: m² = (forward variance into it − the mean of the
+forward variances before and after) × the interval (`eventVariance`, the one before alone for the last
+expiry), so a rising or falling curve does not change it; below half a day of base variance it is
+"no extra move priced yet", and with nothing to read a base from only the earnings date shows. Its
+expiry is the first after the next earnings when Wall Street Horizon gives a date (`useNextEarnings`,
+stocks only; a report dated today is past from 09:30 New York, or 16:00 after the close,
+`upcomingEarnings`), else one whose
+forward variance peaks over its neighbours by 1.08² and at least 3 days of base variance
+(`findEvent`), looked for only within 35 days: with ATM IVs 0.3 points off, monthly expiries farther
+out show false events 1 to 3 times in 100, the near weeks about never. The demo prices a 3–7% earnings
+move into its stocks' option IVs, IV30 and the IV history's last close (`demo.ts → withEarnings`; its
+ETFs report no earnings), and gives a strike's call and put one IV (the skew is in `smileVol`). IV changes since the last IV bar
+before today (New York), and IV rank / percentile are read over 13, 26 and 52 weeks of the IV bars
+(`ivRanks`). A call's or put's
 context menu in the chain (any of its cells) opens that option's chart; back on Options the desk keeps
 the chain it came from (`options/data.ts → underlyingOf` with the desk's current underlying,
 `deskStore.ts`), so the strategy's legs stay. An option selected otherwise maps to its underlying as a

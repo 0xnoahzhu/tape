@@ -82,15 +82,24 @@ describe('helpers', () => {
     expect(visibleExpiries(all, undefined, 6, 12)).toEqual(['1', '2', '3', '4', '5', '6']);
   });
 
-  it('samples one term structure point per monthly cycle', () => {
+  it('samples the term structure: the selected expiry, one a week for three weeks, then one per monthly cycle', () => {
     const e = (expiry: string) => ({ expiry });
+    const dates = (xs: Array<{ expiry: string }>) => xs.map((x) => x.expiry);
     // SPX: AM-settled Thursday next to the SPXW third Friday, plus a quarter-end date.
     const spx = ['20261009', '20261015', '20261016', '20261119', '20261120', '20261217', '20261218', '20261231', '20270114', '20270115'].map(e);
-    expect(termExpiries(spx, 8, now).map((x) => x.expiry)).toEqual(['20261016', '20261120', '20261218', '20270115']);
-    expect(termExpiries(spx, 2, now).map((x) => x.expiry)).toEqual(['20261016', '20261120']);
+    expect(dates(termExpiries(spx, 8, undefined, now))).toEqual(['20261009', '20261016', '20261120', '20261218', '20270115']);
+    expect(dates(termExpiries(spx, 2, undefined, now))).toEqual(['20261009', '20261016']);
+    // The selected expiry always has a point, ahead of the others.
+    expect(dates(termExpiries(spx, 2, '20261231', now))).toEqual(['20261009', '20261231']);
+    expect(dates(termExpiries(spx, 8, '20261231', now))).toEqual(['20261009', '20261016', '20261120', '20261218', '20261231', '20270115']);
+    // Daily expirations (SPY): a week's Friday, then the monthly cycles.
+    const daily = ['20261005', '20261006', '20261007', '20261008', '20261009', '20261012', '20261013', '20261014', '20261015', '20261016', '20261019', '20261023', '20261030', '20261120', '20261218', '20270115', '20270219'].map(e);
+    expect(dates(termExpiries(daily, 8, undefined, now))).toEqual(['20261009', '20261016', '20261023', '20261120', '20261218', '20270115', '20270219']);
     // Fewer than four monthly cycles: every expiration.
     const short = ['20261009', '20261016', '20261023'].map(e);
-    expect(termExpiries(short, 8, now)).toEqual(short);
+    expect(termExpiries(short, 8, undefined, now)).toEqual(short);
+    // Friday after the close (17:00 New York): today's expiration is out, the next week's is first.
+    expect(dates(termExpiries(daily, 3, undefined, new Date(Date.UTC(2026, 9, 9, 21))))).toEqual(['20261016', '20261023', '20261030']);
   });
 
   it('finds strikes and windows', () => {

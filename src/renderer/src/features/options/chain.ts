@@ -4,7 +4,7 @@
 import { daysToExpiry, expiryDate, option } from '@shared/contract';
 import { DASH, f0, f2, sg } from '@shared/format';
 import type { ContractRef, Lang, OptionChainParams, OptionRight, Quote } from '@shared/types';
-import { blackScholes, intrinsic, touchProbability } from './math';
+import { blackScholes, expiryCloseMs, intrinsic, touchProbability } from './math';
 
 /** One expiration of the chain with the trading class that lists it. */
 export interface ChainExpiry {
@@ -114,22 +114,47 @@ export function visibleExpiries(expiries: string[], selected: string | undefined
   return expiries.filter((e) => set.has(e));
 }
 
+/** Weeks of near expirations in the term structure, one each. */
+export const TERM_NEAR_WEEKS = 3;
+
+/** Monday of an expiration's week, as days since 1970-01-01 (a Thursday). */
+function weekOf(yyyymmdd: string): number {
+  const day = Date.UTC(Number(yyyymmdd.slice(0, 4)), Number(yyyymmdd.slice(4, 6)) - 1, Number(yyyymmdd.slice(6, 8))) / 86_400_000;
+  return day - ((day + 3) % 7);
+}
+
 /**
- * Expirations sampled for the ATM term structure (design TERM): one per monthly cycle. When a
- * month lists several non-weekly dates (the AM-settled SPX Thursday next to the SPXW third
- * Friday, a quarter-end date) the third Friday wins. Falls back to every expiration when fewer
- * than four monthly cycles are listed.
+ * Expirations sampled for the ATM term structure (design TERM), `n` in all, by date: the selected
+ * one; one a week for the nearest TERM_NEAR_WEEKS weeks with expirations (weeklies are the most
+ * traded, and an event shows in them); then one per monthly cycle. A week or month listing
+ * several dates keeps its third Friday (the SPXW Friday next to the AM-settled SPX Thursday),
+ * else a week its last date (Friday among daily expirations) and a month its first non-weekly
+ * one. Falls back to every expiration when fewer than four monthly cycles are listed. Expirations
+ * past their close (today's after 16:00 New York) are left out.
  */
-export function termExpiries<T extends { expiry: string }>(expiries: T[], n: number, now: Date = new Date()): T[] {
+export function termExpiries<T extends { expiry: string }>(all: T[], n: number, selected?: string, now: Date = new Date()): T[] {
+  const expiries = all.filter((e) => expiryCloseMs(e.expiry) > now.getTime());
+  const third = (e: T) => isThirdFriday(expiryDate(e.expiry));
+  const byWeek = new Map<number, T>();
+  for (const e of expiries) {
+    const week = weekOf(e.expiry);
+    const kept = byWeek.get(week);
+    if (!kept || !third(kept)) byWeek.set(week, e);
+  }
   const byMonth = new Map<string, T>();
   for (const e of expiries) {
     if (expiryKind(e.expiry, now) === 'W') continue;
     const month = e.expiry.slice(0, 6);
     const kept = byMonth.get(month);
-    if (!kept || (!isThirdFriday(expiryDate(kept.expiry)) && isThirdFriday(expiryDate(e.expiry)))) byMonth.set(month, e);
+    if (!kept || (!third(kept) && third(e))) byMonth.set(month, e);
   }
   const cycles = [...byMonth.values()];
-  return (cycles.length >= 4 ? cycles : expiries).slice(0, n);
+  const picked = new Set<T>();
+  for (const e of [...expiries.filter((x) => x.expiry === selected), ...[...byWeek.values()].slice(0, TERM_NEAR_WEEKS), ...(cycles.length >= 4 ? cycles : expiries)]) {
+    if (picked.size >= n) break;
+    picked.add(e);
+  }
+  return expiries.filter((e) => picked.has(e));
 }
 
 /** Index of the value closest to `x` (first on ties); -1 for an empty list. */

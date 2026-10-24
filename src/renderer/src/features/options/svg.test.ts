@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chartScale, fitLabels, niceTicks } from './svg';
+import { chartScale, fitLabels, niceTicks, stackLabels } from './svg';
 
 describe('axis values', () => {
   it('takes round values within the range, at most as many as asked', () => {
@@ -47,5 +47,41 @@ describe('x labels', () => {
   it('leaves out labels off the plot, and everything without a width', () => {
     expect(fitLabels([{ at: -0.1, label: 'a' }, { at: 1.2, label: 'b' }, { at: 0.5, label: 'c' }], 300).map((l) => l.label)).toEqual(['c']);
     expect(fitLabels([{ at: 0.5, label: 'c' }], 0)).toEqual([]);
+  });
+});
+
+describe('stacked marks', () => {
+  it('puts close labels on rows of their own, and far ones on the first', () => {
+    // "Ex-div 12/12" and "Earnings 12/16" (72 and 84 px) 20 px apart; one more far right.
+    const marks = stackLabels(
+      [
+        { at: 0.52, label: 'Earnings 12/16' },
+        { at: 0.5, label: 'Ex-div 12/12' },
+        { at: 0.9, label: 'Ex-div 03/12' },
+      ],
+      1000,
+    );
+    expect(marks.map((l) => [l.label, l.x, l.left, l.row])).toEqual([
+      ['Ex-div 12/12', 500, 464, 0],
+      ['Earnings 12/16', 520, 478, 1],
+      ['Ex-div 03/12', 900, 864, 0],
+    ]);
+    // Kept inside the plot, then stacked by where they are drawn: at the left edge "Ex-div 10/27"
+    // (0–72 px) and "Earnings 12/02" (62–146 px) would touch on one row.
+    const edge = stackLabels(
+      [
+        { at: 12 / 380, label: 'Ex-div 10/27' },
+        { at: 104 / 380, label: 'Earnings 12/02' },
+      ],
+      380,
+    );
+    expect(edge.map((l) => [l.left, l.row])).toEqual([
+      [0, 0],
+      [62, 1],
+    ]);
+    // CJK characters count double: "除息 10/27" is 60 px wide.
+    expect(stackLabels([{ at: 1, label: '除息 10/27' }], 380)[0].left).toBe(320);
+    expect(stackLabels([{ at: 1.2, label: 'x' }], 1000)).toEqual([]);
+    expect(stackLabels([{ at: 0.5, label: 'x' }], 0)).toEqual([]);
   });
 });

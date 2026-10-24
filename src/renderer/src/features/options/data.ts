@@ -1,12 +1,14 @@
-// Data hooks of the options desk: the underlying, its chain parameters and IV history.
+// Data hooks of the options desk: the underlying, its chain parameters, IV history, daily closes
+// (realized volatility) and next earnings.
 
 import { useMemo } from 'react';
 import { contractKey, stock } from '@shared/contract';
-import type { Bar, ContractRef, HistoryRequest, OptionChainParams } from '@shared/types';
+import type { Bar, ContractRef, CorporateEarnings, EarningsEvent, HistoryRequest, OptionChainParams } from '@shared/types';
 import { underlyingOf as positionUnderlying } from '../portfolio/calc';
 import { buildChain, type ChainExpiry } from './chain';
 import { ivRank } from './math';
 import { retryRequest, seedRequest, useCachedRequest } from './requests';
+import { finishedBars, upcomingEarnings } from './vol';
 
 /**
  * The instrument whose chain is shown: stocks / ETFs and indices. An option charted from the chain
@@ -23,6 +25,8 @@ export function underlyingOf(c: ContractRef, current?: ContractRef | null): Cont
 const HOUR = 3_600_000;
 const chainKey = (u: ContractRef) => `chain:${contractKey(u)}`;
 const ivHistoryKey = (u: ContractRef) => `hist:OPTION_IMPLIED_VOLATILITY:${contractKey(u)}`;
+const dailyKey = (u: ContractRef) => `hist:TRADES:${contractKey(u)}`;
+const earningsKey = (u: ContractRef) => `earnings:${contractKey(u)}`;
 
 export interface ChainData {
   status: 'idle' | 'loading' | 'ready' | 'empty' | 'error';
@@ -74,12 +78,38 @@ export function useIvHistory(underlying: ContractRef | null, current: number | u
   return { hist, times, current: now, stats, error };
 }
 
+/**
+ * Daily closes of the underlying's finished sessions (TRADES bars, 2 years, as the price chart's
+ * daily bars) and their dates, for realized volatility. Null while unavailable.
+ */
+export function useDailyCloses(underlying: ContractRef | null): { closes: number[] | null; times: number[] | null; error?: string } {
+  const key = underlying ? dailyKey(underlying) : null;
+  const entry = useCachedRequest<Bar[]>(key, () => window.tape.getHistory({ contract: underlying!, timeframe: '1D' }), HOUR / 6, (d) => !d.length);
+  const bars = entry?.data;
+  const valid = useMemo(() => (bars ? finishedBars(bars.filter((b) => Number.isFinite(b.close) && b.close > 0)) : []), [bars]);
+  const closes = useMemo(() => (valid.length ? valid.map((b) => b.close) : null), [valid]);
+  const times = useMemo(() => (valid.length ? valid.map((b) => b.time) : null), [valid]);
+  return { closes, times, error: entry?.error };
+}
+
+/**
+ * A stock's next earnings report (Wall Street Horizon, main keeps the answers for the day): one
+ * dated today is past once reported (vol.ts → upcomingEarnings). Undefined for indices, without the
+ * WSH subscription (the paper account) and while unknown.
+ */
+export function useNextEarnings(underlying: ContractRef | null): EarningsEvent | undefined {
+  const key = underlying?.secType === 'STK' ? earningsKey(underlying) : null;
+  const entry = useCachedRequest<CorporateEarnings>(key, () => window.tape.getEarnings([underlying!]), HOUR, (d) => d.status === 'unavailable');
+  return entry?.data?.status === 'ok' ? upcomingEarnings(entry.data.events) : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Debug handle for scripted captures: window.__tape.options
 //
 //   __tape.options.seedChain('AAPL', [{ exchange: 'SMART', tradingClass: 'AAPL', multiplier: 100,
 //     underlyingConId: 265598, expirations: ['20261009', …], strikes: [200, 202.5, …] }])
 //   __tape.options.seedHistory('AAPL', bars)              // daily IV bars (OPTION_IMPLIED_VOLATILITY)
+//   __tape.options.seedDaily('AAPL', bars)                // daily price bars (realized volatility)
 //   __tape.options.desk.setState({ tab: 'vol' })          // feature-local UI state
 //
 // A string symbol means a US stock; pass a ContractRef for an index.
@@ -93,5 +123,6 @@ export function attachDebugHandle(desk: unknown): void {
     desk,
     seedChain: (u: string | ContractRef, params: OptionChainParams[]) => seedRequest(chainKey(asUnderlying(u)), params),
     seedHistory: (u: string | ContractRef, bars: Bar[]) => seedRequest(ivHistoryKey(asUnderlying(u)), bars),
+    seedDaily: (u: string | ContractRef, bars: Bar[]) => seedRequest(dailyKey(asUnderlying(u)), bars),
   };
 }

@@ -79,6 +79,7 @@ export function useStrategyPanelModel(): DeskModel {
     ivAtm,
     ivAtmSource: chainIv != null ? 'chain' : ivAtm != null ? 'underlying' : undefined,
     quotedRows: [],
+    wings: [],
     term: [],
     quotes,
   };

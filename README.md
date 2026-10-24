@@ -130,8 +130,15 @@ Trades (⌘3 / Ctrl+3 opens Orders).
 - **Options**: chain with quotes, greeks, value and probability columns, expiries by type; ATM IV, IV
   rank and percentile, expected move and put / call volume (call and put volume on hover) and
   open-interest ratios in the desk header; strategy builder with payoff and risk, sent at the net mark or at market, DAY or GTC, combos optionally
-  non-guaranteed; tabs Chain / Volatility (HV, IV / HV and skew; the smile by strike with the spot price,
-  the ATM term structure by days to expiry and the 52-week IV history by month, each with an IV % axis).
+  non-guaranteed; tabs Chain / Volatility: HV 30 from the daily closes (10 and 60 days too), IV30 / HV30
+  rich or cheap against the stock's own year, the 25Δ skew (put − call IV, butterfly) and the implied
+  against the realized daily move; the OTM smile by strike with the spot price and the 25Δ points; the
+  ATM term structure by days to expiry (the selected expiry, three near weeks, the monthly cycles) with
+  the ex-dividend and earnings dates; the expected move by expiry (±1σ, range, straddle, forward vol,
+  ATM IV at 30/60/90 days, contango or backwardation, and the event move the term structure prices:
+  before the next earnings with Wall Street Horizon, else when it shows one in the near weeks); and 52
+  weeks of IV against HV with IV's change today and IV rank / percentile over 13, 26 and 52 weeks.
+  Charts have an IV % axis; the smile and the history read out the values under the pointer.
   Under the desk the same positions and open-orders panel as under
   the chart, with the underlying's exposure (Δ sh, $Δ, Γ, Θ/day, Vega/pt) and DTE and Δ per position; a
   click on an option opens its expiry in the chain. Right-click a call or put in the chain for its own

@@ -41,14 +41,15 @@ describe('demo quotes', () => {
     }
   });
 
-  it('gives each symbol a fixed next earnings date and time of day', () => {
+  it('gives each symbol a fixed next earnings date and time of day, and an ETF none', () => {
     const m = new DemoMarket(() => OPEN);
     expect(m.earnings('AAPL')).toEqual({ date: '20261128', time: 'amc' });
-    expect(m.earnings('NVDA').date).toBe('20261130');
-    expect(m.earnings('XOM').date).toBe('20261106');
-    expect(m.earnings('JPM').date).toBe('20261220');
+    expect(m.earnings('NVDA')!.date).toBe('20261130');
+    expect(m.earnings('XOM')!.date).toBe('20261106');
+    expect(m.earnings('JPM')!.date).toBe('20261220');
+    expect(['SPY', 'QQQ', 'IWM', 'DIA'].map((s) => m.earnings(s))).toEqual([null, null, null, null]);
     const syms = Array.from({ length: 60 }, (_, i) => `S${i}`).concat(['MSFT', 'TSLA', 'META', 'KO', 'VST', 'CAT']);
-    const all = syms.map((s) => m.earnings(s));
+    const all = syms.map((s) => m.earnings(s)!);
     expect(syms.map((s) => m.earnings(s))).toEqual(all);
     for (const e of all) {
       expect(e.date >= '20261009' && e.date <= '20270104').toBe(true);
@@ -138,7 +139,9 @@ describe('demo quotes', () => {
     expect(call.gamma!).toBeGreaterThan(0);
     expect(call.theta!).toBeLessThan(0);
     expect(call.iv!).toBeGreaterThan(0.2);
-    expect(put.iv!).toBeGreaterThan(call.iv!); // puts carry the skew premium
+    // One IV per strike; lower strikes carry the skew.
+    expect(put.iv!).toBeCloseTo(call.iv!, 10);
+    expect(m.quote(option('AAPL', '20261016', 210, 'P'))!.iv!).toBeGreaterThan(m.quote(option('AAPL', '20261016', 250, 'C'))!.iv!);
     expect(call.bid!).toBeLessThan(call.ask!);
     expect(call.openInterest!).toBeGreaterThan(0);
     // Roughly at the money: call − put ≈ S − K·e^(−rT).
