@@ -560,7 +560,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
       data-dragging={dragging?.id}
       style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, display: 'flex', flexDirection: 'column', isolation: 'isolate', '--pos-cols': template } as CSSProperties}
     >
-      <div ref={headBoxRef} className="pos-scroll" data-pos="head" data-overflow-x={overflowX || undefined} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+      <div ref={headBoxRef} className="pos-scroll" data-pos="head" data-overflow-x={overflowX || undefined} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
         <div ref={headTableRef} role="table" aria-label={m.tabPos} style={{ minWidth: tableWidth, position: 'relative' }}>
           <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
           {dropLine}

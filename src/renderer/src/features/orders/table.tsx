@@ -13,7 +13,8 @@ import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 export function TableBody({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', fontVariantNumeric: 'tabular-nums' }}>
-      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>{header}</div>
+      {/* Its rule runs on over the scrollbar's room, so the scrollbar starts right under it. */}
+      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>{header}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter }}>{children}</div>
     </div>
   );

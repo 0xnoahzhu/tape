@@ -107,7 +107,7 @@ function ExpiryPicker({ expiries, selected }: { expiries: ChainExpiry[]; selecte
             >
               {/* The header stays over the list, which scrolls on its own; both keep the same room for its
                   scrollbar (scrollGutter.ts), so the columns line up. */}
-              <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+              <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '72px 64px 60px 1fr', gap: 10, padding: '8px 16px', fontSize: 11, color: 'var(--dm)', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
                   <div>{m.expDate}</div>
                   <div>{m.expDte}</div>

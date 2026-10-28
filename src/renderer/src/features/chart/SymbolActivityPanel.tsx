@@ -65,23 +65,23 @@ const orderGrid = (clock: Parameters<typeof timeColumn>[0], withLast: boolean) =
 const LAST_HEADER = 4;
 
 /**
- * The column names above the rows: [label, full name on hover]; `right` marks the numeric columns.
- * `ruled`: a rule under the names, for rows that draw theirs below (orders) rather than above (positions).
- */
-/**
  * A list's header over its rows, which scroll on their own: the scrollbar runs beside the rows only.
- * Both keep the same room for it (scrollGutter.ts), so the header's columns stay over the rows'.
+ * Both keep the same room for it (scrollGutter.ts), so the header's columns stay over the rows'; the
+ * header's rule runs on over that room, so the scrollbar starts right under it.
  */
 function ScrollList({ header, children }: { header: React.ReactNode; children: React.ReactNode }) {
   return (
     <>
-      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>{header}</div>
+      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>{header}</div>
       <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', ...stableGutter }}>{children}</div>
     </>
   );
 }
 
-function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Array<[string, string]>; right: (i: number) => boolean; ruled?: boolean }) {
+/**
+ * The column names above the rows: [label, full name on hover]; `right` marks the numeric columns.
+ */
+function HeaderRow({ grid, headers, right }: { grid: string; headers: Array<[string, string]>; right: (i: number) => boolean }) {
   return (
     <div
       style={{
@@ -93,7 +93,6 @@ function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Arr
         alignItems: 'center',
         fontSize: 12,
         color: 'var(--dm)',
-        boxShadow: ruled ? 'inset 0 -1px 0 var(--ln2)' : undefined,
       }}
     >
       {headers.map(([label, full], i) => (
@@ -166,7 +165,7 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
           alignItems: 'center',
           font: '13px/1 var(--num)',
           fontVariantNumeric: 'tabular-nums',
-          boxShadow: 'inset 0 1px 0 var(--ln2)',
+          boxShadow: 'inset 0 -1px 0 var(--ln2)',
           cursor: 'pointer',
         }}
       >
@@ -283,7 +282,7 @@ function OrderList({ orders, withLast }: { orders: WorkingOrder[]; withLast: boo
   const headers = withLast ? m.orderHeaders : m.orderHeaders.filter((_, i) => i !== LAST_HEADER);
   return (
     // The actions column has no name.
-    <ScrollList header={<HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} ruled />}>
+    <ScrollList header={<HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} />}>
       {/* orderId is unique per API client only (TWS orders all have 0). */}
       {orders.map((o) => (
         <OrderRow

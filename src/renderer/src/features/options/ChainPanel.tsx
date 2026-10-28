@@ -82,7 +82,7 @@ export function ChainPanel({ model, onVisible, state }: { model: DeskModel; onVi
       {state ? (
         <>
           {/* The room the chain keeps for its scrollbar, so the columns stay put when it loads (scrollGutter.ts). */}
-          <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+          <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln)' }}>
             <ChainHeaders keys={keys} widths={columnWidths(keys, [])} />
           </div>
           {state}
@@ -171,7 +171,7 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* The same room for a scrollbar as the rows below, so the columns stay over theirs (scrollGutter.ts). */}
-      <div ref={head} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+      <div ref={head} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln)' }}>
         <div style={{ minWidth }}>
           <ChainHeaders keys={keys} widths={widths} />
         </div>
