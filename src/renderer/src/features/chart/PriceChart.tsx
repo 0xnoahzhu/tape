@@ -10,7 +10,7 @@
 // along it (right: fewer, wider bars), around the pointer; a double-click on it gives back the
 // automatic zoom. A drag with Shift held (or any drag while `measuring`, the ruler button) measures:
 // a line and a box from bar to bar; its price change, percent and the bars between
-// (chartMath.ts → measureBetween) go to the chart's info row (onMeasure), not over the bars. Its
+// (chartMath.ts → measureBetween) go under the ruler button (onMeasure), not over the bars. Its
 // ends snap to a bar's open, high, low or close within SNAP_PX (measurePoint's magnet, off while ⌥
 // is held). The measure stays, anchored to its bars' times and prices, until a click on the
 // chart, Esc or another series.
@@ -128,7 +128,7 @@ interface Props {
   measuring?: boolean;
   /** A measure was drawn, or Esc pressed, while `measuring`: the ruler turns off. */
   onMeasured?(): void;
-  /** The measure's figures as it is drawn and moved (the chart's info row shows them), null once cleared. */
+  /** The measure's figures as it is drawn and moved (shown under the ruler), null once cleared. */
   onMeasure?(m: MeasureReadout | null): void;
 }
 
@@ -772,7 +772,7 @@ export const PriceChart = memo(function PriceChart({
   const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
   // The measure: from the center of its first bar at its price to its second's, in px. Its figures are
-  // not drawn by it (they would cover the bars) but reported (onMeasure) for the chart's info row.
+  // not drawn by it (they would cover the bars) but reported (onMeasure) for the header, under the ruler.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
   const measureBox =
     geo && measure && meas && size.w > 0 && size.h > 0

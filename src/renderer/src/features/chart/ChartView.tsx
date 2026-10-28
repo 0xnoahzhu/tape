@@ -85,8 +85,59 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
   );
 }
 
-/** The ruler: on, the next drag on the chart measures (PriceChart's `measuring`); accent ring while on. */
-function RulerButton({ title, on, onClick }: { title: string; on: boolean; onClick: () => void }) {
+/**
+ * The ruler: on, the next drag on the chart measures (PriceChart's `measuring`); accent ring while on.
+ * Under it, in a bubble pointing up at it and out of the flow (the header does not move), what the
+ * measure drawn reads: its percent change, large, in the up or down color, and the price change and
+ * the bars between; while the ruler is on and nothing is drawn yet, what to do.
+ */
+function RulerButton({ title, on, onClick, readout }: { title: string; on: boolean; onClick: () => void; readout: ReactNode }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <RulerSwitch title={title} on={on} onClick={onClick} />
+      {readout && (
+        <div
+          data-chart="measure-readout"
+          style={{
+            position: 'absolute',
+            top: `calc(100% + ${CARET + 4}px)`,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 2,
+            padding: '6px 10px',
+            background: 'var(--p2)',
+            boxShadow: '0 0 0 1px var(--ln), 0 4px 12px var(--ov)',
+            textAlign: 'center',
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+          }}
+        >
+          {/* The caret: a square turned on its corner, its two upper edges ruled, over the bubble's top edge. */}
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              top: -CARET / 2 - 1,
+              left: '50%',
+              width: CARET,
+              height: CARET,
+              transform: 'translateX(-50%) rotate(45deg)',
+              background: 'var(--p2)',
+              borderTop: '1px solid var(--ln)',
+              borderLeft: '1px solid var(--ln)',
+            }}
+          />
+          <div style={{ position: 'relative' }}>{readout}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The measure bubble's caret (px, the side of the square it is). */
+const CARET = 8;
+
+function RulerSwitch({ title, on, onClick }: { title: string; on: boolean; onClick: () => void }) {
   return (
     <div
       role="switch"
@@ -259,7 +310,7 @@ export function ChartView() {
   // The ruler: the next drag on the chart measures; it turns off once one is drawn (or on Esc).
   const [measuring, setMeasuring] = useState(false);
   const endMeasuring = useCallback(() => setMeasuring(false), []);
-  // The measure drawn on the chart: its figures go in the info row, not over the bars.
+  // The measure drawn on the chart: its figures go under the ruler, not over the bars.
   const [measured, setMeasured] = useState<MeasureReadout | null>(null);
   useEffect(() => setHoverBar(null), [key]);
 
@@ -351,7 +402,25 @@ export function ChartView() {
       <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
         <WatchStar contract={symbol} name={symbolName || info?.longName || undefined} size={BELL_W} />
         <BellButton title={symbolAlerts.length ? m.alertsOn(symbolAlerts.length) : m.addAlert} active={symbolAlerts.length > 0} onClick={() => openAlertForm(symbol)} />
-        <RulerButton title={m.measureHint} on={measuring} onClick={() => setMeasuring((on) => !on)} />
+        <RulerButton
+          title={m.measureHint}
+          on={measuring}
+          onClick={() => setMeasuring((on) => !on)}
+          readout={
+            measured ? (
+              <>
+                <div style={{ font: '600 15px/1.2 var(--num)', color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)' }}>
+                  {measured.pct == null ? '—' : pct(measured.pct * 100)}
+                </div>
+                <div style={{ font: '11px/1.4 var(--num)', color: 'var(--mu)' }}>
+                  {sg(measured.change, fmt)} · {m.measureBars(Math.abs(measured.bars))}
+                </div>
+              </>
+            ) : measuring ? (
+              <div style={{ font: '11px/1.4 var(--sans)', color: 'var(--dm)' }}>{m.measureDrag}</div>
+            ) : null
+          }
+        />
       </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>
@@ -454,15 +523,6 @@ export function ChartView() {
           <Stat label={m.low} value={shown ? fmt(shown.low) : '—'} />
           <Stat label={m.vol} value={volume ? compact(volume) : '—'} />
         </div>
-        {measured && (
-          // In the up / down color: the percent, the change and the bars between its ends.
-          <div data-chart="measure-readout" title={m.measureHint} style={{ whiteSpace: 'nowrap' }}>
-            {m.measure}{' '}
-            <span style={{ color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)', fontFamily: 'var(--num)' }}>
-              <span style={{ fontWeight: 600 }}>{measured.pct == null ? '—' : pct(measured.pct * 100)}</span> {sg(measured.change, fmt)} · {m.measureBars(Math.abs(measured.bars))}
-            </span>
-          </div>
-        )}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
           {MA_PERIODS.map((p) => (
             <Chip key={p} on={mas.includes(p)} onClick={() => toggleMa(p)} title={m.maHint(p)} swatch={`var(--ma${p})`}>
