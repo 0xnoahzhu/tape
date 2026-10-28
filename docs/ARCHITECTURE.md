@@ -613,8 +613,9 @@ prices at the pointer, so it pans and zooms with the chart. A magnet holds an en
 high, low or close when the pointer is within `SNAP_PX` (8 px, from the plot's px per price unit) of
 it, the nearest of them when several are (high and low first on a tie), and records which
 (`MeasurePoint.snap`, drawn as a ring rather than a dot); ⌥ held turns it off; it is drawn in px over the plot (a line,
-its ends and the box between in the up or down color) with a label by its end (the percent, the
-change and the bars between), and stays until a click on the chart (a press that never became a
+its ends and the box between in the up or down color; nothing over the bars), its figures (the
+percent, the change and the bars between: `onMeasure`, `MeasureReadout`) in ChartView's info row by
+O / H / L / Vol, and stays until a click on the chart (a press that never became a
 drag), Esc or another series. Between reloads a real-time last price extends the forming bar and starts the next
 ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator
 alerts, see *Alerts*; `chartMath.ts` re-exports it, and the moving averages come from

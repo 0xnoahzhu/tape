@@ -9,10 +9,11 @@
 // The time axis zooms the time as the price axis zooms the prices: the wheel over it, or a drag
 // along it (right: fewer, wider bars), around the pointer; a double-click on it gives back the
 // automatic zoom. A drag with Shift held (or any drag while `measuring`, the ruler button) measures:
-// a line from bar to bar with the price change, its percent and the bars between
-// (chartMath.ts → measureBetween); its ends snap to a bar's open, high, low or close within SNAP_PX
-// (measurePoint's magnet, off while ⌥ is held). The measure stays, anchored to its bars' times and prices, until
-// a click on the chart, Esc or another series.
+// a line and a box from bar to bar; its price change, percent and the bars between
+// (chartMath.ts → measureBetween) go to the chart's info row (onMeasure), not over the bars. Its
+// ends snap to a bar's open, high, low or close within SNAP_PX (measurePoint's magnet, off while ⌥
+// is held). The measure stays, anchored to its bars' times and prices, until a click on the
+// chart, Esc or another series.
 // Panning past the newest bar shows empty future slots, their times projected on the time axis
 // and in the crosshair (chartMath.ts → futureTimes), and the view keeps them as new bars come;
 // nothing comes before the first bar. The price axis fits the bars in view until the user moves
@@ -33,7 +34,6 @@
 // user pans, zooms or returns to the latest bars (onLeaveFit), which start from the fitted view.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { pct, sg } from '@shared/format';
 import type { Bar, Timeframe } from '@shared/types';
 import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
@@ -128,6 +128,15 @@ interface Props {
   measuring?: boolean;
   /** A measure was drawn, or Esc pressed, while `measuring`: the ruler turns off. */
   onMeasured?(): void;
+  /** The measure's figures as it is drawn and moved (the chart's info row shows them), null once cleared. */
+  onMeasure?(m: MeasureReadout | null): void;
+}
+
+/** What a measure reads: the price change from its start to its end, its percent, the bars between. */
+export interface MeasureReadout {
+  change: number;
+  pct: number | null;
+  bars: number;
 }
 
 interface Point {
@@ -210,9 +219,6 @@ const VOL_GAP = 6;
 const TIME_AXIS_H = 20;
 /** Width of the price axis right of the plot (px). */
 export const PRICE_AXIS_W = 76;
-/** A measure's label: its height, and half the width kept from the plot's sides (px). */
-const MEASURE_LABEL_H = 34;
-const MEASURE_LABEL_HALF = 64;
 /** Horizontal padding of the crosshair chips (crossTag). */
 const CHIP_PAD = 6;
 /** Space kept between the crosshair's time chip and the time labels beside it. */
@@ -243,6 +249,7 @@ export const PriceChart = memo(function PriceChart({
   onLeaveFit,
   measuring = false,
   onMeasured,
+  onMeasure,
 }: Props) {
   const clock = useClock();
   const m = useChartMessages();
@@ -764,9 +771,8 @@ export const PriceChart = memo(function PriceChart({
   }, [showLatest, m.latest]);
   const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
-  // The measure: from the center of its first bar at its price to its second's, in px; its label by
-  // the end, above it when the price rose and below when it fell, kept within the plot and off the
-  // MA legend.
+  // The measure: from the center of its first bar at its price to its second's, in px. Its figures are
+  // not drawn by it (they would cover the bars) but reported (onMeasure) for the chart's info row.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
   const measureBox =
     geo && measure && meas && size.w > 0 && size.h > 0
@@ -775,28 +781,24 @@ export const PriceChart = memo(function PriceChart({
           const x2 = (geo.centerX(meas.to) / VB_W) * size.w;
           const y1 = toPx(geo.y(measure.a.price));
           const y2 = toPx(geo.y(measure.b.price));
-          const up = meas.change >= 0;
-          // Above the end when the price rose and there is room under the legend (or the top), else below;
-          // below when it fell, unless that runs off the bottom.
-          const roomAbove = y2 - MEASURE_LABEL_H - 6 >= (legend ? legend.bottom + 4 : 0);
-          const above = up ? roomAbove : y2 > size.h - MEASURE_LABEL_H - 6 && roomAbove;
           return {
             x1,
             x2,
             y1,
             y2,
-            color: up ? 'var(--up)' : 'var(--dn)',
+            color: meas.change >= 0 ? 'var(--up)' : 'var(--dn)',
             snapA: measure.a.snap,
             snapB: measure.b.snap,
-            labelX: Math.min(Math.max(x2, MEASURE_LABEL_HALF), Math.max(MEASURE_LABEL_HALF, size.w - MEASURE_LABEL_HALF)),
-            labelY: above ? y2 - 6 : y2 + 6,
-            above,
-            pct: meas.pct == null ? '—' : pct(meas.pct * 100),
-            change: sg(meas.change, (v) => axisPrice(v, minTick)),
-            bars: m.measureBars(Math.abs(meas.bars)),
           };
         })()
       : null;
+
+  const readChange = meas?.change;
+  const readPct = meas?.pct;
+  const readBars = meas?.bars;
+  useEffect(() => {
+    onMeasure?.(readChange === undefined || readBars === undefined ? null : { change: readChange, pct: readPct ?? null, bars: readBars });
+  }, [readChange, readPct, readBars, onMeasure]);
 
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
@@ -886,51 +888,27 @@ export const PriceChart = memo(function PriceChart({
             </div>
           ))}
           {measureBox && (
-            <>
-              <svg data-chart="measure" width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
-                <rect
-                  x={Math.min(measureBox.x1, measureBox.x2)}
-                  y={Math.min(measureBox.y1, measureBox.y2)}
-                  width={Math.abs(measureBox.x2 - measureBox.x1)}
-                  height={Math.abs(measureBox.y2 - measureBox.y1)}
-                  style={{ fill: measureBox.color, opacity: 0.12 }}
-                />
-                <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
-                {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot. */}
-                {[
-                  { x: measureBox.x1, y: measureBox.y1, snap: measureBox.snapA },
-                  { x: measureBox.x2, y: measureBox.y2, snap: measureBox.snapB },
-                ].map((p, i) =>
-                  p.snap ? (
-                    <circle key={i} data-snap={p.snap} cx={p.x} cy={p.y} r={4.5} style={{ fill: 'var(--p)', stroke: measureBox.color, strokeWidth: 2 }} />
-                  ) : (
-                    <circle key={i} cx={p.x} cy={p.y} r={3} style={{ fill: measureBox.color }} />
-                  ),
-                )}
-              </svg>
-              <div
-                data-chart="measure-label"
-                style={{
-                  position: 'absolute',
-                  left: measureBox.labelX,
-                  top: measureBox.labelY,
-                  transform: `translate(-50%, ${measureBox.above ? '-100%' : '0'})`,
-                  padding: '4px 7px',
-                  background: measureBox.color,
-                  color: 'var(--p)',
-                  font: '11px/1.35 var(--num)',
-                  fontVariantNumeric: 'tabular-nums',
-                  textAlign: 'center',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 12 }}>{measureBox.pct}</div>
-                <div>
-                  {measureBox.change} · {measureBox.bars}
-                </div>
-              </div>
-            </>
+            <svg data-chart="measure" width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
+              <rect
+                x={Math.min(measureBox.x1, measureBox.x2)}
+                y={Math.min(measureBox.y1, measureBox.y2)}
+                width={Math.abs(measureBox.x2 - measureBox.x1)}
+                height={Math.abs(measureBox.y2 - measureBox.y1)}
+                style={{ fill: measureBox.color, opacity: 0.12 }}
+              />
+              <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
+              {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot. */}
+              {[
+                { x: measureBox.x1, y: measureBox.y1, snap: measureBox.snapA },
+                { x: measureBox.x2, y: measureBox.y2, snap: measureBox.snapB },
+              ].map((p, i) =>
+                p.snap ? (
+                  <circle key={i} data-snap={p.snap} cx={p.x} cy={p.y} r={4.5} style={{ fill: 'var(--p)', stroke: measureBox.color, strokeWidth: 2 }} />
+                ) : (
+                  <circle key={i} cx={p.x} cy={p.y} r={3} style={{ fill: measureBox.color }} />
+                ),
+              )}
+            </svg>
           )}
           {legend && (
             <div data-chart="ma-legend" style={legendStyle}>

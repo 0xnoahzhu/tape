@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { contractLabel, sameContract } from '@shared/contract';
-import { change, compact, f2, signColor } from '@shared/format';
+import { change, compact, f2, pct, sg, signColor } from '@shared/format';
 import { sessionOpenSec } from '@shared/liveBars';
 import { usEquitySession } from '@shared/session';
 import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
@@ -39,7 +39,7 @@ import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, 
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
-import { PRICE_AXIS_W, PriceChart } from './PriceChart';
+import { PRICE_AXIS_W, PriceChart, type MeasureReadout } from './PriceChart';
 import { missingBars, rangeLoaded, rangeStartSec } from './ranges';
 import { TimeframeBar } from './TimeframeBar';
 import { useNow } from './useNow';
@@ -259,6 +259,8 @@ export function ChartView() {
   // The ruler: the next drag on the chart measures; it turns off once one is drawn (or on Esc).
   const [measuring, setMeasuring] = useState(false);
   const endMeasuring = useCallback(() => setMeasuring(false), []);
+  // The measure drawn on the chart: its figures go in the info row, not over the bars.
+  const [measured, setMeasured] = useState<MeasureReadout | null>(null);
   useEffect(() => setHoverBar(null), [key]);
 
   // Today's close after the regular session: IB sends no tick 57 with delayed data, so the
@@ -452,6 +454,15 @@ export function ChartView() {
           <Stat label={m.low} value={shown ? fmt(shown.low) : '—'} />
           <Stat label={m.vol} value={volume ? compact(volume) : '—'} />
         </div>
+        {measured && (
+          // In the up / down color: the percent, the change and the bars between its ends.
+          <div data-chart="measure-readout" title={m.measureHint} style={{ whiteSpace: 'nowrap' }}>
+            {m.measure}{' '}
+            <span style={{ color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)', fontFamily: 'var(--num)' }}>
+              <span style={{ fontWeight: 600 }}>{measured.pct == null ? '—' : pct(measured.pct * 100)}</span> {sg(measured.change, fmt)} · {m.measureBars(Math.abs(measured.bars))}
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
           {MA_PERIODS.map((p) => (
             <Chip key={p} on={mas.includes(p)} onClick={() => toggleMa(p)} title={m.maHint(p)} swatch={`var(--ma${p})`}>
@@ -484,6 +495,7 @@ export function ChartView() {
         onLeaveFit={clearRange}
         measuring={measuring}
         onMeasured={endMeasuring}
+        onMeasure={setMeasured}
       />
     </div>
   );
