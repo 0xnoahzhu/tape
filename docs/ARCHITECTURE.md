@@ -1793,7 +1793,22 @@ formula; `messages.ts → sources`; a test keeps them complete in English and Ch
 tooltip and the column editor's rows show it with the app's own tip (`ui/OverflowTip.tsx →
 useHoverTip`, `HoverTip`), not a native title: that one comes after 1–2 s, goes at the slightest
 move and not at all while the rows under it re-render; the app's comes once the pointer rests
-(350 ms), at once on the next header or row, and goes on a press, a key or a scroll. Where IB sends one datum twice, one
+(350 ms), at once on the next header or row, and goes on a press, a key or a scroll. The symbol's
+tip gives the company's full name (IB's `longName`, an option's underlying's; on an underlying's
+group row too), so the contract details are read for every row (from main's cache), not only while
+a column shows them. A text cell's note (its source) goes in its overflow tip (`useOverflowTip`'s
+`extra`), under the full text while it is cut.
+
+**Tooltips everywhere** (`ui/GlobalTip.tsx`, mounted once at the app's root). Every other `title`
+in the app is shown the same way: one capture-phase `pointermove` listener on the document finds the
+element with a title under the pointer (`tipHost`), moves its text to `data-tip` (so the system shows
+nothing; `aria-description` keeps it for assistive technology unless the element has a label) and
+shows the app's tip under it once the pointer rests, at once right after another tip closed
+(`markTipLeft` / `tipDelay`, shared with the hooks), until the pointer leaves it, a press, a wheel,
+a key, a scroll that moves it, a resize or a blur. React sets a title again only when its value
+changes; the next move, or a `MutationObserver` while the tip shows, takes the new text. Hover areas
+of the hooks' tips carry `data-own-tip` and are left to them. The lock screen's own titles show over
+it (z-index 45), every other tip under it (35). Where IB sends one datum twice, one
 column shows it, the real-time source first (`calc.ts → positionRow`, one field per datum on
 `PositionRow` with its `…Source`): Price is IB's mark (tick 37), else the portfolio update's
 `marketPrice`; Value, Unrl. P&L and Realized P&L are `reqPnLSingle`'s `value`, `unrealizedPnL` and

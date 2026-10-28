@@ -14,6 +14,7 @@ import { SettingsPage } from './features/settings/SettingsPage';
 import { NotificationsPanel } from './features/notifications/NotificationsPanel';
 import { PriceAlertDialog } from './features/alerts/PriceAlertDialog';
 import { ErrorBoundary } from './ui/ErrorBoundary';
+import { GlobalTip } from './ui/GlobalTip';
 import { requestLock } from './features/lock/actions';
 import { LockScreen } from './features/lock/LockScreen';
 import { PinDialogHost } from './features/lock/PinDialog';
@@ -175,6 +176,8 @@ export function App() {
           <LockScreen key={lockSeq} />
         </ErrorBoundary>
       )}
+      {/* Every title in the app, the lock screen's too, as the app's own tip. */}
+      <GlobalTip />
     </div>
   );
 }

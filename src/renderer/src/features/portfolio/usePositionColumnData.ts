@@ -2,8 +2,9 @@
 // quotes (subscribed by the 'portfolio' owner, usePositionRows), their contract details (fetched by
 // the main process for every position, so getContractInfo answers from its cache) and the holdings'
 // earnings (the Positions tab's one useEarnings, shared with the event chips: PositionsView.tsx).
-// Each is read only while a shown column needs it, so the rows are not redrawn for changes no shown
-// column reads.
+// Quotes and earnings are read only while a shown column needs them, so the rows are not redrawn
+// for changes no shown column reads; the details always (they come once, from main's cache), as the
+// symbol's tooltip gives the company's full name from them.
 //
 // Columns with a `profile` need more generic ticks on the positions' lines: the 'positions-table'
 // owner asks for them, on the portfolio's own contracts (no new line), only while such a column is
@@ -177,7 +178,7 @@ const NO_EARNINGS: ReadonlyMap<string, EarningsEvent> = new Map();
 export interface PositionColumnData {
   /** The rows' quotes by contract key (empty while no shown column reads quotes). */
   quotes: Readonly<Record<string, Quote>>;
-  /** Contract details by row id (empty while no shown column reads them). */
+  /** Contract details by row id (missing while unknown). */
   infos: ReadonlyMap<string, ContractInfo | null>;
   /** The next earnings by the underlying's contract key (empty while no shown column reads them). */
   earnings: ReadonlyMap<string, EarningsEvent>;
@@ -186,13 +187,13 @@ export interface PositionColumnData {
 /** `corporate`: the holdings' earnings (data.ts → useEarnings), read only while an earnings column is shown. */
 export function usePositionColumnData(rows: readonly PositionRow[], columns: readonly ColumnDef[], corporate: CorporateEarnings | undefined): PositionColumnData {
   const needQuotes = columns.some((c) => c.needs === 'quote');
-  const needDetails = columns.some((c) => c.needs === 'details');
   const needEarnings = columns.some((c) => c.needs === 'earnings');
   const keySig = needQuotes ? rows.map((r) => r.key).join(',') : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const keys = useMemo(() => (needQuotes ? rows.map((r) => contractKey(r.position.contract)) : NO_KEYS), [keySig]);
   const quotes = useQuotesByKey(keys);
-  const infos = usePositionDetails(rows, needDetails);
+  // Always: the symbol's tooltip reads the company's name from them.
+  const infos = usePositionDetails(rows, true);
 
   // The extra generic ticks of the shown columns (none for the default columns: the mark Price shows
   // is on the positions' lines already, usePositionRows). Only a change of the shown columns waits;

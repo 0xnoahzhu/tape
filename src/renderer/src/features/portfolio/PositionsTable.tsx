@@ -519,6 +519,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
           key={`g:${g.key}`}
           id={g.key}
           label={labelOf(g)}
+          name={groupBy === 'underlying' ? g.ctxs.map((c) => c.info?.longName?.trim()).find(Boolean) : undefined}
           count={g.ctxs.length}
           collapsed={closed}
           chip={chips.groups.get(g.key)}
@@ -850,6 +851,8 @@ interface GroupRowProps {
   /** The group's key (groups.ts → groupKey). */
   id: string;
   label: string;
+  /** An underlying's group: the company's full name (IB's longName), for the label's tooltip. */
+  name?: string;
   count: number;
   collapsed: boolean;
   chip?: CorporateEvent;
@@ -865,6 +868,7 @@ interface GroupRowProps {
 const sameGroupProps = (a: GroupRowProps, b: GroupRowProps): boolean =>
   a.id === b.id &&
   a.label === b.label &&
+  a.name === b.name &&
   a.count === b.count &&
   a.collapsed === b.collapsed &&
   eventSig(a.chip) === eventSig(b.chip) &&
@@ -879,8 +883,9 @@ const sameGroupProps = (a: GroupRowProps, b: GroupRowProps): boolean =>
  * A group's row: its caret, name, count and chip in the Symbol cell, the other cells empty (a group
  * has no figures of its own). A click collapses or expands it (it opens no chart).
  */
-const GroupRowView = memo(function GroupRowView({ id, label, count, collapsed, chip, defs, scrolled, words, clock, now, onToggle }: GroupRowProps) {
+const GroupRowView = memo(function GroupRowView({ id, label, name, count, collapsed, chip, defs, scrolled, words, clock, now, onToggle }: GroupRowProps) {
   const m = usePortfolioMessages();
+  const { hoverProps, tip } = useHoverTip(name ?? null);
   return (
     <div
       role="row"
@@ -931,7 +936,8 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, collapsed, c
               </span>
               {/* Name and count on one baseline (14px sans, 11px mono); the caret and the chip stay centred. */}
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-                <span className="ellipsis" title={label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
+                {/* A sector's name says itself (natively, when cut); an underlying's gives the company's. */}
+                <span {...hoverProps} className="ellipsis" title={name ? undefined : label} style={{ minWidth: 0, fontSize: 14, fontWeight: 600 }}>
                   {label}
                 </span>
                 <span style={{ flexShrink: 0, font: '11px/1 var(--num)', color: 'var(--dm)' }}>{count}</span>
@@ -941,6 +947,7 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, collapsed, c
           </div>
         );
       })}
+      {tip}
     </div>
   );
 }, sameGroupProps);
@@ -1063,6 +1070,8 @@ function SymbolCell({ c, scrolled, nested, chip, words, clock }: { c: CellCtx; s
   const k = c.row.position.contract;
   const line = optionLineText(k, words);
   const sub = line ?? `${m.kinds[k.secType] ?? k.secType} · ${sectorLabel(m, c.row.sector)}`;
+  // The company's full name (IB's longName; an option's is its underlying's) on the symbol.
+  const { hoverProps, tip } = useHoverTip(c.info?.longName?.trim() || null);
   return (
     <div
       role="cell"
@@ -1079,11 +1088,12 @@ function SymbolCell({ c, scrolled, nested, chip, words, clock }: { c: CellCtx; s
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <div className="ellipsis" style={{ minWidth: 0, fontSize: 14 }}>
+        <div {...hoverProps} data-pos-symbol className="ellipsis" style={{ minWidth: 0, fontSize: 14 }}>
           {contractLabel(k)}
         </div>
         {chip && <EventChip e={chip} words={words} clock={clock} now={c.now} />}
       </div>
+      {tip}
       <div className="ellipsis" data-pos-line={line ? 'option' : undefined} style={{ fontSize: 11, color: 'var(--dm)' }}>
         {sub}
       </div>
@@ -1107,9 +1117,10 @@ function Cell({ def, c, words, clock }: { def: ColumnDef; c: CellCtx; words: Cel
 
 /** A left-aligned (text) cell: cut with an ellipsis, shown in full on hover when cut. */
 function TextCell({ text, title, color }: { text: string; title?: string; color?: string }) {
-  const { textRef, hoverProps, tip } = useOverflowTip(text);
+  // One tip: the full text while it is cut, and the cell's note (its source) under it, or alone.
+  const { textRef, hoverProps, tip } = useOverflowTip(text, undefined, title);
   return (
-    <div {...hoverProps} role="cell" title={title} style={{ minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center', color }}>
+    <div {...hoverProps} role="cell" style={{ minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center', color }}>
       <div ref={textRef} className="ellipsis" style={{ minWidth: 0 }}>
         {text}
       </div>

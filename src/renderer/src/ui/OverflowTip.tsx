@@ -9,6 +9,8 @@
 //
 // useHoverTip is the same tip for what a native title used to say (a column's description): it
 // shows on every rest, not only over cut text, so it comes as steadily as the overflow tip does.
+// Every other `title` in the app is shown the same way by GlobalTip.tsx; a hover area of these
+// hooks is marked `data-own-tip`, so GlobalTip leaves it to them.
 
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -23,8 +25,14 @@ const TIP_MAX_WIDTH = 360;
 /** Anything that starts something else hides the tip (as does a scroll that moves the hover area). */
 const HIDE_ON = ['wheel', 'keydown', 'pointerdown'] as const;
 
-/** When the pointer last left a shown tip's hover area (shared by all tips). */
+/** When the pointer last left a shown tip's hover area (shared by all tips, GlobalTip's too). */
 let lastLeft = -Infinity;
+/** A tip was just left: the next shows at once. */
+export const markTipLeft = () => {
+  lastLeft = performance.now();
+};
+/** How long the pointer rests before the next tip shows: none right after another one closed. */
+export const tipDelay = () => (performance.now() - lastLeft < TIP_WARM_MS ? 0 : TIP_DELAY_MS);
 
 export interface OverflowTip<T extends HTMLElement> {
   /** The ellipsis box whose text may be cut. */
@@ -33,6 +41,8 @@ export interface OverflowTip<T extends HTMLElement> {
   hoverProps: {
     onPointerMove: (e: PointerEvent<HTMLElement>) => void;
     onPointerLeave: () => void;
+    /** GlobalTip leaves the area to this tip. */
+    'data-own-tip': '';
   };
   /** Render anywhere in the component (a portal). */
   tip: ReactNode;
@@ -41,18 +51,22 @@ export interface OverflowTip<T extends HTMLElement> {
 /**
  * `content` is what the tip says: the full text, possibly with more (a listing tag). With `spanRef`
  * the tip reaches the right edge of that element's content box: a row with more columns, which the
- * tip then covers whole instead of ending inside one (a price cut to its last digits).
+ * tip then covers whole instead of ending inside one (a price cut to its last digits). `extra` is
+ * said always, under the full text while it is cut, alone while it is not (what a title said: a
+ * cell's source).
  */
-export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: ReactNode, spanRef?: RefObject<HTMLElement | null>): OverflowTip<T> {
+export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: ReactNode, spanRef?: RefObject<HTMLElement | null>, extra?: string): OverflowTip<T> {
   const textRef = useRef<T>(null);
   // Checked when the pointer comes to rest, not before: the text may be cut only later (a price
   // arriving widens its column), and the next rest checks again.
   const { hoverProps, tip } = useRestTip(content, (hovered) => {
     const el = textRef.current;
-    if (!el?.isConnected || !isTruncated(el)) return null;
     const box = hovered.getBoundingClientRect();
+    const more = extra ? <div style={{ whiteSpace: 'pre-line', color: 'var(--mu)' }}>{extra}</div> : null;
+    if (!el?.isConnected || !isTruncated(el)) return more && { left: box.left, top: box.top, bottom: box.bottom, content: more };
     const span = spanRef?.current;
-    return { left: contentEdges(el).left - TIP_PAD_X, top: box.top, bottom: box.bottom, right: span?.isConnected ? contentEdges(span).right : undefined };
+    const anchor = { left: contentEdges(el).left - TIP_PAD_X, top: box.top, bottom: box.bottom, right: span?.isConnected ? contentEdges(span).right : undefined };
+    return more ? { ...anchor, content: <>{content}{more}</> } : anchor;
   });
   return { textRef, hoverProps, tip };
 }
@@ -60,10 +74,11 @@ export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: 
 /**
  * A tip that says `content` (multi-line text keeps its line breaks) whenever the pointer rests on
  * the hover area, under it from its left edge: for descriptions a native title would give late or
- * not at all (a table header over rows that keep re-rendering).
+ * not at all (a table header over rows that keep re-rendering). Null content: no tip (yet).
  */
-export function useHoverTip(content: ReactNode): Omit<OverflowTip<HTMLElement>, 'textRef'> {
+export function useHoverTip(content: ReactNode | null): Omit<OverflowTip<HTMLElement>, 'textRef'> {
   return useRestTip(<div style={{ whiteSpace: 'pre-line' }}>{content}</div>, (hovered) => {
+    if (content == null || content === '') return null;
     const box = hovered.getBoundingClientRect();
     return { left: box.left, top: box.top, bottom: box.bottom };
   });
@@ -80,11 +95,14 @@ export function HoverTip({ content, children }: { content: ReactNode; children: 
   );
 }
 
+/** Where a tip goes and, when it is not the hook's `content`, what it says. */
+type RestAnchor = TipAnchor & { content?: ReactNode };
+
 /** The tip of the hover area under a resting pointer, at the anchor `anchorFor` gives (none: no tip). */
-function useRestTip(content: ReactNode, anchorFor: (hovered: HTMLElement) => TipAnchor | null): Omit<OverflowTip<HTMLElement>, 'textRef'> {
+function useRestTip(content: ReactNode, anchorFor: (hovered: HTMLElement) => RestAnchor | null): Omit<OverflowTip<HTMLElement>, 'textRef'> {
   /** The hover area while the pointer is on it, until a dismissal. */
   const [area, setArea] = useState<HTMLElement | null>(null);
-  const [anchor, setAnchor] = useState<TipAnchor | null>(null);
+  const [anchor, setAnchor] = useState<RestAnchor | null>(null);
   /** The wait for the pointer to rest. */
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hide = () => {
@@ -128,18 +146,20 @@ function useRestTip(content: ReactNode, anchorFor: (hovered: HTMLElement) => Tip
       const target = e.currentTarget;
       setArea(target);
       clearTimeout(timer.current);
-      timer.current = setTimeout(() => show(target), performance.now() - lastLeft < TIP_WARM_MS ? 0 : TIP_DELAY_MS);
+      timer.current = setTimeout(() => show(target), tipDelay());
     },
     onPointerLeave: () => {
-      if (anchor) lastLeft = performance.now();
+      if (anchor) markTipLeft();
       hide();
     },
+    'data-own-tip': '' as const,
   };
 
-  return { hoverProps, tip: anchor && <Tip anchor={anchor}>{content}</Tip> };
+  return { hoverProps, tip: anchor && <Tip anchor={anchor}>{anchor.content ?? content}</Tip> };
 }
 
-function Tip({ anchor, children }: { anchor: TipAnchor; children: ReactNode }) {
+/** A tip at `anchor`, in a portal over everything but the lock screen (with `zIndex` 45, over it too). */
+export function Tip({ anchor, zIndex = 35, children }: { anchor: TipAnchor; zIndex?: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // Measured after every render (the content may change while shown); unchanged places keep the state.
@@ -158,8 +178,8 @@ function Tip({ anchor, children }: { anchor: TipAnchor; children: ReactNode }) {
         left: pos?.left ?? 0,
         top: pos?.top ?? 0,
         visibility: pos ? undefined : 'hidden',
-        // Over menus and dialogs (30), under the lock screen (40).
-        zIndex: 35,
+        // Over menus and dialogs (30), under the lock screen (40) unless it is the lock screen's own.
+        zIndex,
         // As wide as what it spans, or as its text up to a width it wraps at.
         width: anchor.right !== undefined ? anchor.right - anchor.left : 'max-content',
         maxWidth: anchor.right !== undefined ? `calc(100vw - ${2 * TIP_MARGIN}px)` : `min(${TIP_MAX_WIDTH}px, calc(100vw - ${2 * TIP_MARGIN}px))`,
