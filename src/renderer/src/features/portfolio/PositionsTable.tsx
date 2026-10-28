@@ -44,7 +44,7 @@ import type { ContractRef, CorporateEarnings } from '@shared/types';
 import { useCommon } from '../../i18n/common';
 import { useClock, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
-import { useOverflowTip } from '../../ui/OverflowTip';
+import { useHoverTip, useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { Dropdown, MenuChoice, MenuHeading } from '../../ui/select';
@@ -699,6 +699,9 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: He
   const cycleSort = usePositionColumns((s) => s.cycleSort);
   const right = def.align === 'right';
   const arrow = dir && <span style={{ fontSize: 9, color: 'var(--tx)', flexShrink: 0 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
+  // The column's source and description, drawn by the app: a native title comes late, and not at all
+  // while the rows under the header keep re-rendering.
+  const { hoverProps, tip } = useHoverTip(`${columnTip(m, def.id)}\n${sticky ? m.headerSort : m.headerSortMove}`);
   return (
     <div
       role="columnheader"
@@ -708,7 +711,7 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: He
     >
       <button
         type="button"
-        title={`${columnTip(m, def.id)}\n${sticky ? m.headerSort : m.headerSortMove}`}
+        {...hoverProps}
         // Symbol stays first: the other headers are dragged to reorder (a drag's release does not
         // reach onClick: useHeaderDrag swallows its click).
         onPointerDown={sticky ? undefined : (e) => onPress(def.id, e)}
@@ -735,6 +738,7 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: He
         {!right && arrow}
       </button>
       <ResizeHandle def={def} onLive={onLive} />
+      {tip}
     </div>
   );
 }

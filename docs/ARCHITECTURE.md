@@ -1786,10 +1786,14 @@ row order, and `columnStore.ts` persists them. `usePositionColumnData.ts` reads 
 need beyond the rows (the positions' quotes, their contract details, the holdings' earnings), each
 only while a shown column needs it, and asks for the shown columns' extra generic ticks.
 
-**IB's own data.** Every column shows IB's own value, as IB sends it: Tape calculates none (no
-formula, cost basis, share of net liquidation, change, spread, days to a date, moneyness or position
-greek). Each column's tooltip names its source ("IB · tick 4 Last (delayed 68)", `messages.ts →
-sources`; a test keeps them complete in English and Chinese). Where IB sends one datum twice, one
+**IB's own data.** Every column outside the Calculated by Tape group shows IB's own value, as IB
+sends it; that group's (change, mid, spread, cost basis, …) are worked out from IB's fields and say
+so. Each column's tooltip names its source ("IB · tick 4 Last (delayed 68)", or "Tape ·" and the
+formula; `messages.ts → sources`; a test keeps them complete in English and Chinese). The header's
+tooltip and the column editor's rows show it with the app's own tip (`ui/OverflowTip.tsx →
+useHoverTip`, `HoverTip`), not a native title: that one comes after 1–2 s, goes at the slightest
+move and not at all while the rows under it re-render; the app's comes once the pointer rests
+(350 ms), at once on the next header or row, and goes on a press, a key or a scroll. Where IB sends one datum twice, one
 column shows it, the real-time source first (`calc.ts → positionRow`, one field per datum on
 `PositionRow` with its `…Source`): Price is IB's mark (tick 37), else the portfolio update's
 `marketPrice`; Value, Unrl. P&L and Realized P&L are `reqPnLSingle`'s `value`, `unrealizedPnL` and

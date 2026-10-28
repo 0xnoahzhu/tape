@@ -12,6 +12,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { useStore } from '../../state/store';
 import { GripIcon, SlidersIcon } from '../../ui/icons';
 import { GlyphButton, Popover, TextInput } from '../../ui/primitives';
+import { HoverTip } from '../../ui/OverflowTip';
 import { stableGutter } from '../../ui/scrollGutter';
 import type { PositionRow } from './calc';
 import { COLUMN_GROUPS, COLUMN_IDS, COLUMNS, PINNED, applies, type ColumnDef, type ColumnId } from './columns';
@@ -154,38 +155,41 @@ function ColumnEditor({ rows, maxH, onDone }: { rows: readonly PositionRow[]; ma
                   const def = COLUMNS[id];
                   const note = unheld.has(id) ? m.noHoldings : columnNote(def, m);
                   return (
-                    <div
-                      key={id}
-                      role="menuitemcheckbox"
-                      aria-checked={on}
-                      aria-disabled={id === PINNED || undefined}
-                      tabIndex={0}
-                      title={note ? `${columnTip(m, id)}\n${note}` : columnTip(m, id)}
-                      onClick={() => toggle(id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggle(id);
-                        }
-                      }}
-                      className={id === PINNED ? undefined : 'hover-p2'}
-                      style={{ ...rowBase, cursor: id === PINNED ? 'default' : 'pointer', color: 'var(--tx)' }}
-                    >
-                      {/* Name (13px) and note (11px) on one baseline; the check stays centred. The wrapper fills
-                          the row, so the note's 58% is of the same width. */}
-                      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                        <div style={{ alignSelf: 'center', width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
-                        <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
-                          {m.columns[id][0]}
-                        </div>
-                        {note && (
-                          // Shrinks before the column's name does (the full note is in the row's tooltip).
-                          <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
-                            {note}
+                    <HoverTip key={id} content={note ? `${columnTip(m, id)}\n${note}` : columnTip(m, id)}>
+                      {(hoverProps) => (
+                        <div
+                          {...hoverProps}
+                          role="menuitemcheckbox"
+                          aria-checked={on}
+                          aria-disabled={id === PINNED || undefined}
+                          tabIndex={0}
+                          onClick={() => toggle(id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggle(id);
+                            }
+                          }}
+                          className={id === PINNED ? undefined : 'hover-p2'}
+                          style={{ ...rowBase, cursor: id === PINNED ? 'default' : 'pointer', color: 'var(--tx)' }}
+                        >
+                          {/* Name (13px) and note (11px) on one baseline; the check stays centred. The wrapper fills
+                              the row, so the note's 58% is of the same width. */}
+                          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                            <div style={{ alignSelf: 'center', width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
+                            <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
+                              {m.columns[id][0]}
+                            </div>
+                            {note && (
+                              // Shrinks before the column's name does (the full note is in the row's tooltip).
+                              <div className="ellipsis" style={{ flex: '0 1 auto', minWidth: 0, maxWidth: '58%', fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>
+                                {note}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
+                        </div>
+                      )}
+                    </HoverTip>
                   );
                 })}
               </Fragment>
@@ -250,56 +254,59 @@ function ShownList({ ids, all }: { ids: readonly ColumnId[]; all: readonly Colum
         const i = all.indexOf(id);
         const mark = drop?.id === id && drag !== id ? drop.side : null;
         return (
-          <div
-            key={id}
-            ref={(el) => {
-              if (el) rowRefs.current.set(id, el);
-              else rowRefs.current.delete(id);
-            }}
-            tabIndex={0}
-            draggable={!pinned}
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = 'move';
-              e.dataTransfer.setData('text/plain', id);
-              setDrag(id);
-            }}
-            onDragEnd={end}
-            onDragOver={(e) => onDragOver(e, id)}
-            onDrop={onDrop}
-            onKeyDown={(e: KeyboardEvent) => {
-              if (pinned || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
-              e.preventDefault();
-              moveBy(id, e.key === 'ArrowUp' ? -1 : 1);
-              // The moved row's element is put in its new place, which takes the focus away from it.
-              requestAnimationFrame(() => rowRefs.current.get(id)?.focus());
-            }}
-            title={pinned ? undefined : m.dragToReorder}
-            className="hover-p2"
-            style={{ ...rowBase, position: 'relative', opacity: drag === id ? 0.45 : 1, cursor: pinned ? 'default' : 'grab', color: 'var(--tx)' }}
-          >
-            <div style={{ width: 14, flexShrink: 0, color: 'var(--dm)' }}>{!pinned && <GripIcon size={14} />}</div>
-            {/* The name and Symbol's "Always shown" (11px) on one baseline; the buttons stay centred outside. */}
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
-                {m.columns[id][0]}
-              </div>
-              {pinned && <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{m.alwaysShown}</div>}
-            </div>
-            {!pinned && (
-              <div style={{ display: 'flex', flexShrink: 0 }}>
-                <GlyphButton title={m.moveUp} fontSize={12} disabled={i <= 1} onClick={() => moveBy(id, -1)}>
-                  ↑
-                </GlyphButton>
-                <GlyphButton title={m.moveDown} fontSize={12} disabled={i >= all.length - 1} onClick={() => moveBy(id, 1)}>
-                  ↓
-                </GlyphButton>
-                <GlyphButton title={m.hideColumn} fontSize={14} danger onClick={() => remove(id)}>
-                  ×
-                </GlyphButton>
+          <HoverTip key={id} content={pinned ? columnTip(m, id) : `${columnTip(m, id)}\n${m.dragToReorder}`}>
+            {(hoverProps) => (
+              <div
+                {...hoverProps}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(id, el);
+                  else rowRefs.current.delete(id);
+                }}
+                tabIndex={0}
+                draggable={!pinned}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', id);
+                  setDrag(id);
+                }}
+                onDragEnd={end}
+                onDragOver={(e) => onDragOver(e, id)}
+                onDrop={onDrop}
+                onKeyDown={(e: KeyboardEvent) => {
+                  if (pinned || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+                  e.preventDefault();
+                  moveBy(id, e.key === 'ArrowUp' ? -1 : 1);
+                  // The moved row's element is put in its new place, which takes the focus away from it.
+                  requestAnimationFrame(() => rowRefs.current.get(id)?.focus());
+                }}
+                className="hover-p2"
+                style={{ ...rowBase, position: 'relative', opacity: drag === id ? 0.45 : 1, cursor: pinned ? 'default' : 'grab', color: 'var(--tx)' }}
+              >
+                <div style={{ width: 14, flexShrink: 0, color: 'var(--dm)' }}>{!pinned && <GripIcon size={14} />}</div>
+                {/* The name and Symbol's "Always shown" (11px) on one baseline; the buttons stay centred outside. */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
+                    {m.columns[id][0]}
+                  </div>
+                  {pinned && <div style={{ flexShrink: 0, fontSize: 11, color: 'var(--dm)', paddingRight: 4 }}>{m.alwaysShown}</div>}
+                </div>
+                {!pinned && (
+                  <div style={{ display: 'flex', flexShrink: 0 }}>
+                    <GlyphButton title={m.moveUp} fontSize={12} disabled={i <= 1} onClick={() => moveBy(id, -1)}>
+                      ↑
+                    </GlyphButton>
+                    <GlyphButton title={m.moveDown} fontSize={12} disabled={i >= all.length - 1} onClick={() => moveBy(id, 1)}>
+                      ↓
+                    </GlyphButton>
+                    <GlyphButton title={m.hideColumn} fontSize={14} danger onClick={() => remove(id)}>
+                      ×
+                    </GlyphButton>
+                  </div>
+                )}
+                {mark && <div style={{ position: 'absolute', left: 0, right: 0, [mark === 'before' ? 'top' : 'bottom']: 0, height: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}
               </div>
             )}
-            {mark && <div style={{ position: 'absolute', left: 0, right: 0, [mark === 'before' ? 'top' : 'bottom']: 0, height: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}
-          </div>
+          </HoverTip>
         );
       })}
     </>

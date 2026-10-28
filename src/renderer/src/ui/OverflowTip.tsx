@@ -6,6 +6,9 @@
 //
 // It is a pointer affordance only: keyboard selection never shows it, and it is hidden from
 // assistive technology, which reads the full text from the box itself (an ellipsis only paints).
+//
+// useHoverTip is the same tip for what a native title used to say (a column's description): it
+// shows on every rest, not only over cut text, so it comes as steadily as the overflow tip does.
 
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -42,6 +45,43 @@ export interface OverflowTip<T extends HTMLElement> {
  */
 export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: ReactNode, spanRef?: RefObject<HTMLElement | null>): OverflowTip<T> {
   const textRef = useRef<T>(null);
+  // Checked when the pointer comes to rest, not before: the text may be cut only later (a price
+  // arriving widens its column), and the next rest checks again.
+  const { hoverProps, tip } = useRestTip(content, (hovered) => {
+    const el = textRef.current;
+    if (!el?.isConnected || !isTruncated(el)) return null;
+    const box = hovered.getBoundingClientRect();
+    const span = spanRef?.current;
+    return { left: contentEdges(el).left - TIP_PAD_X, top: box.top, bottom: box.bottom, right: span?.isConnected ? contentEdges(span).right : undefined };
+  });
+  return { textRef, hoverProps, tip };
+}
+
+/**
+ * A tip that says `content` (multi-line text keeps its line breaks) whenever the pointer rests on
+ * the hover area, under it from its left edge: for descriptions a native title would give late or
+ * not at all (a table header over rows that keep re-rendering).
+ */
+export function useHoverTip(content: ReactNode): Omit<OverflowTip<HTMLElement>, 'textRef'> {
+  return useRestTip(<div style={{ whiteSpace: 'pre-line' }}>{content}</div>, (hovered) => {
+    const box = hovered.getBoundingClientRect();
+    return { left: box.left, top: box.top, bottom: box.bottom };
+  });
+}
+
+/** useHoverTip for a row drawn in a loop: `children` gets the hover props to spread on it. */
+export function HoverTip({ content, children }: { content: ReactNode; children: (hoverProps: OverflowTip<HTMLElement>['hoverProps']) => ReactNode }) {
+  const { hoverProps, tip } = useHoverTip(content);
+  return (
+    <>
+      {children(hoverProps)}
+      {tip}
+    </>
+  );
+}
+
+/** The tip of the hover area under a resting pointer, at the anchor `anchorFor` gives (none: no tip). */
+function useRestTip(content: ReactNode, anchorFor: (hovered: HTMLElement) => TipAnchor | null): Omit<OverflowTip<HTMLElement>, 'textRef'> {
   /** The hover area while the pointer is on it, until a dismissal. */
   const [area, setArea] = useState<HTMLElement | null>(null);
   const [anchor, setAnchor] = useState<TipAnchor | null>(null);
@@ -73,14 +113,10 @@ export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: 
     };
   }, [area]);
 
-  // Checked when the pointer comes to rest, not before: the text may be cut only later (a price
-  // arriving widens its column), and the next rest checks again.
   const show = (hovered: HTMLElement) => {
-    const el = textRef.current;
-    if (!el?.isConnected || !isTruncated(el)) return;
-    const box = hovered.getBoundingClientRect();
-    const span = spanRef?.current;
-    setAnchor({ left: contentEdges(el).left - TIP_PAD_X, top: box.top, bottom: box.bottom, right: span?.isConnected ? contentEdges(span).right : undefined });
+    if (!hovered.isConnected) return;
+    const next = anchorFor(hovered);
+    if (next) setAnchor(next);
   };
 
   const hoverProps = {
@@ -100,7 +136,7 @@ export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: 
     },
   };
 
-  return { textRef, hoverProps, tip: anchor && <Tip anchor={anchor}>{content}</Tip> };
+  return { hoverProps, tip: anchor && <Tip anchor={anchor}>{content}</Tip> };
 }
 
 function Tip({ anchor, children }: { anchor: TipAnchor; children: ReactNode }) {
