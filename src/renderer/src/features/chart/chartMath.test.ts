@@ -38,6 +38,8 @@ import {
   legendLines,
   MA_PERIODS,
   maReadings,
+  measureBetween,
+  measurePoint,
   MAX_SPAN,
   mergeLivePrice,
   advanceLiveBars,
@@ -93,6 +95,39 @@ function series(n: number, from = 0): Bar[] {
     return bar(T0 + i * 86_400, 100 + i, 101 + i, 99 + i, 100 + i, 1000 + i);
   });
 }
+
+describe('measuring', () => {
+  it('reads the price change, its percent and the bars between two points', () => {
+    const bars = series(30);
+    const a = measurePoint(bars, 5.7, 105)!;
+    const b = measurePoint(bars, 17.2, 115.5)!;
+    expect(a).toEqual({ time: bars[5].time, price: 105 });
+    const m = measureBetween(bars, a, b)!;
+    expect(m).toMatchObject({ from: 5, to: 17, bars: 12 });
+    expect(m.change).toBeCloseTo(10.5, 10);
+    expect(m.pct).toBeCloseTo(0.1, 10);
+    // Dragged back in time and down.
+    expect(measureBetween(bars, b, a)).toMatchObject({ from: 17, to: 5, bars: -12, change: -10.5 });
+    expect(measureBetween(bars, b, a)!.pct).toBeCloseTo(-10.5 / 115.5, 10);
+  });
+
+  it('keeps its bars when older ones come in front, and takes a future slot for the newest bar', () => {
+    const bars = series(30, 10);
+    const a = measurePoint(bars, 2, 100)!;
+    const b = measurePoint(bars, 45, 120)!;
+    expect(b.time).toBe(bars[29].time);
+    const more = [...series(10), ...bars];
+    expect(measureBetween(more, a, b)).toMatchObject({ from: 12, to: 39, bars: 27 });
+  });
+
+  it('gives no percent from a price at or below 0, and nothing without bars', () => {
+    const bars = series(5);
+    expect(measureBetween(bars, { time: bars[0].time, price: 0 }, { time: bars[4].time, price: 2 })!.pct).toBeNull();
+    expect(measurePoint([], 3, 100)).toBeNull();
+    expect(measurePoint(bars, 3, NaN)).toBeNull();
+    expect(measureBetween([], { time: 1, price: 1 }, { time: 2, price: 2 })).toBeNull();
+  });
+});
 
 describe('visibleBarCount', () => {
   it('uses about one bar per 15 px, clamped to 30..200', () => {

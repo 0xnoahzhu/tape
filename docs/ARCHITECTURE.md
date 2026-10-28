@@ -601,7 +601,18 @@ room), so a zoom in stops at the fit and, once zoomed out, a move stops where a 
 the bottom, also after a sideways pan (`keepBarsInRange`); a range back at the fit fits the bars
 again (no Auto chip); the Auto chip under the axis, a double-click on the axis or picking a
 range (the active one again too: `chartPrefs.rangePick`) fits it again (moving the prices keeps a
-range), and a double-click on the chart resets both directions. Between reloads a real-time last price extends the forming bar and starts the next
+range), and a double-click on the chart resets both directions. The time axis zooms the time as
+the price axis zooms the prices: the wheel over it (either way it turns: its own listener stops the
+plot's sideways pan) or a drag along it (`TIME_DRAG_ZOOM`; right shows fewer, wider bars) zooms
+around the pointer, or where the drag started, through `zoomView`; a double-click on it gives back
+the automatic span (`span: null`) where the view is. A measure (`chartMath.ts → measurePoint`,
+`measureBetween`) is drawn by a drag with Shift held, or by any drag while the ruler beside the bell
+is on (ChartView's `measuring`, which turns off once one is drawn or on Esc): its ends are bars, by
+time (older bars loaded in front do not move them; a future slot counts as the newest bar), and the
+prices at the pointer, so it pans and zooms with the chart; it is drawn in px over the plot (a line,
+its ends and the box between in the up or down color) with a label by its end (the percent, the
+change and the bars between), and stays until a click on the chart (a press that never became a
+drag), Esc or another series. Between reloads a real-time last price extends the forming bar and starts the next
 ones on the interval's grid (`shared/liveBars.ts → advanceLiveBars`, shared with the indicator
 alerts, see *Alerts*; `chartMath.ts` re-exports it, and the moving averages come from
 `shared/indicators.ts → sma`); the live bars are kept between

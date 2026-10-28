@@ -6,6 +6,12 @@
 // The chart is explorable: drag (or scroll sideways / shift+wheel) pans, the wheel or a
 // trackpad pinch zooms around the pointer, ← / → and + / − do the same while the chart is
 // hovered, and a double-click returns to the latest bars at the automatic zoom and fitted prices.
+// The time axis zooms the time as the price axis zooms the prices: the wheel over it, or a drag
+// along it (right: fewer, wider bars), around the pointer; a double-click on it gives back the
+// automatic zoom. A drag with Shift held (or any drag while `measuring`, the ruler button) measures:
+// a line from bar to bar with the price change, its percent and the bars between
+// (chartMath.ts → measureBetween). The measure stays, anchored to its bars' times and prices, until
+// a click on the chart, Esc or another series.
 // Panning past the newest bar shows empty future slots, their times projected on the time axis
 // and in the crosshair (chartMath.ts → futureTimes), and the view keeps them as new bars come;
 // nothing comes before the first bar. The price axis fits the bars in view until the user moves
@@ -26,6 +32,7 @@
 // user pans, zooms or returns to the latest bars (onLeaveFit), which start from the fitted view.
 
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { pct, sg } from '@shared/format';
 import type { Bar, Timeframe } from '@shared/types';
 import { useClock } from '../../i18n';
 import { useStore } from '../../state/store';
@@ -38,6 +45,8 @@ import {
   formatBarTime,
   futureTimes,
   keepBarsInRange,
+  measureBetween,
+  measurePoint,
   labelWidth,
   LAST_TAG_H,
   latestButtonSpot,
@@ -74,6 +83,7 @@ import {
   zoomView,
   type ChartView,
   type MaPeriod,
+  type MeasurePoint,
   type PriceRange,
 } from './chartMath';
 import { useChartMessages } from './messages';
@@ -113,6 +123,10 @@ interface Props {
   fit?: { key: string; from: number | null } | null;
   /** The user panned, zoomed or reset the view while a range was fitted. */
   onLeaveFit?(): void;
+  /** The ruler is on: a drag measures (as with Shift held) instead of panning. */
+  measuring?: boolean;
+  /** A measure was drawn, or Esc pressed, while `measuring`: the ruler turns off. */
+  onMeasured?(): void;
 }
 
 interface Point {
@@ -129,8 +143,10 @@ const KEY_ZOOM = 1.25;
 const LINE_PX = 16;
 /** Price axis zoom per pixel dragged on the axis (down shows more prices). */
 const PRICE_DRAG_ZOOM = 0.006;
-/** A drag moves this far (px) before it is known to start sideways or up / down. */
+/** A drag moves this far (px) before it is known to start sideways or up / down (less is a click). */
 const AXIS_LOCK_PX = 5;
+/** Time axis zoom per pixel dragged along it (right shows fewer, wider bars). */
+const TIME_DRAG_ZOOM = 0.006;
 /** Future slot times are worked out in steps of this many slots (a pan does not redo them every frame). */
 const FUTURE_STEP = 64;
 /** Height of the Auto chip, in the time axis row under the price axis (px). */
@@ -193,6 +209,9 @@ const VOL_GAP = 6;
 const TIME_AXIS_H = 20;
 /** Width of the price axis right of the plot (px). */
 export const PRICE_AXIS_W = 76;
+/** A measure's label: its height, and half the width kept from the plot's sides (px). */
+const MEASURE_LABEL_H = 34;
+const MEASURE_LABEL_HALF = 64;
 /** Horizontal padding of the crosshair chips (crossTag). */
 const CHIP_PAD = 6;
 /** Space kept between the crosshair's time chip and the time labels beside it. */
@@ -221,6 +240,8 @@ export const PriceChart = memo(function PriceChart({
   onHover,
   fit,
   onLeaveFit,
+  measuring = false,
+  onMeasured,
 }: Props) {
   const clock = useClock();
   const m = useChartMessages();
@@ -243,6 +264,8 @@ export const PriceChart = memo(function PriceChart({
   // and the range fitted to the bars in view, which a moved or zoomed one always holds.
   const shownRangeRef = useRef<PriceRange | null>(null);
   const fittedRef = useRef<PriceRange | null>(null);
+  // The geometry drawn now, which a measure's ends are read from.
+  const geoRef = useRef<ReturnType<typeof buildChart>>(null);
   const frameRef = useRef(0);
   const live = useRef({ bars, count, w: size.w, h: size.h });
   // The fitted view of a range, while one is shown (the view state is not used meanwhile).
@@ -254,10 +277,20 @@ export const PriceChart = memo(function PriceChart({
   // A drag over the plot: `axis` is null until it has moved AXIS_LOCK_PX, then 'x' (sideways only) or 'xy'.
   const dragRef = useRef<{ id: number; x: number; y: number; ox: number; oy: number; axis: 'x' | 'xy' | null } | null>(null);
   const axisDragRef = useRef<{ id: number; y: number } | null>(null);
+  // A drag along the time axis: zooms around where it started (`fx`, a fraction of the width).
+  const timeDragRef = useRef<{ id: number; x: number; fx: number } | null>(null);
+  // The measure shown (ends a and b), and the pointer drawing it.
+  const [measure, setMeasure] = useState<{ a: MeasurePoint; b: MeasurePoint } | null>(null);
+  const measureRef = useRef(measure);
+  const measureDragRef = useRef<number | null>(null);
+  const measuringRef = useRef(measuring);
+  const onMeasuredRef = useRef(onMeasured);
   const hoverRef = useRef(false);
   useLayoutEffect(() => {
     live.current = { bars, count, w: size.w, h: size.h };
     fitRef.current = { view: fitted, leave: onLeaveFit };
+    measuringRef.current = measuring;
+    onMeasuredRef.current = onMeasured;
   });
   useLayoutEffect(() => {
     viewRef.current = view;
@@ -277,6 +310,8 @@ export const PriceChart = memo(function PriceChart({
     setView(LATEST_VIEW);
     setPt(null);
     setPrice(null);
+    setMeasure(null);
+    measureRef.current = null;
   }
   // A range picked (on the same interval too: YTD and 1Y are both daily) fits the prices again.
   const [shownFit, setShownFit] = useState(fitKey);
@@ -292,6 +327,7 @@ export const PriceChart = memo(function PriceChart({
       setView(viewRef.current);
       setPt(ptRef.current);
       setPrice(priceRef.current);
+      setMeasure(measureRef.current);
     });
   };
   const update = (fn: (v: ChartView, bars: Bar[], count: number) => ChartView) => {
@@ -357,6 +393,21 @@ export const PriceChart = memo(function PriceChart({
     return p && w > 0 ? p.x / w : 1;
   };
 
+  /** The measure end under the pointer: the bar of its slot and the price at its height. */
+  const measureAt = (clientX: number, clientY: number): MeasurePoint | null => {
+    const r = plotRect();
+    const g = geoRef.current;
+    const { bars: b, w, h } = live.current;
+    if (!r || !g || !(w > 0) || !(h > 0)) return null;
+    const fy = Math.min(1, Math.max(0, (clientY - r.top) / h));
+    return measurePoint(b, g.slotAt((clientX - r.left) / w), g.priceAt(fy));
+  };
+  const clearMeasure = () => {
+    if (!measureRef.current) return;
+    measureRef.current = null;
+    commit();
+  };
+
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !bars.length) return;
     rectRef.current = null;
@@ -365,12 +416,31 @@ export const PriceChart = memo(function PriceChart({
     } catch {
       // Not an active pointer (synthetic events): the drag works while the pointer stays over the chart.
     }
+    // Shift held, or the ruler on: the drag draws a measure from here.
+    if (e.shiftKey || measuringRef.current) {
+      const p = measureAt(e.clientX, e.clientY);
+      if (!p) return;
+      measureRef.current = { a: p, b: p };
+      measureDragRef.current = e.pointerId;
+      commit();
+      return;
+    }
     // With the prices already moved, every drag goes both ways.
     dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: e.clientX, oy: e.clientY, axis: priceRef.current ? 'xy' : null };
     setDragging(true);
   };
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (measureDragRef.current === e.pointerId) {
+      measureDragRef.current = null;
+      // A click with the ruler (no line) measures nothing.
+      const mm = measureRef.current;
+      if (mm && mm.a.time === mm.b.time && mm.a.price === mm.b.price) clearMeasure();
+      if (measuringRef.current) onMeasuredRef.current?.();
+      return;
+    }
     if (dragRef.current?.id !== e.pointerId) return;
+    // A click (a press that never moved far enough to be a drag) clears the measure.
+    if (dragRef.current.axis === null && e.type === 'pointerup') clearMeasure();
     dragRef.current = null;
     setDragging(false);
     if (!hoverRef.current) {
@@ -382,6 +452,15 @@ export const PriceChart = memo(function PriceChart({
     // Also covers a pointer that was already over the chart when it mounted (no enter event).
     hoverRef.current = true;
     track(e.clientX, e.clientY);
+    if (measureDragRef.current === e.pointerId) {
+      const mm = measureRef.current;
+      const p = measureAt(e.clientX, e.clientY);
+      if (mm && p && (p.time !== mm.b.time || p.price !== mm.b.price)) {
+        measureRef.current = { a: mm.a, b: p };
+        commit();
+      }
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.id !== e.pointerId) return;
     // The button was released where no pointerup reached us (e.g. the window lost focus).
@@ -430,6 +509,38 @@ export const PriceChart = memo(function PriceChart({
     if (dy) zoomPriceBy(Math.exp(dy * PRICE_DRAG_ZOOM));
   };
 
+  // The time axis: a drag along it zooms the time around where it started (right: fewer, wider bars),
+  // a double-click gives back the automatic zoom. It is in the plot: its events go no further.
+  const onTimePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (e.button !== 0 || !bars.length) return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Not an active pointer (synthetic events).
+    }
+    rectRef.current = null;
+    const r = plotRect();
+    const w = live.current.w;
+    timeDragRef.current = { id: e.pointerId, x: e.clientX, fx: r && w > 0 ? Math.min(1, Math.max(0, (e.clientX - r.left) / w)) : 1 };
+  };
+  const endTimeDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (timeDragRef.current?.id === e.pointerId) timeDragRef.current = null;
+  };
+  const onTimePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = timeDragRef.current;
+    if (!drag || drag.id !== e.pointerId) return;
+    e.stopPropagation();
+    if (!(e.buttons & 1)) {
+      timeDragRef.current = null;
+      return;
+    }
+    const dx = e.clientX - drag.x;
+    drag.x = e.clientX;
+    if (dx) zoomAt(Math.exp(-dx * TIME_DRAG_ZOOM), drag.fx);
+  };
+  const autoTimeZoom = () => update((v) => (v.span == null ? v : { ...v, span: null }));
+
   // Wheel: React's wheel listeners are passive, so preventDefault needs a native one.
   useEffect(() => {
     const el = plotRef.current;
@@ -450,6 +561,25 @@ export const PriceChart = memo(function PriceChart({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
     // The handlers read everything through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Wheel on the time axis: zooms the time around the pointer, whichever way the wheel turns (the
+  // plot's own listener would pan on a sideways scroll).
+  const timeAxisRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = timeAxisRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.stopPropagation();
+      if (!live.current.bars.length) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? live.current.w || 800 : 1;
+      const d = (Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX) * unit;
+      track(e.clientX, e.clientY);
+      if (d) zoomAt(Math.exp(d * (e.ctrlKey ? PINCH_ZOOM : WHEEL_ZOOM)), pointerFx());
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Wheel on the price axis: zooms the prices (down shows more of them).
@@ -478,6 +608,12 @@ export const PriceChart = memo(function PriceChart({
       if (s.page !== 'trade' || s.bellOpen || s.pendingOrder || s.confirm || s.alertForm) return;
       const w = live.current.w;
       switch (e.key) {
+        case 'Escape':
+          // Clears the measure, and turns the ruler off.
+          if (!measureRef.current && !measuringRef.current) return;
+          clearMeasure();
+          if (measuringRef.current) onMeasuredRef.current?.();
+          break;
         case 'ArrowLeft':
           panPx(-w * KEY_PAN);
           break;
@@ -529,6 +665,7 @@ export const PriceChart = memo(function PriceChart({
   useLayoutEffect(() => {
     shownRangeRef.current = geo ? { hi: geo.hi, lo: geo.lo } : null;
     fittedRef.current = geo ? geo.fit : null;
+    geoRef.current = geo;
   });
 
   // Empty future slots in view (panned past the newest bar) and their projected times, for the time
@@ -625,6 +762,34 @@ export const PriceChart = memo(function PriceChart({
   }, [showLatest, m.latest]);
   const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
+  // The measure: from the center of its first bar at its price to its second's, in px; its label by
+  // the end, above it when the price rose and below when it fell, kept within the plot.
+  const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
+  const measureBox =
+    geo && measure && meas && size.w > 0 && size.h > 0
+      ? (() => {
+          const x1 = (geo.centerX(meas.from) / VB_W) * size.w;
+          const x2 = (geo.centerX(meas.to) / VB_W) * size.w;
+          const y1 = toPx(geo.y(measure.a.price));
+          const y2 = toPx(geo.y(measure.b.price));
+          const up = meas.change >= 0;
+          const above = up ? y2 > MEASURE_LABEL_H + 6 : y2 > size.h - MEASURE_LABEL_H - 6;
+          return {
+            x1,
+            x2,
+            y1,
+            y2,
+            color: up ? 'var(--up)' : 'var(--dn)',
+            labelX: Math.min(Math.max(x2, MEASURE_LABEL_HALF), Math.max(MEASURE_LABEL_HALF, size.w - MEASURE_LABEL_HALF)),
+            labelY: above ? y2 - 6 : y2 + 6,
+            above,
+            pct: meas.pct == null ? '—' : pct(meas.pct * 100),
+            change: sg(meas.change, (v) => axisPrice(v, minTick)),
+            bars: m.measureBars(Math.abs(meas.bars)),
+          };
+        })()
+      : null;
+
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
   const olderEmpty = older?.status === 'empty' && near;
@@ -642,7 +807,7 @@ export const PriceChart = memo(function PriceChart({
           display: 'flex',
           flexDirection: 'column',
           minWidth: 0,
-          cursor: geo ? (dragging ? 'grabbing' : 'grab') : undefined,
+          cursor: geo ? (measuring || measureDragRef.current != null ? 'crosshair' : dragging ? 'grabbing' : 'grab') : undefined,
           touchAction: 'none',
         }}
         onPointerEnter={() => {
@@ -712,6 +877,44 @@ export const PriceChart = memo(function PriceChart({
               {e.text}
             </div>
           ))}
+          {measureBox && (
+            <>
+              <svg data-chart="measure" width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
+                <rect
+                  x={Math.min(measureBox.x1, measureBox.x2)}
+                  y={Math.min(measureBox.y1, measureBox.y2)}
+                  width={Math.abs(measureBox.x2 - measureBox.x1)}
+                  height={Math.abs(measureBox.y2 - measureBox.y1)}
+                  style={{ fill: measureBox.color, opacity: 0.12 }}
+                />
+                <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
+                <circle cx={measureBox.x1} cy={measureBox.y1} r={3} style={{ fill: measureBox.color }} />
+                <circle cx={measureBox.x2} cy={measureBox.y2} r={3} style={{ fill: measureBox.color }} />
+              </svg>
+              <div
+                data-chart="measure-label"
+                style={{
+                  position: 'absolute',
+                  left: measureBox.labelX,
+                  top: measureBox.labelY,
+                  transform: `translate(-50%, ${measureBox.above ? '-100%' : '0'})`,
+                  padding: '4px 7px',
+                  background: measureBox.color,
+                  color: 'var(--p)',
+                  font: '11px/1.35 var(--num)',
+                  fontVariantNumeric: 'tabular-nums',
+                  textAlign: 'center',
+                  whiteSpace: 'nowrap',
+                  pointerEvents: 'none',
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 12 }}>{measureBox.pct}</div>
+                <div>
+                  {measureBox.change} · {measureBox.bars}
+                </div>
+              </div>
+            </>
+          )}
           {legend && (
             <div data-chart="ma-legend" style={legendStyle}>
               {legendRows.map((row) => (
@@ -816,11 +1019,29 @@ export const PriceChart = memo(function PriceChart({
           </div>
         )}
         <div
+          ref={timeAxisRef}
           data-chart="time-axis"
+          title={geo ? m.timeAxisHint : undefined}
+          onPointerDown={geo ? onTimePointerDown : undefined}
+          onPointerMove={geo ? onTimePointerMove : undefined}
+          onPointerUp={endTimeDrag}
+          onPointerCancel={endTimeDrag}
+          onLostPointerCapture={endTimeDrag}
+          onDoubleClick={
+            geo
+              ? (e) => {
+                  e.stopPropagation();
+                  autoTimeZoom();
+                }
+              : undefined
+          }
           style={{
             height: TIME_AXIS_H,
             flexShrink: 0,
             position: 'relative',
+            cursor: geo ? 'ew-resize' : undefined,
+            touchAction: 'none',
+            userSelect: 'none',
             borderTop: '1px solid var(--ln2)',
             font: '11px/1 var(--num)',
             color: 'var(--dm)',

@@ -211,6 +211,45 @@ export function zoomView(view: ChartView, bars: readonly Bar[], autoSpan: number
   return withEnd(span, span, end, bars);
 }
 
+// ---------------------------------------------------------------------------
+// Measuring
+
+/**
+ * One end of a measure drawn on the chart: a bar, by its time (so older bars loaded in front do not
+ * move it), and a price.
+ */
+export interface MeasurePoint {
+  time: number;
+  price: number;
+}
+
+export interface Measure {
+  /** Full-series indices of the bars at the two ends (from: where the drag started). */
+  from: number;
+  to: number;
+  /** Price change from the start to the end, and as a fraction of the start's price (null at 0 or below). */
+  change: number;
+  pct: number | null;
+  /** Bars from the start to the end (negative: dragged towards older bars). */
+  bars: number;
+}
+
+/** A measure end at the bar under `slot` (a future slot counts as the newest bar) and `price`. */
+export function measurePoint(bars: readonly Bar[], slot: number, price: number): MeasurePoint | null {
+  if (!bars.length || !Number.isFinite(price)) return null;
+  return { time: bars[clamp(Math.floor(slot), 0, bars.length - 1)].time, price };
+}
+
+/** The bars and the price change between two measure ends; null without bars. */
+export function measureBetween(bars: readonly Bar[], a: MeasurePoint, b: MeasurePoint): Measure | null {
+  if (!bars.length) return null;
+  const at = (t: number) => clamp(firstAtOrAfter(bars, t), 0, bars.length - 1);
+  const from = at(a.time);
+  const to = at(b.time);
+  const change = b.price - a.price;
+  return { from, to, change, pct: a.price > 0 ? change / a.price : null, bars: to - from };
+}
+
 /** The view is within one screen of the oldest loaded bar: time to load older ones. */
 export function nearOldest(w: ViewWindow): boolean {
   return w.start < w.span;

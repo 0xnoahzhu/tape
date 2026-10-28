@@ -52,10 +52,10 @@ const HEADER_GAP = 24;
 const PRICE_GAP = 14;
 /** Width of the header buttons (watchlist star, alert bell); the title keeps at least MIN_TITLE_W beside the tools. */
 const BELL_W = 30;
-/** Gap between the star and the bell (as between the ringed indicator chips). */
+/** Gap between the star, the bell and the ruler (as between the ringed indicator chips). */
 const BUTTON_GAP = 6;
-/** The star and the bell side by side. */
-const BUTTONS_W = 2 * BELL_W + BUTTON_GAP;
+/** The star, the bell and the ruler side by side. */
+const BUTTONS_W = 3 * BELL_W + 2 * BUTTON_GAP;
 const MIN_TITLE_W = 120;
 
 function BellButton({ title, active, onClick }: { title: string; active: boolean; onClick: () => void }) {
@@ -81,6 +81,35 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
         <path d="M4.5 11V7a3.5 3.5 0 0 1 7 0v4h1.3 M3.2 11h1.3 M6.6 13.3h2.8" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="square" />
       </svg>
       {active && <div style={{ position: 'absolute', top: 6, right: 6, width: 5, height: 5, background: 'var(--ac)', boxShadow: '0 0 0 2px var(--p)' }} />}
+    </div>
+  );
+}
+
+/** The ruler: on, the next drag on the chart measures (PriceChart's `measuring`); accent ring while on. */
+function RulerButton({ title, on, onClick }: { title: string; on: boolean; onClick: () => void }) {
+  return (
+    <div
+      role="switch"
+      aria-checked={on}
+      data-chart="ruler"
+      onClick={onClick}
+      title={title}
+      className={on ? undefined : 'hover-tx hover-p2'}
+      style={{
+        height: 30,
+        width: BELL_W,
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        color: on ? 'var(--tx)' : 'var(--mu)',
+        boxShadow: `inset 0 0 0 1px ${on ? 'var(--ac)' : 'var(--ln)'}`,
+      }}
+    >
+      <svg viewBox="0 0 16 16" width={14} height={14} style={{ display: 'block' }} aria-hidden>
+        <path d="M1.7 5.2h12.6v5.6H1.7z M4.7 5.2v2.4 M7.7 5.2v3.2 M10.7 5.2v2.4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="square" />
+      </svg>
     </div>
   );
 }
@@ -227,6 +256,9 @@ export function ChartView() {
     [key, entry?.bars, liveLast, timeframe, session, liveData, sessionOpen, tick],
   );
   const [hoverBar, setHoverBar] = useState<Bar | null>(null);
+  // The ruler: the next drag on the chart measures; it turns off once one is drawn (or on Esc).
+  const [measuring, setMeasuring] = useState(false);
+  const endMeasuring = useCallback(() => setMeasuring(false), []);
   useEffect(() => setHoverBar(null), [key]);
 
   // Today's close after the regular session: IB sends no tick 57 with delayed data, so the
@@ -317,6 +349,7 @@ export function ChartView() {
       <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
         <WatchStar contract={symbol} name={symbolName || info?.longName || undefined} size={BELL_W} />
         <BellButton title={symbolAlerts.length ? m.alertsOn(symbolAlerts.length) : m.addAlert} active={symbolAlerts.length > 0} onClick={() => openAlertForm(symbol)} />
+        <RulerButton title={m.measureHint} on={measuring} onClick={() => setMeasuring((on) => !on)} />
       </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>
@@ -449,6 +482,8 @@ export function ChartView() {
         onHover={setHoverBar}
         fit={fit}
         onLeaveFit={clearRange}
+        measuring={measuring}
+        onMeasured={endMeasuring}
       />
     </div>
   );
