@@ -212,9 +212,6 @@ const en = {
   cacheCleared: 'Local cache cleared',
 
   // Trade
-  orderReview: 'Order review',
-  orderReviewD: 'Every order, modify and cancel is reviewed in a dialog before it is sent',
-  alwaysOn: 'Always on',
   defaultQty: 'Default order size',
   defaultQtyD: 'Stocks, ETFs and the like; options, futures and warrants start at 1 contract',
   outsideRth: 'Allow outside RTH by default',
@@ -592,9 +589,6 @@ const zh: typeof en = {
   cacheClearNote: '图表会重新从 IB 加载K线，较长的历史需要一些时间。',
   cacheCleared: '本地缓存已清除',
 
-  orderReview: '下单确认',
-  orderReviewD: '所有下单、改单、撤单都需在弹窗中确认后发送',
-  alwaysOn: '始终开启',
   defaultQty: '默认下单数量',
   defaultQtyD: '适用于股票、ETF 等；期权、期货和权证默认 1 张合约',
   outsideRth: '默认允许盘前盘后',

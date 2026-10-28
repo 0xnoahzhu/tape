@@ -330,7 +330,7 @@ be confirmed, and nothing is sent), while cancels still go out with a warning th
 Gateway that stays silent for about 40 s is disconnected and, with *Settings › Connection › Auto-reconnect*
 on (the default), reconnected automatically (notification *IB Gateway stopped responding*).
 
-**Order review.** Nothing is sent without it, and no setting skips it (Settings › Trade only says so). Its
+**Order review.** Nothing is sent without it, and no setting skips it. Its
 title carries a **LIVE** (red) or **PAPER** tag and its first row is the account the order goes to (for a
 modify, the order's own account; the id hidden with *Settings › Privacy › Account ID: Hide*; LIVE / PAPER
 never is). It lists every attribute, IBKR's

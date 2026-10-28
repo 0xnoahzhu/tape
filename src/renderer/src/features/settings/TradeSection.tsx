@@ -1,6 +1,6 @@
 // Settings › Trade: default order size, outside-RTH default (the ticket's default trading session:
-// extended hours when on, regular hours when off). The order review is not a setting: every order,
-// modify and cancel is confirmed in a dialog (state/orderActions.ts), and the row here only says so.
+// extended hours when on, regular hours when off). The order review is not a setting and has no row
+// here: every order, modify and cancel is confirmed in a dialog (state/orderActions.ts).
 
 import { tradeDefaultsPatch, useStore } from '../../state/store';
 import { Chip } from '../../ui/primitives';
@@ -34,10 +34,6 @@ export function TradeSection() {
     <>
       <SectionHeader title={m.nav.trade} />
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{ height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-          <LabelBlock label={m.orderReview} desc={m.orderReviewD} />
-          <div style={{ fontSize: 12, color: 'var(--dm)', flexShrink: 0 }}>{m.alwaysOn}</div>
-        </div>
         <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
           <LabelBlock label={m.defaultQty} desc={m.defaultQtyD} />
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
