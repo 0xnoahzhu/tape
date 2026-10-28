@@ -76,8 +76,6 @@ const RESORT_MS = 1000;
 const GAP = 12;
 /** The rows' side padding; the sticky Symbol cell reaches over the left one. */
 const PAD = 32;
-/** The gap between the toolbar and the header row; sticky with the header. */
-const HEAD_GAP = 8;
 /** The rows' padding: the right one gives back the room the card keeps for its scrollbar (scrollGutter.ts). */
 const ROW_PAD = `0 ${lessGutter(PAD)} 0 ${PAD}px`;
 /** How far a group's rows are indented under its group row (px, in the Symbol cell). */
@@ -548,9 +546,6 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
         aria-label={m.tabPos}
         style={{ minWidth: `calc(${minWidth - PAD}px + ${lessGutter(PAD)})`, position: 'relative', '--pos-cols': template } as CSSProperties}
       >
-        {/* The gap over the header stays with it (sticky too), so the header never moves while the
-            rows scroll and no row shows above it. */}
-        <div style={{ position: 'sticky', top: 0, zIndex: 2, height: HEAD_GAP, background: 'var(--p)' }} />
         <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
         <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
           {body}
@@ -560,7 +555,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
             aria-hidden
             data-pos="drop"
             data-slot={drop.slot}
-            style={{ position: 'absolute', top: HEAD_GAP, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
+            style={{ position: 'absolute', top: 0, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
           />
         )}
         {dragging && (
@@ -630,9 +625,11 @@ const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, draggi
     <div
       ref={rowRef}
       role="row"
+      // global.css → .pos-resize: the column edges show while the pointer is over the header row.
+      className="pos-head"
       style={{
         position: 'sticky',
-        top: HEAD_GAP,
+        top: 0,
         zIndex: 2,
         display: 'grid',
         gridTemplateColumns: 'var(--pos-cols)',
@@ -693,7 +690,8 @@ function HeaderCell({ def, dir, sticky, scrolled, dragged, onPress, onLive }: He
         style={{
           flex: 1,
           minWidth: 0,
-          padding: '8px 0',
+          // 12px above and below, as the Orders and Trades headers (orders/table.tsx → HeaderRow).
+          padding: '12px 0',
           border: 'none',
           background: 'transparent',
           font: 'inherit',

@@ -1899,8 +1899,9 @@ marks it (none at the column's own edges, `slotTarget`, never over Symbol), the 
 while the pointer is within 32px of the side it is dragged towards (`edgeScroll`; Symbol's right edge
 on the left), and the release moves the column in the same list the editor shows (`moveToSlot`). A
 press released before that is a click (a sort). The editor's drag, ↑ / ↓ and Alt+↑ / Alt+↓ stay the
-keyboard way. A 10px strip in the gap right of each header (`col-resize`; a faint `--ln` rule at rest
-between two headers, a 2px line on hover, in the accent while it is dragged) sizes its column: from
+keyboard way. A 10px strip in the gap right of each header (`col-resize`; nothing at rest, as the Orders
+and Trades headers; a faint `--ln` rule between two headers while the pointer is over the header row
+(`.pos-head`) or a column is sized, a 2px line on the strip, in the accent while it is dragged) sizes its column: from
 the width it is drawn at, live while the pointer is down, stored on release, between its catalog
 width and `MAX_COLUMN_WIDTH` (640px, `dragWidth` → `clampWidth`); a press that does not move is no
 resize, and a double-click gives the column its default width back (not one with a press that sized

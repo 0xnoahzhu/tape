@@ -197,25 +197,31 @@ input::placeholder {
 }
 
 /* The strip on a Positions header's right edge that sizes its column (PositionsTable.tsx →
-   ResizeHandle). At rest a faint 1px rule in the gap between two headers, so the edges can be found
-   (none after the last header); on hover a 2px line, in the accent while it is dragged. */
+   ResizeHandle). None at rest, as the Orders and Trades headers have none; while the pointer is over
+   the header row (or a column is sized) a faint 1px rule in the gap between two headers, so the edges
+   can be found (none after the last header); on the strip a 2px line, in the accent while it is
+   dragged. */
 .pos-resize::after {
   content: '';
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 12px;
+  bottom: 12px;
   left: calc(50% - 0.5px);
   width: 1px;
-  background: var(--ln);
+  background: transparent;
   transition: background 0.12s;
+}
+.pos-head:hover .pos-resize::after,
+.pos-resizing .pos-resize::after {
+  background: var(--ln);
 }
 [role='columnheader']:last-child > .pos-resize:not(:hover):not([data-active])::after {
   background: transparent;
 }
 .pos-resize:hover::after,
 .pos-resize[data-active]::after {
-  top: 5px;
-  bottom: 5px;
+  top: 9px;
+  bottom: 9px;
   left: calc(50% - 1px);
   width: 2px;
   background: var(--mu);
