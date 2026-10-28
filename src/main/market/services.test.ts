@@ -160,9 +160,9 @@ describe('ContractService', () => {
       for (let i = 1; i < sentAt.length; i++) expect(sentAt[i] - sentAt[i - 1]).toBeGreaterThanOrEqual(REFETCH_GAP_MS);
       // Upgraded: by key and by conId, in memory and stored.
       for (const sym of syms) {
-        expect(await ctx.contracts.getInfo(stock(sym))).toMatchObject({ v: 2, longName: `${sym} NEW`, isin: `US-${sym}` });
-        expect(await ctx.contracts.getInfo({ ...stock(sym), conId: conIdOf(sym) })).toMatchObject({ v: 2, longName: `${sym} NEW` });
-        expect((await ctx.db.kv.get<ContractInfo>('contract', `STK:${sym}`))?.value.v).toBe(2);
+        expect(await ctx.contracts.getInfo(stock(sym))).toMatchObject({ v: 3, longName: `${sym} NEW`, isin: `US-${sym}` });
+        expect(await ctx.contracts.getInfo({ ...stock(sym), conId: conIdOf(sym) })).toMatchObject({ v: 3, longName: `${sym} NEW` });
+        expect((await ctx.db.kv.get<ContractInfo>('contract', `STK:${sym}`))?.value.v).toBe(3);
       }
       expect(fake.callsOf('reqContractDetails')).toHaveLength(7);
     } finally {

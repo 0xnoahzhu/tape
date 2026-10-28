@@ -48,8 +48,7 @@ import { useOverflowTip } from '../../ui/OverflowTip';
 import { Empty } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { Dropdown, MenuChoice, MenuHeading } from '../../ui/select';
-import { openOptionChart } from '../orders/navigation';
-import { positionTarget, underlyingOf, type PositionRow } from './calc';
+import { chainTarget, positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, formatValue, optionLineText, type CellWords } from './cells';
 import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
@@ -77,6 +76,8 @@ const RESORT_MS = 1000;
 const GAP = 12;
 /** The rows' side padding; the sticky Symbol cell reaches over the left one. */
 const PAD = 32;
+/** The gap between the toolbar and the header row; sticky with the header. */
+const HEAD_GAP = 8;
 /** The rows' padding: the right one gives back the room the card keeps for its scrollbar (scrollGutter.ts). */
 const ROW_PAD = `0 ${lessGutter(PAD)} 0 ${PAD}px`;
 /** How far a group's rows are indented under its group row (px, in the Symbol cell). */
@@ -429,6 +430,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const clock = useClock();
   const connected = useStore((s) => s.connection.status === 'connected');
   const openSymbol = useStore((s) => s.openSymbol);
+  const netLiq = useStore((s) => s.account?.netLiquidation);
   const shown = useShownColumns();
   const sort = usePositionColumns((s) => s.sort);
   const widths = usePositionColumns((s) => s.widths);
@@ -454,10 +456,10 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
       const k = row.position.contract;
       // An option shows its underlying's earnings.
       const e = earnings.size ? earnings.get(contractKey(underlyingOf(k))) : undefined;
-      out.set(rowId(row), { row, q: quotes[contractKey(k)], info: infos.get(rowId(row)), earnings: e, now });
+      out.set(rowId(row), { row, q: quotes[contractKey(k)], info: infos.get(rowId(row)), earnings: e, now, netLiq });
     }
     return out;
-  }, [rows, quotes, infos, earnings, now]);
+  }, [rows, quotes, infos, earnings, now, netLiq]);
 
   // The rows come largest absolute value first (calc.ts → sortRows): the order within a group
   // without a sort.
@@ -482,6 +484,10 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const overflowX = boxW > 0 && minWidth > boxW;
   const open = (c: ContractRef) => {
     const t = positionTarget(c);
+    openSymbol(t.contract, t.view);
+  };
+  const openChain = (c: ContractRef) => {
+    const t = chainTarget(c);
     openSymbol(t.contract, t.view);
   };
   const onMenu = (contract: ContractRef, anchor: HTMLElement) => setMenu({ contract, anchor });
@@ -542,7 +548,9 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
         aria-label={m.tabPos}
         style={{ minWidth: `calc(${minWidth - PAD}px + ${lessGutter(PAD)})`, position: 'relative', '--pos-cols': template } as CSSProperties}
       >
-        <div style={{ height: 8 }} />
+        {/* The gap over the header stays with it (sticky too), so the header never moves while the
+            rows scroll and no row shows above it. */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 2, height: HEAD_GAP, background: 'var(--p)' }} />
         <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
         <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
           {body}
@@ -552,7 +560,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
             aria-hidden
             data-pos="drop"
             data-slot={drop.slot}
-            style={{ position: 'absolute', top: 8, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
+            style={{ position: 'absolute', top: HEAD_GAP, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
           />
         )}
         {dragging && (
@@ -595,8 +603,8 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
       {menu && (
         <Dropdown anchor={menu.anchor} width={200} onClose={() => setMenu(null)}>
           <MenuHeading>{contractLabel(menu.contract)}</MenuHeading>
-          <MenuChoice label={common.openChart} onPick={pick(openOptionChart)} />
-          <MenuChoice label={m.optionChain} onPick={pick(open)} />
+          <MenuChoice label={common.openChart} onPick={pick(open)} />
+          <MenuChoice label={m.optionChain} onPick={pick(openChain)} />
         </Dropdown>
       )}
     </div>
@@ -624,7 +632,7 @@ const HeaderRow = memo(function HeaderRow({ rowRef, defs, sort, scrolled, draggi
       role="row"
       style={{
         position: 'sticky',
-        top: 0,
+        top: HEAD_GAP,
         zIndex: 2,
         display: 'grid',
         gridTemplateColumns: 'var(--pos-cols)',
@@ -909,7 +917,8 @@ const GroupRowView = memo(function GroupRowView({ id, label, count, collapsed, c
 }, sameGroupProps);
 
 /**
- * An underlying's next corporate event: "Earnings 10/23 AMC" (Wall Street Horizon), "Ex-div 10/15
+ * An underlying's next corporate event: "Earnings 10/23 AMC" (Wall Street Horizon or IB's market
+ * scanner, which the tooltip names), "Ex-div 10/15
  * $0.24" (IB's dividend tick). It takes only the room the symbol beside it leaves (no flex basis,
  * growing up to its own width), so short of room it is cut with an ellipsis (in full in its tooltip)
  * and the symbol stays readable. A hairline ring, not a fill: a fill in --p2 would vanish into a
@@ -919,7 +928,7 @@ function EventChip({ e, words, clock, now }: { e: CorporateEvent; words: CellWor
   const m = usePortfolioMessages();
   const text = eventLabel(e, { earnings: m.earnings, exDiv: m.exDiv, times: words.earningsTimes });
   const date = formatValue('date', e.date, words, clock, now);
-  const detail = e.kind === 'earnings' ? m.earningsOn(date) : m.exDivOn(date, e.amount != null ? dividendAmount(e.amount, e.underlying.currency) : undefined);
+  const detail = e.kind === 'earnings' ? m.earningsOn(date, e.fromScanner) : m.exDivOn(date, e.amount != null ? dividendAmount(e.amount, e.underlying.currency) : undefined);
   return (
     <span
       data-pos-chip={e.kind}
@@ -974,11 +983,12 @@ const sameRowProps = (a: RowProps, b: RowProps): boolean =>
   a.c.info === b.c.info &&
   a.c.earnings === b.c.earnings &&
   a.c.now === b.c.now &&
+  a.c.netLiq === b.c.netLiq &&
   sameRow(a.c.row, b.c.row);
 
 const RowView = memo(function RowView({ c, defs, scrolled, words, clock, nested, chip, onOpen, onMenu }: RowProps) {
   const p = c.row.position;
-  // A click opens an option's chain; its context menu offers the option's own chart too.
+  // A click opens the position's own chart (an option's too); an option's context menu offers its chain.
   const menu = p.contract.secType === 'OPT';
   return (
     <div

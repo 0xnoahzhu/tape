@@ -131,6 +131,7 @@ function bondDetails(d: ContractDetails): BondDetails | undefined {
   if (text(d.issueDate)) b.issueDate = text(d.issueDate);
   if (text(d.bondType)) b.bondType = text(d.bondType);
   if (text(d.couponType)) b.couponType = text(d.couponType);
+  if (text(d.ratings)) b.ratings = text(d.ratings);
   if (typeof d.callable === 'boolean') b.callable = d.callable;
   if (typeof d.putable === 'boolean') b.putable = d.putable;
   if (typeof d.convertible === 'boolean') b.convertible = d.convertible;

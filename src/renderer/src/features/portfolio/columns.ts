@@ -12,17 +12,22 @@
 // position's own quote line. A column with a `profile` needs more generic ticks on that line: they
 // are asked for only while the column is shown, and only for the positions it applies to
 // (addOnSubscriptions, the 'positions-table' quote owner). The earnings column reads the holdings'
-// Wall Street Horizon dates (getEarnings). A column whose unit or source a live check has not
+// Wall Street Horizon dates, else IB's market scanner's (getEarnings). A column whose unit or source a live check has not
 // confirmed yet is `unverified`, which its tooltip says.
+//
+// The exception is the Calculated group (`calc`): columns IB's own apps show but the API does not
+// send (change, mid, spread, cost basis, % of net liquidation, ratios, days to the last trading
+// day). Tape works them out from the IB fields above, and each header's tooltip gives the formula.
 
 import { contractKey, contractLabel } from '@shared/contract';
 import { addOnApplies, type AddOnProfile } from '@shared/quoteProfiles';
+import { nyDaysUntil } from '@shared/orderTiming';
 import { wallClockAt } from '@shared/timeFormat';
 import type { ContractInfo, ContractRef, EarningsEvent, Quote, QuoteDividends, QuoteSubscription, SecType } from '@shared/types';
 import type { CellWords } from './cells';
 import { isExchangeTraded, quoteContract, underlyingOf, type FigureSource, type PositionRow } from './calc';
 
-export const COLUMN_GROUPS = ['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other'] as const;
+export const COLUMN_GROUPS = ['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other', 'calc'] as const;
 export type ColumnGroup = (typeof COLUMN_GROUPS)[number];
 
 /** Every column id in catalog order (the editor's order within each group). */
@@ -72,6 +77,9 @@ export const COLUMN_IDS = [
   'ask',
   'bidSize',
   'askSize',
+  'bidExch',
+  'askExch',
+  'lastExch',
   'close',
   'open',
   'high',
@@ -139,9 +147,26 @@ export const COLUMN_IDS = [
   'cusip',
   'coupon',
   'maturity',
+  'issueDate',
   'bondType',
+  'ratings',
   'bondFeatures',
   'bondDesc',
+  // Calculated by Tape
+  'change',
+  'changePct',
+  'changeOpen',
+  'changeOpenPct',
+  'mid',
+  'spread',
+  'costBasis',
+  'unrealizedPct',
+  'pctNetLiq',
+  'divYield',
+  'putCallVolume',
+  'putCallInterest',
+  'ivHv',
+  'daysToLastTrade',
 ] as const;
 export type ColumnId = (typeof COLUMN_IDS)[number];
 
@@ -159,7 +184,8 @@ export const isColumnId = (v: unknown): v is ColumnId => typeof v === 'string' &
  * compact count (12.4K), dec = as many decimals as it has, id = a plain integer, kind / right /
  * halt / dataType / shortable = IB codes as words, hours = today's sessions, month = YYYYMM, stamp
  * = "YYYYMMDD HH:MM" (a date and a wall time), earn = an earnings date and its time of day
- * ("YYYYMMDD|amc"), features = a bond's features as words.
+ * ("YYYYMMDD|amc"), features = a bond's features as words; chg = a signed price, pct = a signed
+ * fraction as percent, pctU = an unsigned fraction as percent, num2 = a number with 2 decimals.
  */
 export type Fmt =
   | 'text'
@@ -186,7 +212,11 @@ export type Fmt =
   | 'stamp'
   | 'shortable'
   | 'earn'
-  | 'features';
+  | 'features'
+  | 'chg'
+  | 'pct'
+  | 'pctU'
+  | 'num2';
 
 /** A cell's raw value: what sorts and what is formatted (never the formatted label). */
 export type CellValue = number | string | undefined;
@@ -202,6 +232,8 @@ export interface CellCtx {
   earnings?: EarningsEvent;
   /** Unix ms (today's trading hours, a time's date). */
   now: number;
+  /** IB's net liquidation of the account, in its currency (the % of net liq column). */
+  netLiq?: number;
 }
 
 /** Editor notes of type-specific columns. */
@@ -232,6 +264,8 @@ export interface ColumnDef {
   profile?: AddOnProfile | 'dividends';
   /** A live check has not confirmed the value's unit or source yet (messages.ts → unverified gives why). */
   unverified?: true;
+  /** Calculated by Tape from IB's fields (the Calculated group); messages.ts → sources gives the formula. */
+  calc?: true;
   fmt: Fmt;
   color?: 'sign' | 'muted';
   value(c: CellCtx): CellValue;
@@ -614,6 +648,18 @@ const tick = (fmt: Fmt, read: (q: Quote) => number | undefined, types?: readonly
   value: (c) => (c.q ? read(c.q) : undefined),
 });
 
+/** IB's exchange letters at the bid, ask or last trade (ticks 32, 33, 84), as sent; stocks' live lines. */
+const exch = (read: (q: Quote) => string | undefined): Def => ({
+  align: 'left',
+  width: 88,
+  sort: 'text',
+  fmt: 'text',
+  needs: 'quote',
+  types: STOCKS,
+  note: 'stocks',
+  value: (c) => (c.q ? read(c.q) : undefined),
+});
+
 const QUOTE: Partial<Record<ColumnId, Def>> = {
   last: tick('px', (q) => q.last, TRADED),
   lastSize: tick('big', (q) => q.lastSize, TRADED),
@@ -622,6 +668,9 @@ const QUOTE: Partial<Record<ColumnId, Def>> = {
   ask: tick('px', (q) => q.ask),
   bidSize: tick('big', (q) => q.bidSize),
   askSize: tick('big', (q) => q.askSize),
+  bidExch: exch((q) => q.bidExch),
+  askExch: exch((q) => q.askExch),
+  lastExch: exch((q) => q.lastExch),
   close: tick('px', (q) => q.close, [...WITH_CLOSE, 'WAR']),
   open: tick('px', (q) => q.open, SESSIONED),
   high: tick('px', (q) => q.high, SESSIONED),
@@ -752,6 +801,7 @@ const INCOME: Partial<Record<ColumnId, Def>> = {
     unverified: true,
     value: (c) => earningsOf(c.earnings),
     sortValue: (c) => earningsOrder(c.earnings),
+    title: (c, w) => (c.earnings ? w.earningsSources[c.earnings.estimated ? 'scanner' : 'wsh'] : undefined),
   },
 };
 
@@ -799,7 +849,9 @@ const OTHER: Partial<Record<ColumnId, Def>> = {
   cusip: bond('text', (b) => b.cusip, 80),
   coupon: bond('dec', (b) => b.coupon, 72, 'right'),
   maturity: bond('date', (b) => b.maturity, 92),
+  issueDate: bond('date', (b) => b.issueDate, 92),
   bondType: bond('text', (b) => b.bondType, 80),
+  ratings: bond('text', (b) => b.ratings, 96),
   // Callable, putable, convertible as words; 'none' when IB says it is none of them.
   bondFeatures: bond(
     'features',
@@ -813,6 +865,87 @@ const OTHER: Partial<Record<ColumnId, Def>> = {
   bondDesc: { ...bond('text', (b) => b.descAppend, 140), title: (c) => text(c.info?.bond?.notes) },
 };
 
+/** The position's last trade, the reference of the change columns. */
+const lastOf = (c: CellCtx): number | undefined => (c.q && pos(c.q.last) ? c.q.last : undefined);
+
+/** last − ref, or that as a fraction of ref; undefined without both. */
+const changeFrom = (ref: (q: Quote) => number | undefined, asFraction: boolean) => (c: CellCtx): number | undefined => {
+  const last = lastOf(c);
+  const r = c.q ? ref(c.q) : undefined;
+  if (last === undefined || !pos(r)) return undefined;
+  return asFraction ? (last - r) / r : last - r;
+};
+
+/** The bid and ask when both are quoted the right way round (an option's bid may be 0). */
+function bidAsk(c: CellCtx): [number, number] | undefined {
+  const b = c.q?.bid;
+  const a = c.q?.ask;
+  return finite(b) && b >= 0 && pos(a) && a >= b ? [b, a] : undefined;
+}
+
+/** Quantity × IB's average cost (per contract, so options include their multiplier). */
+function costBasis(c: CellCtx): number | undefined {
+  const { quantity, averageCost } = c.row.position;
+  return finite(averageCost) && averageCost !== 0 ? quantity * averageCost : undefined;
+}
+
+/** a / b when b is positive. */
+const ratio = (a: number | undefined, b: number | undefined): number | undefined => (finite(a) && pos(b) ? a / b : undefined);
+
+/** A column Tape calculates (the Calculated group). */
+const calc = (fmt: Fmt, width: number, value: (c: CellCtx) => number | undefined, extra: Partial<Def> = {}): Def => ({
+  align: 'right',
+  width,
+  sort: 'num',
+  fmt,
+  calc: true,
+  ...extra,
+  value,
+});
+
+const CHANGE_TYPES: readonly SecType[] = TRADED.filter((t) => WITH_CLOSE.includes(t));
+const OPEN_TYPES: readonly SecType[] = TRADED.filter((t) => SESSIONED.includes(t));
+
+const CALC: Partial<Record<ColumnId, Def>> = {
+  change: calc('chg', 84, changeFrom((q) => q.close, false), { needs: 'quote', types: CHANGE_TYPES, color: 'sign' }),
+  changePct: calc('pct', 80, changeFrom((q) => q.close, true), { needs: 'quote', types: CHANGE_TYPES, color: 'sign' }),
+  changeOpen: calc('chg', 96, changeFrom((q) => q.open, false), { needs: 'quote', types: OPEN_TYPES, color: 'sign' }),
+  changeOpenPct: calc('pct', 104, changeFrom((q) => q.open, true), { needs: 'quote', types: OPEN_TYPES, color: 'sign' }),
+  mid: calc('px', 84, (c) => {
+    const ba = bidAsk(c);
+    return ba ? (ba[0] + ba[1]) / 2 : undefined;
+  }, { needs: 'quote' }),
+  spread: calc('px', 72, (c) => {
+    const ba = bidAsk(c);
+    return ba ? ba[1] - ba[0] : undefined;
+  }, { needs: 'quote' }),
+  costBasis: calc('num0', 96, costBasis),
+  // Against what was paid, so a short's gain is positive as its P&L is.
+  unrealizedPct: calc('pct', 88, (c) => {
+    const basis = costBasis(c);
+    return basis !== undefined && finite(c.row.unrealized) ? c.row.unrealized / Math.abs(basis) : undefined;
+  }, { color: 'sign' }),
+  // In the account's currency at IB's exchange rate; a short's share is negative.
+  pctNetLiq: calc('pct', 88, (c) => (finite(c.row.value) && finite(c.row.fx) ? ratio(c.row.value * c.row.fx, c.netLiq) : undefined)),
+  divYield: calc('pctU', 80, (c) => {
+    const d = c.q ? dividendsOf(c.q) : undefined;
+    return d ? ratio(d.next12m, c.row.price) : undefined;
+  }, { needs: 'quote', types: STOCKS, note: 'stocks', profile: 'dividends' }),
+  putCallVolume: calc('num2', 92, (c) => ratio(c.q?.putVolume, c.q?.callVolume), { needs: 'quote', types: STOCKS, note: 'stocks', profile: 'optionFlow' }),
+  putCallInterest: calc('num2', 92, (c) => ratio(c.q?.putOpenInterest, c.q?.callOpenInterest), {
+    needs: 'quote',
+    types: STOCKS_FUTURES,
+    note: 'stocksFutures',
+    profile: 'optionFlow',
+  }),
+  ivHv: calc('pctU', 80, (c) => ratio(c.q?.impliedVol, c.q?.rtHistVol), { needs: 'quote', types: STOCKS, note: 'stocks', profile: 'volatility' }),
+  // Calendar days in New York until the contract's last trading day (0 on the day).
+  daysToLastTrade: calc('num0', 80, (c) => {
+    const day = c.row.position.contract.lastTradeDate;
+    return day && /^\d{8}$/.test(day) ? nyDaysUntil(day, new Date(c.now)) : undefined;
+  }, { types: EXPIRING, note: 'derivatives' }),
+};
+
 const BY_GROUP: Record<ColumnGroup, Partial<Record<ColumnId, Def>>> = {
   position: POSITION,
   contract: CONTRACT,
@@ -822,6 +955,7 @@ const BY_GROUP: Record<ColumnGroup, Partial<Record<ColumnId, Def>>> = {
   income: INCOME,
   options: OPTION,
   other: OTHER,
+  calc: CALC,
 };
 
 /** Every column by id. */

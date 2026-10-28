@@ -15,6 +15,7 @@ import {
   liveMark,
   pctLabel,
   positionRow,
+  chainTarget,
   positionTarget,
   qtyLabel,
   quoteContract,
@@ -91,7 +92,9 @@ describe('sectors', () => {
     const hk = { ...stock('700'), currency: 'HKD', primaryExchange: 'SEHK' };
     expect(underlyingOf({ ...option('700', '20261029', 500, 'C'), currency: 'HKD' })).toEqual({ ...stock('700'), currency: 'HKD' });
     expect(contractKey(underlyingOf({ ...option('700', '20261029', 500, 'C'), currency: 'HKD' }))).toBe(contractKey(underlyingOf(hk)));
-    expect(positionTarget(call)).toEqual({ contract: stock('AAPL'), view: 'opt' });
+    // An option opens its own chart, SMART-routed; its chain is in the row's context menu.
+    expect(positionTarget(call)).toEqual({ contract: quoteContract(call), view: 'chart' });
+    expect(chainTarget(call)).toEqual({ contract: stock('AAPL'), view: 'opt' });
     expect(positionTarget({ ...stock('NVDA'), conId: 4815747, exchange: 'NASDAQ' })).toEqual({ contract: stock('NVDA'), view: 'chart' });
   });
 });

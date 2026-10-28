@@ -1,7 +1,8 @@
 // The holdings' next corporate event (pure): the chip on a Positions group or row ("Earnings 10/23
 // AMC", "Ex-div 10/15 $0.24") and the footer note on why earnings dates are missing. Both come from
-// IB: earnings from Wall Street Horizon (an account without that subscription gets none: Tape
-// estimates no dates), ex-dividend dates from IB's dividend tick (456) on the holdings' stock lines.
+// IB: earnings from Wall Street Horizon, else from IB's market scanner (its nextEarningsDateTime,
+// for an account without the WSH subscription), ex-dividend dates from IB's dividend tick (456) on
+// the holdings' stock lines.
 // No React and no store access; which row carries a chip is groups.ts → chipTargets.
 
 import { contractKey } from '@shared/contract';
@@ -28,6 +29,8 @@ export interface CorporateEvent {
   days: number;
   /** Earnings: before the open, after the close or during the session. */
   time?: 'bmo' | 'amc' | 'dmh';
+  /** Earnings: found through IB's market scanner, not Wall Street Horizon (the chip's tooltip says so). */
+  fromScanner?: boolean;
   /** Dividend per share, in the underlying's currency. */
   amount?: number;
 }
@@ -64,7 +67,7 @@ export function nextEvents(
   withinDays = EVENT_WINDOW_DAYS,
 ): Map<string, CorporateEvent> {
   const out = new Map<string, CorporateEvent>();
-  const add = (key: string, kind: CorporateEvent['kind'], date: string, extra: Pick<CorporateEvent, 'time' | 'amount'>) => {
+  const add = (key: string, kind: CorporateEvent['kind'], date: string, extra: Pick<CorporateEvent, 'time' | 'fromScanner' | 'amount'>) => {
     const und = underlyings.get(key);
     if (!und || !/^\d{8}$/.test(date)) return;
     const days = nyDaysUntil(date, now);
@@ -74,7 +77,12 @@ export function nextEvents(
     out.set(key, { key, symbol: und.symbol, underlying: und, kind, date, days, ...extra });
   };
   if (earnings?.status === 'ok') {
-    for (const e of earnings.events) add(e.key, 'earnings', e.date, e.time ? { time: e.time } : {});
+    for (const e of earnings.events) {
+      const extra: Pick<CorporateEvent, 'time' | 'fromScanner'> = {};
+      if (e.time) extra.time = e.time;
+      if (e.estimated) extra.fromScanner = true;
+      add(e.key, 'earnings', e.date, extra);
+    }
   }
   for (const [key, d] of Object.entries(dividends)) {
     if (d?.nextDate) add(key, 'dividend', d.nextDate, finite(d.nextAmount) ? { amount: d.nextAmount } : {});
@@ -105,18 +113,20 @@ export function eventLabel(e: CorporateEvent, w: EventWords): string {
 
 /** An event's identity for redrawing: its chip changes only when one of these does. */
 export function eventSig(e: CorporateEvent | undefined): string {
-  return e ? [e.key, e.kind, e.date, e.time, e.amount].join('|') : '';
+  return e ? [e.key, e.kind, e.date, e.time, e.fromScanner, e.amount].join('|') : '';
 }
 
-export type EarningsState = 'ok' | 'unsubscribed' | 'unavailable';
+export type EarningsState = 'ok' | 'searching' | 'unsubscribed' | 'unavailable';
 
 /**
- * What the Positions tab can say about earnings: 'ok' (listed, or still loading), 'unsubscribed'
- * (no Wall Street Horizon subscription, so no dates) or 'unavailable' (IB did not answer while
- * connected). Not connected counts as 'ok': the table then says so itself.
+ * What the Positions tab can say about earnings: 'ok' (listed, or still loading), 'searching' (IB's
+ * market scanner is still looking some up), 'unsubscribed' (IB refused Wall Street Horizon and the
+ * scanner) or 'unavailable' (IB did not answer while connected). Not connected counts as 'ok': the
+ * table then says so itself.
  */
 export function earningsState(earnings: CorporateEarnings | undefined, connected: boolean): EarningsState {
   if (earnings?.status === 'unsubscribed') return 'unsubscribed';
   if (earnings?.status === 'unavailable' && connected) return 'unavailable';
+  if (earnings?.status === 'ok' && earnings.pending) return 'searching';
   return 'ok';
 }

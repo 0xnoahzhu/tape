@@ -4,10 +4,10 @@ import type { ContractRef, OptionRight } from './types';
 
 /**
  * Version of the contract details Tape keeps (ContractInfo.v). 2 added the ISIN, market name,
- * contract month, real expiration, last trading time, the underlying and the bond details; older
- * persisted entries are used at once and fetched again in the background.
+ * contract month, real expiration, last trading time, the underlying and the bond details; 3 a
+ * bond's ratings. Older persisted entries are used at once and fetched again in the background.
  */
-export const CONTRACT_DETAILS_VERSION = 2;
+export const CONTRACT_DETAILS_VERSION = 3;
 
 /**
  * Stable key for an instrument, used for quote maps, selection and subscriptions.

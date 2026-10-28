@@ -66,9 +66,17 @@ export function quoteContract(c: ContractRef): ContractRef {
   return { ...c, ...primary, exchange: 'SMART' };
 }
 
-/** Where a click on a position row leads: the underlying's option chain or chart. */
-export function positionTarget(c: ContractRef): { contract: ContractRef; view: 'opt' | 'chart' } {
-  return { contract: underlyingOf(c), view: c.secType === 'OPT' ? 'opt' : 'chart' };
+/**
+ * Where a click on a position row leads (Portfolio › Positions, the panel under the chart): the
+ * position's own chart, an option's too (SMART-routed as its quotes are), a stock's as the stock.
+ */
+export function positionTarget(c: ContractRef): { contract: ContractRef; view: 'chart' } {
+  return { contract: c.secType === 'OPT' ? quoteContract(c) : underlyingOf(c), view: 'chart' };
+}
+
+/** An option position's underlying in the option chain (the row's context menu). */
+export function chainTarget(c: ContractRef): { contract: ContractRef; view: 'opt' } {
+  return { contract: underlyingOf(c), view: 'opt' };
 }
 
 /**

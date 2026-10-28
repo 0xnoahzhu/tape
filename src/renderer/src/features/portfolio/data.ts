@@ -12,6 +12,8 @@ import type { PositionRow } from './calc';
 import { holdingUnderlyings } from './events';
 
 const HOUR = 3_600_000;
+/** How soon earnings are asked again while main's scanner is still looking dates up. */
+const PENDING_POLL_MS = 3000;
 const UNAVAILABLE: CorporateEarnings = { status: 'unavailable', events: [] };
 
 /** Unix ms of the current minute, so days to expiry, the event window and today's hours follow the clock. */
@@ -44,9 +46,11 @@ export function useHoldingDividends(underlyings: ReadonlyMap<string, ContractRef
 }
 
 /**
- * Upcoming earnings of the holdings' stocks (Wall Street Horizon), asked when the holdings or the
- * connection change and every hour (main keeps the answers for the day). `unsubscribed` when IB
- * refuses WSH; `unavailable` while not connected.
+ * Upcoming earnings of the holdings' stocks (Wall Street Horizon, else IB's market scanner), asked
+ * when the holdings or the connection change and every hour (main keeps the answers for the day),
+ * every few seconds while the scanner is still looking dates up (`pending`) and when a stock is due
+ * to be searched again (`retryInMs`). `unsubscribed` when IB refuses both; `unavailable` while not
+ * connected.
  */
 export function useEarnings(underlyings: ReadonlyMap<string, ContractRef>): CorporateEarnings | undefined {
   const available = useMarketDataAvailable();
@@ -72,6 +76,17 @@ export function useEarnings(underlyings: ReadonlyMap<string, ContractRef>): Corp
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, available, tick]);
+
+  // Main answers at once with what the scanner knows so far; ask again until it is done, and
+  // when a stock it could not search yet is due again.
+  useEffect(() => {
+    if (!available || state?.sig !== sig) return;
+    const { pending, retryInMs } = state.value;
+    const delay = pending ? PENDING_POLL_MS : typeof retryInMs === 'number' && Number.isFinite(retryInMs) ? Math.max(PENDING_POLL_MS, retryInMs) : undefined;
+    if (delay === undefined) return;
+    const timer = setTimeout(() => setTick((t) => t + 1), delay);
+    return () => clearTimeout(timer);
+  }, [available, sig, state]);
 
   if (!available) return UNAVAILABLE;
   // Answers for a former set of holdings still apply to the stocks that remain.

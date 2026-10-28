@@ -27,22 +27,27 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   default), **sector** or not at all: a group row shows the group's name, its count and its chip, never
   a sum; groups collapse, and a single position stands on its own without a group row. The next
   **earnings or ex-dividend date** within two weeks shows as a chip on the group (or the stock's row):
-  *Earnings 10/23 AMC* (Wall Street Horizon), *Ex-div 10/15 $0.24* (IB's dividend data). Option rows
-  read *Call · 10/16* (the right and the expiry). A click on a row opens its underlying on the Trade
-  page (an option's in the option chain); right-click an option for its own chart. Every column sorts
+  *Earnings 10/23 AMC* (Wall Street Horizon, else IB's market scanner), *Ex-div 10/15 $0.24* (IB's dividend data). Option rows
+  read *Call · 10/16* (the right and the expiry). A click on a row opens its own chart on the Trade
+  page (an option's too); right-click an option for its underlying's option chain. Every column sorts
   the groups (by their best row) and the rows within them. A **column editor** adds contract details, quote fields, IB's option model
   values (IV and greeks), 52-week ranges, volatility, option and trading activity, short-sale data,
-  dividends, earnings dates, ETF NAV, futures open interest and bond details (107 columns, every one
-  IB's data; those not yet checked against IB's data say so, and the extra quote fields are asked of IB
-  only while their column is shown, on the positions' own quote lines). Drag a header to move its
+  dividends, earnings dates, ETF NAV, futures open interest and bond details (126 columns; those not
+  yet checked against IB's data say so, and the extra quote fields are asked of IB only while their
+  column is shown, on the positions' own quote lines). All are IB's data except the **Calculated by
+  Tape** group, the figures IBKR's own apps show but the API does not send: change and change since
+  open (and their %), mid, spread, cost basis, unrealized P&L %, % of net liq, dividend yield, put/call
+  volume and open interest, IV/HV and days to the last trading day; each header's tooltip gives the
+  formula. Drag a header to move its
   column or its right edge to size it (the columns left of it keep their widths; double-click the edge
   for the default width); a wide table scrolls sideways with its scrollbar always shown, and Tape
   remembers the columns, their order and widths, the sort and the grouping per device (a column choice
   stored by an older version keeps IB's columns under their new names; Price, Value, Unrl. P&L and Day
   P&L stay and now show IB's figures, the per-unit Avg becomes IB's Avg cost, and the other columns
   Tape calculated are dropped). Ex-dividend dates and amounts come with IB's quotes. Earnings dates
-  come from Wall Street Horizon when the account has that IBKR subscription; without it there are none
-  (Tape does not estimate them).
+  come from Wall Street Horizon when the account has that IBKR subscription; without it Tape finds
+  each US stock's date (and time of day) in IB's market scanner, which lists stocks by their next
+  earnings date: a few seconds per stock in the background, once a day; the tooltip names the source.
 - **Orders**: working orders with their attributes and each instrument's last price beside the order price
   (how far the limit or trigger is from it on hover); modify and cancel the orders Tape placed. The cancel
   dialog names the order, the account (paper or live) and what has filled, and for a bracket what cancelling

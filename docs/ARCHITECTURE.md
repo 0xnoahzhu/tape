@@ -51,7 +51,8 @@ through the shared `MainContext` (never inside their factory).
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
-| `market/corporateEvents.ts` | Upcoming earnings of the holdings from Wall Street Horizon (see *Corporate events*) |
+| `market/corporateEvents.ts` | Upcoming earnings of the holdings: Wall Street Horizon, else IB's market scanner (see *Corporate events*) |
+| `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |
 | `market/alerts.ts` | The alerts engine: the alert list (main is its only writer), the alert lines, evaluation, notifications (see *Alerts*) |
 | `market/news.ts` | `ctx.news`: the login's API news providers (once per session) and the background headline checks of news alerts (see *Alerts › News*) |
@@ -451,8 +452,8 @@ names and listener arguments), built on `node:net` and `node:events` only.
   row) emits `scannerData` per row, then `scannerDataEnd`; IB has no end message of its own and an
   empty answer is a count of 0. The scanner parameters (19, 24) are not implemented. In the API log
   165 ("N items retrieved", before a scan's rows) is a notice and IB's 162 acknowledging a scanner
-  cancel ("API scanner subscription cancelled") is not shown as an error; other 162s still are. No
-  feature sends a scan (earnings come from Wall Street Horizon only).
+  cancel ("API scanner subscription cancelled") is not shown as an error; other 162s still are. The
+  earnings fallback (`market/earningsScanner.ts`) is the only feature that sends scans.
 * `pacing.ts` — per-request rules checked when a frame is written (the moment IB counts it):
   `reqMatchingSymbols` at most 1 per second; `reqHistoricalData` no identical request within
   15 s, at most 5 per contract + exchange + tick type within 2 s, at most 60 per 10 minutes
@@ -877,22 +878,71 @@ asks for Level 2 when that needs a test (main runs it right after); a check that
 ### Corporate events
 
 `getEarnings(underlyings)` (`market/corporateEvents.ts`) answers with the holdings' next earnings
-dates from Wall Street Horizon: `reqWshMetaData` once per connection (IB wants it first), then one
-`reqWshEventData` per conId from today to 90 days ahead, one at a time, cached per conId for the New
-York day and the connection (a 1101 keeps the cache). Option-only underlyings are resolved to their
-conId first. IB documents the event JSON only by example and the paper account cannot receive any,
-so `parseWshEarnings` reads it defensively (an array, `{ events }` or arrays keyed by event type;
-earnings types `wshe_ed` / `earnings`; yyyy-mm-dd or yyyyMMdd dates; before / after the session); an
-answer it cannot read is logged once. Dividends do not come from WSH but from the dividend tick above.
+dates. Wall Street Horizon comes first: `reqWshMetaData` once per connection (IB wants it first),
+then one `reqWshEventData` per conId from today to 90 days ahead, one at a time, cached per conId
+for the New York day and the connection (a 1101 keeps the cache). Option-only underlyings are
+resolved to their conId first. IB documents the event JSON only by example and the paper account
+cannot receive any, so `parseWshEarnings` reads it defensively (an array, `{ events }` or arrays
+keyed by event type; earnings types `wshe_ed` / `earnings`; yyyy-mm-dd or yyyyMMdd dates; before /
+after the session); an answer it cannot read is logged once. Dividends do not come from WSH but from
+the dividend tick above.
 
 Without the WSH subscription IB refuses with 10276 "News feed is not allowed" (the paper account) or
-10277. The refusal is remembered for the connection and the New York day, so WSH is asked again on the
-next connection or day; meanwhile the answer is `unsubscribed`, and the Positions tab has no earnings
-dates (Tape does not estimate them). A refusal of one event request keeps the events WSH already gave;
-WSH answers stay in use for the rest of the day after a later refusal, option-only underlyings too (by
-the conId resolved for their contract key). A meta data failure other than a refusal (a timeout, 10279)
-answers `unavailable`. The answer's status: `ok` (the events, soonest first), `unsubscribed` or
-`unavailable` (not connected, a timeout or another error). Demo mode answers from the simulator.
+10277. The refusal is remembered for the connection and the New York day, so WSH is asked again on
+the next connection or day. The stocks then go to IB's market scanner (`market/earningsScanner.ts`);
+a refusal of one event request keeps the events WSH already gave and sends that stock and the rest
+there. A meta data failure other than a refusal (a timeout, 10279) answers `unavailable`. WSH
+answers stay in use for the rest of the day after a later refusal, option-only underlyings too
+(by the conId resolved for their contract key).
+
+The scanner fallback. `SCAN_nextEarningsDateTime_ASC` on `STK` / `STK.US.MAJOR` with the filter
+`nextEarningsDateTimeAbove=X;nextEarningsDateTimeBelow=Y;` works without WSH. X and Y are epoch
+seconds, inclusive, always both sent (without them stocks that report no earnings are listed too).
+The rows carry no date, so the date is inferred: a stock listed for a window reports in it. Windows
+are New York wall time (`nyWallToEpochMs`, midnight to midnight, so 23- and 25-hour days are right).
+A scan answers at most 50 rows, soonest first: a stock in a cut answer is in the window for sure,
+its absence proves nothing. 165 says whether an answer was cut ("50 out of 435 items retrieved");
+without a 165, 50 rows count as cut. Each scan is narrowed to the stock's price, ± 3 % around the
+lowest and highest of its quote's last, close, mark and last RTH trade and its position's market
+price (Tape knows no market cap), read when the scan is sent (a search may wait minutes for its
+turn). A cut answer without the stock is asked again at ± 1.5 %, then ± 0.75 %, and the narrower
+band stays for the rest of that stock's search. A window still cut is split, and a cut single day
+gives no date rather than a wrong one.
+
+The search per stock (`searchEarnings`): bisection, earliest first, over today .. today + 120 New
+York days (1 + 7 scans; a half known from the other costs none; nothing within 120 days: no
+earnings). Then 16:00:00 ET exactly (IB's stamp for after the close: `amc`, 9 scans in all), then
+09:30:00 exactly (before the open: `bmo`, 10), then 00:00:00 exactly (a date without a time, which
+TWS shows without one: the date only, 11). Otherwise the whole day is checked once more (a day the
+stock is not listed for, its price having left the band, gives no date), then the half-hour slot
+(6 scans) and its first minute: `minutes` when the release is exactly there (CAT 08:30), else the
+slot's side of the session (before 09:30 `bmo`, from 16:00 `amc`, else `dmh`); about 19 scans. A
+stock's search stops after 24 scans: the date without a time once the day was confirmed, else no
+date. IB marks no date confirmed, so every scanner event carries `estimated: true`; the Positions
+tab shows it like a WSH date and names the source in the chip's and the cell's tooltip.
+
+Searches run in the background, at most 3 at a time with one scan each, so at most 3 scans are open
+(IB allows 10). Every scan is cancelled however it ends: rows, an IB error, the 10 s timeout
+(counted from the write) or an abort (`ibRequest`'s `cancelWhenDone`), not after the connection
+closed; late rows and IB's 162 acknowledgement find no listener, and request ids are never reused.
+Typical cost for 40 holdings is about 400 scans (960 at worst): about 75 s at about 0.55 s per scan
+three at a time, about 5.5 requests and 5.5 cancels per second (of the 45 sent at most), once per
+New York day per connection plus new holdings. ETFs (`ContractInfo.stockType`) and non-USD stocks
+cost no scans. A stock without any price waits up to 10 s for a quote (the Positions tab's
+`positions-div` line), else, like a timeout or another IB error, it is tried again after 5 minutes. Results, none
+and unknown too, are kept per stock for the New York day and dropped when the connection closes;
+a none or unknown reached with a narrowed band (the stock's price may have moved away from Tape's)
+is asked once more after 5 minutes before it holds for the day. 162 (other than pacing or a limit)
+or 321 means IB refuses the scanner itself: no more scans on this connection that day.
+
+`getEarnings` never waits for the scanner: it answers with what is known and `pending: true` while
+searches run (the Positions tab asks again every 3 s), and `retryInMs` while a stock waits to be
+tried again (the Positions tab asks again then). The answer has a status: `ok` (with `source: 'wsh'`, or
+`'scanner'` when some stocks went to the scanner; `partial` when some of those are not US dollar
+stocks, which the scanner cannot look up: the note then says US stocks only), `unsubscribed` (IB
+refused WSH and the scanner, or only stocks the scanner does not cover are left) or `unavailable`
+(not connected, a timeout or another error). Demo mode answers from the simulator, as scanner
+estimates.
 
 ### Alerts
 
@@ -1334,8 +1384,9 @@ under the options desk the panel adds the underlying's in its header while an op
 (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`: Δ sh, $Δ, Γ, Θ/day,
 Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New York days, `optionDte`, in the accent
 within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares, so the column adds up to the exposure's
-Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Under either
-view an option row's context menu opens the option's own chart (`orders/navigation.ts →
+Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Under the
+chart a click on a row opens that position's own chart (`portfolio/calc.ts → positionTarget`: an
+option's SMART-routed, a stock's as the stock). Under either view an option row's context menu opens the option's own chart (`orders/navigation.ts →
 openOptionChart`: SMART-routed as its quotes are; the option becomes the ticket's instrument). Modify
 from the options view switches to the chart, where the ticket is. An order just placed from a floating
 panel flashes for 15 s from IB's acceptance (`activityModel.ts → isFreshOrder`,
@@ -1747,12 +1798,13 @@ the old key.
 | --- | --- | --- |
 | Position | Name, Type, Qty, Avg cost, Price, Value, Unrl. P&L, Realized P&L, Day P&L, Currency, FX rate, Account | `position` / `updatePortfolio` (`Position.averageCost` is IB's as sent, per contract); the mark (tick 37); `reqPnLSingle`, else `updatePortfolio` (see above); contract details; the account updates' `ExchangeRate` (paper accounts: `$LEDGER-ExchangeRate`) per currency, `account.ts → exchangeRateOf`, kept as `AccountSummary.exchangeRates` |
 | Contract | Con ID, Local symbol, Exchange, Class, Mult., Expiry, Strike, C/P, Underlying, Industry, Category, Subcategory, Stock type, Min tick, Time zone, Trading hours, Regular hours, Contract month, Last trade, Expiration, ISIN, Market | The position's contract; contract details (`ContractInfo`, which main fetches for every position, so `getContractInfo` answers from its cache). The hours are today's sessions in the instrument's zone (`todaysHours`: a futures session from the evening before counts for the day it ends). Only IB's own values: Exchange shows "—" for SMART on non-stocks (Tape's stand-in until the position message names the exchange; `updatePortfolio` carries none), Mult. is the contract's multiplier as IB sent it (1 for a stock, never `multiplierOf`'s 100 for options). Underlying is IB's `underSymbol` (a futures option's is its future, `ESZ6`; the tooltip has the underlying's type and conId). Last trade is the day and time of `lastTradeDateOrContractMonth` ("20261016 16:00:00 US/Eastern" on server 193), in the user's clock, the zone in the tooltip, sorted by the instant (`zonedInstant`: 08:30 US/Central after 09:00 US/Eastern); ISIN comes from `secIdList` (stocks and ETFs) |
-| Quote | Last, Last size, Last time, Bid, Ask, sizes, Prev close, Open, High, Low, Volume, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner's `mark` profile: the basic ticks, stocks 318, options 100, 101, 106 and 221, plus 221 on stocks, futures, forex and crypto). IB's mark is the Price column (one column per datum). Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
+| Quote | Last, Last size, Last time, Bid, Ask, sizes, Bid / ask / last exch (stocks), Prev close, Open, High, Low, Volume, Last RTH (stocks), Halted, Data, Quote status | The ticks of the position's own line (the `portfolio` owner's `mark` profile: the basic ticks, stocks 318, options 100, 101, 106 and 221, plus 221 on stocks, futures, forex and crypto). IB's mark is the Price column (one column per datum). The exchanges are IB's letter codes as sent (ticks 32, 33, 84, live lines only: cleared with a new line and when it turns delayed). Halted keeps IB's code (`Quote.haltCode`: halted or volatility halt); Quote status is IB's last error, else 321 while the line runs without refused ticks (`ticksRefused`) |
 | Statistics | 52w / 26w / 13w high and low, Avg volume, IV 30d, HV 30d, Call / put volume and OI, Avg opt. volume, Trades, Trades/min, Volume/min, Vol 3m / 5m / 10m, VWAP, Auction price, volume, imbalance and regulatory imbalance | The add-ons `range`, `volatility`, `optionFlow`, `activity`, `vwap`, `auction` (stocks; IV, OI and volume/min also futures) |
 | Short selling | Shortable, Shortable shares, Borrow fee | `shortSale` (stocks): tick 46 as a word (above 2.5 easy, at least 1000 shares; above 1.5 on locate; else no), sorted by IB's value; tick 89; tick 111 as sent |
-| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Earnings | The `dividends` profile (tick 59, live lines only; a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). Earnings reads `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the event chips: one per Positions tab, cached for the day): Wall Street Horizon's date with BMO / AMC / during, sorted by date, then before the open, during, after the close, unknown; none without the WSH subscription |
+| Dividends & earnings | Div. past / next 12m, Next div. date, Next div., Earnings | The `dividends` profile (tick 59, live lines only; a summary without 12-month amounts, IB's `,,,`, reads as 0; "—" only while none came). Earnings reads `getEarnings` for the holdings' stocks (options show their underlying's, `useEarnings`, shared with the event chips: one per Positions tab, cached for the day): Wall Street Horizon's date, else IB's market scanner's (see *Corporate events*; the cell's tooltip names the source), with BMO / AMC / during, sorted by date, then before the open, during, after the close, unknown |
 | Options | IV, Delta, Gamma, Theta, Vega, Und. price, Model price, PV dividends, OI | Tick 13 / 83 (`tickMap.ts` keeps the model's option price and dividends' present value too, `Quote.optPrice` / `pvDividend`), ticks 27 / 28, per share as IB sends them |
-| ETF / futures / bonds | NAV, NAV high / low, Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Bond type, Features, Description | `etfNav` (ETFs), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
+| ETF / futures / bonds | NAV, NAV high / low, Fut. OI, Bid / ask / last yield, Bond factor, CUSIP, Coupon, Maturity, Issue date, Bond type, Ratings, Features, Description | `etfNav` (ETFs), `futuresOi`, `bondFactor`; the yields come with every bond line. The bond fields are `bondContractDetails` (`ContractInfo.bond`), which `contracts.ts` keeps whole, so Name and Min tick apply to bonds too (Maturity is the date of IB's maturity, which server 193 may send as "YYYYMMDD HH:MM:SS zone"). Bonds of one issuer share a contract key (`BOND:symbol`), so they share one quote line (known, not fixed yet) |
+| Calculated by Tape | Change, Change %, Chg. since open (and %), Mid, Spread, Cost basis, Unrl. P&L %, % of net liq, Div. yield, Put/call vol., Put/call OI, IV/HV, Days to last trade | The one group IB does not send (`calc: true`; the header tooltip starts with "Tape ·" and gives the formula, messages.ts → sources): Last − Prev close (or Open), as a fraction too; (Bid + Ask) ÷ 2 and Ask − Bid with a 0 bid allowed and no crossed quote; Qty × Avg cost; Unrl. P&L ÷ \|Qty × Avg cost\| (a short's gain positive); Value × FX rate ÷ the account's NetLiquidation (`CellCtx.netLiq`); Div. next 12m ÷ Price (`dividends` profile); put ÷ call volume and open interest (`optionFlow`); IV 30d ÷ HV (`volatility`); New York calendar days to `lastTradeDate`. A ratio without a positive divisor is "—" |
 
 **Extra market data.** A column with a `profile` needs generic ticks beyond the position's basic line.
 `addOnSubscriptions` lists one subscription per position and profile, for the positions the column
@@ -1902,10 +1954,11 @@ session (`columnStore.ts → toggleGroup`).
 
 **Option lines** (`cells.ts → optionLineText`, pure). An option or futures option row's second line
 reads IB's contract: the right and the expiry, "Call · 10/16" (no days to expiry, no moneyness: IB
-sends neither); other rows' read their type and sector. A click on a row opens its underlying on the
-Trade page (`calc.ts → positionTarget`: an option's in the option chain); an option row's context menu
-(a `Dropdown` under the cell, headed by the contract) offers the option's own chart as well
-(`orders/navigation.ts → openOptionChart`), and the rows keep their places while it is open.
+sends neither); other rows' read their type and sector. A click on a row opens its own chart on the
+Trade page (`calc.ts → positionTarget`: an option's too, SMART-routed as its quotes are; a stock's as
+the stock); an option row's context menu (a `Dropdown` under the cell, headed by the contract) offers
+Open chart and its underlying's option chain (`calc.ts → chainTarget`), and the rows keep their
+places while it is open.
 
 **Exposure** (`exposure.ts`, pure), for the Trade page's activity panel under the options desk only
 (see *Trade page*): `portfolioGreeks` adds IB's per-share model greeks of each option × quantity ×

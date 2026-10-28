@@ -69,10 +69,12 @@ describe('stored column choice', () => {
       'dayPnl',
       'bid',
     ]);
+    // Mid is a Calculated column again; the others have no successor.
     expect(sanitizeColumns(['delta', 'positionDelta', 'moneyness', 'daysToExpiry', 'expiry', 'mid', 'navPremium', 'nextEarningsEst', 'nextEarnings'])).toEqual([
       'symbol',
       'delta',
       'expiry',
+      'mid',
       'nextEarnings',
     ]);
     expect(COLUMN_ALIASES).toEqual({
@@ -91,8 +93,8 @@ describe('stored column choice', () => {
 
   it('falls back to the default columns when a stored list keeps none but Symbol', () => {
     // Only Tape's calculations were shown: nothing is left of them.
-    expect(sanitizeColumns(['weight', 'costBasis', 'daysToExpiry'])).toBeNull();
-    expect(sanitizeColumns(['symbol', 'weight', 'unrealizedPct'])).toBeNull();
+    expect(sanitizeColumns(['weight', 'valueBase', 'daysToExpiry'])).toBeNull();
+    expect(sanitizeColumns(['symbol', 'weight', 'moneyness'])).toBeNull();
     expect(sanitizePrefs({ columns: ['symbol', 'pctGross', 'totalPnl'], sort: { id: 'totalPnl', dir: 'desc' }, groupBy: 'sector' })).toEqual({
       columns: null,
       sort: null,

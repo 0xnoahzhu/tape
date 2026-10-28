@@ -30,6 +30,8 @@ export const TICK = {
   OPTION_PUT_OPEN_INTEREST: 28,
   OPTION_CALL_VOLUME: 29,
   OPTION_PUT_VOLUME: 30,
+  BID_EXCH: 32,
+  ASK_EXCH: 33,
   AUCTION_VOLUME: 34,
   AUCTION_PRICE: 35,
   AUCTION_IMBALANCE: 36,
@@ -64,6 +66,7 @@ export const TICK = {
   DELAYED_CLOSE: 75,
   DELAYED_OPEN: 76,
   DELAYED_MODEL_OPTION: 83,
+  LAST_EXCH: 84,
   FUTURES_OPEN_INTEREST: 86,
   AVG_OPT_VOLUME: 87,
   DELAYED_LAST_TIMESTAMP: 88,
@@ -186,6 +189,12 @@ export const GENERIC_FIELDS: Readonly<Record<number, readonly (keyof Quote)[]>> 
 const LINE_YIELDS: readonly (keyof Quote)[] = ['bidYield', 'askYield', 'lastYield'];
 
 /**
+ * The exchanges at the bid, ask and last trade (ticks 32, 33, 84): sent on live lines only (no
+ * delayed tick), and IB repeats them only when they change, so they go with the yields.
+ */
+const LINE_EXCHANGES: readonly (keyof Quote)[] = ['bidExch', 'askExch', 'lastExch'];
+
+/**
  * Generic values IB sends on delayed lines too (probe of the paper account, October 2026): the mark
  * (37), the 165 values (week ranges 15–20, seen on a delayed index, with the average volume 21),
  * implied volatility (24), open interest (27 / 28, futures 86) and the volume rate (56). IB sends some
@@ -203,9 +212,10 @@ export const DELAYED_TOO: ReadonlySet<keyof Quote> = new Set<keyof Quote>([
 ]);
 
 /**
- * Clears every field a generic tick brings, and the bond yields, for a new line requested with
- * `ticks` (a genericTicksFor list). Only the mark stays, when the new line asks for it too (221):
- * options are valued at it, and IB sends it on delayed lines as well. Returns true when a field changed.
+ * Clears every field a generic tick brings, the bond yields and the exchanges, for a new line
+ * requested with `ticks` (a genericTicksFor list). Only the mark stays, when the new line asks for it
+ * too (221): options are valued at it, and IB sends it on delayed lines as well. Returns true when a
+ * field changed.
  */
 export function clearGenericFields(q: Quote, ticks: string): boolean {
   const keepMark = ticks.split(',').includes('221');
@@ -213,22 +223,22 @@ export function clearGenericFields(q: Quote, ticks: string): boolean {
   for (const fields of Object.values(GENERIC_FIELDS)) {
     for (const f of fields) if (!(keepMark && f === 'mark')) changed = set(q, f, undefined) || changed;
   }
-  for (const f of LINE_YIELDS) changed = set(q, f, undefined) || changed;
+  for (const f of [...LINE_YIELDS, ...LINE_EXCHANGES]) changed = set(q, f, undefined) || changed;
   return changed;
 }
 
 /**
  * Clears what a line whose data type changed between live (1, 2) and delayed (3, 4) may not get
  * again: the generic values IB is not known to send on delayed lines (dividends, the last RTH trade,
- * …) and the bond yields. Those of DELAYED_TOO stay: IB sends them on the new data type as well, some
- * only at the start of a line. Returns true when a field changed.
+ * …), the bond yields and the exchanges. Those of DELAYED_TOO stay: IB sends them on the new data
+ * type as well, some only at the start of a line. Returns true when a field changed.
  */
 export function clearLiveOnlyFields(q: Quote): boolean {
   let changed = false;
   for (const fields of Object.values(GENERIC_FIELDS)) {
     for (const f of fields) if (!DELAYED_TOO.has(f)) changed = set(q, f, undefined) || changed;
   }
-  for (const f of LINE_YIELDS) changed = set(q, f, undefined) || changed;
+  for (const f of [...LINE_YIELDS, ...LINE_EXCHANGES]) changed = set(q, f, undefined) || changed;
   return changed;
 }
 
@@ -407,6 +417,9 @@ export function parseVwap(value: string | undefined): number | undefined {
 const sameDividends = (a: QuoteDividends | undefined, b: QuoteDividends | undefined): boolean =>
   a === b || (!!a && !!b && a.past12m === b.past12m && a.next12m === b.next12m && a.nextDate === b.nextDate && a.nextAmount === b.nextAmount);
 
+/** IB's exchange letters ("PQV"), undefined when empty. */
+const exchanges = (v: string | undefined): string | undefined => (v && v.trim() ? v.trim() : undefined);
+
 function applyString(q: Quote, field: number, value: string | undefined): boolean {
   switch (field) {
     case TICK.LAST_TIMESTAMP:
@@ -421,6 +434,12 @@ function applyString(q: Quote, field: number, value: string | undefined): boolea
       const vwap = parseVwap(value);
       return vwap !== undefined ? set(q, 'vwap', vwap) : false;
     }
+    case TICK.BID_EXCH:
+      return set(q, 'bidExch', exchanges(value));
+    case TICK.ASK_EXCH:
+      return set(q, 'askExch', exchanges(value));
+    case TICK.LAST_EXCH:
+      return set(q, 'lastExch', exchanges(value));
     case TICK.IB_DIVIDENDS: {
       // A new object only when a value changed: the renderer patch compares fields by reference.
       const d = parseDividends(value);

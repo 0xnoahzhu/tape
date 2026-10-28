@@ -8,8 +8,10 @@
 // owner; options with their model greeks) serve the exposure below; the open orders' lines are held
 // only while their tab shows ('symbol-orders'). Under the options desk (`options`) the panel adds
 // the underlying's exposure (Δ, $Δ, Γ, Θ, Vega: exposure.ts → portfolioGreeks), DTE and Δ cells on
-// the rows, and a click on an option row opens its expiry in the chain. Under either view an option
-// row's context menu opens the option's own chart (it becomes the ticket's instrument). An order just
+// the rows, and a click on an option row opens its expiry in the chain. Under the chart a click on a
+// row opens that position's own chart (an option's too: portfolio/calc.ts → positionTarget). Under
+// either view an option row's context menu opens the option's own chart (it becomes the ticket's
+// instrument). An order just
 // placed from a floating panel flashes in the open orders (activityModel.ts → isFreshOrder).
 
 import { useMemo, useRef, useState } from 'react';
@@ -30,10 +32,10 @@ import { Dropdown, MenuChoice } from '../../ui/select';
 import { useDesk } from '../options/deskStore';
 import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
 import { useOrdersMessages } from '../orders/messages';
-import { openOptionChart } from '../orders/navigation';
+import { openInstrument, openOptionChart } from '../orders/navigation';
 import { OrderActions } from '../orders/OrderActions';
 import { modifyOrderInTicket } from '../panels/actions';
-import { positionRow, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
+import { positionRow, positionTarget, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
 import { useMinute } from '../portfolio/data';
 import { optionDte, portfolioGreeks, positionDelta, underlyingKey } from '../portfolio/exposure';
 import { GreeksLine } from '../portfolio/GreeksLine';
@@ -119,13 +121,18 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const p = r.position;
   const expiry = opt?.expiry;
+  const openChart = () => {
+    const t = positionTarget(p.contract);
+    openInstrument(t.contract, t.view);
+  };
+  const onClick = expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : opt ? undefined : openChart;
   return (
     <>
       <div
         data-activity="position"
         data-position={r.key}
         data-expiry={expiry}
-        onClick={expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : undefined}
+        onClick={onClick}
         onContextMenu={
           isOption(p.contract)
             ? (e) => {
@@ -136,8 +143,8 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
               }
             : undefined
         }
-        title={expiry ? m.openExpiry : undefined}
-        className={expiry ? 'hover-p2' : undefined}
+        title={expiry ? m.openExpiry : onClick ? common.openChart : undefined}
+        className={onClick ? 'hover-p2' : undefined}
         style={{
           display: 'grid',
           gridTemplateColumns: opt ? POS_GRID_OPT : POS_GRID,
@@ -148,7 +155,7 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
           font: '13px/1 var(--num)',
           fontVariantNumeric: 'tabular-nums',
           boxShadow: 'inset 0 1px 0 var(--ln2)',
-          cursor: expiry ? 'pointer' : undefined,
+          cursor: onClick ? 'pointer' : undefined,
         }}
       >
         <div className="ellipsis" style={{ fontFamily: 'var(--sans)' }}>

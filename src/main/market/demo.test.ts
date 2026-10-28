@@ -294,13 +294,13 @@ describe('offline search and details', () => {
 
   it('answers contract details without a made-up conId', () => {
     const info = demoContractInfo(stock('AAPL'))!;
-    expect(info).toMatchObject({ longName: 'APPLE INC', industry: 'Technology', minTick: 0.01, v: 2, isin: 'US0378331005', marketName: 'NMS' });
+    expect(info).toMatchObject({ longName: 'APPLE INC', industry: 'Technology', minTick: 0.01, v: 3, isin: 'US0378331005', marketName: 'NMS' });
     expect(info.contract.conId).toBeUndefined();
-    expect(demoContractInfo(index('SPX', 'CBOE'))!).toMatchObject({ longName: 'S&P 500 Stock Index', v: 2 });
+    expect(demoContractInfo(index('SPX', 'CBOE'))!).toMatchObject({ longName: 'S&P 500 Stock Index', v: 3 });
     expect(demoContractInfo({ symbol: 'NOPE!', secType: 'STK', exchange: 'SMART', currency: 'USD' })).toBeNull();
     // Version 2 fields of options and bonds.
     expect(demoContractInfo(option('AAPL', '20261016', 230, 'C'))).toMatchObject({
-      v: 2,
+      v: 3,
       contractMonth: '202610',
       realExpirationDate: '20261016',
       lastTradeTime: '16:00:00',
@@ -308,7 +308,7 @@ describe('offline search and details', () => {
       underSymbol: 'AAPL',
       underSecType: 'STK',
     });
-    expect(demoContractInfo({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD' })).toMatchObject({ v: 2, bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115' } });
+    expect(demoContractInfo({ symbol: 'US-T', secType: 'BOND', exchange: 'SMART', currency: 'USD' })).toMatchObject({ v: 3, bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115' } });
   });
 
   it('hashes strings stably', () => {

@@ -2,7 +2,7 @@
 // on the shared number helpers and the user's clock. The words for IB's codes come from the
 // feature's messages.
 
-import { compact, DASH, f0, f2, px, sg, signColor } from '@shared/format';
+import { compact, DASH, f0, f2, pct, px, sg, signColor } from '@shared/format';
 import type { Clock } from '@shared/timeFormat';
 import type { ContractRef, EarningsEvent, MarketDataType, OptionRight, Quote } from '@shared/types';
 import { qtyLabel, type FigureSource } from './calc';
@@ -23,6 +23,8 @@ export interface CellWords {
   shortable: readonly [string, string, string];
   /** An earnings release's time of day. */
   earningsTimes: Record<NonNullable<EarningsEvent['time']>, string>;
+  /** Where an earnings date comes from (the earnings cell's tooltip). */
+  earningsSources: Record<'wsh' | 'scanner', string>;
   /** A bond's features; `none`: IB says it has none of them. */
   features: Record<'callable' | 'putable' | 'convertible' | 'none', string>;
   /** The Quote status cell's tooltip while IB refused the line's extra generic ticks. */
@@ -111,6 +113,14 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
       return String(Math.trunc(v));
     case 'pnl':
       return sg(v, f0);
+    case 'chg':
+      return sg(v, price);
+    case 'pct':
+      return pct(v * 100);
+    case 'pctU':
+      return `${f2(v * 100)}%`;
+    case 'num2':
+      return f2(v);
     case 'vol':
       return `${f2(v * 100, 1)}%`;
     case 'big':
@@ -150,7 +160,7 @@ export function priceDigits(c: CellCtx): number | undefined {
  */
 export function cellText(def: ColumnDef, c: CellCtx, w: CellWords, clock: Clock): string {
   if (!applies(def, c.row)) return '';
-  const text = formatValue(def.fmt, def.value(c), w, clock, c.now, def.fmt === 'px' ? priceDigits(c) : undefined);
+  const text = formatValue(def.fmt, def.value(c), w, clock, c.now, def.fmt === 'px' || def.fmt === 'chg' ? priceDigits(c) : undefined);
   if (def.fmt === 'dataType' && text !== DASH && c.q?.source) return `${text} · ${c.q.source.exchange}`;
   return text;
 }

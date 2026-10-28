@@ -23,6 +23,7 @@ export function PositionsView({ rows }: { rows: PositionRow[] }) {
   const events = useMemo(() => nextEvents(underlyings, dividends, earnings, new Date(now)), [underlyings, dividends, earnings, now]);
 
   const notes: Partial<Record<EarningsState, string>> = {
+    searching: m.eventsNoteSearching,
     unsubscribed: m.eventsNoteUnsubscribed,
     unavailable: m.eventsNoteUnavailable,
   };

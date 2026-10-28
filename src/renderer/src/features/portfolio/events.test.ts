@@ -93,6 +93,25 @@ describe('next events', () => {
     expect(Object.keys(events.get('STK:TSLA')!).sort()).toEqual(['date', 'days', 'key', 'kind', 'symbol', 'underlying']);
   });
 
+  it('marks the dates IB’s market scanner found, so the chip can name its source', () => {
+    const events = nextEvents(
+      und,
+      {},
+      {
+        status: 'ok',
+        source: 'scanner',
+        events: [
+          { key: 'STK:AAPL', date: '20261016', time: 'amc', estimated: true },
+          { key: 'STK:TSLA', date: '20261014' },
+        ],
+      },
+      NOW,
+    );
+    expect(events.get('STK:AAPL')).toMatchObject({ time: 'amc', fromScanner: true });
+    expect(events.get('STK:TSLA')?.fromScanner).toBeUndefined();
+    expect(eventSig(events.get('STK:AAPL'))).not.toBe(eventSig({ ...events.get('STK:AAPL')!, fromScanner: undefined }));
+  });
+
   it('writes the date as month/day', () => {
     expect(monthDay('20261023')).toBe('10/23');
     expect(monthDay('20260105')).toBe('01/05');
@@ -103,6 +122,8 @@ describe('next events', () => {
     expect(earningsState({ status: 'ok', events: [] }, true)).toBe('ok');
     expect(earningsState({ status: 'unsubscribed', events: [] }, true)).toBe('unsubscribed');
     expect(earningsState({ status: 'unavailable', events: [] }, true)).toBe('unavailable');
+    // IB's market scanner is still looking dates up.
+    expect(earningsState({ status: 'ok', events: [], source: 'scanner', pending: true }, true)).toBe('searching');
     // Not connected: the table says so itself.
     expect(earningsState({ status: 'unavailable', events: [] }, false)).toBe('ok');
   });

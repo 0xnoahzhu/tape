@@ -93,13 +93,13 @@ export function useDailyCloses(underlying: ContractRef | null): { closes: number
 }
 
 /**
- * A stock's next earnings report (Wall Street Horizon, main keeps the answers for the day): one
- * dated today is past once reported (vol.ts → upcomingEarnings). Undefined for indices, without the
- * WSH subscription (the paper account) and while unknown.
+ * A stock's next earnings report (Wall Street Horizon, else IB's market scanner; main keeps the
+ * answers for the day): one dated today is past once reported (vol.ts → upcomingEarnings). Undefined
+ * for indices and while unknown; an answer the scanner is still working on is asked again.
  */
 export function useNextEarnings(underlying: ContractRef | null): EarningsEvent | undefined {
   const key = underlying?.secType === 'STK' ? earningsKey(underlying) : null;
-  const entry = useCachedRequest<CorporateEarnings>(key, () => window.tape.getEarnings([underlying!]), HOUR, (d) => d.status === 'unavailable');
+  const entry = useCachedRequest<CorporateEarnings>(key, () => window.tape.getEarnings([underlying!]), HOUR, (d) => d.status === 'unavailable' || !!d.pending);
   return entry?.data?.status === 'ok' ? upcomingEarnings(entry.data.events) : undefined;
 }
 

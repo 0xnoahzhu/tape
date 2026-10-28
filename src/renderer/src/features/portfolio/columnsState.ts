@@ -46,8 +46,8 @@ export interface ColumnPrefs {
  * Each of IB's figures that had two columns has one now (the real-time source first): IB's
  * portfolio-update and P&L columns and the Mark went into Price, Value, Unrl. P&L, Realized P&L and
  * Day P&L, and Avg (IB's cost ÷ the multiplier) became IB's Avg cost. An id that is neither a column
- * nor here is dropped: Tape's calculated columns (% NLV, Cost basis, DTE, Mid, Chg, the position
- * greeks, …) have no IB equivalent.
+ * nor here is dropped: Tape's former calculated columns without a successor (the old % NLV, DTE,
+ * the position greeks, …). Those of the Calculated group come back under their own ids.
  */
 export const COLUMN_ALIASES: Readonly<Record<string, ColumnId>> = {
   avgPrice: 'averageCost',

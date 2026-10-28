@@ -99,7 +99,7 @@ describe('fromIbContract / toContractInfo', () => {
       liquidHours: '20261005:0930-20261005:1600',
       validExchanges: ['SMART', 'AMEX', 'NYSE'],
       orderTypes: ['ACTIVETIM', 'AD', 'LMT'],
-      v: 2,
+      v: 3,
     });
   });
 
@@ -112,7 +112,7 @@ describe('fromIbContract / toContractInfo', () => {
       { longName: 'APPLE INC', secIdList: [{ tag: 'ISIN', value: 'US0378331005' }], marketName: 'NMS', contractMonth: '', realExpirationDate: '', underSymbol: '', underConId: 0, stockType: 'COMMON', timeZoneId: 'US/Eastern' },
     );
     const info = toContractInfo(d, stock('AAPL'));
-    expect(info).toMatchObject({ v: 2, isin: 'US0378331005', marketName: 'NMS', stockType: 'COMMON' });
+    expect(info).toMatchObject({ v: 3, isin: 'US0378331005', marketName: 'NMS', stockType: 'COMMON' });
     for (const k of ['contractMonth', 'realExpirationDate', 'lastTradeTime', 'lastTradeZone', 'underSymbol', 'underConId', 'underSecType', 'bond'] as const) expect(info[k], k).toBeUndefined();
   });
 
@@ -185,6 +185,7 @@ describe('fromIbContract / toContractInfo', () => {
         issueDate: '20241115',
         bondType: 'US-T',
         couponType: 'FIXED',
+        ratings: 'AAA',
         callable: false,
         putable: false,
         convertible: false,
@@ -200,7 +201,7 @@ describe('fromIbContract / toContractInfo', () => {
       longName: 'United States Treasury',
       minTick: 0.0001,
       isin: 'US91282CLW90',
-      bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115', issueDate: '20241115', bondType: 'US-T', couponType: 'FIXED', callable: false, putable: false, convertible: false, descAppend: 'T 4 1/4 11/15/34' },
+      bond: { cusip: '91282CLW9', coupon: 4.25, maturity: '20341115', issueDate: '20241115', bondType: 'US-T', couponType: 'FIXED', ratings: 'AAA', callable: false, putable: false, convertible: false, descAppend: 'T 4 1/4 11/15/34' },
     });
     expect(info.bond?.notes).toBeUndefined();
     // Server 193's "date time zone" form, which the decoder keeps whole: the maturity is its date.

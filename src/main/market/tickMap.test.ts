@@ -72,6 +72,23 @@ describe('applyTick prices', () => {
     expect(q.bidYield).toBeUndefined();
   });
 
+  it('keeps the exchanges at the bid, ask and last trade as IB writes them (ticks 32, 33, 84)', () => {
+    const q = q0();
+    applyTick(q, { kind: 'string', field: TICK.BID_EXCH, value: 'KPTVZU' }, stock);
+    applyTick(q, { kind: 'string', field: TICK.ASK_EXCH, value: 'PQV' }, stock);
+    applyTick(q, { kind: 'string', field: TICK.LAST_EXCH, value: 'Z' }, stock);
+    expect(q).toMatchObject({ bidExch: 'KPTVZU', askExch: 'PQV', lastExch: 'Z' });
+    expect(applyTick(q, { kind: 'string', field: TICK.LAST_EXCH, value: 'Z' }, stock)).toBe(false);
+    applyTick(q, { kind: 'string', field: TICK.BID_EXCH, value: '' }, stock);
+    expect(q.bidExch).toBeUndefined();
+    // Live lines only: they go with a new line and when the line turns delayed.
+    expect(clearGenericFields(q, '221')).toBe(true);
+    expect(q.askExch).toBeUndefined();
+    const live: Quote = { ...q0(), bidExch: 'P', lastExch: 'D' };
+    expect(clearLiveOnlyFields(live)).toBe(true);
+    expect(live).toMatchObject({ bidExch: undefined, lastExch: undefined });
+  });
+
   it('takes the frozen ETF NAV (97) only while the line has sent no live one (96)', () => {
     const q = q0();
     applyTick(q, { kind: 'price', field: TICK.ETF_NAV_FROZEN_LAST, value: 571.1 }, stock);

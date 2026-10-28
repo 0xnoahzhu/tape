@@ -74,15 +74,17 @@ describe('column catalog', () => {
     // The editor lists the groups in catalog order, each contiguous.
     const groups = COLUMN_IDS.map((id) => COLUMNS[id].group);
     expect(groups.filter((g, i) => g !== groups[i - 1])).toEqual([...COLUMN_GROUPS]);
-    expect(COLUMN_GROUPS).toEqual(['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other']);
-    expect(COLUMN_IDS).toHaveLength(107);
+    expect(COLUMN_GROUPS).toEqual(['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other', 'calc']);
+    expect(COLUMN_IDS).toHaveLength(126);
   });
 
-  it('keeps one column per datum: IB’s figures merged, Tape’s calculations gone', () => {
+  it('keeps one column per datum: IB’s figures merged, Tape’s calculations in their own group', () => {
     const ids: readonly string[] = COLUMN_IDS;
     for (const gone of ['marketPriceIb', 'marketValueIb', 'unrealizedIb', 'realizedIb', 'dailyPnlIb', 'unrealizedPnlIb', 'realizedPnlIb', 'valuePnlIb', 'mark']) expect(ids, gone).not.toContain(gone);
-    for (const calc of ['avgPrice', 'costBasis', 'weight', 'unrealizedPct', 'valueBase', 'pctGross', 'totalPnl', 'daysToExpiry', 'mid', 'spread', 'change', 'moneyness', 'positionDelta', 'navPremium', 'nextEarningsEst'])
+    for (const calc of ['avgPrice', 'weight', 'valueBase', 'pctGross', 'totalPnl', 'daysToExpiry', 'moneyness', 'positionDelta', 'navPremium', 'nextEarningsEst'])
       expect(ids, calc).not.toContain(calc);
+    // Every calculated column is in the Calculated group, and only they are.
+    for (const id of COLUMN_IDS) expect(COLUMNS[id].group === 'calc', id).toBe(!!COLUMNS[id].calc);
     expect(COLUMN_IDS.filter((id) => COLUMNS[id].group === 'position')).toEqual([
       'symbol',
       'name',
@@ -117,10 +119,11 @@ describe('column catalog', () => {
     }
   });
 
-  it('starts every tooltip with IB’s source', () => {
+  it('starts every tooltip with IB’s source, or Tape’s formula for a calculated column', () => {
     expect(columnTip(en, 'bid').startsWith('IB · tick 1 Bid')).toBe(true);
     expect(columnTip(en, 'value').split('\n')).toEqual(['IB · reqPnLSingle value (real time), else updatePortfolio marketValue (every 3 min). The cell’s tooltip says which', 'Market value']);
-    for (const id of COLUMN_IDS) expect(columnTip(en, id).startsWith('IB · '), id).toBe(true);
+    for (const id of COLUMN_IDS) expect(columnTip(en, id).startsWith(COLUMNS[id].calc ? 'Tape · ' : 'IB · '), id).toBe(true);
+    expect(columnTip(en, 'mid').split('\n')).toEqual(['Tape · (Bid + Ask) ÷ 2', 'Midpoint of the bid and ask']);
   });
 
   it('says why an unverified column is not verified yet, in both languages', () => {
@@ -359,6 +362,62 @@ describe('column values', () => {
     expect(text('liquidHours', c)).toBe('09:30–16:00');
     expect(COLUMNS.liquidHours.title!(c, words)).toBe('US/Eastern');
     expect(text('tradingHours', c)).toBe('—');
+  });
+});
+
+describe('calculated columns', () => {
+  it('works out the change, mid, spread and the position figures from IB’s fields', () => {
+    const c = { ...ctx(aapl, { quote: { ...aaplQuote, open: 226 } }), netLiq: 100_000 };
+    expect(value('change', c)).toBeCloseTo(2.48, 10);
+    expect(text('change', c)).toBe('+2.48');
+    expect(value('changePct', c)).toBeCloseTo(2.48 / 225, 10);
+    expect(text('changePct', c)).toBe('+1.10%');
+    expect(value('changeOpen', c)).toBeCloseTo(1.48, 10);
+    expect(value('mid', c)).toBeCloseTo(227.475, 10);
+    expect(value('spread', c)).toBeCloseTo(0.05, 10);
+    expect(value('costBasis', c)).toBe(20_000);
+    // reqPnLSingle's unrealized P&L against the cost basis.
+    expect(value('unrealizedPct', c)).toBeCloseTo(2_748 / 20_000, 10);
+    expect(text('unrealizedPct', c)).toBe('+13.74%');
+    expect(value('pctNetLiq', c)).toBeCloseTo(0.22748, 10);
+    // Without a net liquidation, or a last trade, there is nothing to show.
+    expect(value('pctNetLiq', { ...c, netLiq: undefined })).toBeUndefined();
+    expect(value('change', ctx(aapl, { quote: { ...aaplQuote, last: undefined } }))).toBeUndefined();
+  });
+
+  it('compares a short’s unrealized P&L with what it was sold for, and converts its value at IB’s rate', () => {
+    const short = position(aaplStock, { quantity: -100, averageCost: 250, pnlUnrealized: 2_252, pnlValue: -22_748 });
+    const c = { ...ctx(short, { quote: aaplQuote, fx: 0.5 }), netLiq: 100_000 };
+    expect(value('costBasis', c)).toBe(-25_000);
+    expect(value('unrealizedPct', c)).toBeCloseTo(2_252 / 25_000, 10);
+    expect(value('pctNetLiq', c)).toBeCloseTo(-0.11374, 10);
+  });
+
+  it('takes an option’s 0 bid in the mid, and no crossed quote', () => {
+    expect(value('mid', ctx(aaplCall, { quote: { ...callQuote, bid: 0, ask: 0.1 } }))).toBeCloseTo(0.05, 10);
+    expect(value('spread', ctx(aaplCall, { quote: { ...callQuote, bid: 3.4, ask: 3.3 } }))).toBeUndefined();
+  });
+
+  it('works out the yield and the ratios of the underlying statistics', () => {
+    const c = ctx(aapl, { quote: { ...aaplQuote, dividends: { next12m: 1.04 }, putVolume: 300, callVolume: 600, putOpenInterest: 900, callOpenInterest: 0, impliedVol: 0.3, rtHistVol: 0.25 } });
+    expect(value('divYield', c)).toBeCloseTo(1.04 / 227.47, 10);
+    expect(text('divYield', c)).toBe('0.46%');
+    expect(value('putCallVolume', c)).toBe(0.5);
+    expect(text('putCallVolume', c)).toBe('0.50');
+    // No call open interest: no ratio.
+    expect(value('putCallInterest', c)).toBeUndefined();
+    expect(value('ivHv', c)).toBeCloseTo(1.2, 10);
+    expect(text('ivHv', c)).toBe('120.00%');
+    // Their generic ticks are asked for only while the columns are shown.
+    expect(COLUMNS.divYield.profile).toBe('dividends');
+    expect(COLUMNS.putCallVolume.profile).toBe('optionFlow');
+    expect(COLUMNS.ivHv.profile).toBe('volatility');
+  });
+
+  it('counts the calendar days to the last trading day in New York', () => {
+    // NOW is 10/06; the call's last trading day 10/16.
+    expect(value('daysToLastTrade', ctx(aaplCall))).toBe(10);
+    expect(text('daysToLastTrade', ctx(aapl))).toBe('');
   });
 });
 
