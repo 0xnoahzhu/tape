@@ -225,8 +225,10 @@ export interface HeaderFigures {
   /** IB's StockMarketValue / OptionMarketValue (account updates). */
   stockValue?: number;
   optionValue?: number;
-  /** IB's Leverage tag (gross position value / net liquidation). */
+  /** IB's leverage of the securities segment (gross position value / net liquidation). */
   leverage?: number;
+  /** IB's Leverage-C, only while the commodities segment holds anything (futures). */
+  leverageC?: number;
   /** IB's Cushion tag in percent (excess liquidity / net liquidation; IB sends a fraction). */
   cushionPct?: number;
 }
@@ -240,13 +242,15 @@ export function headerFigures(a: AccountSummary | null): HeaderFigures {
     stockValue: a.stockMarketValue,
     optionValue: a.optionMarketValue,
     leverage: a.leverage,
+    ...(finite(a.grossPositionValueC) && a.grossPositionValueC !== 0 && finite(a.leverageC) ? { leverageC: a.leverageC } : {}),
     cushionPct: finite(a.cushion) ? a.cushion * 100 : undefined,
   };
 }
 
-/** "1.38×"; "—" when unknown. */
-export function leverageLabel(lev: number | undefined): string {
-  return finite(lev) ? `${f2(lev)}×` : DASH;
+/** "1.38×"; "—" when unknown. With the commodities segment's: "0.89× · C 2.10×". */
+export function leverageLabel(lev: number | undefined, levC?: number): string {
+  const s = finite(lev) ? `${f2(lev)}×` : DASH;
+  return finite(levC) ? `${s} · C ${f2(levC)}×` : s;
 }
 
 /** "18.4%", "−1.0%"; "—" when unknown. */

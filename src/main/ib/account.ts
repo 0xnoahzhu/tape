@@ -19,7 +19,8 @@ import { fromIbContract, num } from './ibContract';
 
 /**
  * reqAccountSummary tags and the summary fields they fill. The header shows IB's own Cushion and
- * Leverage rather than computing them from the other figures.
+ * Leverage rather than computing them from the other figures. IB answers no Leverage here (a live
+ * account, October 2026): it sends it with the account updates instead (SEGMENT_VALUES).
  */
 const SUMMARY_TAGS = {
   NetLiquidation: 'netLiquidation',
@@ -40,7 +41,22 @@ const ACCOUNT_VALUES = {
   OptionMarketValue: 'optionMarketValue',
 } as const satisfies Record<string, keyof AccountSummary>;
 
-type NumericField = (typeof SUMMARY_TAGS)[keyof typeof SUMMARY_TAGS] | (typeof ACCOUNT_VALUES)[keyof typeof ACCOUNT_VALUES];
+/**
+ * updateAccountValue keys of one segment, taken whatever their currency: IB's leverage of the
+ * securities segment ("Leverage-S", what holds stocks and options: the header's Leverage), and the
+ * commodities segment's ("Leverage-C") with its gross position value, which says whether it holds
+ * anything (futures). A live account sends its leverage only this way.
+ */
+const SEGMENT_VALUES = {
+  'Leverage-S': 'leverage',
+  'Leverage-C': 'leverageC',
+  'GrossPositionValue-C': 'grossPositionValueC',
+} as const satisfies Record<string, keyof AccountSummary>;
+
+type NumericField =
+  | (typeof SUMMARY_TAGS)[keyof typeof SUMMARY_TAGS]
+  | (typeof ACCOUNT_VALUES)[keyof typeof ACCOUNT_VALUES]
+  | (typeof SEGMENT_VALUES)[keyof typeof SEGMENT_VALUES];
 
 /**
  * Tags IB may answer under another name: Leverage with its securities segment's suffix
@@ -62,9 +78,12 @@ const LEDGER_PREFIX = '$LEDGER-';
  * holds that currency's positions only, so it is never the account's figure, not even the account
  * currency's row (a USD account holding HKD stocks would show its USD stocks alone). Reading BASE
  * alone also never depends on the account currency, which is not known before NetLiquidation.
+ * A segment's value (SEGMENT_VALUES) is taken as it is, whatever its currency.
  */
 export function accountValueField(key: string, currency: string): NumericField | undefined {
   const name = key.startsWith(LEDGER_PREFIX) ? key.slice(LEDGER_PREFIX.length) : key;
+  const segment = (SEGMENT_VALUES as Record<string, NumericField>)[name];
+  if (segment) return segment;
   const field = (ACCOUNT_VALUES as Record<string, NumericField>)[name];
   return field && currency === 'BASE' ? field : undefined;
 }

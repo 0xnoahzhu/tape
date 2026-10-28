@@ -140,6 +140,20 @@ describe('account service', () => {
     expect(t.svc.getSummary()).toMatchObject({ leverage: 1.4, netLiquidation: 100_000 });
   });
 
+  it('reads IB’s Leverage from the account updates, where a live account sends it (the securities segment’s)', async () => {
+    const t = setup();
+    await vi.advanceTimersByTimeAsync(0);
+    t.ready();
+    // As a live account sent them (October 2026): no Leverage in the account summary.
+    t.emit('updateAccountValue', 'Leverage-C', '0.00', '', 'DU1');
+    t.emit('updateAccountValue', 'Leverage-S', '0.89', '', 'DU1');
+    expect(t.svc.getSummary()?.leverage).toBe(0.89);
+    // The commodities segment's never replaces it; it is kept apart, with that segment's gross position value.
+    t.emit('updateAccountValue', 'Leverage-C', '0.00', '', 'DU1');
+    t.emit('updateAccountValue', 'GrossPositionValue-C', '0.00', 'USD', 'DU1');
+    expect(t.svc.getSummary()).toMatchObject({ leverage: 0.89, leverageC: 0, grossPositionValueC: 0 });
+  });
+
   it('reads Stocks and Options from IB’s BASE row, whatever the order and the account currency', async () => {
     const t = setup();
     await vi.advanceTimersByTimeAsync(0);

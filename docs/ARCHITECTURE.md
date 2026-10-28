@@ -1751,7 +1751,7 @@ and does nothing while a dialog is open. Portfolio › Orders asks IB for its li
 | Cash / Margin loan | `TotalCashValue`; a negative value reads Margin loan, shown positive |
 | Stocks, Options | IB's `StockMarketValue` / `OptionMarketValue` (account updates, about every 3 minutes; paper accounts send them only as `$LEDGER-…` keys). IB sends one row per currency plus `BASE`, for the plain keys as for the `$LEDGER-…` ones; only the `BASE` row is read (`account.ts → accountValueField`): a currency's own row holds that currency's positions only, the account currency's row too |
 | Init margin, Maint margin | `InitMarginReq`, `MaintMarginReq` |
-| Leverage | IB's `Leverage` tag (gross position value / net liquidation; read under `Leverage-S` too, the securities segment's name, `account.ts → summaryField`) |
+| Leverage | IB's leverage (gross position value / net liquidation) of the securities segment: `Leverage-S` from the account updates, where a live account sends it (it answers no `Leverage` to the account summary; `account.ts → accountValueField`), else the summary's `Leverage` / `Leverage-S` (`summaryField`). The commodities segment's `Leverage-C` is never taken for it: while that segment holds anything (`GrossPositionValue-C` not 0: futures) it shows beside it, "0.89× · C 2.10×" (`calc.ts → headerFigures`, `leverageLabel`), both IB's as sent |
 | Accrued div | `AccruedDividend` |
 
 ### Portfolio positions table (`features/portfolio`)

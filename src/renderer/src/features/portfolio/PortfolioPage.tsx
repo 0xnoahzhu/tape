@@ -82,7 +82,7 @@ function AccountStrip({ account, figures }: { account: AccountSummary | null; fi
     { label: m.options, value: sg(figures.optionValue, f0), title: m.optionsHint },
     { label: m.initMargin, value: f0(a?.initMarginReq) },
     { label: m.maintMargin, value: f0(a?.maintMarginReq) },
-    { label: m.leverage, value: leverageLabel(figures.leverage), title: m.leverageHint },
+    { label: m.leverage, value: leverageLabel(figures.leverage, figures.leverageC), title: figures.leverageC === undefined ? m.leverageHint : `${m.leverageHint}\n${m.leverageCHint}` },
     { label: m.accruedDiv, value: f0(a?.accruedDividend) },
   ];
   return (

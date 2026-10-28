@@ -505,8 +505,15 @@ export interface AccountSummary {
   accruedDividend?: number;
   /** IB's `Cushion`: excess liquidity / net liquidation, as a fraction (0.942 = 94.2 %). */
   cushion?: number;
-  /** IB's `Leverage`: gross position value / net liquidation (1.38 = 1.38×). */
+  /**
+   * IB's leverage, gross position value / net liquidation (1.38 = 1.38×), of the securities segment
+   * (`Leverage-S`, which a live account sends with the account updates; `Leverage` when IB answers it).
+   */
   leverage?: number;
+  /** IB's `Leverage-C`: the commodities segment's (futures, futures options), as sent. */
+  leverageC?: number;
+  /** IB's `GrossPositionValue-C`: whether the commodities segment holds anything (its leverage then shows). */
+  grossPositionValueC?: number;
   /** IB's StockMarketValue / OptionMarketValue (account updates, in the account currency). */
   stockMarketValue?: number;
   optionMarketValue?: number;

@@ -284,6 +284,16 @@ describe('header figures', () => {
     });
   });
 
+  it('adds IB’s Leverage-C only while the commodities segment holds anything', () => {
+    // A stocks-and-options account, as a live one sends it: the commodities segment is empty.
+    expect(headerFigures({ ...summary, leverage: 0.89, leverageC: 0, grossPositionValueC: 0 }).leverageC).toBeUndefined();
+    // With futures held.
+    const futures = headerFigures({ ...summary, leverage: 0.89, leverageC: 2.1, grossPositionValueC: 250_000 });
+    expect(futures).toMatchObject({ leverage: 0.89, leverageC: 2.1 });
+    expect(leverageLabel(futures.leverage, futures.leverageC)).toBe('0.89× · C 2.10×');
+    expect(leverageLabel(0.89)).toBe('0.89×');
+  });
+
   it('draws IB’s cushion as a bar, red below 10 %', () => {
     expect(cushionBar(headerFigures(summary).cushionPct)).toEqual({ fill: expect.closeTo(94.25, 2), warn: false });
     expect(cushionBar(9)).toEqual({ fill: 9, warn: true });

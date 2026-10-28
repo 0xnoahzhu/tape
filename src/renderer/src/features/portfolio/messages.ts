@@ -45,7 +45,8 @@ export const usePortfolioMessages = createMessages({
     accruedDiv: 'Accrued div',
     stocksHint: 'IB’s StockMarketValue (account updates, every 3 min)',
     optionsHint: 'IB’s OptionMarketValue (account updates, every 3 min), shorts negative',
-    leverageHint: 'IB’s Leverage: gross position value / net liquidation',
+    leverageHint: 'IB’s Leverage-S: the securities segment’s gross position value / net liquidation',
+    leverageCHint: 'C: IB’s Leverage-C, the commodities segment’s (futures), shown while it holds positions',
     /** Negative cash in the header. */
     marginLoan: 'Margin loan',
     marginLoanHint: 'Negative cash: borrowed from IBKR',
@@ -486,7 +487,8 @@ export const usePortfolioMessages = createMessages({
     accruedDiv: '应计股息',
     stocksHint: 'IB 的 StockMarketValue（账户更新，每 3 分钟）',
     optionsHint: 'IB 的 OptionMarketValue（账户更新，每 3 分钟），空头为负',
-    leverageHint: 'IB 的 Leverage：持仓总值 / 净清算值',
+    leverageHint: 'IB 的 Leverage-S：证券分部的持仓总值 / 净清算值',
+    leverageCHint: 'C：IB 的 Leverage-C，商品分部（期货）的杠杆率，有持仓时才显示',
     marginLoan: '融资负债',
     marginLoanHint: '现金为负：向 IBKR 借入的金额',
 
