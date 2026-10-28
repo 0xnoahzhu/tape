@@ -8,11 +8,13 @@
 // to `data-tip`, so the system shows nothing; the element keeps it as an accessible description
 // (`aria-description`, unless it names one itself). React sets a title again only when its value
 // changes: the next move (or the observer while the tip shows) takes the new one. Hover areas of the
-// app's own tips (OverflowTip.tsx, marked `data-own-tip`) are left to them.
+// app's own tips (OverflowTip.tsx, marked `data-own-tip`) are left to them. A title that only
+// repeats the element's text (the full name of a cut one) shows only while that text is cut, and a
+// tip starts where the element's text does (tipLeft), not at a wide box's left edge.
 
 import { useEffect, useState } from 'react';
 import { markTipLeft, Tip, tipDelay } from './OverflowTip';
-import type { TipAnchor } from './tipGeometry';
+import { isTruncated, tipLeft, type TipAnchor } from './tipGeometry';
 
 const HIDE_ON = ['pointerdown', 'wheel', 'keydown'] as const;
 
@@ -54,9 +56,11 @@ export function GlobalTip() {
     const show = (el: Element) => {
       const text = el.getAttribute('data-tip');
       if (!el.isConnected || !text) return;
+      // A title that only repeats the element's text is for when that text is cut: none while it is whole.
+      if (el instanceof HTMLElement && text.trim() === (el.textContent ?? '').trim() && !isTruncated(el)) return;
       const r = el.getBoundingClientRect();
       open = true;
-      setShown({ host: el, text, anchor: { left: r.left, top: r.top, bottom: r.bottom } });
+      setShown({ host: el, text, anchor: { left: tipLeft(el), top: r.top, bottom: r.bottom } });
       // A new title while the tip shows (a price, a count) is taken at once.
       watch = new MutationObserver(() => {
         if (tipHost(el) !== el) return hide();

@@ -26,6 +26,7 @@ import { useConnectedOrders } from '../../state/connectedLists';
 import { useOrderFeedback } from '../../state/orderFeedback';
 import { useStore } from '../../state/store';
 import { DoubleChevronIcon } from '../../ui/icons';
+import { useOverflowTip } from '../../ui/OverflowTip';
 import { TabItems } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
 import { Dropdown, MenuChoice } from '../../ui/select';
@@ -105,13 +106,16 @@ function HeaderRow({ grid, headers, right }: { grid: string; headers: Array<[str
 }
 
 /**
- * Right-aligned number that clips with an ellipsis (full value on hover) instead of overlapping its
- * neighbor. `source`: which of IB's sources the figure shows, after it in the tooltip.
+ * Right-aligned number that clips with an ellipsis instead of overlapping its neighbor. Its tip
+ * (the app's overflow tip) gives the full value only while it is cut, and `source` (which of IB's
+ * sources the figure shows) always: a number shown whole needs no tip of itself.
  */
 function NumCell({ text, color, cell, source }: { text: string; color?: string; cell?: string; source?: string }) {
+  const { textRef, hoverProps, tip } = useOverflowTip(text, undefined, source);
   return (
-    <div className="ellipsis" data-cell={cell} title={[text, source].filter(Boolean).join('\n') || undefined} style={{ textAlign: 'right', color }}>
+    <div ref={textRef} {...hoverProps} className="ellipsis" data-cell={cell} style={{ textAlign: 'right', color }}>
       {text}
+      {tip}
     </div>
   );
 }

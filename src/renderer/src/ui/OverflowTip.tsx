@@ -14,7 +14,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { contentEdges, isTruncated, placeTip, TIP_MARGIN, TIP_PAD_X, type TipAnchor } from './tipGeometry';
+import { contentEdges, isTruncated, placeTip, tipLeft, TIP_MARGIN, TIP_PAD_X, type TipAnchor } from './tipGeometry';
 
 /** How long the pointer rests on the box before the tip shows. */
 const TIP_DELAY_MS = 350;
@@ -63,7 +63,7 @@ export function useOverflowTip<T extends HTMLElement = HTMLDivElement>(content: 
     const el = textRef.current;
     const box = hovered.getBoundingClientRect();
     const more = extra ? <div style={{ whiteSpace: 'pre-line', color: 'var(--mu)' }}>{extra}</div> : null;
-    if (!el?.isConnected || !isTruncated(el)) return more && { left: box.left, top: box.top, bottom: box.bottom, content: more };
+    if (!el?.isConnected || !isTruncated(el)) return more && { left: tipLeft(el?.isConnected ? el : hovered), top: box.top, bottom: box.bottom, content: more };
     const span = spanRef?.current;
     const anchor = { left: contentEdges(el).left - TIP_PAD_X, top: box.top, bottom: box.bottom, right: span?.isConnected ? contentEdges(span).right : undefined };
     return more ? { ...anchor, content: <>{content}{more}</> } : anchor;
@@ -80,7 +80,7 @@ export function useHoverTip(content: ReactNode | null): Omit<OverflowTip<HTMLEle
   return useRestTip(<div style={{ whiteSpace: 'pre-line' }}>{content}</div>, (hovered) => {
     if (content == null || content === '') return null;
     const box = hovered.getBoundingClientRect();
-    return { left: box.left, top: box.top, bottom: box.bottom };
+    return { left: tipLeft(hovered), top: box.top, bottom: box.bottom };
   });
 }
 

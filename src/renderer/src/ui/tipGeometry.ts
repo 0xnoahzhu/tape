@@ -30,6 +30,18 @@ export function isTruncated(el: HTMLElement): boolean {
   return overflows(range.getBoundingClientRect().width, right - left);
 }
 
+/**
+ * Where a tip for `el` starts: its padding before the element's text, so the tip's text starts where
+ * that does (a right-aligned number's or header's too, not the wide cell's left edge); the element's
+ * own left edge when it has no text (an icon button).
+ */
+export function tipLeft(el: Element): number {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const text = range.getBoundingClientRect();
+  return text.width > 0 ? text.left - TIP_PAD_X : el.getBoundingClientRect().left;
+}
+
 export interface TipAnchor {
   /** Where the tip's left edge goes: its padding before the cut text, so the full text starts where that does. */
   left: number;

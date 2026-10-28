@@ -1807,8 +1807,12 @@ shows the app's tip under it once the pointer rests, at once right after another
 (`markTipLeft` / `tipDelay`, shared with the hooks), until the pointer leaves it, a press, a wheel,
 a key, a scroll that moves it, a resize or a blur. React sets a title again only when its value
 changes; the next move, or a `MutationObserver` while the tip shows, takes the new text. Hover areas
-of the hooks' tips carry `data-own-tip` and are left to them. The lock screen's own titles show over
-it (z-index 45), every other tip under it (35). Where IB sends one datum twice, one
+of the hooks' tips carry `data-own-tip` and are left to them. A title that only repeats the
+element's text (the full name of a cut one) shows only while that text is cut (`isTruncated`). Every
+tip starts where its element's text does (`tipGeometry.ts → tipLeft`: a right-aligned number's or
+header's, not the wide cell's left edge; an icon's own edge). The lock screen's own titles show over
+it (z-index 45), every other tip under it (35). The panel under the chart gives a number's full value
+in its overflow tip only while it is cut, with IB's source under it (`NumCell`). Where IB sends one datum twice, one
 column shows it, the real-time source first (`calc.ts → positionRow`, one field per datum on
 `PositionRow` with its `…Source`): Price is IB's mark (tick 37), else the portfolio update's
 `marketPrice`; Value, Unrl. P&L and Realized P&L are `reqPnLSingle`'s `value`, `unrealizedPnL` and
