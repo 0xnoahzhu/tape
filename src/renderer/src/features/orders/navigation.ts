@@ -5,7 +5,7 @@ import { contractKey, sameContract, stock } from '@shared/contract';
 import type { NotificationView } from '@shared/ipc';
 import type { ContractRef, LocalizedName } from '@shared/types';
 import { useStore, type TradeView } from '../../state/store';
-import { quoteContract } from '../portfolio/calc';
+import { positionTarget, quoteContract } from '../portfolio/calc';
 import { showPortfolio } from '../portfolio/uiState';
 
 function watchedContracts(): Array<{ contract: ContractRef; name?: LocalizedName }> {
@@ -42,6 +42,16 @@ export function openInstrument(contract: ContractRef, view?: TradeView): void {
  */
 export function openOptionChart(contract: ContractRef): void {
   openInstrument(quoteContract(contract), 'chart');
+}
+
+/**
+ * Opens a list row's own chart (a position, an order or a trade): an option's too, SMART-routed, a
+ * stock's as the stock (portfolio/calc.ts → positionTarget). A combo has no chart of its own.
+ */
+export function openRowChart(contract: ContractRef): void {
+  if (contract.secType === 'BAG') return;
+  const t = positionTarget(contract);
+  openInstrument(t.contract, t.view);
 }
 
 /**

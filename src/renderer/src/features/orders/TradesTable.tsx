@@ -10,6 +10,7 @@ import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { useOrdersMessages } from './messages';
 import { priceOrUndefined, timeCell, tradeAmount } from './model';
+import { openRowChart } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
 const tradeColumns = (time: string) => `${time} minmax(0,2fr) 60px repeat(4,minmax(0,1fr)) 110px`;
@@ -44,7 +45,7 @@ export function TradesTable({ executions }: { executions: Execution[] }) {
         const buy = e.side === 'BUY';
         const title = [e.exchange, e.execId].filter(Boolean).join(' · ');
         return (
-          <Row key={e.execId} columns={columns} title={title}>
+          <Row key={e.execId} columns={columns} title={title} onOpen={() => openRowChart(e.contract)}>
             <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
               {timeCell(e.time, clock)}
             </div>

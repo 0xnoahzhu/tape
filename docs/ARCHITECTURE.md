@@ -1384,9 +1384,11 @@ under the options desk the panel adds the underlying's in its header while an op
 (`portfolio/exposure.ts → portfolioGreeks` with `portfolio/GreeksLine.tsx`: Δ sh, $Δ, Γ, Θ/day,
 Vega/pt, or "Greeks: waiting for IB on N options"), DTE (New York days, `optionDte`, in the accent
 within `SOON_DAYS`) and Δ (`positionDelta`: a stock's shares, so the column adds up to the exposure's
-Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Under the
-chart a click on a row opens that position's own chart (`portfolio/calc.ts → positionTarget`: an
-option's SMART-routed, a stock's as the stock). Under either view an option row's context menu opens the option's own chart (`orders/navigation.ts →
+Δ) after Qty, and a click on an option row selects its expiry and the Chain tab (`useDesk`). Under
+the desk a click on the stock's row, and under the chart on any position row, opens that position's
+own chart, and a click on an open order (not on its Modify / Cancel) its instrument's
+(`orders/navigation.ts → openRowChart`: an option's SMART-routed, a stock's as the stock). Under
+either view an option row's context menu opens the option's own chart (`orders/navigation.ts →
 openOptionChart`: SMART-routed as its quotes are; the option becomes the ticket's instrument). Modify
 from the options view switches to the chart, where the ticket is. An order just placed from a floating
 panel flashes for 15 s from IB's acceptance (`activityModel.ts → isFreshOrder`,
@@ -1697,7 +1699,7 @@ own remembered position (first: the bottom-right corner of the content area).
 
 ### Portfolio header (`features/portfolio/PortfolioPage.tsx`)
 
-A sticky header over the three tabs (Positions, Orders, Trades) in two tiers. Tier 1 (36 / 22px): net
+A fixed header over the three tabs (Positions, Orders, Trades) in two tiers (what is under it scrolls on its own, so no scrollbar runs beside it). Tier 1 (36 / 22px): net
 liquidation, day P&L, unrealized P&L, realized today, buying power and excess liquidity. Under excess
 liquidity hangs IB's margin cushion: a 3px bar with a tick at 10 % and "18.4% cushion", red below
 `MARGIN_CALL_CUSHION` (`calc.ts → cushionBar`). It is positioned absolutely under the stat, so tier 1
@@ -1712,7 +1714,11 @@ sent shows "—". The last account's figures stay while Tape is disconnected or
 `AccountSummary.updatedAt` ("Disconnected · as of 09:41 AM", "Connecting · …", or "Another account · …"
 for a summary that is not the connected account's).
 
-**Orders tab.** `orders/WorkingTable.tsx` lists the working orders; its actions cell
+**Orders tab.** `orders/WorkingTable.tsx` lists the working orders. A click on a row, as on a Trades
+row, opens its instrument's chart (`orders/table.tsx → Row` with `onOpen`, `navigation.ts →
+openRowChart`: an option's own, SMART-routed, a stock's as the stock, none for a combo); a click on a
+control in it (Modify, Cancel, Why?, all `role="button"`) or one that ends a text selection does not.
+Its actions cell
 (`orders/OrderActions.tsx`, `lib/orders.ts → orderRowAction`) offers Modify / Cancel only for an order
 Tape can cancel, "Cancelling…" while a cancel sent from here waits for IB (`StoreState.pendingCancels`,
 so a second click sends nothing), and for the others who placed them ("Other app" for client 0,

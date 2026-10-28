@@ -1,4 +1,4 @@
-// Portfolio page (design v6, "acct"): sticky two-tier account header with tabs, then Positions
+// Portfolio page (design v6, "acct"): fixed two-tier account header with tabs, then Positions
 // (grouped, with the toolbar line: PositionsView.tsx), Orders (the working orders) or Trades
 // (today's executions); the last two are the orders feature's tables. ⌘1 opens Positions, ⌘3 and
 // the menu's Orders open Orders (uiState.ts → showPortfolio). Each tab fills the page height, so no
@@ -169,7 +169,7 @@ function Header({ account, figures, counts }: { account: AccountSummary | null; 
   const dim = stale ? { opacity: 0.5 } : undefined;
 
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--p)', boxShadow: '0 1px 0 var(--ln)', flexShrink: 0 }}>
+    <div style={{ position: 'relative', zIndex: 3, background: 'var(--p)', boxShadow: '0 1px 0 var(--ln)', flexShrink: 0 }}>
       <StaleNote account={account} />
       {/* Tier 1. The bottom padding holds the cushion under Excess Liquidity. */}
       <div style={{ padding: '24px 32px 32px', display: 'flex', alignItems: 'last baseline', gap: '24px 44px', flexWrap: 'wrap', ...dim }}>
@@ -210,7 +210,7 @@ function Header({ account, figures, counts }: { account: AccountSummary | null; 
   );
 }
 
-/** The card of the Orders and Trades tabs: the table scrolls inside it under its sticky header. */
+/** The card of the Orders and Trades tabs: the rows scroll inside it under their header (orders/table.tsx → TableBody). */
 const TABLE_CARD = { background: 'var(--p)', margin: 'var(--gap) var(--pad) var(--pad)', flex: '1 1 0', minHeight: 240, display: 'flex', flexDirection: 'column' } as const;
 
 export function PortfolioPage() {
@@ -224,22 +224,25 @@ export function PortfolioPage() {
   const working = useMemo(() => workingOrders(orders), [orders]);
   const trades = useMemo(() => newestExecutions(executions), [executions]);
 
-  // No stable gutter: the page scrolls only when zoomed in with a small window, and its cards keep
-  // their own (scrollGutter.ts); a second one would leave an empty strip beside their scrollbars.
+  // The account header stays; what is under it scrolls only when zoomed in with a small window, its
+  // scrollbar beside the cards, not beside the header. No stable gutter there: the cards keep their
+  // own (scrollGutter.ts); a second one would leave an empty strip beside their scrollbars.
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--gbg)' }}>
       <Header account={account} figures={figures} counts={{ positions: rows.length, orders: working.length, trades: trades.length }} />
-      {tab === 'pos' && <PositionsView rows={rows} />}
-      {tab === 'ord' && (
-        <div data-pos="orders" style={TABLE_CARD}>
-          <WorkingTable orders={working} />
-        </div>
-      )}
-      {tab === 'fill' && (
-        <div data-pos="trades" style={TABLE_CARD}>
-          <TradesTable executions={trades} />
-        </div>
-      )}
+      <div data-pos="page-body" style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+        {tab === 'pos' && <PositionsView rows={rows} />}
+        {tab === 'ord' && (
+          <div data-pos="orders" style={TABLE_CARD}>
+            <WorkingTable orders={working} />
+          </div>
+        )}
+        {tab === 'fill' && (
+          <div data-pos="trades" style={TABLE_CARD}>
+            <TradesTable executions={trades} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

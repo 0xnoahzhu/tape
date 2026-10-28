@@ -62,8 +62,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   how (never counted as cancelled). IBKR sends Tape no updates of orders placed in other apps, so Tape asks
   for every app's open and completed orders every 30 s and whenever Orders or Cancel all opens; an order
   that ended elsewhere is announced (cancelled, or filled), and one IBKR no longer lists reads "Not reported
-  by IB" (not offered for cancel or modify) until IBKR says how it ended.
-- **Trades**: today's executions with commissions.
+  by IB" (not offered for cancel or modify) until IBKR says how it ended. A click on an order (not on
+  its Modify / Cancel) opens its instrument's chart, an option's own.
+- **Trades**: today's executions with commissions; a click on one opens its instrument's chart.
 
 **Trade**
 

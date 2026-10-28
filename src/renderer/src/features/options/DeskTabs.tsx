@@ -98,49 +98,55 @@ function ExpiryPicker({ expiries, selected }: { expiries: ChainExpiry[]; selecte
                 zIndex: 8,
                 width: 460,
                 maxHeight: 440,
-                overflow: 'auto',
-                ...stableGutter,
+                display: 'flex',
+                flexDirection: 'column',
                 background: 'var(--p)',
                 boxShadow: '0 0 0 1px var(--ln),0 16px 48px rgba(0,0,0,.22)',
-                padding: '6px 0 10px',
+                padding: '6px 0 0',
               }}
             >
-              <div style={{ display: 'grid', gridTemplateColumns: '72px 64px 60px 1fr', gap: 10, padding: '8px 16px', fontSize: 11, color: 'var(--dm)', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-                <div>{m.expDate}</div>
-                <div>{m.expDte}</div>
-                <div>{m.expKind}</div>
-                <div>{showClass ? m.expClass : ''}</div>
-              </div>
-              {groupByMonth(rows, lang).map((g) => (
-                <div key={g.name}>
-                  <div style={{ padding: '12px 16px 4px', fontSize: 11, fontWeight: 600, color: 'var(--mu)' }}>{g.name}</div>
-                  {g.rows.map((e) => {
-                    const on = e.expiry === selected;
-                    return (
-                      <div
-                        key={e.expiry}
-                        onClick={() => pick(e.expiry)}
-                        className="hover-p2"
-                        style={{
-                          height: 34,
-                          display: 'grid',
-                          gridTemplateColumns: '72px 64px 60px 1fr',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '0 16px',
-                          cursor: 'pointer',
-                          background: on ? 'var(--sel)' : 'transparent',
-                        }}
-                      >
-                        <div style={{ font: '600 12px/1 var(--num)', color: on ? 'var(--tx)' : 'var(--mu)' }}>{shortExpiry(e.expiry)}</div>
-                        <div style={{ font: '12px/1 var(--num)', color: 'var(--dm)' }}>{m.nDays(e.dte)}</div>
-                        <div style={{ font: '600 10px/1 var(--mono)', color: kindColor(e.kind) }}>{m.kinds[e.kind]}</div>
-                        <div style={{ font: '11px/1 var(--sans)', color: 'var(--ac)' }}>{showClass ? e.tradingClass : ''}</div>
-                      </div>
-                    );
-                  })}
+              {/* The header stays over the list, which scrolls on its own; both keep the same room for its
+                  scrollbar (scrollGutter.ts), so the columns line up. */}
+              <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '72px 64px 60px 1fr', gap: 10, padding: '8px 16px', fontSize: 11, color: 'var(--dm)', boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+                  <div>{m.expDate}</div>
+                  <div>{m.expDte}</div>
+                  <div>{m.expKind}</div>
+                  <div>{showClass ? m.expClass : ''}</div>
                 </div>
-              ))}
+              </div>
+              <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', ...stableGutter, paddingBottom: 10 }}>
+                {groupByMonth(rows, lang).map((g) => (
+                  <div key={g.name}>
+                    <div style={{ padding: '12px 16px 4px', fontSize: 11, fontWeight: 600, color: 'var(--mu)' }}>{g.name}</div>
+                    {g.rows.map((e) => {
+                      const on = e.expiry === selected;
+                      return (
+                        <div
+                          key={e.expiry}
+                          onClick={() => pick(e.expiry)}
+                          className="hover-p2"
+                          style={{
+                            height: 34,
+                            display: 'grid',
+                            gridTemplateColumns: '72px 64px 60px 1fr',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '0 16px',
+                            cursor: 'pointer',
+                            background: on ? 'var(--sel)' : 'transparent',
+                          }}
+                        >
+                          <div style={{ font: '600 12px/1 var(--num)', color: on ? 'var(--tx)' : 'var(--mu)' }}>{shortExpiry(e.expiry)}</div>
+                          <div style={{ font: '12px/1 var(--num)', color: 'var(--dm)' }}>{m.nDays(e.dte)}</div>
+                          <div style={{ font: '600 10px/1 var(--mono)', color: kindColor(e.kind) }}>{m.kinds[e.kind]}</div>
+                          <div style={{ font: '11px/1 var(--sans)', color: 'var(--ac)' }}>{showClass ? e.tradingClass : ''}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
           </>
         )}

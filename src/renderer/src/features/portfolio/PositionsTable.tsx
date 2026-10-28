@@ -213,8 +213,17 @@ interface Dragged {
  * slot while the pointer is level with the card (columnsState.ts → dropMark), and the card scrolls
  * sideways near its sides (edgeScroll). The release drops the column in that slot and swallows its
  * click, so no header sorts. A press released without that move is a click (a sort); Escape cancels.
+ * `cardRef` is the card (header and rows: the pointer's vertical range), `boxRef` the rows' scroller,
+ * `tableRef` the header's table, which the ghost and the slot's x are placed in (the rows' table is
+ * laid out alike and scrolled alike).
  */
-function useHeaderDrag(shown: readonly ColumnId[], boxRef: RefObject<HTMLDivElement | null>, tableRef: RefObject<HTMLDivElement | null>, headerRef: RefObject<HTMLDivElement | null>) {
+function useHeaderDrag(
+  shown: readonly ColumnId[],
+  cardRef: RefObject<HTMLDivElement | null>,
+  boxRef: RefObject<HTMLDivElement | null>,
+  tableRef: RefObject<HTMLDivElement | null>,
+  headerRef: RefObject<HTMLDivElement | null>,
+) {
   const [dragging, setDragging] = useState<Dragged | null>(null);
   const [drop, setDrop] = useState<DropMark | null>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
@@ -268,10 +277,10 @@ function useHeaderDrag(shown: readonly ColumnId[], boxRef: RefObject<HTMLDivElem
       const p: HeaderPress = { id, x0: e.clientX, x: e.clientX, y: e.clientY, dx: e.clientX - cell.left, dragged: false };
       /** The slot under the pointer (none while it is above or below the card), and the ghost. */
       const follow = () => {
-        const box = boxRef.current?.getBoundingClientRect();
+        const card = cardRef.current?.getBoundingClientRect();
         const table = tableRef.current?.getBoundingClientRect();
         let next: DropMark | null = null;
-        if (box && table && p.y >= box.top && p.y <= box.bottom) {
+        if (card && table && p.y >= card.top && p.y <= card.bottom) {
           const cells = Array.from(headerRef.current?.children ?? [], (c) => c.getBoundingClientRect());
           const at = dropMark(cells, p.x, cols.current, id, GAP);
           if (at) next = { slot: at.slot, x: Math.round(at.x - table.left) };
@@ -290,7 +299,8 @@ function useHeaderDrag(shown: readonly ColumnId[], boxRef: RefObject<HTMLDivElem
         const symbol = headerRef.current?.firstElementChild;
         if (!box || !symbol || box.scrollWidth <= box.clientWidth) return;
         const r = box.getBoundingClientRect();
-        if (p.y < r.top || p.y > r.bottom) return;
+        const card = cardRef.current?.getBoundingClientRect() ?? r;
+        if (p.y < card.top || p.y > card.bottom) return;
         const step = edgeScroll(p.x, p.x0, symbol.getBoundingClientRect().right, r.left + box.clientLeft + box.clientWidth, EDGE, EDGE_SPEED);
         if (!step) return;
         const before = box.scrollLeft;
@@ -340,7 +350,7 @@ function useHeaderDrag(shown: readonly ColumnId[], boxRef: RefObject<HTMLDivElem
         done();
       };
     },
-    [boxRef, tableRef, headerRef, place],
+    [cardRef, boxRef, tableRef, headerRef, place],
   );
 
   return { dragging, drop, ghostRef, onPress };
@@ -441,11 +451,13 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const [scrolled, setScrolled] = useState(false);
   const [live, setLive] = useState<LiveWidth | null>(null);
   const [menu, setMenu] = useState<{ contract: ContractRef; anchor: HTMLElement } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const headBoxRef = useRef<HTMLDivElement>(null);
+  const headTableRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-  const tableRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const boxW = useOuterWidth(boxRef);
-  const { dragging, drop, ghostRef, onPress } = useHeaderDrag(shown, boxRef, tableRef, headerRef);
+  const { dragging, drop, ghostRef, onPress } = useHeaderDrag(shown, cardRef, boxRef, headTableRef, headerRef);
   const words = useMemo<CellWords>(() => ({ ...m.words, kinds: m.kinds }), [m]);
 
   const ctxs = useMemo(() => {
@@ -527,74 +539,89 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
     }
   }
 
-  return (
+  const tableWidth = `calc(${minWidth - PAD}px + ${lessGutter(PAD)})`;
+  const dropLine = drop && (
     <div
-      ref={boxRef}
-      className="pos-scroll"
-      data-pos="scroll"
-      data-overflow-x={overflowX || undefined}
+      aria-hidden
+      data-pos="drop"
+      data-slot={drop.slot}
+      style={{ position: 'absolute', top: 0, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
+    />
+  );
+
+  return (
+    // The header sits over the rows' scroller, not in it, so the scrollbar runs beside the rows only.
+    // Both keep the same room for it (scrollGutter.ts; while the columns overflow, global.css styles
+    // both alike and sets --sbw), so the header's columns stay over the rows', and the header follows
+    // the rows' sideways scroll. Its own stacking context: the sticky Symbol column stays under the
+    // page's popovers.
+    <div
+      ref={cardRef}
       data-dragging={dragging?.id}
-      onScroll={(e) => setScrolled(e.currentTarget.scrollLeft > 0)}
-      // Its own stacking context: the sticky header and column stay under the page's popovers. Rows
-      // added or a group expanded leave the columns' width as it is (scrollGutter.ts); while the
-      // columns overflow, global.css sets --sbw to its styled scrollbars' width.
-      style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, overflow: 'auto', ...stableGutter, isolation: 'isolate' }}
+      style={{ background: 'var(--p)', flex: '1 1 0', minHeight: 200, display: 'flex', flexDirection: 'column', isolation: 'isolate', '--pos-cols': template } as CSSProperties}
     >
-      <div
-        ref={tableRef}
-        role="table"
-        aria-label={m.tabPos}
-        style={{ minWidth: `calc(${minWidth - PAD}px + ${lessGutter(PAD)})`, position: 'relative', '--pos-cols': template } as CSSProperties}
-      >
-        <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
-        <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
-          {body}
+      <div ref={headBoxRef} className="pos-scroll" data-pos="head" data-overflow-x={overflowX || undefined} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+        <div ref={headTableRef} role="table" aria-label={m.tabPos} style={{ minWidth: tableWidth, position: 'relative' }}>
+          <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
+          {dropLine}
+          {dragging && (
+            // The dragged header, under the pointer along the header row (useHeaderDrag places it).
+            <div
+              ref={ghostRef}
+              aria-hidden
+              data-pos="ghost"
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                zIndex: 5,
+                width: dragging.w + 2 * GHOST_PAD,
+                height: dragging.h,
+                padding: `0 ${GHOST_PAD}px`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: COLUMNS[dragging.id].align === 'right' ? 'flex-end' : 'flex-start',
+                fontSize: 12,
+                color: 'var(--tx)',
+                background: 'var(--p2)',
+                boxShadow: 'inset 0 0 0 1px var(--ln), 0 2px 8px var(--ov)',
+                opacity: 0.95,
+                pointerEvents: 'none',
+                willChange: 'transform',
+              }}
+            >
+              <span className="ellipsis">{m.columns[dragging.id][0]}</span>
+            </div>
+          )}
         </div>
-        {drop && (
-          <div
-            aria-hidden
-            data-pos="drop"
-            data-slot={drop.slot}
-            style={{ position: 'absolute', top: 0, bottom: 0, left: drop.x - 1, width: 2, zIndex: 4, background: 'var(--ac)', pointerEvents: 'none' }}
-          />
-        )}
-        {dragging && (
-          // The dragged header, under the pointer along the header row (useHeaderDrag places it).
-          <div
-            ref={ghostRef}
-            aria-hidden
-            data-pos="ghost"
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              zIndex: 5,
-              width: dragging.w + 2 * GHOST_PAD,
-              height: dragging.h,
-              padding: `0 ${GHOST_PAD}px`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: COLUMNS[dragging.id].align === 'right' ? 'flex-end' : 'flex-start',
-              fontSize: 12,
-              color: 'var(--tx)',
-              background: 'var(--p2)',
-              boxShadow: 'inset 0 0 0 1px var(--ln), 0 2px 8px var(--ov)',
-              opacity: 0.95,
-              pointerEvents: 'none',
-              willChange: 'transform',
-            }}
-          >
-            <span className="ellipsis">{m.columns[dragging.id][0]}</span>
+      </div>
+      <div
+        ref={boxRef}
+        className="pos-scroll"
+        data-pos="scroll"
+        data-overflow-x={overflowX || undefined}
+        onScroll={(e) => {
+          const x = e.currentTarget.scrollLeft;
+          if (headBoxRef.current) headBoxRef.current.scrollLeft = x;
+          setScrolled(x > 0);
+        }}
+        // Rows added or a group expanded leave the columns' width as it is (scrollGutter.ts).
+        style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', ...stableGutter }}
+      >
+        <div role="table" aria-label={m.tabPos} style={{ minWidth: tableWidth, position: 'relative' }}>
+          <div role="rowgroup" style={{ fontVariantNumeric: 'tabular-nums' }} onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}>
+            {body}
+          </div>
+          {dropLine}
+        </div>
+        {!rows.length && <Empty style={{ padding: '18px 32px 22px' }}>{connected ? m.noPositions : common.notConnected}</Empty>}
+        {note && (
+          // Stays in view while the table is scrolled sideways.
+          <div data-pos="events-note" style={{ position: 'sticky', left: 0, padding: '10px 32px 14px', fontSize: 11, color: 'var(--dm)' }}>
+            {note}
           </div>
         )}
       </div>
-      {!rows.length && <Empty style={{ padding: '18px 32px 22px' }}>{connected ? m.noPositions : common.notConnected}</Empty>}
-      {note && (
-        // Stays in view while the table is scrolled sideways.
-        <div data-pos="events-note" style={{ position: 'sticky', left: 0, padding: '10px 32px 14px', fontSize: 11, color: 'var(--dm)' }}>
-          {note}
-        </div>
-      )}
       {menu && (
         <Dropdown anchor={menu.anchor} width={200} onClose={() => setMenu(null)}>
           <MenuHeading>{contractLabel(menu.contract)}</MenuHeading>

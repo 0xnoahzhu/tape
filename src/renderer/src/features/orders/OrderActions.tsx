@@ -24,11 +24,11 @@ export function OrderActions({ o, onModify }: { o: WorkingOrder; onModify?: () =
       return (
         <>
           {onModify && (
-            <div onClick={onModify} style={{ color: 'var(--ac)', cursor: 'pointer' }}>
+            <div onClick={onModify} role="button" style={{ color: 'var(--ac)', cursor: 'pointer' }}>
               {m.modify}
             </div>
           )}
-          <div onClick={() => confirmCancel(o)} className="hover-tx" style={{ color: 'var(--dm)', cursor: 'pointer' }}>
+          <div onClick={() => confirmCancel(o)} role="button" className="hover-tx" style={{ color: 'var(--dm)', cursor: 'pointer' }}>
             {m.cancel}
           </div>
         </>

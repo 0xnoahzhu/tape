@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import { useStore } from '../../state/store';
 import { usePortfolioUi } from '../portfolio/uiState';
-import { openNotificationTarget, openOptionChart } from './navigation';
+import { openNotificationTarget, openOptionChart, openRowChart } from './navigation';
 
 describe('opening a notification', () => {
   const initial = useStore.getState();
@@ -52,5 +52,28 @@ describe('opening an option chart', () => {
     openOptionChart(held);
     expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'chart', symbol: { ...held, exchange: 'SMART' } });
     expect(useStore.getState().ticket.limitPrice).toBeNull();
+  });
+});
+
+describe('opening a list row’s chart', () => {
+  const initial = useStore.getState();
+  beforeEach(() => {
+    useStore.setState({ ...initial, page: 'acct', view: 'opt', symbol: stock('MSFT') }, true);
+  });
+
+  it('opens an option order or trade on its own chart, SMART-routed', () => {
+    const call = { ...option('AAPL', '20261016', 230, 'C'), exchange: 'CBOE', conId: 7 };
+    openRowChart(call);
+    expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'chart', symbol: { ...call, exchange: 'SMART' } });
+  });
+
+  it('opens a stock on its chart as the stock', () => {
+    openRowChart({ ...stock('NVDA'), exchange: 'NASDAQ', conId: 4815747 });
+    expect(useStore.getState()).toMatchObject({ page: 'trade', view: 'chart', symbol: stock('NVDA') });
+  });
+
+  it('leaves a combo where it is: it has no chart of its own', () => {
+    openRowChart({ symbol: 'AAPL', secType: 'BAG', exchange: 'SMART', currency: 'USD' });
+    expect(useStore.getState()).toMatchObject({ page: 'acct', view: 'opt', symbol: stock('MSFT') });
   });
 });

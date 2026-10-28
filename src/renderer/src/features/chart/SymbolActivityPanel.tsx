@@ -8,10 +8,10 @@
 // owner; options with their model greeks) serve the exposure below; the open orders' lines are held
 // only while their tab shows ('symbol-orders'). Under the options desk (`options`) the panel adds
 // the underlying's exposure (Δ, $Δ, Γ, Θ, Vega: exposure.ts → portfolioGreeks), DTE and Δ cells on
-// the rows, and a click on an option row opens its expiry in the chain. Under the chart a click on a
-// row opens that position's own chart (an option's too: portfolio/calc.ts → positionTarget). Under
-// either view an option row's context menu opens the option's own chart (it becomes the ticket's
-// instrument). An order just
+// the rows, and a click on an option row opens its expiry in the chain. A click on any other row,
+// a position or an order (not on its Modify / Cancel), opens that instrument's own chart (an
+// option's too: orders/navigation.ts → openRowChart), under either view. An option row's context
+// menu opens the option's own chart too (it becomes the ticket's instrument). An order just
 // placed from a floating panel flashes in the open orders (activityModel.ts → isFreshOrder).
 
 import { useMemo, useRef, useState } from 'react';
@@ -32,10 +32,11 @@ import { Dropdown, MenuChoice } from '../../ui/select';
 import { useDesk } from '../options/deskStore';
 import { distanceText, lastCellTitle, lastPriceText, orderLastPrice, SYMBOL_ORDERS_QUOTE_OWNER, useOrderQuotes } from '../orders/lastPrice';
 import { useOrdersMessages } from '../orders/messages';
-import { openInstrument, openOptionChart } from '../orders/navigation';
+import { openOptionChart, openRowChart } from '../orders/navigation';
+import { clickForControl } from '../orders/table';
 import { OrderActions } from '../orders/OrderActions';
 import { modifyOrderInTicket } from '../panels/actions';
-import { positionRow, positionTarget, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
+import { positionRow, quoteContract, type FigureSource, type PositionRow } from '../portfolio/calc';
 import { useMinute } from '../portfolio/data';
 import { optionDte, portfolioGreeks, positionDelta, underlyingKey } from '../portfolio/exposure';
 import { GreeksLine } from '../portfolio/GreeksLine';
@@ -67,6 +68,19 @@ const LAST_HEADER = 4;
  * The column names above the rows: [label, full name on hover]; `right` marks the numeric columns.
  * `ruled`: a rule under the names, for rows that draw theirs below (orders) rather than above (positions).
  */
+/**
+ * A list's header over its rows, which scroll on their own: the scrollbar runs beside the rows only.
+ * Both keep the same room for it (scrollGutter.ts), so the header's columns stay over the rows'.
+ */
+function ScrollList({ header, children }: { header: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <>
+      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>{header}</div>
+      <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', ...stableGutter }}>{children}</div>
+    </>
+  );
+}
+
 function HeaderRow({ grid, headers, right, ruled }: { grid: string; headers: Array<[string, string]>; right: (i: number) => boolean; ruled?: boolean }) {
   return (
     <div
@@ -121,11 +135,9 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const p = r.position;
   const expiry = opt?.expiry;
-  const openChart = () => {
-    const t = positionTarget(p.contract);
-    openInstrument(t.contract, t.view);
-  };
-  const onClick = expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : opt ? undefined : openChart;
+  const openChart = () => openRowChart(p.contract);
+  // Under the desk an option row selects its expiry in the chain; any other row opens its own chart.
+  const onClick = expiry ? () => useDesk.getState().patch({ expiry, tab: 'chain' }) : openChart;
   return (
     <>
       <div
@@ -143,8 +155,8 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
               }
             : undefined
         }
-        title={expiry ? m.openExpiry : onClick ? common.openChart : undefined}
-        className={onClick ? 'hover-p2' : undefined}
+        title={expiry ? m.openExpiry : common.openChart}
+        className="hover-p2"
         style={{
           display: 'grid',
           gridTemplateColumns: opt ? POS_GRID_OPT : POS_GRID,
@@ -155,7 +167,7 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
           font: '13px/1 var(--num)',
           fontVariantNumeric: 'tabular-nums',
           boxShadow: 'inset 0 1px 0 var(--ln2)',
-          cursor: onClick ? 'pointer' : undefined,
+          cursor: 'pointer',
         }}
       >
         <div className="ellipsis" style={{ fontFamily: 'var(--sans)' }}>
@@ -211,7 +223,12 @@ function OrderRow({ o, fresh, quote, withLast }: { o: WorkingOrder; fresh: boole
     <div
       data-activity="order"
       data-fresh={fresh || undefined}
+      // Opens the order's instrument's chart, not on Modify / Cancel / Why?.
+      onClick={(e) => !clickForControl(e) && openRowChart(o.contract)}
+      title={common.openChart}
+      className="hover-p2"
       style={{
+        cursor: 'pointer',
         display: 'grid',
         gridTemplateColumns: orderGrid(clock, withLast),
         gap: 12,
@@ -265,9 +282,8 @@ function OrderList({ orders, withLast }: { orders: WorkingOrder[]; withLast: boo
   const quotes = useOrderQuotes(SYMBOL_ORDERS_QUOTE_OWNER, orders);
   const headers = withLast ? m.orderHeaders : m.orderHeaders.filter((_, i) => i !== LAST_HEADER);
   return (
-    <div>
-      {/* The actions column has no name. */}
-      <HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} ruled />
+    // The actions column has no name.
+    <ScrollList header={<HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} ruled />}>
       {/* orderId is unique per API client only (TWS orders all have 0). */}
       {orders.map((o) => (
         <OrderRow
@@ -278,7 +294,7 @@ function OrderList({ orders, withLast }: { orders: WorkingOrder[]; withLast: boo
           withLast={withLast}
         />
       ))}
-    </div>
+    </ScrollList>
   );
 }
 
@@ -392,9 +408,10 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
   const withLast = lastColumnFits(w, timeColumn(clock));
 
   return (
-    // Rows added or the splitter dragged make the panel scroll; its columns keep their width (scrollGutter.ts).
-    <div ref={root} data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'auto', ...stableGutter }}>
-      <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+    // The tab bar and a list's header stay; rows added or the splitter dragged make only the rows
+    // scroll, and their columns keep their width (ScrollList, scrollGutter.ts).
+    <div ref={root} data-activity="panel" data-view={options ? 'opt' : 'chart'} style={{ background: 'var(--p)', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
         <div
           style={{
             height: 40,
@@ -438,12 +455,11 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
             <div style={{ padding: '10px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.noOrders(sym)}</div>
           )
         ) : rows.length ? (
-          <div>
-            <HeaderRow grid={options ? POS_GRID_OPT : POS_GRID} headers={posHeaders} right={(i) => i > 0} />
+          <ScrollList header={<HeaderRow grid={options ? POS_GRID_OPT : POS_GRID} headers={posHeaders} right={(i) => i > 0} />}>
             {rows.map((r) => (
               <HoldingRow key={r.key} r={r} opt={options ? optionCells(r) : undefined} />
             ))}
-          </div>
+          </ScrollList>
         ) : (
           <div style={{ padding: '8px 24px', fontSize: 13, color: 'var(--dm)' }}>{m.noPosition(sym)}</div>
         )}

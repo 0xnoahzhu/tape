@@ -15,7 +15,7 @@ import { OrderActions } from './OrderActions';
 import { openTicket } from '../panels/actions';
 import { lastCellTitle, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
 import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
-import { openInstrument } from './navigation';
+import { openInstrument, openRowChart } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
 // The design gives the status column 70px, which truncates every status ("Working…");
@@ -82,7 +82,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
         const quote = quotes[contractKey(o.contract)];
         const last = orderLastPrice(o.contract, quote);
         return (
-          <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title}>
+          <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title} onOpen={() => openRowChart(o.contract)}>
             <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
               {timeCell(o.createdAt, clock)}
             </div>

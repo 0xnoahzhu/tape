@@ -129,15 +129,16 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
   const [menu, setMenu] = useState<{ contract: ContractRef; anchor: HTMLElement } | null>(null);
   const exp = model.exp!;
 
+  // The headers sit over the scroller, not in it, so its scrollbar runs beside the rows only; they
+  // follow its sideways scroll.
   const head = useRef<HTMLDivElement>(null);
-  const headH = () => head.current?.offsetHeight ?? 0;
 
   // Center the ATM row whenever the instrument, expiry, range or columns change (design centerAtm).
   const centerKey = [model.symbol, exp.expiry, range, preset, model.spot != null, model.rows.length > 0].join('|');
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.scrollTop = Math.max(0, model.centerRow * ROW_H + ROW_H / 2 - (el.clientHeight - headH()) / 2);
+    el.scrollTop = Math.max(0, model.centerRow * ROW_H + ROW_H / 2 - el.clientHeight / 2);
     report();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [centerKey]);
@@ -148,10 +149,11 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
     const el = ref.current;
     if (!el || model.rows.length <= MAX_CHAIN_ROWS) return;
     const from = Math.max(0, Math.floor(el.scrollTop / ROW_H) - OVERSCAN);
-    const to = Math.ceil((el.scrollTop + el.clientHeight - headH()) / ROW_H) + OVERSCAN;
+    const to = Math.ceil((el.scrollTop + el.clientHeight) / ROW_H) + OVERSCAN;
     onVisible({ from, to });
   };
   const onScroll = () => {
+    if (head.current && ref.current) head.current.scrollLeft = ref.current.scrollLeft;
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(report);
   };
@@ -167,12 +169,15 @@ function ChainRows({ model, keys, onVisible }: { model: DeskModel; keys: ColumnK
   const template = cols(widths);
   const minWidth = 2 * widths.reduce((a, w) => a + w, 0) + STRIKE_COL + ROW_PAD;
   return (
-    <div ref={ref} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter }}>
-      <div style={{ minWidth }}>
-        <div ref={head} style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {/* The same room for a scrollbar as the rows below, so the columns stay over theirs (scrollGutter.ts). */}
+      <div ref={head} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter }}>
+        <div style={{ minWidth }}>
           <ChainHeaders keys={keys} widths={widths} />
         </div>
-        <div style={{ font: '12.5px/1 var(--num)', fontVariantNumeric: 'tabular-nums' }}>
+      </div>
+      <div ref={ref} onScroll={onScroll} style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter }}>
+        <div style={{ minWidth, font: '12.5px/1 var(--num)', fontVariantNumeric: 'tabular-nums' }}>
           {model.rows.map((r) => (
             <div
               key={r.strike}
