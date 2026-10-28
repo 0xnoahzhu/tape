@@ -40,6 +40,7 @@ import {
   maReadings,
   measureBetween,
   measurePoint,
+  SNAP_PX,
   MAX_SPAN,
   mergeLivePrice,
   advanceLiveBars,
@@ -118,6 +119,23 @@ describe('measuring', () => {
     expect(b.time).toBe(bars[29].time);
     const more = [...series(10), ...bars];
     expect(measureBetween(more, a, b)).toMatchObject({ from: 12, to: 39, bars: 27 });
+  });
+
+  it('snaps an end to the bar’s open, high, low or close within SNAP_PX, the nearest when two are close', () => {
+    // One bar: open 100, high 104, low 98, close 102; 10 px per price unit.
+    const bars = [bar(T0, 100, 104, 98, 102)];
+    const at = (price: number) => measurePoint(bars, 0, price, 10);
+    expect(at(103.6)).toEqual({ time: T0, price: 104, snap: 'high' }); // 4 px from the high
+    expect(at(97.3)).toEqual({ time: T0, price: 98, snap: 'low' }); // 7 px from the low
+    expect(at(101)).toEqual({ time: T0, price: 101 }); // 10 px from open and close: free
+    // Open and close both within reach: the nearer wins, either way.
+    const close = [bar(T0, 100, 104, 98, 100.6)];
+    expect(measurePoint(close, 0, 100.2, 10)).toMatchObject({ price: 100, snap: 'open' }); // 2 px vs 4 px
+    expect(measurePoint(close, 0, 100.4, 10)).toMatchObject({ price: 100.6, snap: 'close' }); // 4 px vs 2 px
+    // Without the scale (⌥ held) nothing snaps; a nearer threshold keeps it free too.
+    expect(measurePoint(bars, 0, 103.6)).toEqual({ time: T0, price: 103.6 });
+    expect(measurePoint(bars, 0, 103.6, 10, 3)).toEqual({ time: T0, price: 103.6 });
+    expect(SNAP_PX).toBe(8);
   });
 
   it('gives no percent from a price at or below 0, and nothing without bars', () => {

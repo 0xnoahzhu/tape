@@ -10,7 +10,8 @@
 // along it (right: fewer, wider bars), around the pointer; a double-click on it gives back the
 // automatic zoom. A drag with Shift held (or any drag while `measuring`, the ruler button) measures:
 // a line from bar to bar with the price change, its percent and the bars between
-// (chartMath.ts → measureBetween). The measure stays, anchored to its bars' times and prices, until
+// (chartMath.ts → measureBetween); its ends snap to a bar's open, high, low or close within SNAP_PX
+// (measurePoint's magnet, off while ⌥ is held). The measure stays, anchored to its bars' times and prices, until
 // a click on the chart, Esc or another series.
 // Panning past the newest bar shows empty future slots, their times projected on the time axis
 // and in the crosshair (chartMath.ts → futureTimes), and the view keeps them as new bars come;
@@ -394,13 +395,14 @@ export const PriceChart = memo(function PriceChart({
   };
 
   /** The measure end under the pointer: the bar of its slot and the price at its height. */
-  const measureAt = (clientX: number, clientY: number): MeasurePoint | null => {
+  /** With `free` (⌥ held) the magnet is off: the end stays at the pointer's price. */
+  const measureAt = (clientX: number, clientY: number, free = false): MeasurePoint | null => {
     const r = plotRect();
     const g = geoRef.current;
     const { bars: b, w, h } = live.current;
     if (!r || !g || !(w > 0) || !(h > 0)) return null;
     const fy = Math.min(1, Math.max(0, (clientY - r.top) / h));
-    return measurePoint(b, g.slotAt((clientX - r.left) / w), g.priceAt(fy));
+    return measurePoint(b, g.slotAt((clientX - r.left) / w), g.priceAt(fy), free || !(g.hi > g.lo) ? undefined : h / (g.hi - g.lo));
   };
   const clearMeasure = () => {
     if (!measureRef.current) return;
@@ -418,7 +420,7 @@ export const PriceChart = memo(function PriceChart({
     }
     // Shift held, or the ruler on: the drag draws a measure from here.
     if (e.shiftKey || measuringRef.current) {
-      const p = measureAt(e.clientX, e.clientY);
+      const p = measureAt(e.clientX, e.clientY, e.altKey);
       if (!p) return;
       measureRef.current = { a: p, b: p };
       measureDragRef.current = e.pointerId;
@@ -454,8 +456,8 @@ export const PriceChart = memo(function PriceChart({
     track(e.clientX, e.clientY);
     if (measureDragRef.current === e.pointerId) {
       const mm = measureRef.current;
-      const p = measureAt(e.clientX, e.clientY);
-      if (mm && p && (p.time !== mm.b.time || p.price !== mm.b.price)) {
+      const p = measureAt(e.clientX, e.clientY, e.altKey);
+      if (mm && p && (p.time !== mm.b.time || p.price !== mm.b.price || p.snap !== mm.b.snap)) {
         measureRef.current = { a: mm.a, b: p };
         commit();
       }
@@ -763,7 +765,8 @@ export const PriceChart = memo(function PriceChart({
   const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
   // The measure: from the center of its first bar at its price to its second's, in px; its label by
-  // the end, above it when the price rose and below when it fell, kept within the plot.
+  // the end, above it when the price rose and below when it fell, kept within the plot and off the
+  // MA legend.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
   const measureBox =
     geo && measure && meas && size.w > 0 && size.h > 0
@@ -773,13 +776,18 @@ export const PriceChart = memo(function PriceChart({
           const y1 = toPx(geo.y(measure.a.price));
           const y2 = toPx(geo.y(measure.b.price));
           const up = meas.change >= 0;
-          const above = up ? y2 > MEASURE_LABEL_H + 6 : y2 > size.h - MEASURE_LABEL_H - 6;
+          // Above the end when the price rose and there is room under the legend (or the top), else below;
+          // below when it fell, unless that runs off the bottom.
+          const roomAbove = y2 - MEASURE_LABEL_H - 6 >= (legend ? legend.bottom + 4 : 0);
+          const above = up ? roomAbove : y2 > size.h - MEASURE_LABEL_H - 6 && roomAbove;
           return {
             x1,
             x2,
             y1,
             y2,
             color: up ? 'var(--up)' : 'var(--dn)',
+            snapA: measure.a.snap,
+            snapB: measure.b.snap,
             labelX: Math.min(Math.max(x2, MEASURE_LABEL_HALF), Math.max(MEASURE_LABEL_HALF, size.w - MEASURE_LABEL_HALF)),
             labelY: above ? y2 - 6 : y2 + 6,
             above,
@@ -888,8 +896,17 @@ export const PriceChart = memo(function PriceChart({
                   style={{ fill: measureBox.color, opacity: 0.12 }}
                 />
                 <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
-                <circle cx={measureBox.x1} cy={measureBox.y1} r={3} style={{ fill: measureBox.color }} />
-                <circle cx={measureBox.x2} cy={measureBox.y2} r={3} style={{ fill: measureBox.color }} />
+                {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot. */}
+                {[
+                  { x: measureBox.x1, y: measureBox.y1, snap: measureBox.snapA },
+                  { x: measureBox.x2, y: measureBox.y2, snap: measureBox.snapB },
+                ].map((p, i) =>
+                  p.snap ? (
+                    <circle key={i} data-snap={p.snap} cx={p.x} cy={p.y} r={4.5} style={{ fill: 'var(--p)', stroke: measureBox.color, strokeWidth: 2 }} />
+                  ) : (
+                    <circle key={i} cx={p.x} cy={p.y} r={3} style={{ fill: measureBox.color }} />
+                  ),
+                )}
               </svg>
               <div
                 data-chart="measure-label"

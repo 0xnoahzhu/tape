@@ -83,8 +83,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   (**Auto**, or a double-click on the axis, fits it to the bars again), zooming the time axis the same way
   (scroll on it, or drag along it: right shows fewer, wider bars; a double-click gives back the automatic
   zoom), a **measure**: hold Shift and drag (or turn on the ruler beside the bell and drag) from one point
-  to another for the price change, its percent and the bars between, shown until a click on the chart or
-  Esc, live bars from real-time quotes (a note says when
+  to another for the price change, its percent and the bars between (its ends snap to a bar's open, high,
+  low or close within 8 px, the nearest of them, and show as a ring when they do; hold ⌥ to place them
+  freely), shown until a click on the chart or Esc, live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,

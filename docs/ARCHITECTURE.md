@@ -609,7 +609,10 @@ the automatic span (`span: null`) where the view is. A measure (`chartMath.ts ‚Ü
 `measureBetween`) is drawn by a drag with Shift held, or by any drag while the ruler beside the bell
 is on (ChartView's `measuring`, which turns off once one is drawn or on Esc): its ends are bars, by
 time (older bars loaded in front do not move them; a future slot counts as the newest bar), and the
-prices at the pointer, so it pans and zooms with the chart; it is drawn in px over the plot (a line,
+prices at the pointer, so it pans and zooms with the chart. A magnet holds an end to its bar's open,
+high, low or close when the pointer is within `SNAP_PX` (8 px, from the plot's px per price unit) of
+it, the nearest of them when several are (high and low first on a tie), and records which
+(`MeasurePoint.snap`, drawn as a ring rather than a dot); ‚å• held turns it off; it is drawn in px over the plot (a line,
 its ends and the box between in the up or down color) with a label by its end (the percent, the
 change and the bars between), and stays until a click on the chart (a press that never became a
 drag), Esc or another series. Between reloads a real-time last price extends the forming bar and starts the next

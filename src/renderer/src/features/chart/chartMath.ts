@@ -221,7 +221,15 @@ export function zoomView(view: ChartView, bars: readonly Bar[], autoSpan: number
 export interface MeasurePoint {
   time: number;
   price: number;
+  /** The bar's price the end snapped to (measurePoint's magnet), if any. */
+  snap?: OhlcKey;
 }
+
+export type OhlcKey = 'open' | 'high' | 'low' | 'close';
+const OHLC_KEYS: readonly OhlcKey[] = ['high', 'low', 'close', 'open'];
+
+/** How far (px) from a bar's open, high, low or close a measure end snaps to it. */
+export const SNAP_PX = 8;
 
 export interface Measure {
   /** Full-series indices of the bars at the two ends (from: where the drag started). */
@@ -234,10 +242,24 @@ export interface Measure {
   bars: number;
 }
 
-/** A measure end at the bar under `slot` (a future slot counts as the newest bar) and `price`. */
-export function measurePoint(bars: readonly Bar[], slot: number, price: number): MeasurePoint | null {
+/**
+ * A measure end at the bar under `slot` (a future slot counts as the newest bar) and `price`. With
+ * `pxPerUnit` (the plot's px per price unit), the magnet: the price snaps to the bar's open, high,
+ * low or close nearest to it when that is within `snapPx` px (the nearest wins; high and low first
+ * on a tie, as a doji's open and close sit on each other).
+ */
+export function measurePoint(bars: readonly Bar[], slot: number, price: number, pxPerUnit?: number, snapPx = SNAP_PX): MeasurePoint | null {
   if (!bars.length || !Number.isFinite(price)) return null;
-  return { time: bars[clamp(Math.floor(slot), 0, bars.length - 1)].time, price };
+  const bar = bars[clamp(Math.floor(slot), 0, bars.length - 1)];
+  if (!(pxPerUnit !== undefined && pxPerUnit > 0)) return { time: bar.time, price };
+  let best: { key: OhlcKey; px: number } | null = null;
+  for (const key of OHLC_KEYS) {
+    const v = bar[key];
+    if (!Number.isFinite(v)) continue;
+    const px = Math.abs(v - price) * pxPerUnit;
+    if (px <= snapPx && (!best || px < best.px)) best = { key, px };
+  }
+  return best ? { time: bar.time, price: bar[best.key], snap: best.key } : { time: bar.time, price };
 }
 
 /** The bars and the price change between two measure ends; null without bars. */
