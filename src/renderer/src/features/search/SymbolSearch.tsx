@@ -3,7 +3,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { contractKey, isTradable, sameContract } from '@shared/contract';
+import { contractKey, sameContract } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
 import type { ContractRef, LocalizedName, SymbolMatch, Watchlist } from '@shared/types';
 import { createMessages, nameOf, useLang } from '../../i18n';
@@ -146,10 +146,7 @@ export function SymbolSearch() {
   const open = (contract: ContractRef, name: LocalizedName | undefined) => {
     const s = useStore.getState();
     clear();
-    if (!isTradable(contract)) {
-      s.showToast(common.indexNotTradable(contract.symbol));
-      return;
-    }
+    // An index opens too: its chart, without the order ticket.
     // The order ticket is not shown on the options view.
     s.openSymbol(contract, s.view === 'opt' ? 'chart' : undefined, name || '');
     if (!name) fillName(contract);

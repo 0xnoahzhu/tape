@@ -24,6 +24,12 @@ describe('where the panels show', () => {
     expect(panelShown('strategy', s)).toBe(false);
     expect(panelShown('ticket', { ...s, page: 'acct' })).toBe(false);
   });
+
+  it('no ticket for an index: its chart without orders', () => {
+    const s = { ...useStore.getState(), symbol: index('SPX', 'CBOE') };
+    expect(panelShown('ticket', s)).toBe(false);
+    expect(panelShown('strategy', { ...s, view: 'opt' })).toBe(true);
+  });
 });
 
 describe('triggers while floating', () => {

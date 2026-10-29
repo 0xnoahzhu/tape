@@ -7,6 +7,7 @@
 // positions / orders take the full width; the options desk always does.
 
 import { useRef, useState } from 'react';
+import { isTradable } from '@shared/contract';
 import { createMessages } from '../i18n';
 import { useStore, type TradeView } from '../state/store';
 import { TabItems } from '../ui/primitives';
@@ -46,8 +47,10 @@ export function TradePage() {
   const ticketFloating = usePanels(isFloating('ticket'));
   const cm = useChartMessages();
   const options = view === 'opt';
-  // The ticket trades on Chart only; the options desk has its strategy builder.
-  const ticketDocked = !options && !ticketFloating;
+  // The ticket trades on Chart only, and not an index (its chart runs the full width); the options
+  // desk has its strategy builder.
+  const tradable = useStore((s) => isTradable(s.symbol));
+  const ticketDocked = !options && !ticketFloating && tradable;
 
   // Positions / orders under the view: resizable with the splitter, collapsible to a bar. One grid
   // element for both views, so the splitter's measurement (bound once to it) stays current.

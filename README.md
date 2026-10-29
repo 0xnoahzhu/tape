@@ -69,7 +69,8 @@ Trades (⌘3 / Ctrl+3 opens Orders).
 **Trade**
 
 - **Watchlists** with groups, built-in US index and macro lists, symbol search (IBKR contract search) and
-  per-row actions. Drag a row to reorder it or to move it into another group (onto a collapsed group's
+  per-row actions. An index opens like any symbol, its chart (and options) at the full width: there is no
+  order ticket for it. Drag a row to reorder it or to move it into another group (onto a collapsed group's
   header to add it at its end), and drag a group's header to reorder the groups; Esc undoes a drag. A star in the chart header opens a list → group picker for the charted symbol: check
   a group to add it there (or move it there within that list), uncheck it to take it out of that list.
   The star is filled while any list holds it.

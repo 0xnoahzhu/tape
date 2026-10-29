@@ -10,11 +10,10 @@
 // (model.ts → dropIndex) and applied as one change (moveItemTo, moveGroupTo).
 
 import { memo, useCallback, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
-import { contractKey, contractLabel, isTradable } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
 import type { Lang, WatchItem, Watchlist } from '@shared/types';
 import { changePct, lastPrice } from '../../hooks/useQuotes';
-import { useCommon } from '../../i18n/common';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
@@ -229,14 +228,8 @@ export function GroupList({
     };
   }, []);
 
-  const pick = useCallback((item: WatchItem) => {
-    const s = useStore.getState();
-    if (!isTradable(item.contract)) {
-      s.showToast(useCommon.now().indexNotTradable(contractLabel(item.contract)));
-      return;
-    }
-    s.selectSymbol(item.contract, item.name);
-  }, []);
+  // An index opens too: its chart (and options), without the order ticket.
+  const pick = useCallback((item: WatchItem) => useStore.getState().selectSymbol(item.contract, item.name), []);
 
   const createNamedGroup = (value: string, byKey: boolean) => {
     const name = value.trim();

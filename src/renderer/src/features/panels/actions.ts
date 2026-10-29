@@ -12,12 +12,13 @@ import { usePanels } from './panelStore';
 
 /**
  * Whether panel `id` is on screen with the page as it is (docked or floating): the ticket in
- * Trade › Chart, the strategy builder in Trade › Options.
+ * Trade › Chart for an instrument that trades (not an index, which has a chart and no orders), the
+ * strategy builder in Trade › Options.
  */
-export function panelShown(id: PanelId, s: Pick<StoreState, 'page' | 'view'>): boolean {
+export function panelShown(id: PanelId, s: Pick<StoreState, 'page' | 'view' | 'symbol'>): boolean {
   if (s.page !== 'trade') return false;
   const options = s.view === 'opt';
-  return id === 'strategy' ? options : !options;
+  return id === 'strategy' ? options : !options && isTradable(s.symbol);
 }
 
 /** Pops a panel out: it floats over the page and its column goes. */
