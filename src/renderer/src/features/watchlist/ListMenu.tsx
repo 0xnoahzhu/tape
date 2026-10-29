@@ -5,6 +5,7 @@ import type { Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
+import { CrossIcon, PencilIcon } from '../../ui/icons';
 import { GlyphButton, TextInput } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
 import { updateWatchlists } from './actions';
@@ -185,10 +186,10 @@ export function ListMenu({
                 {r.count}
               </div>
               <GlyphButton title={m.rename} fontSize={12} onClick={() => startRename(l)}>
-                ✎
+                <PencilIcon />
               </GlyphButton>
               <GlyphButton title={m.deleteList} fontSize={13} danger onClick={() => confirmDelete(l)}>
-                ×
+                <CrossIcon />
               </GlyphButton>
             </div>
           );

@@ -105,3 +105,21 @@ export function GripIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Rename (the watchlist's group headers and lists): a pencil, its tip at the lower left. */
+export function PencilIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      <path d="M2.75 13.25l.8-3.2 7.2-7.2 2.4 2.4-7.2 7.2z M9.15 4.45l2.4 2.4" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Delete (the watchlist's group headers and lists): a cross of the pencil's weight. */
+export function CrossIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} style={{ display: 'block' }} aria-hidden>
+      <path d="M4 4l8 8 M12 4l-8 8" stroke="currentColor" strokeWidth="1.4" fill="none" />
+    </svg>
+  );
+}

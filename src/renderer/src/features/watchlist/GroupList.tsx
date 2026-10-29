@@ -18,6 +18,7 @@ import { useCommon } from '../../i18n/common';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
+import { CrossIcon, PencilIcon } from '../../ui/icons';
 import { GlyphButton, TextInput } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { edgeScroll } from '../portfolio/columnsState';
@@ -472,10 +473,10 @@ function GroupSection({
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', flexShrink: 0, opacity: tools ? 1 : 0 }}>
               <GlyphButton title={m.renameGroup} fontSize={12} onClick={onRename}>
-                ✎
+                <PencilIcon />
               </GlyphButton>
               <GlyphButton title={canDelete ? m.deleteGroup : m.lastGroup} fontSize={13} danger disabled={!canDelete} onClick={onDelete}>
-                ×
+                <CrossIcon />
               </GlyphButton>
             </div>
           </div>
