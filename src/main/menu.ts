@@ -9,6 +9,8 @@ export function installMenu(ctx: MainContext): void {
   app.setAboutPanelOptions({
     applicationName: 'Tape',
     applicationVersion: app.getVersion(),
+    // In parentheses after the version: the build number, the commit count (vite.electron.config.ts).
+    ...(process.env.TAPE_BUILD ? { version: process.env.TAPE_BUILD } : {}),
     copyright: 'Apache License 2.0',
   });
 

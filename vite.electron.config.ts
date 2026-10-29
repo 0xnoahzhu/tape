@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { builtinModules } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,18 @@ export const outDir = (bundle: 'main' | 'preload' | 'renderer'): string => resol
 /** Extra entries built next to a bundle's index.js (the database worker runs from its own file). */
 const extraEntries: Record<string, Record<string, string>> = { main: { dbWorker: 'src/main/db/worker.ts' } };
 
+/**
+ * The build number shown in the About panel: the number of commits on HEAD, so it goes up with every
+ * commit; undefined outside a git checkout.
+ */
+function buildNumber(): string | undefined {
+  try {
+    return execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 interface Options {
   mode: 'development' | 'production';
   watch?: boolean;
@@ -37,7 +50,7 @@ function nodeConfig(name: 'main' | 'preload', format: 'es' | 'cjs', { mode, watc
     mode,
     logLevel: 'warn',
     resolve: { alias: { '@shared': shared } },
-    define: { 'process.env.NODE_ENV': JSON.stringify(mode) },
+    define: { 'process.env.NODE_ENV': JSON.stringify(mode), 'process.env.TAPE_BUILD': JSON.stringify(buildNumber() ?? '') },
     build: {
       outDir: outDir(name),
       emptyOutDir: true,
