@@ -89,9 +89,10 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   in the up or down color), the price change and the bars between (its ends snap to a bar's open, high,
   low or close within 8 px, the nearest of them, and show as a ring when they do; hold ⌥ to place them
   freely), shown until a click on the chart or Esc; beside the ruler, a **price arrow** (drag up or down
-  anywhere: a vertical arrow, the change from one price to another) and a **time arrow** (drag left or
-  right anywhere: a horizontal arrow, the change from the close of the bar it starts at to the close of
-  the bar it ends at, and the bars between), each read in the same bubble under its button, live bars from real-time quotes (a note says when
+  anywhere: a vertical arrow over a band across the chart, the change from one price to another) and a
+  **time arrow** (drag left or right anywhere: a horizontal arrow over a band down the chart, the change
+  from the close of the bar it starts at to the close of the bar it ends at, and the bars between), each
+  read in the same bubble under its button, live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,

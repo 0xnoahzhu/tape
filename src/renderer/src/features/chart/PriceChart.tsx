@@ -234,8 +234,11 @@ const CHIP_CLEAR = 6;
 const ARROW_L = 9;
 const ARROW_W = 4.5;
 
-/** The price arrow (up or down) or the time arrow (back or forward): a line, its head where the drag ended. */
-function MeasureArrow({ box }: { box: { kind: MeasureKind; x1: number; x2: number; y1: number; y2: number; color: string } }) {
+/**
+ * The price arrow (up or down, over a band across the plot between its prices) or the time arrow (back
+ * or forward, over a band down the plot between its bars): a line, its head where the drag ended.
+ */
+function MeasureArrow({ box, w, h }: { box: { kind: MeasureKind; x1: number; x2: number; y1: number; y2: number; color: string }; w: number; h: number }) {
   const { kind, x1, x2, y1, y2, color } = box;
   const len = Math.hypot(x2 - x1, y2 - y1);
   const ux = len ? (x2 - x1) / len : 0;
@@ -245,6 +248,11 @@ function MeasureArrow({ box }: { box: { kind: MeasureKind; x1: number; x2: numbe
   const by = y2 - uy * head;
   return (
     <g data-measure-arrow={kind}>
+      {kind === 'price' ? (
+        <rect x={0} y={Math.min(y1, y2)} width={w} height={Math.abs(y2 - y1)} style={{ fill: color, opacity: 0.1 }} />
+      ) : (
+        <rect x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={h} style={{ fill: color, opacity: 0.1 }} />
+      )}
       <line x1={x1} y1={y1} x2={bx} y2={by} style={{ stroke: color, strokeWidth: 1.5 }} />
       {len > 0 && <polygon points={`${x2},${y2} ${bx - uy * ARROW_W},${by + ux * ARROW_W} ${bx + uy * ARROW_W},${by - ux * ARROW_W}`} style={{ fill: color }} />}
     </g>
@@ -776,8 +784,8 @@ export const PriceChart = memo(function PriceChart({
   const legend = legendItems.length > 0 && legendRows.length > 0 ? legendBox(legendItems, legendRows, size.w) : null;
 
   // The measure in px: the ruler a line and a box from bar to bar; the price arrow straight up or down
-  // from where it started; the time arrow straight back or forward from there, with the closes it
-  // measures from and to marked. Its figures are not drawn by it (they would cover the bars) but
+  // from where it started, over a band across the plot; the time arrow straight back or forward from
+  // there, over a band down the plot, with the closes it measures from and to marked. Its figures are not drawn by it (they would cover the bars) but
   // reported (onMeasure) for the header, under its tool.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b, measure.kind) : null;
   const measureBox =
@@ -966,7 +974,7 @@ export const PriceChart = memo(function PriceChart({
                   <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
                 </>
               )}
-              {measureBox.kind !== 'ruler' && <MeasureArrow box={measureBox} />}
+              {measureBox.kind !== 'ruler' && <MeasureArrow box={measureBox} w={size.w} h={size.h} />}
               {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot; the price arrow's are its own ends. */}
               {measureBox.kind !== 'price' &&
                 measureBox.ends.map((p, i) =>
