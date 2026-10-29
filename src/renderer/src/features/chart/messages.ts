@@ -203,7 +203,7 @@ export const useChartMessages = createMessages({
     /** Column headers of the activity panel: [label, full name on hover], as in Portfolio's Positions and Orders. */
     posHeaders: [
       ['Contract', 'Contract'],
-      ['Qty', 'Quantity'],
+      ['Position', 'Position: shares or contracts held, negative when short'],
       ['Avg cost', 'Average cost as IB sends it: per contract, with commissions'],
       ['Value', 'Market value (IB)'],
       ['Unrl. P&L', 'Unrealized P&L (IB)'],
@@ -218,7 +218,7 @@ export const useChartMessages = createMessages({
       ['Last', 'Last price of the order’s contract'],
       ['Status', 'Order status at IB'],
     ] as Array<[string, string]>,
-    /** The cells the panel adds after Qty under the options desk. */
+    /** The cells the panel adds after Position under the options desk. */
     dteHeader: ['DTE', 'Days to expiry (New York calendar)'] as [string, string],
     deltaHeader: ['Δ', 'Share-equivalent delta: shares for the stock, IB’s model delta × quantity × multiplier for an option'] as [string, string],
     exposure: 'Exposure',
@@ -363,7 +363,7 @@ export const useChartMessages = createMessages({
     allOrders: '全部订单 ›',
     posHeaders: [
       ['合约', '合约'],
-      ['数量', '持仓数量'],
+      ['持仓量', '持仓量：持有的股数或合约数，空头为负'],
       ['平均成本', 'IB 发送的平均成本：每张合约，含佣金'],
       ['市值', '市值（IB）'],
       ['未实现盈亏', '未实现盈亏（IB）'],

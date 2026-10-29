@@ -16,7 +16,7 @@ maintenance margin, IB's leverage and accrued dividends. While Tape is not conne
 stay, dimmed, with when IBKR last sent them (*Disconnected · as of …*). Tabs Positions, Orders and
 Trades (⌘3 / Ctrl+3 opens Orders).
 
-- **Positions**: a table of IB's own figures, nothing calculated by Tape (by default Symbol, Qty, Avg
+- **Positions**: a table of IB's own figures, nothing calculated by Tape (by default Symbol, Position, Avg
   cost, Price, Value, Unrl. P&L and Day P&L). Where IB sends a figure twice, one column shows it, the
   real-time source first: Price is IB's mark price (tick 37, which Tape asks for on the quote line of
   every stock, future, forex, crypto and option position), Value, Unrl. P&L and Realized P&L come from

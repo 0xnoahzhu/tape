@@ -276,7 +276,7 @@ describe('column edits', () => {
   });
 
   it('finds the slot a dragged header lands in, never before Symbol', () => {
-    // Header midpoints of Symbol, Qty, Price, Value.
+    // Header midpoints of Symbol, Position, Price, Value.
     const mids = [100, 260, 360, 460];
     expect(dropSlot(mids, 10)).toBe(1);
     expect(dropSlot(mids, 250)).toBe(1);
@@ -284,7 +284,7 @@ describe('column edits', () => {
     expect(dropSlot(mids, 400)).toBe(3);
     expect(dropSlot(mids, 900)).toBe(4);
     expect(dropSlot(mids, 10, 200)).toBe(1);
-    // Scrolled sideways: Symbol spans 0–200 and Qty and Price lie under it, Value right of it.
+    // Scrolled sideways: Symbol spans 0–200 and Position and Price lie under it, Value right of it.
     const scrolled = [100, 40, 160, 260];
     expect(dropSlot(scrolled, 120)).toBe(2);
     // Over Symbol, the pointer counts as at its right edge: before Value, not between the hidden columns.
@@ -319,26 +319,26 @@ describe('column edits', () => {
   });
 
   it('marks where a dragged header lands, in the gap before the slot, never over Symbol', () => {
-    // Headers with 12px gaps: Symbol 0–200, Qty 212–284, Price 296–380, Value 392–488.
+    // Headers with 12px gaps: Symbol 0–200, Position 212–284, Price 296–380, Value 392–488.
     const cells = [
       { left: 0, right: 200 },
       { left: 212, right: 284 },
       { left: 296, right: 380 },
       { left: 392, right: 488 },
     ];
-    // Value dragged left over Qty's right half: between Qty and Price.
+    // Value dragged left over Position's right half: between Position and Price.
     expect(dropMark(cells, 270, cols, 'value', 12)).toEqual({ slot: 2, x: 290 });
-    // ...to Qty's left edge (left of its midpoint): right after Symbol.
+    // ...to Position's left edge (left of its midpoint): right after Symbol.
     expect(dropMark(cells, 212, cols, 'value', 12)).toEqual({ slot: 1, x: 206 });
     // Over Symbol: as at its right edge.
     expect(dropMark(cells, 40, cols, 'value', 12)).toEqual({ slot: 1, x: 206 });
-    // Qty dragged past the last header: after it.
+    // Position dragged past the last header: after it.
     expect(dropMark(cells, 900, cols, 'quantity', 12)).toEqual({ slot: 4, x: 494 });
     // No mark where the column already is (either of its own edges).
     expect(dropMark(cells, 420, cols, 'value', 12)).toBeNull();
     expect(dropMark(cells, 350, cols, 'value', 12)).toBeNull();
     expect(dropMark(cells, 300, cols, 'price', 12)).toBeNull();
-    // Scrolled sideways, Qty partly under Symbol: over Symbol, the first slot in view (after Qty).
+    // Scrolled sideways, Position partly under Symbol: over Symbol, the first slot in view (after Position).
     const scrolled = [
       { left: 0, right: 200 },
       { left: 150, right: 222 },

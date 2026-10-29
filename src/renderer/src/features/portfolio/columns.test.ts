@@ -102,7 +102,7 @@ describe('column catalog', () => {
     ]);
   });
 
-  it('defaults to IB’s figures: Symbol, Qty, Avg cost, Price, Value, Unrl. P&L, Day P&L', () => {
+  it('defaults to IB’s figures: Symbol, Position, Avg cost, Price, Value, Unrl. P&L, Day P&L', () => {
     expect(DEFAULT_COLUMNS).toEqual(['symbol', 'quantity', 'averageCost', 'price', 'value', 'unrealized', 'dayPnl']);
   });
 
