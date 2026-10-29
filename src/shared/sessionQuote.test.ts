@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { index, option, stock } from './contract';
 import { createClock } from './timeFormat';
 import type { Quote } from './types';
-import { dailyBarsCurrent, etTime, liveChangeRef, sessionQuote, usesUsEquitySession } from './sessionQuote';
+import { dailyBarsCurrent, etTime, headerSession, liveChangeRef, sessionQuote, usesUsEquitySession } from './sessionQuote';
 
 const q = (fields: Partial<Quote>): Quote => ({ key: 'STK:AAPL', updatedAt: 0, ...fields });
 
@@ -26,6 +26,30 @@ describe('sessionQuote', () => {
         { kind: 'prev', value: 224.52 },
       ],
     });
+  });
+
+  it("overnight: the overnight last vs today's close, the close as a ref", () => {
+    expect(sessionQuote(full, 'overnight')).toEqual({
+      price: 228.1,
+      ref: 227.48,
+      refs: [
+        { kind: 'close', value: 227.48, base: 224.52 },
+        { kind: 'prev', value: 224.52 },
+      ],
+    });
+    // From 20:00 IB's close is today's (live AAPL at 01:00: last 346.38, close and tick 57 343.83).
+    expect(sessionQuote(q({ last: 346.38, close: 343.829987, lastRthTrade: 343.83 }), 'overnight')).toEqual({ price: 346.38, ref: 343.83, refs: [{ kind: 'close', value: 343.83 }] });
+    expect(sessionQuote(q({ last: 10, close: 9 }), 'overnight')).toEqual({ price: 10, ref: 9, refs: [{ kind: 'prev', value: 9 }] });
+  });
+
+  it('heads US stocks with the overnight session, other US instruments with the day sessions', () => {
+    const wedNight = new Date('2026-10-28T22:30:00-04:00');
+    const satNight = new Date('2026-10-31T22:30:00-04:00');
+    expect(headerSession(stock('AAPL'), wedNight)).toBe('overnight');
+    expect(headerSession(stock('AAPL'), satNight)).toBe('closed');
+    expect(headerSession(option('AAPL', '20261120', 230, 'C'), wedNight)).toBe('closed');
+    expect(headerSession(index('SPX', 'CBOE'), wedNight)).toBe('closed');
+    expect(headerSession({ ...stock('SAP'), currency: 'EUR' }, wedNight)).toBe('regular');
   });
 
   it('after hours without tick 57 falls back to the previous close', () => {

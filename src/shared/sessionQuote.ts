@@ -2,16 +2,21 @@
 // session (design: sessionQuote). Shared with the main process so price alerts measure a day's
 // change against the same reference (liveChangeRef). Pure so it can be unit tested.
 //
-//   regular  last vs previous close                      refs: Prev close
-//   post     extended last vs today's close              refs: Close (vs prev close), Prev close
-//   pre      last vs previous close                      refs: Prev close
-//   closed   today's close vs prev close                 refs: After-hours last (if different), Prev close
+//   regular    last vs previous close                    refs: Prev close
+//   post       extended last vs today's close            refs: Close (vs prev close), Prev close
+//   overnight  overnight last vs today's close           refs: Close (vs prev close, until IB rolls it to today's at 20:00)
+//   pre        last vs previous close                    refs: Prev close
+//   closed     today's close vs prev close               refs: After-hours last (if different), Prev close
+//
+// The overnight session (US stocks, 20:00–03:50 New York: usStockSession) trades on IB's OVERNIGHT
+// venue, and SMART's last price and quote follow it (checked live: AAPL's last at 00:53 on SMART
+// was the overnight trade, its bid / ask the OVERNIGHT venue's), so its last is the live price.
 //
 // "Today's close" is the last regular-hours trade (tick 57). IB does not send it with delayed
 // data; the caller then passes the latest daily bar's close. Without either, post and closed
 // fall back to the last trade vs the previous close.
 
-import { nyClock, usEquitySession, type MarketSession } from './session';
+import { nyClock, usEquitySession, usStockSession, type MarketSession } from './session';
 import { CLOCK_24H, NEW_YORK_ZONE, wallClockAt, type Clock } from './timeFormat';
 import type { ContractRef, Quote } from './types';
 
@@ -46,7 +51,7 @@ function livePrice(q: Quote): number | undefined {
  * @param regularClose close of the latest regular session from daily bars, used for post and
  *   closed when the quote has no tick 57
  */
-export function sessionQuote(q: Quote | undefined, session: MarketSession, regularClose?: number): SessionQuote {
+export function sessionQuote(q: Quote | undefined, session: MarketSession | 'overnight', regularClose?: number): SessionQuote {
   if (!q) return { refs: [] };
   const prev = ok(q.close) ? q.close : undefined;
   const rth = todaysClose(q, regularClose);
@@ -60,6 +65,12 @@ export function sessionQuote(q: Quote | undefined, session: MarketSession, regul
     case 'post':
       if (rth == null) return { price: live, ref: prev, refs: prevRef };
       return { price: live, ref: liveChangeRef(q, session, regularClose)?.ref, refs: [{ kind: 'close', value: rth, base: prev }, ...prevRef] };
+    case 'overnight': {
+      if (rth == null) return { price: live, ref: prev, refs: prevRef };
+      // From 20:00 IB's close (tick 9) is today's (343.829987 beside tick 57's 343.83): the day before's is no longer known.
+      if (prev == null || Math.abs(prev - rth) <= rth * 1e-6) return { price: live, ref: rth, refs: [{ kind: 'close', value: rth }] };
+      return { price: live, ref: rth, refs: [{ kind: 'close', value: rth, base: prev }, ...prevRef] };
+    }
     case 'closed': {
       const price = rth ?? live;
       const ext = rth != null && ok(q.last) && q.last !== rth ? [{ kind: 'ext' as const, value: q.last, base: rth }] : [];
@@ -102,6 +113,15 @@ function dayPhase(d: Date, liquidHours?: string): string {
  */
 export function dailyBarsCurrent(loadedAt: number, now: Date, liquidHours?: string): boolean {
   return dayPhase(new Date(loadedAt), liquidHours) === dayPhase(now, liquidHours);
+}
+
+/**
+ * The session the price header shows for an instrument: US stocks' with the overnight session
+ * (usStockSession), other US instruments' day sessions, the regular session for the rest.
+ */
+export function headerSession(c: ContractRef, now: Date, liquidHours?: string): MarketSession | 'overnight' {
+  if (!usesUsEquitySession(c)) return 'regular';
+  return c.secType === 'STK' ? usStockSession(now, liquidHours) : usEquitySession(now, liquidHours);
 }
 
 /** Whether US equity session rules (pre / regular / post) apply to an instrument. */

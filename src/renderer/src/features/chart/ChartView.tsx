@@ -24,7 +24,7 @@ import { contractLabel, sameContract } from '@shared/contract';
 import { change, compact, f2, pct, sg, signColor } from '@shared/format';
 import { sessionOpenSec } from '@shared/liveBars';
 import { usEquitySession } from '@shared/session';
-import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
+import { dailyBarsCurrent, etTime, headerSession, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
 import { barSeconds, isSecondsTimeframe } from '@shared/timeframes';
 import { localZone } from '@shared/timeFormat';
 import type { Bar } from '@shared/types';
@@ -234,6 +234,8 @@ export function ChartView() {
   const now = useNow(30_000);
   const usSession = usesUsEquitySession(symbol);
   const session = usSession ? usEquitySession(now, info?.liquidHours) : 'regular';
+  // The price header also knows a US stock's overnight session (its live price, not the close).
+  const priceSession = headerSession(symbol, now, info?.liquidHours);
 
   // The star, bell and timeframes sit beside the price as in the design while price and change fit
   // there on one line. In a narrower view the header stacks: title beside the tools, price below.
@@ -334,7 +336,7 @@ export function ChartView() {
   // latest daily bar stands in, once loaded after the close.
   const dailyKey = barsKey(symbol, '1D');
   const daily = useBarsStore((s) => s.entries[dailyKey]);
-  const needsClose = usSession && (session === 'post' || session === 'closed') && !((quote?.lastRthTrade ?? 0) > 0);
+  const needsClose = usSession && (priceSession === 'post' || priceSession === 'closed' || priceSession === 'overnight') && !((quote?.lastRthTrade ?? 0) > 0);
   const dailyCurrent = daily?.loadedAt != null && dailyBarsCurrent(daily.loadedAt, now, info?.liquidHours);
   useEffect(() => {
     if (connected && needsClose) void loadBars(symbol, '1D', !dailyCurrent);
@@ -344,7 +346,7 @@ export function ChartView() {
   const regularClose = needsClose && dailyCurrent ? daily?.bars.at(-1)?.close : undefined;
 
   // Price header --------------------------------------------------------------
-  const sq = sessionQuote(quote, session, regularClose);
+  const sq = sessionQuote(quote, priceSession, regularClose);
   const minTick = info?.minTick;
   const fmt = (v: number) => f2(v, priceDecimals(minTick, v));
   const name = nameOf(symbolName, lang) || info?.longName;
@@ -492,7 +494,7 @@ export function ChartView() {
               whiteSpace: 'nowrap',
             }}
           >
-            {m.session[session]}
+            {m.session[priceSession]}
           </div>
         )}
         {dataType && (

@@ -14,8 +14,7 @@
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { isTradable } from '@shared/contract';
 import { change, f0, px, signColor } from '@shared/format';
-import { usEquitySession } from '@shared/session';
-import { sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
+import { headerSession, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
 import { lastPrice, useQuote, useQuoteSubscriptions } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
@@ -137,7 +136,7 @@ function TicketTitleBar({ T, compact = false }: { T: TicketCtl; compact?: boolea
   const symbolName = useStore((s) => s.symbolName);
   const now = useNow(30_000);
   const us = usesUsEquitySession(T.symbol);
-  const session = us ? usEquitySession(now, T.info?.liquidHours) : 'regular';
+  const session = headerSession(T.symbol, now, T.info?.liquidHours);
   const sq = sessionQuote(T.q, session);
   // The chart header's contract details (name, primary exchange).
   const info = useChartContractInfo(T.symbol);

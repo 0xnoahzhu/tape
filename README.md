@@ -96,7 +96,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   from the close of the bar it starts at to the close of the bar it ends at, and the bars between), each
   read in the same bubble under its button, live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
-  in the header. Under the chart a panel lists the selected symbol's positions (contract, quantity and
+  in the header. The header's big price is the live one while any session trades (pre-market, regular,
+  after hours, and US stocks' overnight session with today's close beside it); once nothing trades it is
+  the day's close, with the after-hours last beside it. Under the chart a panel lists the selected symbol's positions (contract, quantity and
   IB's average cost, value, unrealized and day P&L, as on Portfolio › Positions) and open orders (time,
   side, contract, quantity @ price, last price where the panel is wide enough, status, Modify / Cancel),
   under column names; right-click an option position for its own chart. A splitter resizes the panel
