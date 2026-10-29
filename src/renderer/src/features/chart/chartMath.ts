@@ -8,7 +8,7 @@
 
 import { sma } from '@shared/indicators';
 import { barDay, quarterOf } from '@shared/liveBars';
-import { clockText, type Clock } from '@shared/timeFormat';
+import { clockText, type ChartZone, type Clock } from '@shared/timeFormat';
 import { barEndSec, barSeconds, isIntraday, isSecondsTimeframe, TIMEFRAMES } from '@shared/timeframes';
 import type { Bar, Timeframe } from '@shared/types';
 
@@ -997,6 +997,15 @@ export function chartTimeZone(timeZoneId: string | undefined): string {
   return zone;
 }
 
+/**
+ * The zone the chart's times are shown in, per Settings › General › Chart time zone: the
+ * instrument's exchange's (chartTimeZone), this computer's (`local`), or the zone chosen.
+ */
+export function shownTimeZone(setting: ChartZone, timeZoneId: string | undefined, local: string): string {
+  if (setting === 'exchange') return chartTimeZone(timeZoneId);
+  return setting === 'local' ? local : setting;
+}
+
 /** Per zone: a formatter and its UTC offsets (s) per hour since the epoch (exchange zones change offset on the hour, UTC). */
 const zoneClocks = new Map<string, { parts: Intl.DateTimeFormat; offsets: Map<number, number> }>();
 
@@ -1032,22 +1041,24 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 const MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** Bar time labels per language (weekday names are indexed like Date.getUTCDay). */
+/** Bar time labels per language (weekday names are indexed like Date.getUTCDay); dates carry their year. */
 const BAR_LABELS = {
   en: {
     weekdays: WEEKDAYS,
-    intraday: (wd: string, md: string, hm: string) => `${wd} ${md} ${hm}`,
-    day: (day: string, wd: string) => `${wd} ${day}`,
-    week: (day: string) => `Week of ${day}`,
+    date: (y: number, m: number, d: number) => `${MONTH_EN[m - 1]} ${d}, ${y}`,
+    intraday: (wd: string, date: string, hm: string) => `${wd}, ${date} ${hm}`,
+    day: (date: string, wd: string) => `${wd}, ${date}`,
+    week: (date: string) => `Week of ${date}`,
     month: (y: string, m: number) => `${MONTH_EN[m - 1]} ${y}`,
     quarter: (y: string, q: number) => `Q${q} ${y}`,
     year: (y: string) => y,
   },
   zh: {
     weekdays: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
-    intraday: (wd: string, md: string, hm: string) => `${md} ${wd} ${hm}`,
-    day: (day: string, wd: string) => `${day} ${wd}`,
-    week: (day: string) => `${day} 当周`,
+    date: (y: number, m: number, d: number) => `${y}年${m}月${d}日`,
+    intraday: (wd: string, date: string, hm: string) => `${date} ${wd} ${hm}`,
+    day: (date: string, wd: string) => `${date} ${wd}`,
+    week: (date: string) => `${date} 当周`,
     month: (y: string, m: number) => `${y}年${m}月`,
     quarter: (y: string, q: number) => `${y}年Q${q}`,
     year: (y: string) => `${y}年`,
@@ -1070,22 +1081,24 @@ const barClock = (f: BarFields, clock: LabelClock, seconds: boolean) =>
   clockText({ h: Math.floor(f.min / 60), m: f.min % 60, s: f.sec % 60 }, clock.format, clock.lang, seconds);
 
 /**
- * Hover label for a bar. Intraday bars are shown in exchange time (`zone`, see chartTimeZone), as
- * on the time axis, in `clock`'s format with seconds for second intervals ("Fri 10/02 10:31 AM");
- * daily and longer bars by their trading date (quarters as "Q3 2026").
+ * Hover label for a bar, with its year. Intraday bars are shown in time zone `zone` (the chart's,
+ * see chartTimeZone), as on the time axis, in `clock`'s format with seconds for second intervals
+ * ("Fri, Oct 2, 2026 10:31 AM", "2026年10月2日 周五 上午 10:31"); daily and longer bars by their
+ * trading date, which no zone moves ("Fri, Oct 2, 2026"; quarters as "Q3 2026").
  */
 export function formatBarTime(time: number, tf: Timeframe, clock: LabelClock, zone: string = NY_ZONE): string {
   const L = BAR_LABELS[clock.lang];
   if (isIntraday(tf)) {
     const f = barFields(time, true, zone);
-    return L.intraday(L.weekdays[f.wd], `${pad2(f.mo)}/${pad2(f.d)}`, barClock(f, clock, isSecondsTimeframe(tf)));
+    return L.intraday(L.weekdays[f.wd], L.date(f.y, f.mo, f.d), barClock(f, clock, isSecondsTimeframe(tf)));
   }
   const day = barDay(time);
   const [y, m] = [day.slice(0, 4), Number(day.slice(5, 7))];
   const wd = L.weekdays[new Date(day + 'T12:00:00Z').getUTCDay()];
+  const date = L.date(Number(y), m, Number(day.slice(8, 10)));
   switch (tf) {
     case '1W':
-      return L.week(day);
+      return L.week(date);
     case '1M':
       return L.month(y, m);
     case '1Q':
@@ -1093,7 +1106,7 @@ export function formatBarTime(time: number, tf: Timeframe, clock: LabelClock, zo
     case '1Y':
       return L.year(y);
     default:
-      return L.day(day, wd);
+      return L.day(date, wd);
   }
 }
 

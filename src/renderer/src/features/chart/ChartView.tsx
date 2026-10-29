@@ -26,6 +26,7 @@ import { sessionOpenSec } from '@shared/liveBars';
 import { usEquitySession } from '@shared/session';
 import { dailyBarsCurrent, etTime, sessionQuote, usesUsEquitySession } from '@shared/sessionQuote';
 import { barSeconds, isSecondsTimeframe } from '@shared/timeframes';
+import { localZone } from '@shared/timeFormat';
 import type { Bar } from '@shared/types';
 import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../hooks/useQuotes';
 import { nameOf, useClock, useLang } from '../../i18n';
@@ -35,7 +36,7 @@ import { alertLevel } from '../alerts/model';
 import { WatchStar } from '../watchlist/WatchStar';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, withLiveBars, type MeasureKind } from './chartMath';
+import { advanceLiveBars, isIntraday, MA_PERIODS, priceDecimals, shownTimeZone, withLiveBars, type MeasureKind } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
@@ -320,6 +321,8 @@ export function ChartView() {
     [key, entry?.bars, liveLast, timeframe, session, liveData, sessionOpen, tick],
   );
   const [hoverBar, setHoverBar] = useState<Bar | null>(null);
+  // The time axis and crosshair read in Settings › General › Chart time zone.
+  const chartZone = useStore((s) => s.settings.appearance.chartZone);
   // The measure tool on: the next drag on the chart draws it; it turns off once one is drawn (or on Esc).
   const [measuring, setMeasuring] = useState<MeasureKind | null>(null);
   const endMeasuring = useCallback(() => setMeasuring(null), []);
@@ -562,7 +565,7 @@ export function ChartView() {
         mas={mas}
         showVol={showVol}
         minTick={minTick}
-        timeZone={chartTimeZone(info?.timeZoneId)}
+        timeZone={shownTimeZone(chartZone, info?.timeZoneId, localZone())}
         // An option's bars come in its regular hours only (IB's tradingHours add a pre-open from 07:30).
         tradingHours={(symbol.secType === 'OPT' ? info?.liquidHours : undefined) ?? info?.tradingHours}
         exchangeTimeZone={info?.timeZoneId}

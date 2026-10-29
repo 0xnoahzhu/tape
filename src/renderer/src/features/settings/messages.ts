@@ -1,7 +1,7 @@
 // Strings of the Settings page (English from the design's EN map, Chinese from its script).
 
 import { compact, f0 } from '@shared/format';
-import type { Clock } from '@shared/timeFormat';
+import type { ChartZone, Clock } from '@shared/timeFormat';
 import { createMessages } from '../../i18n';
 import type { BiometricKind, LockBiometrics, MarketCheckStatus } from '@shared/types';
 import type { ExchangePair, Hint, MarketRow, RowNote, RowTip, ShortcutId } from './logic';
@@ -291,6 +291,24 @@ const en = {
   timeFormat: 'Time format',
   hour12: '12-hour',
   hour24: '24-hour',
+  chartZone: 'Chart time zone',
+  chartZoneD: 'The times on the chart’s time axis and crosshair. Daily and longer bars keep their trading date.',
+  chartZones: {
+    exchange: 'Exchange',
+    local: 'This computer',
+    'America/New_York': 'New York',
+    'America/Chicago': 'Chicago',
+    'America/Los_Angeles': 'Los Angeles',
+    'Europe/London': 'London',
+    'Europe/Berlin': 'Frankfurt',
+    'Asia/Hong_Kong': 'Hong Kong',
+    'Asia/Shanghai': 'Shanghai',
+    'Asia/Tokyo': 'Tokyo',
+    'Asia/Singapore': 'Singapore',
+    'Australia/Sydney': 'Sydney',
+    UTC: 'UTC',
+  } satisfies Record<ChartZone, string>,
+  chartZoneExchangeD: 'Each instrument’s exchange (New York for US ones)',
   theme: 'Theme',
   system: 'System',
   dark: 'Dark',
@@ -659,6 +677,24 @@ const zh: typeof en = {
   timeFormat: '时间格式',
   hour12: '12 小时制',
   hour24: '24 小时制',
+  chartZone: '图表时区',
+  chartZoneD: '图表横坐标和十字光标上的时间。日线及更长周期按交易日显示，不随时区变化。',
+  chartZones: {
+    exchange: '交易所',
+    local: '本机',
+    'America/New_York': '纽约',
+    'America/Chicago': '芝加哥',
+    'America/Los_Angeles': '洛杉矶',
+    'Europe/London': '伦敦',
+    'Europe/Berlin': '法兰克福',
+    'Asia/Hong_Kong': '香港',
+    'Asia/Shanghai': '上海',
+    'Asia/Tokyo': '东京',
+    'Asia/Singapore': '新加坡',
+    'Australia/Sydney': '悉尼',
+    UTC: 'UTC',
+  },
+  chartZoneExchangeD: '各标的所在交易所的时区（美股为纽约）',
   theme: '主题',
   system: '跟随系统',
   dark: 'Dark',

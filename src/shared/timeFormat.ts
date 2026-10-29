@@ -24,6 +24,30 @@ export const isTimeFormat = (v: unknown): v is TimeFormat => v === '12h' || v ==
 /** New York, the zone of US exchange times shown with " ET". */
 export const NEW_YORK_ZONE = 'America/New_York';
 
+/** The zones the chart's times can be read in besides the exchange's and this computer's (Settings › General). */
+export const CHART_ZONES = [
+  NEW_YORK_ZONE,
+  'America/Chicago',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Asia/Hong_Kong',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Australia/Sydney',
+  'UTC',
+] as const;
+/** The chart's time zone: the instrument's exchange's (the default), this computer's, or one of CHART_ZONES. */
+export type ChartZone = 'exchange' | 'local' | (typeof CHART_ZONES)[number];
+export const CHART_ZONE_SETTINGS: readonly ChartZone[] = ['exchange', 'local', ...CHART_ZONES];
+export const DEFAULT_CHART_ZONE: ChartZone = 'exchange';
+
+/** This computer's time zone (IANA), New York when the runtime does not say. */
+export function localZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || NEW_YORK_ZONE;
+}
+
 /** A wall clock reading: hours 0–23. */
 export interface WallClock {
   h: number;

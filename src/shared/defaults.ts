@@ -2,7 +2,7 @@
 
 import { index, stock } from './contract';
 import { defaultSounds } from './notificationSounds';
-import { DEFAULT_TIME_FORMAT } from './timeFormat';
+import { DEFAULT_CHART_ZONE, DEFAULT_TIME_FORMAT } from './timeFormat';
 import type { Lang, NotificationKind, Settings, UpColor, Watchlist } from './types';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = ['fill', 'order', 'price', 'opt', 'conn', 'sys'];
@@ -28,7 +28,7 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
       autoReconnect: true,
     },
     trading: { defaultQty: 100, outsideRthDefault: false },
-    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, upColor: defaultUpColor(language), colorBlind: 'off', showAccountId: true },
+    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, chartZone: DEFAULT_CHART_ZONE, upColor: defaultUpColor(language), colorBlind: 'off', showAccountId: true },
     features: { depth: false, depthSetByUser: false },
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },

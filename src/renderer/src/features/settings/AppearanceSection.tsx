@@ -1,11 +1,13 @@
-// Settings › General: language, time format, theme, up/down color convention and color-blind mode
-// (red–green set further apart, or blue and orange, for up / down: tokens.css, data-cb).
+// Settings › General: language, time format, the chart's time zone, theme, up/down color convention
+// and color-blind mode (red–green set further apart, or blue and orange, for up / down: tokens.css, data-cb).
 
-import type { TimeFormat } from '@shared/timeFormat';
+import { CHART_ZONE_SETTINGS, localZone, type ChartZone, type TimeFormat } from '@shared/timeFormat';
 import type { ColorBlind, Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
+import { Select } from '../../ui/select';
+import { zoneOffsetText } from './logic';
 import { useSettingsMessages } from './messages';
-import { OptionRow, SectionHeader, saveSettings } from './parts';
+import { LabelBlock, OptionRow, SectionHeader, saveSettings } from './parts';
 
 export function AppearanceSection() {
   const m = useSettingsMessages();
@@ -60,6 +62,7 @@ export function AppearanceSection() {
         value={a.timeFormat}
         onChange={(timeFormat) => saveSettings({ appearance: { timeFormat } })}
       />
+      <ChartZoneRow />
       <OptionRow<ThemeSetting>
         label={m.theme}
         options={[
@@ -92,6 +95,32 @@ export function AppearanceSection() {
         onChange={(colorBlind) => saveSettings({ appearance: { colorBlind } })}
       />
     </>
+  );
+}
+
+/** The chart's time zone: the exchange's, this computer's (named), or a city's, each with its offset now. */
+function ChartZoneRow() {
+  const m = useSettingsMessages();
+  const value = useStore((s) => s.settings.appearance.chartZone);
+  const now = Date.now();
+  const local = localZone();
+  const options = CHART_ZONE_SETTINGS.map((key) => {
+    if (key === 'exchange') return { key, label: m.chartZones.exchange, hint: m.chartZoneExchangeD };
+    const zone = key === 'local' ? local : key;
+    const name = key === 'local' ? `${m.chartZones.local} · ${local}` : m.chartZones[key];
+    return { key, label: key === 'UTC' ? name : `${name} · ${zoneOffsetText(zone, now)}` };
+  });
+  return (
+    <div data-setting="chart-zone" style={{ minHeight: 60, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+      <LabelBlock label={m.chartZone} desc={m.chartZoneD} />
+      <Select<ChartZone>
+        options={options}
+        value={value}
+        onChange={(chartZone) => chartZone !== value && saveSettings({ appearance: { chartZone } })}
+        width={340}
+        style={{ width: 240, flexShrink: 0 }}
+      />
+    </div>
   );
 }
 

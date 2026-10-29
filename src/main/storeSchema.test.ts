@@ -215,6 +215,13 @@ describe('loadSettings', () => {
     for (const bad of ['24', 'h24', 24, true, null, '']) expect(loadSettings({ appearance: { timeFormat: bad } }, defaults).appearance.timeFormat).toBe('12h');
   });
 
+  it('reads the chart in the exchange’s time zone unless a known one was chosen', () => {
+    expect(defaults.appearance.chartZone).toBe('exchange');
+    expect(loadSettings({ appearance: { theme: 'dark' } }, defaults).appearance.chartZone).toBe('exchange');
+    for (const ok of ['local', 'Asia/Shanghai', 'UTC']) expect(loadSettings({ appearance: { chartZone: ok } }, defaults).appearance.chartZone).toBe(ok);
+    for (const bad of ['Mars/Olympus', 'asia/shanghai', 8, null, '']) expect(loadSettings({ appearance: { chartZone: bad } }, defaults).appearance.chartZone).toBe('exchange');
+  });
+
   it('validates the lock preferences', () => {
     const s = loadSettings({ lock: { autoLock: 'custom', customMinutes: '5000', unlockWith: 'face', sound: 0, pin: '123456' } }, defaults);
     expect(s.lock).toEqual({ autoLock: 'custom', customMinutes: 1440, unlockWith: 'biometric', sound: false });

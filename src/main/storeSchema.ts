@@ -9,7 +9,7 @@ import { ALERT_FREQUENCIES, ALERT_SESSIONS, ALERT_TIMEFRAMES, clipNote, DEFAULT_
 import { defaultUpColor, NOTIFICATION_KINDS } from '@shared/defaults';
 import { DND_MAX_MS } from '@shared/dnd';
 import { KNOWN_SOUNDS } from '@shared/notificationSounds';
-import { TIME_FORMATS } from '@shared/timeFormat';
+import { CHART_ZONE_SETTINGS, TIME_FORMATS } from '@shared/timeFormat';
 import type {
   AlertCross,
   AlertFrequency,
@@ -125,6 +125,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     theme: oneOf(['system', 'dark', 'light']),
     language: oneOf(['en', 'zh']),
     timeFormat: oneOf(TIME_FORMATS),
+    chartZone: oneOf(CHART_ZONE_SETTINGS),
     upColor: oneOf(['cn', 'us']),
     colorBlind: oneOf(['off', 'redGreen', 'blueOrange']),
     showAccountId: bool,

@@ -1,5 +1,6 @@
 // Pure helpers for the Settings page: input validation, connection labels, do-not-disturb,
-// market data observation, API log filtering/formatting and retention, and shortcut labels.
+// market data observation, API log filtering/formatting and retention, shortcut labels and the
+// chart time zone's offsets.
 
 import { DEFAULT_PORTS } from '@shared/defaults';
 import { DEPTH_PARTIAL, depthPermissions, isFullBook } from '@shared/depthPermissions';
@@ -18,6 +19,16 @@ import type {
   Quote,
   Settings,
 } from '@shared/types';
+
+// ---------------------------------------------------------------------------
+// Chart time zone
+
+/** A time zone's UTC offset at `now` (ms): "UTC−4", "UTC+8", "UTC+5:30", "UTC". */
+export function zoneOffsetText(zone: string, now: number): string {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(now).find((p) => p.type === 'timeZoneName')?.value ?? '';
+  const off = name.replace(/^GMT/, '');
+  return off && off !== '+0' ? `UTC${off.replace('-', '−')}` : 'UTC';
+}
 
 // ---------------------------------------------------------------------------
 // Do-not-disturb

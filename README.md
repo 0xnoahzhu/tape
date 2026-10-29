@@ -266,7 +266,11 @@ green but sets them further apart (a teal-leaning green; for color weakness), *B
 green's place and orange in red's (for red–green color blindness); both keep the convention and draw up
 candles hollow, so up and down differ by shape too. English and
 中文, and 12-hour ("09:41 AM", "上午 09:41"; the default) or 24-hour ("09:41") clock times everywhere you
-read them; the API log and what is sent to IB stay 24-hour.
+read them; the API log and what is sent to IB stay 24-hour. The chart's time axis and crosshair read in a
+**chart time zone** of your choice: each instrument's exchange (the default), this computer's, or New
+York, Chicago, Los Angeles, London, Frankfurt, Hong Kong, Shanghai, Tokyo, Singapore, Sydney or UTC; the
+crosshair shows the full date with its year and weekday ("Tue, Aug 25, 2026 09:30 AM"), and daily and
+longer bars keep their trading date in any zone.
 
 **Lock screen** — lock Tape with ⌘L / Ctrl+L or the padlock in the top bar; it also locks after a chosen
 idle time. Unlock with a 6-character PIN, Touch ID or Windows Hello (see *Lock screen* below).

@@ -3,6 +3,7 @@ import { NO_SOUND } from '@shared/notificationSounds';
 import { createClock } from '@shared/timeFormat';
 import type { ApiLogEntry, DepthBook, MarketCheckItem, MarketDataCheck, Quote } from '@shared/types';
 import {
+  zoneOffsetText,
   autoCheckPlan,
   checkAge,
   checkAttention,
@@ -815,5 +816,19 @@ describe('notification sound helpers', () => {
     expect(soundListKey('Escape', 7, 15)).toEqual({ kind: 'close' });
     expect(soundListKey('Tab', 7, 15)).toEqual({ kind: 'close' });
     expect(soundListKey('a', 7, 15)).toBeUndefined();
+  });
+});
+
+describe('chart time zone', () => {
+  it('names a zone by its UTC offset at the time, daylight saving included', () => {
+    const july = Date.UTC(2026, 6, 1);
+    const jan = Date.UTC(2026, 0, 15);
+    expect(zoneOffsetText('America/New_York', july)).toBe('UTC−4');
+    expect(zoneOffsetText('America/New_York', jan)).toBe('UTC−5');
+    expect(zoneOffsetText('Asia/Hong_Kong', july)).toBe('UTC+8');
+    expect(zoneOffsetText('Asia/Kolkata', july)).toBe('UTC+5:30');
+    expect(zoneOffsetText('UTC', july)).toBe('UTC');
+    expect(zoneOffsetText('Europe/London', jan)).toBe('UTC');
+    expect(zoneOffsetText('Europe/London', july)).toBe('UTC+1');
   });
 });

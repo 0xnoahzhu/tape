@@ -16,6 +16,7 @@ import {
   fitView,
   exchangeZone,
   formatBarTime,
+  shownTimeZone,
   futureKeep,
   futureTimes,
   isCurrentBar,
@@ -828,26 +829,26 @@ describe('labels', () => {
 
   it('formats hover times per timeframe', () => {
     const intraday = Date.UTC(2026, 9, 2, 14, 31) / 1000; // Fri 10:31 ET
-    expect(formatBarTime(intraday, '5m', EN24)).toBe('Fri 10/02 10:31');
-    expect(formatBarTime(intraday, '1m', ZH24)).toBe('10/02 周五 10:31');
+    expect(formatBarTime(intraday, '5m', EN24)).toBe('Fri, Oct 2, 2026 10:31');
+    expect(formatBarTime(intraday, '1m', ZH24)).toBe('2026年10月2日 周五 10:31');
     const day = Date.UTC(2026, 9, 2) / 1000;
-    expect(formatBarTime(day, '1D', EN24)).toBe('Fri 2026-10-02');
-    expect(formatBarTime(day, '1D', ZH24)).toBe('2026-10-02 周五');
-    expect(formatBarTime(day, '1W', EN24)).toBe('Week of 2026-10-02');
+    expect(formatBarTime(day, '1D', EN24)).toBe('Fri, Oct 2, 2026');
+    expect(formatBarTime(day, '1D', ZH24)).toBe('2026年10月2日 周五');
+    expect(formatBarTime(day, '1W', EN24)).toBe('Week of Oct 2, 2026');
     expect(formatBarTime(day, '1M', EN24)).toBe('Oct 2026');
     expect(formatBarTime(day, '1M', ZH24)).toBe('2026年10月');
     expect(formatBarTime(day, '1Y', EN24)).toBe('2026');
     // Just after midnight ET, and in another exchange's time zone.
-    expect(formatBarTime(Date.UTC(2026, 9, 2, 4, 5) / 1000, '1m', EN24)).toBe('Fri 10/02 00:05');
+    expect(formatBarTime(Date.UTC(2026, 9, 2, 4, 5) / 1000, '1m', EN24)).toBe('Fri, Oct 2, 2026 00:05');
     const hk = Date.UTC(2026, 9, 1, 1, 30) / 1000; // Thu 09:30 in Hong Kong, Wed 21:30 ET
-    expect(formatBarTime(hk, '5m', EN24)).toBe('Wed 09/30 21:30');
-    expect(formatBarTime(hk, '5m', EN24, 'Asia/Hong_Kong')).toBe('Thu 10/01 09:30');
-    expect(formatBarTime(hk, '5m', ZH24, 'Asia/Hong_Kong')).toBe('10/01 周四 09:30');
+    expect(formatBarTime(hk, '5m', EN24)).toBe('Wed, Sep 30, 2026 21:30');
+    expect(formatBarTime(hk, '5m', EN24, 'Asia/Hong_Kong')).toBe('Thu, Oct 1, 2026 09:30');
+    expect(formatBarTime(hk, '5m', ZH24, 'Asia/Hong_Kong')).toBe('2026年10月1日 周四 09:30');
     // Second intervals show seconds; minute and hour intervals do not.
     const sec = Date.UTC(2026, 9, 2, 14, 31, 7) / 1000;
-    expect(formatBarTime(sec, '1s', EN24)).toBe('Fri 10/02 10:31:07');
-    expect(formatBarTime(sec - 7, '45s', ZH24)).toBe('10/02 周五 10:31:00');
-    expect(formatBarTime(sec - 7, '3m', EN24)).toBe('Fri 10/02 10:31');
+    expect(formatBarTime(sec, '1s', EN24)).toBe('Fri, Oct 2, 2026 10:31:07');
+    expect(formatBarTime(sec - 7, '45s', ZH24)).toBe('2026年10月2日 周五 10:31:00');
+    expect(formatBarTime(sec - 7, '3m', EN24)).toBe('Fri, Oct 2, 2026 10:31');
     // Quarters by their first month.
     expect(formatBarTime(Date.UTC(2026, 6, 1) / 1000, '1Q', EN24)).toBe('Q3 2026');
     expect(formatBarTime(Date.UTC(2026, 9, 1) / 1000, '1Q', ZH24)).toBe('2026年Q4');
@@ -1542,6 +1543,16 @@ describe('exchange time', () => {
     expect(chartTimeZone(' Europe/London ')).toBe('Europe/London');
   });
 
+  it('reads the chart in the zone chosen in Settings, the exchange’s by default', () => {
+    expect(shownTimeZone('exchange', 'HKT', 'Europe/Paris')).toBe('Asia/Hong_Kong');
+    expect(shownTimeZone('exchange', 'US/Eastern', 'Europe/Paris')).toBe(NY_ZONE);
+    expect(shownTimeZone('local', 'HKT', 'Europe/Paris')).toBe('Europe/Paris');
+    expect(shownTimeZone('Asia/Shanghai', 'US/Eastern', 'Europe/Paris')).toBe('Asia/Shanghai');
+    // The same 09:30 ET bar, read in Shanghai.
+    const bar = Date.UTC(2026, 9, 2, 13, 30) / 1000;
+    expect(formatBarTime(bar, '5m', EN24, shownTimeZone('Asia/Shanghai', undefined, 'UTC'))).toBe('Fri, Oct 2, 2026 21:30');
+  });
+
   it('starts days at the session open in the exchange time zone', () => {
     const bars = hkBars(2026, 9, 28, 5); // Mon 09/28 .. Fri 10/02, 66 bars a day
     const opens = new Set(bars.map((_, i) => i).filter((i) => i % 66 === 0));
@@ -1588,8 +1599,8 @@ describe('exchange time', () => {
       timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24, NY_ZONE);
       const met = timeAxisLabels(bars, '5m', view(0, bars.length), 1000, EN24, chartTimeZone('MET'));
       expect(met.filter((l) => l.kind === 'day').map((l) => l.index)).toEqual([perDay, 2 * perDay, 3 * perDay]);
-      expect(formatBarTime(bars[2 * perDay].time, '5m', EN24, 'MET')).toBe('Mon 10/26 09:00');
-      expect(formatBarTime(bars[2 * perDay - 1].time, '5m', EN24, 'MET')).toBe('Fri 10/23 17:25');
+      expect(formatBarTime(bars[2 * perDay].time, '5m', EN24, 'MET')).toBe('Mon, Oct 26, 2026 09:00');
+      expect(formatBarTime(bars[2 * perDay - 1].time, '5m', EN24, 'MET')).toBe('Fri, Oct 23, 2026 17:25');
     }
   });
 });
@@ -1652,24 +1663,24 @@ describe('chart times in the 12- and 24-hour formats', () => {
   const at = (h: number, m: number, sec = 0) => Date.UTC(2026, 9, 2, h + 4, m, sec) / 1000; // Fri 10/02, EDT
 
   it('writes hover times in the clock format and language', () => {
-    expect(formatBarTime(at(10, 31), '5m', EN12)).toBe('Fri 10/02 10:31 AM');
-    expect(formatBarTime(at(10, 31), '5m', ZH12)).toBe('10/02 周五 上午 10:31');
-    expect(formatBarTime(at(14, 31), '1h', EN12)).toBe('Fri 10/02 02:31 PM');
-    expect(formatBarTime(at(14, 31), '1h', ZH24)).toBe('10/02 周五 14:31');
+    expect(formatBarTime(at(10, 31), '5m', EN12)).toBe('Fri, Oct 2, 2026 10:31 AM');
+    expect(formatBarTime(at(10, 31), '5m', ZH12)).toBe('2026年10月2日 周五 上午 10:31');
+    expect(formatBarTime(at(14, 31), '1h', EN12)).toBe('Fri, Oct 2, 2026 02:31 PM');
+    expect(formatBarTime(at(14, 31), '1h', ZH24)).toBe('2026年10月2日 周五 14:31');
     // Noon and midnight.
-    expect(formatBarTime(at(12, 0), '1m', EN12)).toBe('Fri 10/02 12:00 PM');
-    expect(formatBarTime(at(12, 0), '1m', ZH12)).toBe('10/02 周五 下午 12:00');
-    expect(formatBarTime(at(0, 5), '1m', EN12)).toBe('Fri 10/02 12:05 AM');
-    expect(formatBarTime(at(0, 5), '1m', ZH12)).toBe('10/02 周五 上午 12:05');
-    expect(formatBarTime(at(23, 59), '1m', EN12)).toBe('Fri 10/02 11:59 PM');
+    expect(formatBarTime(at(12, 0), '1m', EN12)).toBe('Fri, Oct 2, 2026 12:00 PM');
+    expect(formatBarTime(at(12, 0), '1m', ZH12)).toBe('2026年10月2日 周五 下午 12:00');
+    expect(formatBarTime(at(0, 5), '1m', EN12)).toBe('Fri, Oct 2, 2026 12:05 AM');
+    expect(formatBarTime(at(0, 5), '1m', ZH12)).toBe('2026年10月2日 周五 上午 12:05');
+    expect(formatBarTime(at(23, 59), '1m', EN12)).toBe('Fri, Oct 2, 2026 11:59 PM');
     // Seconds intervals keep their seconds.
-    expect(formatBarTime(at(14, 31, 7), '1s', EN12)).toBe('Fri 10/02 02:31:07 PM');
-    expect(formatBarTime(at(14, 31, 7), '1s', ZH12)).toBe('10/02 周五 下午 02:31:07');
-    expect(formatBarTime(at(0, 0, 45), '15s', EN12)).toBe('Fri 10/02 12:00:45 AM');
+    expect(formatBarTime(at(14, 31, 7), '1s', EN12)).toBe('Fri, Oct 2, 2026 02:31:07 PM');
+    expect(formatBarTime(at(14, 31, 7), '1s', ZH12)).toBe('2026年10月2日 周五 下午 02:31:07');
+    expect(formatBarTime(at(0, 0, 45), '15s', EN12)).toBe('Fri, Oct 2, 2026 12:00:45 AM');
     // Exchange time in another zone; dates do not change with the format.
     const hk = Date.UTC(2026, 9, 1, 1, 30) / 1000;
-    expect(formatBarTime(hk, '5m', EN12)).toBe('Wed 09/30 09:30 PM');
-    expect(formatBarTime(hk, '5m', ZH12, 'Asia/Hong_Kong')).toBe('10/01 周四 上午 09:30');
+    expect(formatBarTime(hk, '5m', EN12)).toBe('Wed, Sep 30, 2026 09:30 PM');
+    expect(formatBarTime(hk, '5m', ZH12, 'Asia/Hong_Kong')).toBe('2026年10月1日 周四 上午 09:30');
     const day = Date.UTC(2026, 9, 2) / 1000;
     for (const c of [EN12, ZH12]) {
       expect(formatBarTime(day, '1D', c)).toBe(formatBarTime(day, '1D', c.lang === 'en' ? EN24 : ZH24));
@@ -1680,15 +1691,15 @@ describe('chart times in the 12- and 24-hour formats', () => {
   it('follows the DST change in both formats', () => {
     // Sun 2026-03-08: 02:00 EST becomes 03:00 EDT. 01:55 EST and 03:00 EDT are five minutes apart.
     const before = Date.UTC(2026, 2, 8, 6, 55) / 1000;
-    expect(formatBarTime(before, '5m', EN12)).toBe('Sun 03/08 01:55 AM');
-    expect(formatBarTime(before + 300, '5m', EN12)).toBe('Sun 03/08 03:00 AM');
-    expect(formatBarTime(before + 300, '5m', ZH12)).toBe('03/08 周日 上午 03:00');
-    expect(formatBarTime(before + 300, '5m', EN24)).toBe('Sun 03/08 03:00');
+    expect(formatBarTime(before, '5m', EN12)).toBe('Sun, Mar 8, 2026 01:55 AM');
+    expect(formatBarTime(before + 300, '5m', EN12)).toBe('Sun, Mar 8, 2026 03:00 AM');
+    expect(formatBarTime(before + 300, '5m', ZH12)).toBe('2026年3月8日 周日 上午 03:00');
+    expect(formatBarTime(before + 300, '5m', EN24)).toBe('Sun, Mar 8, 2026 03:00');
     // Sun 2026-11-01: 01:00–01:59 comes twice (EDT, then EST).
     const first = Date.UTC(2026, 10, 1, 5, 30) / 1000;
-    expect(formatBarTime(first, '1m', EN12)).toBe('Sun 11/01 01:30 AM');
-    expect(formatBarTime(first + 3600, '1m', EN12)).toBe('Sun 11/01 01:30 AM');
-    expect(formatBarTime(first + 7200, '1m', ZH12)).toBe('11/01 周日 上午 02:30');
+    expect(formatBarTime(first, '1m', EN12)).toBe('Sun, Nov 1, 2026 01:30 AM');
+    expect(formatBarTime(first + 3600, '1m', EN12)).toBe('Sun, Nov 1, 2026 01:30 AM');
+    expect(formatBarTime(first + 7200, '1m', ZH12)).toBe('2026年11月1日 周日 上午 02:30');
     // The regular session after the spring change: 10:00 EDT is 14:00 UTC.
     const bars = sessionBars(2026, 3, 6, 2, 5);
     for (const [c, label] of [
