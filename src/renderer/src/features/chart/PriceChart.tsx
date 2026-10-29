@@ -8,13 +8,14 @@
 // hovered, and a double-click returns to the latest bars at the automatic zoom and fitted prices.
 // The time axis zooms the time as the price axis zooms the prices: the wheel over it, or a drag
 // along it (right: fewer, wider bars), around the pointer; a double-click on it gives back the
-// automatic zoom. A drag with Shift held (or any drag while `measuring`, the ruler button) measures:
-// a line and a box from bar to bar; its price change, percent and the bars between
-// (chartMath.ts → measureBetween) go under the ruler button (onMeasure), not over the bars. Its
-// ends snap to a bar's open, high, low or close within SNAP_PX (measurePoint's magnet, off while ⌥
-// is held), and each shows its price as the highest and lowest bars do (placeMeasureEnd). The
-// measure stays, anchored to its bars' times and prices, until a click on the chart, Esc or another
-// series.
+// automatic zoom. A drag with Shift held (or any drag while `measuring`, a measure tool in the header)
+// measures: the ruler a line and a box from bar to bar, the price arrow up or down from one price to
+// another, the time arrow back or forward from one bar's close to another's (MeasureArrow); its price
+// change, percent and the bars between (chartMath.ts → measureBetween) go under its tool (onMeasure),
+// not over the bars. Its ends snap to a bar's open, high, low or close within SNAP_PX (measurePoint's
+// magnet, off while ⌥ is held), and each shows its price as the highest and lowest bars do
+// (placeMeasureEnd). The measure stays, anchored to its bars' times and prices, until a click on the
+// chart, Esc or another series.
 // Panning past the newest bar shows empty future slots, their times projected on the time axis
 // and in the crosshair (chartMath.ts → futureTimes), and the view keeps them as new bars come;
 // nothing comes before the first bar. The price axis fits the bars in view until the user moves
@@ -48,6 +49,7 @@ import {
   futureTimes,
   keepBarsInRange,
   measureBetween,
+  measureEmpty,
   measurePoint,
   labelWidth,
   LAST_TAG_H,
@@ -86,6 +88,7 @@ import {
   zoomView,
   type ChartView,
   type MaPeriod,
+  type MeasureKind,
   type MeasurePoint,
   type PriceRange,
 } from './chartMath';
@@ -126,9 +129,9 @@ interface Props {
   fit?: { key: string; from: number | null } | null;
   /** The user panned, zoomed or reset the view while a range was fitted. */
   onLeaveFit?(): void;
-  /** The ruler is on: a drag measures (as with Shift held) instead of panning. */
-  measuring?: boolean;
-  /** A measure was drawn, or Esc pressed, while `measuring`: the ruler turns off. */
+  /** A measure tool is on: a drag draws it (with Shift held and none on, the ruler) instead of panning. */
+  measuring?: MeasureKind | null;
+  /** A measure was drawn, or Esc pressed, while `measuring`: the tool turns off. */
   onMeasured?(): void;
   /** The measure's figures as it is drawn and moved (shown under the ruler), null once cleared. */
   onMeasure?(m: MeasureReadout | null): void;
@@ -136,6 +139,7 @@ interface Props {
 
 /** What a measure reads: the price change from its start to its end, its percent, the bars between. */
 export interface MeasureReadout {
+  kind: MeasureKind;
   change: number;
   pct: number | null;
   bars: number;
@@ -226,6 +230,27 @@ const CHIP_PAD = 6;
 /** Space kept between the crosshair's time chip and the time labels beside it. */
 const CHIP_CLEAR = 6;
 
+/** Arrowhead length and half width (px). */
+const ARROW_L = 9;
+const ARROW_W = 4.5;
+
+/** The price arrow (up or down) or the time arrow (back or forward): a line, its head where the drag ended. */
+function MeasureArrow({ box }: { box: { kind: MeasureKind; x1: number; x2: number; y1: number; y2: number; color: string } }) {
+  const { kind, x1, x2, y1, y2, color } = box;
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  const ux = len ? (x2 - x1) / len : 0;
+  const uy = len ? (y2 - y1) / len : 0;
+  const head = Math.min(ARROW_L, len);
+  const bx = x2 - ux * head;
+  const by = y2 - uy * head;
+  return (
+    <g data-measure-arrow={kind}>
+      <line x1={x1} y1={y1} x2={bx} y2={by} style={{ stroke: color, strokeWidth: 1.5 }} />
+      {len > 0 && <polygon points={`${x2},${y2} ${bx - uy * ARROW_W},${by + ux * ARROW_W} ${bx + uy * ARROW_W},${by - ux * ARROW_W}`} style={{ fill: color }} />}
+    </g>
+  );
+}
+
 function isEditable(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
@@ -249,7 +274,7 @@ export const PriceChart = memo(function PriceChart({
   onHover,
   fit,
   onLeaveFit,
-  measuring = false,
+  measuring = null,
   onMeasured,
   onMeasure,
 }: Props) {
@@ -290,7 +315,7 @@ export const PriceChart = memo(function PriceChart({
   // A drag along the time axis: zooms around where it started (`fx`, a fraction of the width).
   const timeDragRef = useRef<{ id: number; x: number; fx: number } | null>(null);
   // The measure shown (ends a and b), and the pointer drawing it.
-  const [measure, setMeasure] = useState<{ a: MeasurePoint; b: MeasurePoint } | null>(null);
+  const [measure, setMeasure] = useState<{ kind: MeasureKind; a: MeasurePoint; b: MeasurePoint } | null>(null);
   const measureRef = useRef(measure);
   const measureDragRef = useRef<number | null>(null);
   const measuringRef = useRef(measuring);
@@ -427,11 +452,12 @@ export const PriceChart = memo(function PriceChart({
     } catch {
       // Not an active pointer (synthetic events): the drag works while the pointer stays over the chart.
     }
-    // Shift held, or the ruler on: the drag draws a measure from here.
-    if (e.shiftKey || measuringRef.current) {
+    // A measure tool on, or Shift held (the ruler): the drag draws it from here.
+    const kind = measuringRef.current || (e.shiftKey ? 'ruler' : null);
+    if (kind) {
       const p = measureAt(e.clientX, e.clientY, e.altKey);
       if (!p) return;
-      measureRef.current = { a: p, b: p };
+      measureRef.current = { kind, a: p, b: p };
       measureDragRef.current = e.pointerId;
       commit();
       return;
@@ -443,9 +469,9 @@ export const PriceChart = memo(function PriceChart({
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (measureDragRef.current === e.pointerId) {
       measureDragRef.current = null;
-      // A click with the ruler (no line) measures nothing.
+      // A click with a tool on (nothing drawn) measures nothing.
       const mm = measureRef.current;
-      if (mm && mm.a.time === mm.b.time && mm.a.price === mm.b.price) clearMeasure();
+      if (mm && measureEmpty(mm.kind, mm.a, mm.b)) clearMeasure();
       if (measuringRef.current) onMeasuredRef.current?.();
       return;
     }
@@ -467,7 +493,7 @@ export const PriceChart = memo(function PriceChart({
       const mm = measureRef.current;
       const p = measureAt(e.clientX, e.clientY, e.altKey);
       if (mm && p && (p.time !== mm.b.time || p.price !== mm.b.price || p.snap !== mm.b.snap)) {
-        measureRef.current = { a: mm.a, b: p };
+        measureRef.current = { ...mm, b: p };
         commit();
       }
       return;
@@ -749,41 +775,53 @@ export const PriceChart = memo(function PriceChart({
   const legendItems = readings.map((r, i) => legendItem(maLabels[i], r.value, minTick));
   const legend = legendItems.length > 0 && legendRows.length > 0 ? legendBox(legendItems, legendRows, size.w) : null;
 
-  // The measure: from the center of its first bar at its price to its second's, in px. Its figures are
-  // not drawn by it (they would cover the bars) but reported (onMeasure) for the header, under the ruler.
-  const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
+  // The measure in px: the ruler a line and a box from bar to bar; the price arrow straight up or down
+  // from where it started; the time arrow straight back or forward from there, with the closes it
+  // measures from and to marked. Its figures are not drawn by it (they would cover the bars) but
+  // reported (onMeasure) for the header, under its tool.
+  const meas = geo && measure ? measureBetween(bars, measure.a, measure.b, measure.kind) : null;
   const measureBox =
     geo && measure && meas && size.w > 0 && size.h > 0
       ? (() => {
-          const x1 = (geo.centerX(meas.from) / VB_W) * size.w;
-          const x2 = (geo.centerX(meas.to) / VB_W) * size.w;
-          const y1 = toPx(geo.y(measure.a.price));
-          const y2 = toPx(geo.y(measure.b.price));
+          const { kind, a, b } = measure;
+          const xAt = (i: number) => (geo.centerX(i) / VB_W) * size.w;
+          const x1 = xAt(meas.from);
+          const x2 = kind === 'price' ? x1 : xAt(meas.to);
+          const y1 = toPx(geo.y(a.price));
+          const y2 = kind === 'time' ? y1 : toPx(geo.y(b.price));
+          // The ends whose prices it marks: the ruler's and the price arrow's own, the time arrow's bars' closes.
+          const ends: { index: number; price: number; snap?: MeasurePoint['snap'] }[] =
+            kind === 'time'
+              ? [
+                  { index: meas.from, price: bars[meas.from].close },
+                  { index: meas.to, price: bars[meas.to].close },
+                ]
+              : [
+                  { index: meas.from, price: a.price, snap: a.snap },
+                  { index: kind === 'price' ? meas.from : meas.to, price: b.price, snap: b.snap },
+                ];
           return {
+            kind,
             x1,
             x2,
             y1,
             y2,
             color: meas.change >= 0 ? 'var(--up)' : 'var(--dn)',
-            snapA: measure.a.snap,
-            snapB: measure.b.snap,
+            ends: ends.map((e) => ({ ...e, x: xAt(e.index), y: toPx(geo.y(e.price)) })),
           };
         })()
       : null;
 
-  // Each measure end's price, marked as the extremes are, from the end out and away from the line.
-  const measureEnds =
-    measureBox && measure
-      ? [
-          { key: 'a', price: measure.a.price, tip: { x: measureBox.x1, y: measureBox.y1 }, other: { x: measureBox.x2, y: measureBox.y2 } },
-          { key: 'b', price: measure.b.price, tip: { x: measureBox.x2, y: measureBox.y2 }, other: { x: measureBox.x1, y: measureBox.y1 } },
-        ].flatMap((end) => {
-          if (!geo || !(end.price >= geo.lo && end.price <= geo.hi)) return [];
-          if (end.key === 'b' && measureBox.x1 === measureBox.x2 && measureBox.y1 === measureBox.y2) return [];
-          const text = axisPrice(end.price, minTick);
-          return [{ key: end.key, text, ...placeMeasureEnd(end.tip, end.other, size.w, size.h, text, end.key === 'a', legend) }];
-        })
-      : [];
+  // Each measure end's price, marked as the extremes are, from the end out and away from the other.
+  const measureEnds = measureBox
+    ? measureBox.ends.flatMap((end, i) => {
+        const other = measureBox.ends[1 - i];
+        if (!geo || !(end.price >= geo.lo && end.price <= geo.hi)) return [];
+        if (i === 1 && end.x === other.x && end.y === other.y) return [];
+        const text = axisPrice(end.price, minTick);
+        return [{ key: i ? 'b' : 'a', text, ...placeMeasureEnd(end, other, size.w, size.h, text, i === 0, legend) }];
+      })
+    : [];
 
   // Highest high and lowest low of the bars in view, marked with a leader and their price (clear of the
   // legend); with the prices moved, only those within the plot.
@@ -793,7 +831,7 @@ export const PriceChart = memo(function PriceChart({
           const e = geo.extremes[kind];
           if (!(e.price >= geo.lo && e.price <= geo.hi)) return [];
           // A measure end on it shows its price already.
-          if (meas && measure && ((meas.from === e.index && measure.a.price === e.price) || (meas.to === e.index && measure.b.price === e.price))) return [];
+          if (measureBox?.ends.some((m) => m.index === e.index && m.price === e.price)) return [];
           const text = axisPrice(e.price, minTick);
           return [{ kind, text, ...placeExtreme((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind, text, legend) }];
         })
@@ -811,12 +849,17 @@ export const PriceChart = memo(function PriceChart({
   }, [showLatest, m.latest]);
   const latestSpot = latestButtonSpot([...extremes, ...measureEnds].map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
+  const readKind = measure?.kind;
   const readChange = meas?.change;
   const readPct = meas?.pct;
   const readBars = meas?.bars;
   useEffect(() => {
-    onMeasure?.(readChange === undefined || readBars === undefined ? null : { change: readChange, pct: readPct ?? null, bars: readBars });
-  }, [readChange, readPct, readBars, onMeasure]);
+    onMeasure?.(
+      readKind === undefined || readChange === undefined || readBars === undefined
+        ? null
+        : { kind: readKind, change: readChange, pct: readPct ?? null, bars: readBars },
+    );
+  }, [readKind, readChange, readPct, readBars, onMeasure]);
 
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
@@ -906,30 +949,33 @@ export const PriceChart = memo(function PriceChart({
             </div>
           ))}
           {measureBox && (
-            <svg data-chart="measure" width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
+            <svg data-chart="measure" data-kind={measureBox.kind} width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
               {/* Leaders first, so the end markers sit on their start. */}
               {measureEnds.map((e) => (
                 <polyline key={e.key} points={e.points} style={{ fill: 'none', stroke: 'var(--dm)', strokeWidth: 1 }} />
               ))}
-              <rect
-                x={Math.min(measureBox.x1, measureBox.x2)}
-                y={Math.min(measureBox.y1, measureBox.y2)}
-                width={Math.abs(measureBox.x2 - measureBox.x1)}
-                height={Math.abs(measureBox.y2 - measureBox.y1)}
-                style={{ fill: measureBox.color, opacity: 0.12 }}
-              />
-              <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
-              {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot. */}
-              {[
-                { x: measureBox.x1, y: measureBox.y1, snap: measureBox.snapA },
-                { x: measureBox.x2, y: measureBox.y2, snap: measureBox.snapB },
-              ].map((p, i) =>
-                p.snap ? (
-                  <circle key={i} data-snap={p.snap} cx={p.x} cy={p.y} r={4.5} style={{ fill: 'var(--p)', stroke: measureBox.color, strokeWidth: 2 }} />
-                ) : (
-                  <circle key={i} cx={p.x} cy={p.y} r={3} style={{ fill: measureBox.color }} />
-                ),
+              {measureBox.kind === 'ruler' && (
+                <>
+                  <rect
+                    x={Math.min(measureBox.x1, measureBox.x2)}
+                    y={Math.min(measureBox.y1, measureBox.y2)}
+                    width={Math.abs(measureBox.x2 - measureBox.x1)}
+                    height={Math.abs(measureBox.y2 - measureBox.y1)}
+                    style={{ fill: measureBox.color, opacity: 0.12 }}
+                  />
+                  <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
+                </>
               )}
+              {measureBox.kind !== 'ruler' && <MeasureArrow box={measureBox} />}
+              {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot; the price arrow's are its own ends. */}
+              {measureBox.kind !== 'price' &&
+                measureBox.ends.map((p, i) =>
+                  p.snap ? (
+                    <circle key={i} data-snap={p.snap} cx={p.x} cy={p.y} r={4.5} style={{ fill: 'var(--p)', stroke: measureBox.color, strokeWidth: 2 }} />
+                  ) : (
+                    <circle key={i} cx={p.x} cy={p.y} r={3} style={{ fill: measureBox.color }} />
+                  ),
+                )}
             </svg>
           )}
           {measureEnds.map((e) => (

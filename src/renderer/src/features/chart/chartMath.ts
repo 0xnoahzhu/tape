@@ -262,14 +262,32 @@ export function measurePoint(bars: readonly Bar[], slot: number, price: number, 
   return best ? { time: bar.time, price: bar[best.key], snap: best.key } : { time: bar.time, price };
 }
 
-/** The bars and the price change between two measure ends; null without bars. */
-export function measureBetween(bars: readonly Bar[], a: MeasurePoint, b: MeasurePoint): Measure | null {
+/**
+ * What a measure draws: the ruler (a line from point to point), the price arrow (up or down from
+ * where it starts, at that bar) or the time arrow (back or forward from where it starts, at that price).
+ */
+export type MeasureKind = 'ruler' | 'price' | 'time';
+
+/**
+ * The bars and the price change between two measure ends; null without bars. The ruler and the
+ * price arrow measure from the start's price to the end's; the time arrow from the close of the bar
+ * it starts at to the close of the bar it ends at, either way in time.
+ */
+export function measureBetween(bars: readonly Bar[], a: MeasurePoint, b: MeasurePoint, kind: MeasureKind = 'ruler'): Measure | null {
   if (!bars.length) return null;
   const at = (t: number) => clamp(firstAtOrAfter(bars, t), 0, bars.length - 1);
   const from = at(a.time);
   const to = at(b.time);
-  const change = b.price - a.price;
-  return { from, to, change, pct: a.price > 0 ? change / a.price : null, bars: to - from };
+  const [start, end] = kind === 'time' ? [bars[from].close, bars[to].close] : [a.price, b.price];
+  const change = end - start;
+  return { from, to, change, pct: start > 0 ? change / start : null, bars: to - from };
+}
+
+/** Whether a measure's ends are where it started: nothing to draw (a click with a measure tool on). */
+export function measureEmpty(kind: MeasureKind, a: MeasurePoint, b: MeasurePoint): boolean {
+  if (kind === 'price') return a.price === b.price;
+  if (kind === 'time') return a.time === b.time;
+  return a.time === b.time && a.price === b.price;
 }
 
 /** The view is within one screen of the oldest loaded bar: time to load older ones. */

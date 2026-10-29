@@ -39,6 +39,7 @@ import {
   MA_PERIODS,
   maReadings,
   measureBetween,
+  measureEmpty,
   measurePoint,
   SNAP_PX,
   MAX_SPAN,
@@ -111,6 +112,33 @@ describe('measuring', () => {
     // Dragged back in time and down.
     expect(measureBetween(bars, b, a)).toMatchObject({ from: 17, to: 5, bars: -12, change: -10.5 });
     expect(measureBetween(bars, b, a)!.pct).toBeCloseTo(-10.5 / 115.5, 10);
+  });
+
+  it('measures the price arrow from price to price, and the time arrow from close to close, either way', () => {
+    // Bar i closes at 100 + i.
+    const bars = series(30);
+    const a = { time: bars[5].time, price: 104.2 };
+    const b = { time: bars[17].time, price: 99.3 };
+    // The price arrow: the prices alone (the end's bar only says where the pointer was).
+    const down = measureBetween(bars, a, b, 'price')!;
+    expect(down.change).toBeCloseTo(-4.9, 10);
+    expect(down.pct).toBeCloseTo(-4.9 / 104.2, 10);
+    expect(measureBetween(bars, b, a, 'price')!.change).toBeCloseTo(4.9, 10);
+    // The time arrow: bar 5's close (105) to bar 17's (117), whatever the heights; back in time, the other way.
+    const fwd = measureBetween(bars, a, b, 'time')!;
+    expect(fwd).toMatchObject({ from: 5, to: 17, bars: 12, change: 12 });
+    expect(fwd.pct).toBeCloseTo(12 / 105, 10);
+    expect(measureBetween(bars, b, a, 'time')).toMatchObject({ from: 17, to: 5, bars: -12, change: -12 });
+  });
+
+  it('draws nothing from a click: no price moved for the price arrow, no bar for the time arrow', () => {
+    const p = { time: 10, price: 5 };
+    expect(measureEmpty('price', p, { time: 20, price: 5 })).toBe(true);
+    expect(measureEmpty('price', p, { time: 10, price: 6 })).toBe(false);
+    expect(measureEmpty('time', p, { time: 10, price: 6 })).toBe(true);
+    expect(measureEmpty('time', p, { time: 20, price: 5 })).toBe(false);
+    expect(measureEmpty('ruler', p, { time: 10, price: 5 })).toBe(true);
+    expect(measureEmpty('ruler', p, { time: 20, price: 5 })).toBe(false);
   });
 
   it('keeps its bars when older ones come in front, and takes a future slot for the newest bar', () => {

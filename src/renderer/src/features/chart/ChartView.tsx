@@ -35,7 +35,7 @@ import { alertLevel } from '../alerts/model';
 import { WatchStar } from '../watchlist/WatchStar';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, withLiveBars } from './chartMath';
+import { advanceLiveBars, chartTimeZone, isIntraday, MA_PERIODS, priceDecimals, withLiveBars, type MeasureKind } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
@@ -52,10 +52,10 @@ const HEADER_GAP = 24;
 const PRICE_GAP = 14;
 /** Width of the header buttons (watchlist star, alert bell); the title keeps at least MIN_TITLE_W beside the tools. */
 const BELL_W = 30;
-/** Gap between the star, the bell and the ruler (as between the ringed indicator chips). */
+/** Gap between the star, the bell and the measure tools (as between the ringed indicator chips). */
 const BUTTON_GAP = 6;
-/** The star, the bell and the ruler side by side. */
-const BUTTONS_W = 3 * BELL_W + 2 * BUTTON_GAP;
+/** The star, the bell and the three measure tools side by side. */
+const BUTTONS_W = 5 * BELL_W + 4 * BUTTON_GAP;
 const MIN_TITLE_W = 120;
 
 function BellButton({ title, active, onClick }: { title: string; active: boolean; onClick: () => void }) {
@@ -85,16 +85,26 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
   );
 }
 
+/** The measure tools' icons: the ruler, the price arrow (up from a bar to a bar), the time arrow (right from a bar to a bar). */
+const MEASURE_ICONS: Record<MeasureKind, string> = {
+  ruler: 'M1.7 5.2h12.6v5.6H1.7z M4.7 5.2v2.4 M7.7 5.2v3.2 M10.7 5.2v2.4',
+  price: 'M3.2 2.2h9.6 M3.2 13.8h9.6 M8 13.8V5 M4.8 8.2 8 5l3.2 3.2',
+  time: 'M2.2 3.2v9.6 M13.8 3.2v9.6 M2.2 8H11 M7.8 4.8 11 8l-3.2 3.2',
+};
+/** Their switches' data-chart names. */
+const MEASURE_NAMES: Record<MeasureKind, string> = { ruler: 'ruler', price: 'price-range', time: 'time-range' };
+
 /**
- * The ruler: on, the next drag on the chart measures (PriceChart's `measuring`); accent ring while on.
- * Under it, in a bubble pointing up at it and out of the flow (the header does not move), what the
- * measure drawn reads: its percent change, large, in the up or down color, and the price change and
- * the bars between; while the ruler is on and nothing is drawn yet, what to do.
+ * A measure tool (the ruler, the price arrow, the time arrow): on, the next drag on the chart draws it
+ * (PriceChart's `measuring`); accent ring while on. Under the one drawn (or on), in a bubble pointing
+ * up at it and out of the flow (the header does not move), what the measure reads: its percent change,
+ * large, in the up or down color, and the price change and (but for the price arrow) the bars between;
+ * while the tool is on and nothing is drawn yet, what to do.
  */
-function RulerButton({ title, on, onClick, readout }: { title: string; on: boolean; onClick: () => void; readout: ReactNode }) {
+function MeasureButton({ kind, title, on, onClick, readout }: { kind: MeasureKind; title: string; on: boolean; onClick: () => void; readout: ReactNode }) {
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
-      <RulerSwitch title={title} on={on} onClick={onClick} />
+      <MeasureSwitch kind={kind} title={title} on={on} onClick={onClick} />
       {readout && (
         <div
           data-chart="measure-readout"
@@ -134,15 +144,18 @@ function RulerButton({ title, on, onClick, readout }: { title: string; on: boole
   );
 }
 
+/** The measure tools, in the header's order. */
+const MEASURE_KINDS: readonly MeasureKind[] = ['ruler', 'price', 'time'];
+
 /** The measure bubble's caret (px, the side of the square it is). */
 const CARET = 8;
 
-function RulerSwitch({ title, on, onClick }: { title: string; on: boolean; onClick: () => void }) {
+function MeasureSwitch({ kind, title, on, onClick }: { kind: MeasureKind; title: string; on: boolean; onClick: () => void }) {
   return (
     <div
       role="switch"
       aria-checked={on}
-      data-chart="ruler"
+      data-chart={MEASURE_NAMES[kind]}
       onClick={onClick}
       title={title}
       className={on ? undefined : 'hover-tx hover-p2'}
@@ -159,7 +172,7 @@ function RulerSwitch({ title, on, onClick }: { title: string; on: boolean; onCli
       }}
     >
       <svg viewBox="0 0 16 16" width={14} height={14} style={{ display: 'block' }} aria-hidden>
-        <path d="M1.7 5.2h12.6v5.6H1.7z M4.7 5.2v2.4 M7.7 5.2v3.2 M10.7 5.2v2.4" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="square" />
+        <path d={MEASURE_ICONS[kind]} stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="square" />
       </svg>
     </div>
   );
@@ -307,10 +320,10 @@ export function ChartView() {
     [key, entry?.bars, liveLast, timeframe, session, liveData, sessionOpen, tick],
   );
   const [hoverBar, setHoverBar] = useState<Bar | null>(null);
-  // The ruler: the next drag on the chart measures; it turns off once one is drawn (or on Esc).
-  const [measuring, setMeasuring] = useState(false);
-  const endMeasuring = useCallback(() => setMeasuring(false), []);
-  // The measure drawn on the chart: its figures go under the ruler, not over the bars.
+  // The measure tool on: the next drag on the chart draws it; it turns off once one is drawn (or on Esc).
+  const [measuring, setMeasuring] = useState<MeasureKind | null>(null);
+  const endMeasuring = useCallback(() => setMeasuring(null), []);
+  // The measure drawn on the chart: its figures go under its tool, not over the bars.
   const [measured, setMeasured] = useState<MeasureReadout | null>(null);
   useEffect(() => setHoverBar(null), [key]);
 
@@ -402,25 +415,30 @@ export function ChartView() {
       <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
         <WatchStar contract={symbol} name={symbolName || info?.longName || undefined} size={BELL_W} />
         <BellButton title={symbolAlerts.length ? m.alertsOn(symbolAlerts.length) : m.addAlert} active={symbolAlerts.length > 0} onClick={() => openAlertForm(symbol)} />
-        <RulerButton
-          title={m.measureHint}
-          on={measuring}
-          onClick={() => setMeasuring((on) => !on)}
-          readout={
-            measured ? (
-              <>
-                <div style={{ font: '600 15px/1.2 var(--num)', color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)' }}>
-                  {measured.pct == null ? '—' : pct(measured.pct * 100)}
-                </div>
-                <div style={{ font: '11px/1.4 var(--num)', color: 'var(--mu)' }}>
-                  {sg(measured.change, fmt)} · {m.measureBars(Math.abs(measured.bars))}
-                </div>
-              </>
-            ) : measuring ? (
-              <div style={{ font: '11px/1.4 var(--sans)', color: 'var(--dm)' }}>{m.measureDrag}</div>
-            ) : null
-          }
-        />
+        {MEASURE_KINDS.map((kind) => (
+          <MeasureButton
+            key={kind}
+            kind={kind}
+            title={m.measureHints[kind]}
+            on={measuring === kind}
+            onClick={() => setMeasuring((on) => (on === kind ? null : kind))}
+            readout={
+              measured && kind === measured.kind && (!measuring || measuring === kind) ? (
+                <>
+                  <div style={{ font: '600 15px/1.2 var(--num)', color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)' }}>
+                    {measured.pct == null ? '—' : pct(measured.pct * 100)}
+                  </div>
+                  <div style={{ font: '11px/1.4 var(--num)', color: 'var(--mu)' }}>
+                    {sg(measured.change, fmt)}
+                    {kind !== 'price' && ` · ${m.measureBars(Math.abs(measured.bars))}`}
+                  </div>
+                </>
+              ) : measuring === kind ? (
+                <div style={{ font: '11px/1.4 var(--sans)', color: 'var(--dm)' }}>{m.measureDrags[kind]}</div>
+              ) : null
+            }
+          />
+        ))}
       </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>

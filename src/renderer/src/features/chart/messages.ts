@@ -100,9 +100,16 @@ export const useChartMessages = createMessages({
     priceAxisHint: 'Drag or scroll to zoom prices · double-click to fit them',
     timeAxisHint: 'Drag or scroll to zoom time · double-click for the default zoom',
     measure: 'Measure',
-    measureHint: 'Measure: drag on the chart from one point to another (or hold Shift and drag); the ends snap to a bar’s open, high, low or close (hold ⌥ to place them freely) · click the chart or Esc to clear',
+    /** The measure tools' tooltips (the ruler, the price arrow, the time arrow), and what to do once one is on. */
+    measureHints: {
+      ruler:
+        'Measure: drag on the chart from one point to another (or hold Shift and drag); the ends snap to a bar’s open, high, low or close (hold ⌥ to place them freely) · click the chart or Esc to clear',
+      price:
+        'Price range: drag up or down on the chart for the change from one price to another; the ends snap to a bar’s open, high, low or close (hold ⌥ to place them freely) · click the chart or Esc to clear',
+      time: 'Time range: drag left or right on the chart for the change from the close of the bar it starts at to the close of the bar it ends at · click the chart or Esc to clear',
+    },
     measureBars: (n: number) => (n === 1 ? '1 bar' : `${n} bars`),
-    measureDrag: 'Drag on the chart',
+    measureDrags: { ruler: 'Drag on the chart', price: 'Drag up or down', time: 'Drag left or right' },
     autoScale: 'Auto',
     autoScaleHint: 'Fit the prices to the bars in view (double-click the price axis)',
     olderLoading: 'Loading older bars…',
@@ -206,9 +213,13 @@ export const useChartMessages = createMessages({
     priceAxisHint: '拖动或滚动缩放价格 · 双击自动适配',
     timeAxisHint: '拖动或滚动缩放时间 · 双击恢复默认缩放',
     measure: '测量',
-    measureHint: '测量：在图上从一点拖到另一点（或按住 Shift 拖动）；端点会吸附到K线的开、高、低、收（按住 ⌥ 可自由放置）· 点击图表或按 Esc 清除',
+    measureHints: {
+      ruler: '测量：在图上从一点拖到另一点（或按住 Shift 拖动）；端点会吸附到K线的开、高、低、收（按住 ⌥ 可自由放置）· 点击图表或按 Esc 清除',
+      price: '价格区间：在图上向上或向下拖动，量出从一个价格到另一个价格的涨跌；端点会吸附到K线的开、高、低、收（按住 ⌥ 可自由放置）· 点击图表或按 Esc 清除',
+      time: '时间区间：在图上向左或向右拖动，量出从起点K线收盘价到终点K线收盘价的涨跌 · 点击图表或按 Esc 清除',
+    },
     measureBars: (n: number) => `${n} 根K线`,
-    measureDrag: '在图上拖动',
+    measureDrags: { ruler: '在图上拖动', price: '向上或向下拖动', time: '向左或向右拖动' },
     autoScale: '自动',
     autoScaleHint: '价格随可见K线自动适配（或双击价格轴）',
     olderLoading: '正在加载更早数据…',
