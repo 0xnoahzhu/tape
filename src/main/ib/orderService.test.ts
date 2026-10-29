@@ -642,6 +642,24 @@ describe('OrderService', () => {
     expect(t.notices).toHaveLength(2);
   });
 
+  it('does not announce other apps’ working orders at connect, after IB’s own first list of this client’s orders', async () => {
+    const t = setup();
+    await tick();
+    // Before Tape asks anything, IB sends this client's open orders and an end of its own.
+    t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'PreSubmitted' });
+    t.emit('openOrderEnd');
+    t.ready();
+    // reqAllOpenOrders' answer: an order placed in IBKR Mobile (order id 0, client 0), working for days.
+    t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'PreSubmitted' });
+    t.emit('openOrder', 0, ibAapl, { ...lmt(0, 0), permId: 780759989, tif: 'GTC' as never }, { status: 'PreSubmitted' });
+    t.emit('openOrderEnd');
+    expect(t.notices).toEqual([]);
+    expect(t.svc.getOrders().map((o) => o.permId).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([9040, 780759989]);
+    // One placed elsewhere after the first load is news.
+    t.emit('openOrder', 0, ibAapl, { ...lmt(0, 0), permId: 555 }, { status: 'Submitted' });
+    expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL submitted · PAPER DU1']);
+  });
+
   it('keeps completed orders without announcing them', async () => {
     const t = await loaded();
     t.emit('completedOrder', ibAapl, { ...lmt(0, 0), orderId: 0, permId: 777, filledQuantity: 0 }, { status: 'Cancelled', completedStatus: 'Cancelled by Trader', completedTime: '20261004 10:00:00 US/Eastern' });

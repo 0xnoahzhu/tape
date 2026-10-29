@@ -1778,7 +1778,12 @@ export function createOrderService(ctx: MainContext): OrderService {
     ib.on(EventName.openOrder, onOpenOrder);
     ib.on(EventName.orderStatus, onOrderStatus);
     ib.on(EventName.openOrderEnd, () => {
-      ordersLoaded = true;
+      // The first load is this session's first full list. IB opens every connection with this
+      // client's own open orders and an openOrderEnd of its own, before Tape asks for anything (live:
+      // order 40 of client 7, then the end, 0.6 s before reqAllOpenOrders' answer): that end leaves
+      // out other apps' orders (IBKR Mobile's, order id 0), which would otherwise be announced as
+      // submitted on every connect.
+      if (openRequest?.kind === 'all') ordersLoaded = true;
       endOpenRequest(true);
     });
     ib.on(EventName.completedOrder, onCompletedOrder);
