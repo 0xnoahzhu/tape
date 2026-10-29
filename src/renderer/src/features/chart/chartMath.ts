@@ -665,8 +665,15 @@ export interface ExtremeLayout {
  * label would otherwise run into the price axis), right otherwise; up for the high, down for
  * the low, kept inside the plot vertically and with the label's center at or below `minY`.
  */
-export function extremeLayout(tipX: number, tipY: number, width: number, height: number, kind: 'high' | 'low', minY = EXTREME_EDGE): ExtremeLayout {
-  const dir: 1 | -1 = tipX > width * 0.6 ? -1 : 1;
+export function extremeLayout(
+  tipX: number,
+  tipY: number,
+  width: number,
+  height: number,
+  kind: 'high' | 'low',
+  minY = EXTREME_EDGE,
+  dir: 1 | -1 = tipX > width * 0.6 ? -1 : 1,
+): ExtremeLayout {
   const want = kind === 'high' ? tipY - EXTREME_DIAG : tipY + EXTREME_DIAG;
   const top = Math.max(EXTREME_EDGE, minY);
   const y = clamp(want, top, Math.max(top, height - EXTREME_EDGE));
@@ -722,12 +729,34 @@ export function placeExtreme(
   kind: 'high' | 'low',
   text: string,
   avoid?: Rect | null,
+  dir?: 1 | -1,
 ): ExtremeLayout & { box: Rect } {
-  const layout = extremeLayout(tipX, tipY, width, height, kind);
+  const layout = extremeLayout(tipX, tipY, width, height, kind, undefined, dir);
   const box = extremeBox(layout, text);
   if (!avoid || !overlaps(box, avoid, LEGEND_CLEAR_GAP)) return { ...layout, box };
-  const moved = extremeLayout(tipX, tipY, width, height, kind, avoid.bottom + LEGEND_CLEAR_GAP + EXTREME_LABEL_H / 2);
+  const moved = extremeLayout(tipX, tipY, width, height, kind, avoid.bottom + LEGEND_CLEAR_GAP + EXTREME_LABEL_H / 2, dir);
   return { ...moved, box: extremeBox(moved, text) };
+}
+
+/**
+ * A measure end's price, marked as the extremes are (placeExtreme): up from the higher end and
+ * down from the lower (the start up, the end down when level), pointing away from the other end so
+ * the label stays off the line, and towards it only where the label would leave the plot.
+ */
+export function placeMeasureEnd(
+  tip: { x: number; y: number },
+  other: { x: number; y: number },
+  width: number,
+  height: number,
+  text: string,
+  start: boolean,
+  avoid?: Rect | null,
+): ExtremeLayout & { box: Rect } {
+  const kind = tip.y < other.y || (tip.y === other.y && start) ? 'high' : 'low';
+  const away: 1 | -1 | undefined = tip.x < other.x ? -1 : tip.x > other.x ? 1 : undefined;
+  const placed = placeExtreme(tip.x, tip.y, width, height, kind, text, avoid, away);
+  if (away === undefined || (placed.box.left >= 0 && placed.box.right <= width)) return placed;
+  return placeExtreme(tip.x, tip.y, width, height, kind, text, avoid, away === 1 ? -1 : 1);
 }
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,7 @@ import {
   panView,
   pickTimeStep,
   placeExtreme,
+  placeMeasureEnd,
   prependBars,
   priceDecimals,
   renderRange,
@@ -1032,6 +1033,24 @@ describe('MA legend', () => {
     // Away from the legend (right side) nothing moves.
     expect(placeExtreme(700, 20, 760, 120, 'high', '210.40', legend).y).toBe(14);
     expect(placeExtreme(60, 20, 760, 120, 'high', '210.40', null).y).toBe(14);
+  });
+
+  it('marks a measure end’s price away from the line, up from the higher end and down from the lower', () => {
+    // Rising from (200, 200) to (400, 100): the start points down-left, the end up-right.
+    const a = placeMeasureEnd({ x: 200, y: 200 }, { x: 400, y: 100 }, 760, 300, '100.00', true);
+    expect(a).toMatchObject({ dir: -1, y: 206, x: 184 });
+    const b = placeMeasureEnd({ x: 400, y: 100 }, { x: 200, y: 200 }, 760, 300, '110.00', false);
+    expect(b).toMatchObject({ dir: 1, y: 94, x: 416 });
+    // Level: the start up, the end down.
+    expect(placeMeasureEnd({ x: 200, y: 150 }, { x: 400, y: 150 }, 760, 300, '1', true).y).toBe(144);
+    expect(placeMeasureEnd({ x: 400, y: 150 }, { x: 200, y: 150 }, 760, 300, '1', false).y).toBe(156);
+    // A label that would leave the plot turns towards the other end.
+    const edge = placeMeasureEnd({ x: 10, y: 200 }, { x: 300, y: 100 }, 760, 300, '100.00', true);
+    expect(edge.dir).toBe(1);
+    expect(edge.box.left).toBeGreaterThanOrEqual(0);
+    const right = placeMeasureEnd({ x: 750, y: 100 }, { x: 300, y: 200 }, 760, 300, '100.00', false);
+    expect(right.dir).toBe(-1);
+    expect(right.box.right).toBeLessThanOrEqual(760);
   });
 
   it('keeps the legend clear of the bars and the high marker in a buildChart range', () => {

@@ -12,8 +12,9 @@
 // a line and a box from bar to bar; its price change, percent and the bars between
 // (chartMath.ts → measureBetween) go under the ruler button (onMeasure), not over the bars. Its
 // ends snap to a bar's open, high, low or close within SNAP_PX (measurePoint's magnet, off while ⌥
-// is held). The measure stays, anchored to its bars' times and prices, until a click on the
-// chart, Esc or another series.
+// is held), and each shows its price as the highest and lowest bars do (placeMeasureEnd). The
+// measure stays, anchored to its bars' times and prices, until a click on the chart, Esc or another
+// series.
 // Panning past the newest bar shows empty future slots, their times projected on the time axis
 // and in the crosshair (chartMath.ts → futureTimes), and the view keeps them as new bars come;
 // nothing comes before the first bar. The price axis fits the bars in view until the user moves
@@ -70,6 +71,7 @@ import {
   panPrice,
   panView,
   placeExtreme,
+  placeMeasureEnd,
   resolveView,
   SMALL_TAG_H,
   spreadAlertTags,
@@ -747,30 +749,6 @@ export const PriceChart = memo(function PriceChart({
   const legendItems = readings.map((r, i) => legendItem(maLabels[i], r.value, minTick));
   const legend = legendItems.length > 0 && legendRows.length > 0 ? legendBox(legendItems, legendRows, size.w) : null;
 
-  // Highest high and lowest low of the bars in view, marked with a leader and their price (clear of the
-  // legend); with the prices moved, only those within the plot.
-  const extremes =
-    geo && size.w > 0 && size.h > 0
-      ? (['high', 'low'] as const).flatMap((kind) => {
-          const e = geo.extremes[kind];
-          if (!(e.price >= geo.lo && e.price <= geo.hi)) return [];
-          const text = axisPrice(e.price, minTick);
-          return [{ kind, text, ...placeExtreme((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind, text, legend) }];
-        })
-      : [];
-  // The "Latest" button keeps out of the way of the markers (the lowest low may sit in the bottom-right corner).
-  // Back among the bars, or ahead of the newest one: the button brings it back to the right edge.
-  const showLatest = !!win && (!win.latest || (shownView.ahead ?? 0) > 0);
-  const latestRef = useRef<HTMLDivElement>(null);
-  const [latestSize, setLatestSize] = useState({ w: 0, h: 0 });
-  useLayoutEffect(() => {
-    const el = latestRef.current;
-    if (!el) return;
-    const [w, h] = [el.offsetWidth, el.offsetHeight];
-    setLatestSize((s) => (s.w === w && s.h === h ? s : { w, h }));
-  }, [showLatest, m.latest]);
-  const latestSpot = latestButtonSpot(extremes.map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
-
   // The measure: from the center of its first bar at its price to its second's, in px. Its figures are
   // not drawn by it (they would cover the bars) but reported (onMeasure) for the header, under the ruler.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b) : null;
@@ -792,6 +770,46 @@ export const PriceChart = memo(function PriceChart({
           };
         })()
       : null;
+
+  // Each measure end's price, marked as the extremes are, from the end out and away from the line.
+  const measureEnds =
+    measureBox && measure
+      ? [
+          { key: 'a', price: measure.a.price, tip: { x: measureBox.x1, y: measureBox.y1 }, other: { x: measureBox.x2, y: measureBox.y2 } },
+          { key: 'b', price: measure.b.price, tip: { x: measureBox.x2, y: measureBox.y2 }, other: { x: measureBox.x1, y: measureBox.y1 } },
+        ].flatMap((end) => {
+          if (!geo || !(end.price >= geo.lo && end.price <= geo.hi)) return [];
+          if (end.key === 'b' && measureBox.x1 === measureBox.x2 && measureBox.y1 === measureBox.y2) return [];
+          const text = axisPrice(end.price, minTick);
+          return [{ key: end.key, text, ...placeMeasureEnd(end.tip, end.other, size.w, size.h, text, end.key === 'a', legend) }];
+        })
+      : [];
+
+  // Highest high and lowest low of the bars in view, marked with a leader and their price (clear of the
+  // legend); with the prices moved, only those within the plot.
+  const extremes =
+    geo && size.w > 0 && size.h > 0
+      ? (['high', 'low'] as const).flatMap((kind) => {
+          const e = geo.extremes[kind];
+          if (!(e.price >= geo.lo && e.price <= geo.hi)) return [];
+          // A measure end on it shows its price already.
+          if (meas && measure && ((meas.from === e.index && measure.a.price === e.price) || (meas.to === e.index && measure.b.price === e.price))) return [];
+          const text = axisPrice(e.price, minTick);
+          return [{ kind, text, ...placeExtreme((geo.centerX(e.index) / VB_W) * size.w, toPx(geo.y(e.price)), size.w, size.h, kind, text, legend) }];
+        })
+      : [];
+  // The "Latest" button keeps out of the way of the markers (the lowest low may sit in the bottom-right corner).
+  // Back among the bars, or ahead of the newest one: the button brings it back to the right edge.
+  const showLatest = !!win && (!win.latest || (shownView.ahead ?? 0) > 0);
+  const latestRef = useRef<HTMLDivElement>(null);
+  const [latestSize, setLatestSize] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = latestRef.current;
+    if (!el) return;
+    const [w, h] = [el.offsetWidth, el.offsetHeight];
+    setLatestSize((s) => (s.w === w && s.h === h ? s : { w, h }));
+  }, [showLatest, m.latest]);
+  const latestSpot = latestButtonSpot([...extremes, ...measureEnds].map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
   const readChange = meas?.change;
   const readPct = meas?.pct;
@@ -889,6 +907,10 @@ export const PriceChart = memo(function PriceChart({
           ))}
           {measureBox && (
             <svg data-chart="measure" width={size.w} height={size.h} style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
+              {/* Leaders first, so the end markers sit on their start. */}
+              {measureEnds.map((e) => (
+                <polyline key={e.key} points={e.points} style={{ fill: 'none', stroke: 'var(--dm)', strokeWidth: 1 }} />
+              ))}
               <rect
                 x={Math.min(measureBox.x1, measureBox.x2)}
                 y={Math.min(measureBox.y1, measureBox.y2)}
@@ -910,6 +932,15 @@ export const PriceChart = memo(function PriceChart({
               )}
             </svg>
           )}
+          {measureEnds.map((e) => (
+            <div
+              key={e.key}
+              data-measure-end={e.key}
+              style={{ ...extremeTag, top: e.y, ...(e.dir === 1 ? { left: e.x } : { right: size.w - e.x }) }}
+            >
+              {e.text}
+            </div>
+          ))}
           {legend && (
             <div data-chart="ma-legend" style={legendStyle}>
               {legendRows.map((row) => (
