@@ -10,6 +10,10 @@ describe('Portfolio tabs', () => {
     expect(usePortfolioUi.getState().tab).toBe('pos');
   });
 
+  it('is the page the app launches on', () => {
+    expect(initial.page).toBe('acct');
+  });
+
   it('opens the page on a tab, or on the tab it last showed', () => {
     showPortfolio('ord');
     expect(useStore.getState().page).toBe('acct');

@@ -539,7 +539,8 @@ export const useStore = create<StoreState>()((set, get) => ({
   lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui
-  page: 'trade',
+  // Launch on Portfolio (its tab starts on Positions); the Trade page keeps AAPL until a symbol is opened.
+  page: 'acct',
   view: 'chart',
   symbol: stock('AAPL'),
   symbolName: 'Apple',
