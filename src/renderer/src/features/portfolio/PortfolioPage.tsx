@@ -77,13 +77,13 @@ function AccountStrip({ account, figures }: { account: AccountSummary | null; fi
   const cash = a?.totalCashValue;
   const loan = cash != null && cash < 0;
   const items: Array<{ label: string; value: string; title?: string }> = [
-    loan ? { label: m.marginLoan, value: f0(-cash), title: m.marginLoanHint } : { label: m.cash, value: f0(cash) },
-    { label: m.stocks, value: f0(figures.stockValue), title: m.stocksHint },
-    { label: m.options, value: sg(figures.optionValue, f0), title: m.optionsHint },
-    { label: m.initMargin, value: f0(a?.initMarginReq) },
-    { label: m.maintMargin, value: f0(a?.maintMarginReq) },
+    loan ? { label: m.marginLoan, value: f2(-cash), title: m.marginLoanHint } : { label: m.cash, value: f2(cash) },
+    { label: m.stocks, value: f2(figures.stockValue), title: m.stocksHint },
+    { label: m.options, value: sg(figures.optionValue), title: m.optionsHint },
+    { label: m.initMargin, value: f2(a?.initMarginReq) },
+    { label: m.maintMargin, value: f2(a?.maintMarginReq) },
     { label: m.leverage, value: leverageLabel(figures.leverage, figures.leverageC), title: figures.leverageC === undefined ? m.leverageHint : `${m.leverageHint}\n${m.leverageCHint}` },
-    { label: m.accruedDiv, value: f0(a?.accruedDividend) },
+    { label: m.accruedDiv, value: f2(a?.accruedDividend) },
   ];
   return (
     <div style={{ padding: '0 32px 16px', display: 'flex', flexWrap: 'wrap', gap: '6px 24px', fontSize: 13 }}>
@@ -183,12 +183,12 @@ function Header({ account, figures, counts }: { account: AccountSummary | null; 
           {sg(unrealized)}
         </Stat>
         <Stat label={m.realizedToday} title={m.realizedTodayHint} color={signColor(realized)}>
-          {sg(realized, f0)}
+          {sg(realized)}
         </Stat>
-        <Stat label={m.buyingPower}>{f0(a?.buyingPower)}</Stat>
+        <Stat label={m.buyingPower}>{f2(a?.buyingPower)}</Stat>
         {/* Last, so that when the row wraps its foot is on the last line, over the padding. */}
         <Stat label={m.excessLiquidityHd} title={m.excessLiquidityHint} foot={<CushionFoot pct={figures.cushionPct} />}>
-          {f0(a?.excessLiquidity)}
+          {f2(a?.excessLiquidity)}
         </Stat>
       </div>
       <div style={dim}>

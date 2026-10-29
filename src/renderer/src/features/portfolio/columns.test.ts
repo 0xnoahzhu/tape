@@ -292,7 +292,7 @@ describe('column values', () => {
     expect(value('unrealized', c)).toBe(2_748);
     expect(value('realized', c)).toBe(12.5);
     expect(value('dayPnl', c)).toBe(150);
-    expect(text('unrealized', c)).toBe('+2,748');
+    expect(text('unrealized', c)).toBe('+2,748.00');
     expect(cellColor(COLUMNS.unrealized, value('unrealized', c))).toBe('var(--up)');
     // Quote and contract.
     expect(value('last', c)).toBe(227.48);
@@ -450,8 +450,9 @@ describe('cell formats', () => {
   });
 
   it('writes numbers with the shared helpers', () => {
-    expect(formatValue('pnl', 2_748.4, words, clock, NOW)).toBe('+2,748');
-    expect(formatValue('pnl', -1_234.4, words, clock, NOW)).toBe('−1,234');
+    expect(formatValue('pnl', 2_748.4, words, clock, NOW)).toBe('+2,748.40');
+    expect(formatValue('pnl', -1_234.4, words, clock, NOW)).toBe('−1,234.40');
+    expect(formatValue('money', 2_202.4689, words, clock, NOW)).toBe('2,202.47');
     expect(formatValue('big', 5_120, words, clock, NOW)).toBe('5,120');
     expect(formatValue('dec', 5, words, clock, NOW)).toBe('5');
     expect(formatValue('num4', 1.08, words, clock, NOW)).toBe('1.0800');

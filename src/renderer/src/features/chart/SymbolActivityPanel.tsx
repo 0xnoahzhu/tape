@@ -16,7 +16,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
-import { f0, MINUS, px, sg, signColor } from '@shared/format';
+import { f0, f2, MINUS, px, sg, signColor } from '@shared/format';
 import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type ContractRef, type Position, type Quote, type QuoteSubscription, type WorkingOrder } from '@shared/types';
 import { useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
@@ -184,9 +184,9 @@ function HoldingRow({ r, opt }: { r: PositionRow; opt?: OptionCells }) {
           </>
         )}
         <NumCell cell="averageCost" text={px(p.averageCost)} color="var(--mu)" />
-        <NumCell cell="value" text={f0(r.value)} source={source(r.valueSource)} />
-        <NumCell cell="unrealized" text={signed0(r.unrealized)} color={signColor(r.unrealized)} source={source(r.unrealizedSource)} />
-        <NumCell cell="dayPnl" text={signed0(r.dayPnl)} color={signColor(r.dayPnl)} source={r.dayPnl === undefined ? undefined : sources.pnl} />
+        <NumCell cell="value" text={f2(r.value)} source={source(r.valueSource)} />
+        <NumCell cell="unrealized" text={sg(r.unrealized)} color={signColor(r.unrealized)} source={source(r.unrealizedSource)} />
+        <NumCell cell="dayPnl" text={sg(r.dayPnl)} color={signColor(r.dayPnl)} source={r.dayPnl === undefined ? undefined : sources.pnl} />
       </div>
       {/* Beside the row, not in it: a pick would reach the row's click through the portal. */}
       {menu && (

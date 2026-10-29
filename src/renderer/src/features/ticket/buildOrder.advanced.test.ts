@@ -417,6 +417,6 @@ describe('review rows of the advanced choices', () => {
     const fx = ok(build({ cashQtyOn: true, cashQty: '20000', limitPrice: 1.07 }, EURUSD));
     const p = pendingOrder(fx, composeOrder(input({ limitPrice: 1.07 }, EURUSD)).model, labels, mkt);
     expect(p.rows.find((x) => x.label === 'Qty')?.value).toBe('Cash 20,000.00 USD');
-    expect(p.summary).toBe('Buy 20,000 USD EUR.USD');
+    expect(p.summary).toBe('Buy 20,000.00 USD EUR.USD');
   });
 });

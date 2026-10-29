@@ -214,8 +214,8 @@ describe('column widths', () => {
     const live = liveWidths({}, 'value', 266.8, left);
     // Every track up to Value is fixed, so Value's right edge does not move with the spare width;
     // the columns right of it share what it took.
-    expect(gridTemplate(defs, live)).toBe('361.6px 152.8px 164.8px 164.8px 266.8px minmax(104px,1fr) minmax(96px,1fr)');
-    expect(tracksWidth(defs, live)).toBeCloseTo(361.6 + 152.8 + 164.8 + 164.8 + 266.8 + 104 + 96);
+    expect(gridTemplate(defs, live)).toBe('361.6px 152.8px 164.8px 164.8px 266.8px minmax(112px,1fr) minmax(104px,1fr)');
+    expect(tracksWidth(defs, live)).toBeCloseTo(361.6 + 152.8 + 164.8 + 164.8 + 266.8 + 112 + 104);
     // A width of the column itself in `left` or in the stored widths gives way to the live one.
     expect(liveWidths({ value: 120 }, 'value', 266.8, { ...left, value: 176.8 }).value).toBe(266.8);
 

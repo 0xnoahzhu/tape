@@ -101,6 +101,8 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
       return qtyLabel(v);
     case 'px':
       return price(v);
+    case 'money':
+      return f2(v);
     case 'num0':
       return f0(v);
     case 'num3':
@@ -112,7 +114,7 @@ export function formatValue(fmt: Fmt, v: CellValue, w: CellWords, clock: Clock, 
     case 'id':
       return String(Math.trunc(v));
     case 'pnl':
-      return sg(v, f0);
+      return sg(v);
     case 'chg':
       return sg(v, price);
     case 'pct':

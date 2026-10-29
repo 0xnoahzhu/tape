@@ -179,7 +179,8 @@ export const PINNED: ColumnId = 'symbol';
 export const isColumnId = (v: unknown): v is ColumnId => typeof v === 'string' && (COLUMN_IDS as readonly string[]).includes(v);
 
 /**
- * How a value is written (cells.ts): qty = position size, px = price, pnl = signed money, num0 /
+ * How a value is written (cells.ts): qty = position size, px = price, money = an amount and pnl = a
+ * signed amount (both with 2 decimals, like every amount Tape shows), num0 /
  * num3 / num4 = a number with 0, 3 or 4 decimals, vol = a volatility fraction as percent, big =
  * compact count (12.4K), dec = as many decimals as it has, id = a plain integer, kind / right /
  * halt / dataType / shortable = IB codes as words, hours = today's sessions, month = YYYYMM, stamp
@@ -191,6 +192,7 @@ export type Fmt =
   | 'text'
   | 'qty'
   | 'px'
+  | 'money'
   | 'num0'
   | 'num3'
   | 'num4'
@@ -454,10 +456,10 @@ const POSITION: Partial<Record<ColumnId, Def>> = {
   // As IB sends it: per contract (an option's includes its multiplier), commissions included.
   averageCost: { align: 'right', width: 84, sort: 'num', fmt: 'px', color: 'muted', value: (c) => c.row.position.averageCost },
   price: figure('px', 84, (r) => r.price, (r) => r.priceSource),
-  value: figure('num0', 96, (r) => r.value, (r) => r.valueSource),
-  unrealized: figure('pnl', 104, (r) => r.unrealized, (r) => r.unrealizedSource, 'sign'),
-  realized: figure('pnl', 104, (r) => r.realized, (r) => r.realizedSource, 'sign'),
-  dayPnl: figure('pnl', 96, (r) => r.dayPnl, (r) => (r.dayPnl === undefined ? undefined : 'pnl'), 'sign'),
+  value: figure('money', 108, (r) => r.value, (r) => r.valueSource),
+  unrealized: figure('pnl', 112, (r) => r.unrealized, (r) => r.unrealizedSource, 'sign'),
+  realized: figure('pnl', 112, (r) => r.realized, (r) => r.realizedSource, 'sign'),
+  dayPnl: figure('pnl', 104, (r) => r.dayPnl, (r) => (r.dayPnl === undefined ? undefined : 'pnl'), 'sign'),
   currency: { align: 'left', width: 64, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.contract.currency) },
   fxRate: { align: 'right', width: 72, sort: 'num', fmt: 'num4', value: (c) => c.row.fx },
   account: { align: 'left', width: 96, sort: 'text', fmt: 'text', value: (c) => text(c.row.position.account) },
@@ -919,7 +921,7 @@ const CALC: Partial<Record<ColumnId, Def>> = {
     const ba = bidAsk(c);
     return ba ? ba[1] - ba[0] : undefined;
   }, { needs: 'quote' }),
-  costBasis: calc('num0', 96, costBasis),
+  costBasis: calc('money', 108, costBasis),
   // Against what was paid, so a short's gain is positive as its P&L is.
   unrealizedPct: calc('pct', 88, (c) => {
     const basis = costBasis(c);

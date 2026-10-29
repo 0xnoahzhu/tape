@@ -7,7 +7,7 @@
 // the composed request to grey out choices that would not combine (choiceProblem).
 
 import { contractLabel, isTradable } from '@shared/contract';
-import { f0, parseNum, roundToTick } from '@shared/format';
+import { f0, f2, parseNum, roundToTick } from '@shared/format';
 import { algoInfo, ORDER_TYPE_FIELDS, orderProblems, problemsInvolving, TRIGGER_ORDER_TYPES, type OrderField, type OrderProblem, type OrderRulesContext } from '@shared/orderRules';
 import { ibEasternTime, sessionOutsideRth, timingProblem, timingText, type TimingProblem } from '@shared/orderTiming';
 import { parseTypedTime, type Clock, type TimeFormat } from '@shared/timeFormat';
@@ -541,6 +541,6 @@ export function pendingOrder(
     label: side,
     ...(modify ? { modifyOrderId: modify.order.orderId } : {}),
     ...(modify && !modifyChanges(modify.request, req) ? { unchanged: true } : {}),
-    summary: `${side} ${req.quantity === 0 && req.cashQty != null ? `${f0(req.cashQty)} ${req.contract.currency}` : withUnits(req, labels)} ${contractLabel(req.contract)}`,
+    summary: `${side} ${req.quantity === 0 && req.cashQty != null ? `${f2(req.cashQty)} ${req.contract.currency}` : withUnits(req, labels)} ${contractLabel(req.contract)}`,
   };
 }
