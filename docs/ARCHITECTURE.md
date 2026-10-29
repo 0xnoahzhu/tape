@@ -558,6 +558,18 @@ what IB was seen to do). Intervals (`shared/timeframes.ts`, `historyParams.ts �
   per 10 minutes) and the chart says so. IB's small-bar pacing is kept by the send queue
   (`pacing.ts`); the chart reloads every intraday interval every 60 s (10 of IB's 60 requests per
   10 minutes, beside the 40 pages may use).
+* Overnight session. SMART with `useRTH` 0 answers 04:00–20:00 New York only; IB's overnight
+  session of US stocks (20:00–03:50, Sunday to Thursday nights) comes only from the `OVERNIGHT`
+  venue (checked live: AAPL 30 mins, 20:00 to 03:30 bars, TRADES and BID_ASK). A chart's request
+  (`HistoryRequest.overnight`) of a US stock's minute and hour bars with extended hours
+  (`withOvernight`; not seconds bars, not background loads) is two loads: SMART and the
+  `OVERNIGHT` venue, each its own cached series (`STK:AAPL@OVERNIGHT|…`), its own slot (so neither
+  supersedes the other) and its own settling (`lastOvernightSettledMs`: the night is final from
+  04:20 until 20:00 on weekdays, all weekend), merged by time (`mergeSessions`; pages:
+  `mergeSessionPages`, the newest `limit` of both). The overnight venue claims coverage from its
+  first bar only (its `'N D'` days are nights that begin the evening before). A night IB refuses
+  (no permission) is logged once and the day's bars show alone. At night the chart moves with
+  its 60 s reloads; the live last price (SMART) does not extend overnight bars.
 * Indicator alerts load the chart's series (the same request, so a series the chart has shown costs
   no IB request) as `background` requests (`HistoryRequest.background`): they wait behind every
   view's request and page, take one request slot at a time and at most `BACKGROUND_BUDGET` (12) of

@@ -75,7 +75,9 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   The star is filled while any list holds it.
 - **Chart** from IBKR historical data in every interval IBKR offers: seconds (1s 5s 10s 15s 30s, and 45s
   merged from 15-second bars), minutes (1m 3m 5m 10m 15m 30m), hours (1h 2h 3h 4h) and D / W / M / Q / Y,
-  plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. A picker
+  plus **ranges** (1M, 3M, YTD, 1Y, 5Y, Max) that pick an interval and fit the chart to the span. US
+  stocks' minute and hour charts include IBKR's overnight session (20:00–03:50 ET, from the OVERNIGHT
+  venue) between the extended-hours days, refreshed every minute while the night runs. A picker
   lists them all; starred ones become toolbar chips. Moving averages (MA5 … MA200) and volume, scrolling back
   through older bars (seconds bars up to six months; nothing before the first one), dragging on past the newest
   bar into empty future time (its dates and hours on the time axis), zooming the price axis by dragging or

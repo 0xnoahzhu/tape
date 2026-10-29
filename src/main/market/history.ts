@@ -56,7 +56,7 @@
 // other 162 errors are final and remembered for 30 s.
 
 import { EventName, OUT_MSG_ID, type BarSizeSetting, type WhatToShow as IbWhatToShow } from '../ib/tws';
-import { contractKey, contractLabel } from '@shared/contract';
+import { contractLabel } from '@shared/contract';
 import { isSmallBarSize, SECONDS_HISTORY_DAYS } from '@shared/timeframes';
 import type { Bar, ContractRef, HistoryPage, HistoryRequest } from '@shared/types';
 import type { HistoryService, MainContext } from '../context';
@@ -71,19 +71,24 @@ import {
   barsToDays,
   dedupePeriods,
   historyAdjusted,
+  historyContractKey,
   historyKey,
   historySpec,
   historyTtlMs,
   isTimeframe,
   mergeIntraday,
+  mergeSessionPages,
+  mergeSessions,
   mergeTail,
   normalizeBars,
   overlapAdjusted,
+  overnightRequest,
   parseBarTime,
   planFetch,
   seriesKey,
   seriesPeriod,
   windowStartSec,
+  withOvernight,
   type HistorySpec,
 } from './historyParams';
 import {
@@ -715,7 +720,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   // ---------------------------------------------------------------------------
   // Older bars
 
-  const headKey = (req: HistoryRequest, spec: HistorySpec) => `head|${contractKey(req.contract)}|${spec.whatToShow}|${spec.useRTH}`;
+  const headKey = (req: HistoryRequest, spec: HistorySpec) => `head|${historyContractKey(req.contract)}|${spec.whatToShow}|${spec.useRTH}`;
   const headFresh = (h: { head: number | null; at: number }) => Date.now() - h.at < (h.head === null ? HEAD_RETRY_MS : HEAD_TTL_MS);
 
   /** The cached head timestamp, without asking IB (undefined: not known yet). */
@@ -974,9 +979,34 @@ export function createHistoryService(ctx: MainContext): HistoryService {
   const validRequest = (req: HistoryRequest) => !!req?.contract?.symbol && isTimeframe(req.timeframe);
   const slotOf = (req: HistoryRequest) => (typeof req.slot === 'string' && req.slot ? req.slot : undefined);
 
-  return {
+  /**
+   * The overnight venue's part of a chart's load (withOvernight), or nothing when IB refuses it (no
+   * permission, a symbol it does not trade overnight): the day's bars still show. A superseded load
+   * rejects as the day's does.
+   */
+  const nightOf = <T,>(load: Promise<T>, req: HistoryRequest): Promise<T | null> =>
+    load.catch((err: unknown) => {
+      if (err instanceof SupersededError) throw err;
+      overnightWarned(req, err);
+      return null;
+    });
+  /** One warning per contract and error, so a refused night does not log on every reload. */
+  const nightWarnings = new Set<string>();
+  const overnightWarned = (req: HistoryRequest, err: unknown) => {
+    const text = `${contractLabel(req.contract)}: ${toError(err).message}`;
+    if (nightWarnings.has(text)) return;
+    if (nightWarnings.size > MAX_MEMORY_DOCS) nightWarnings.clear();
+    nightWarnings.add(text);
+    console.warn(`[history] overnight bars of ${text}`);
+  };
+
+  const service: HistoryService = {
     async get(req: HistoryRequest): Promise<Bar[]> {
       if (!validRequest(req)) throw new Error('Invalid history request');
+      if (!ctx.demo && withOvernight(req)) {
+        const [day, night] = await Promise.all([service.get({ ...req, overnight: false }), nightOf(service.get(overnightRequest(req)), req)]);
+        return night ? mergeSessions(day, night) : day;
+      }
       if (ctx.demo) {
         const bars = demoMarket().bars(req.contract, req.timeframe, { outsideRth: req.outsideRth, whatToShow: req.whatToShow });
         // Seconds charts open with their window, as from IB; older bars come as pages.
@@ -984,7 +1014,7 @@ export function createHistoryService(ctx: MainContext): HistoryService {
         if (!isSecondsWindow(spec.duration)) return bars;
         return bars.slice(-Math.ceil(durationUnits(spec.duration) / (spec.mergeSec ?? BAR_SIZE_SEC[spec.barSize] ?? 1)));
       }
-      const ckey = contractKey(req.contract);
+      const ckey = historyContractKey(req.contract);
       const key = historyKey(req, ckey);
       const spec = historySpec(req);
       const series = seriesKey(spec, ckey);
@@ -1021,13 +1051,17 @@ export function createHistoryService(ctx: MainContext): HistoryService {
     async getOlder(req: HistoryRequest, before: number, limit: number): Promise<HistoryPage> {
       if (!validRequest(req) || !Number.isFinite(before)) throw new Error('Invalid history request');
       const max = Math.min(MAX_PAGE_LIMIT, Math.max(1, Math.floor(Number(limit) || 0)));
+      if (!ctx.demo && withOvernight(req)) {
+        const [day, night] = await Promise.all([service.getOlder({ ...req, overnight: false }, before, max), nightOf(service.getOlder(overnightRequest(req), before, max), req)]);
+        return mergeSessionPages(day, night, max);
+      }
       if (ctx.demo) {
         const older = demoMarket()
           .bars(req.contract, req.timeframe, { outsideRth: req.outsideRth, whatToShow: req.whatToShow })
           .filter((b) => b.time < before);
         return { bars: older.slice(Math.max(0, older.length - max)), done: older.length <= max };
       }
-      const ckey = contractKey(req.contract);
+      const ckey = historyContractKey(req.contract);
       const spec = historySpec(req);
       const series = seriesKey(spec, ckey);
       const key = `${historyKey(req, ckey)}|page|${before}|${max}`;
@@ -1050,4 +1084,5 @@ export function createHistoryService(ctx: MainContext): HistoryService {
       );
     },
   };
+  return service;
 }

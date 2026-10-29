@@ -35,7 +35,7 @@
 import { barSeconds } from '@shared/timeframes';
 import type { Bar, ContractRef, Timeframe } from '@shared/types';
 import { addDays, type CalendarDay, isWeekday, latestSession, nyDay, nyWallToEpochMs, RTH_CLOSE, RTH_OPEN } from './nyTime';
-import { BAR_SIZE_SEC, MAX_STEP_SEC, periodKey, seriesPeriod, SETTLE_MIN, usSessions, type HistorySpec, type Period } from './historyParams';
+import { BAR_SIZE_SEC, isOvernightContract, MAX_STEP_SEC, periodKey, seriesPeriod, SETTLE_MIN, usSessions, type HistorySpec, type Period } from './historyParams';
 
 const DAY_SEC = 86_400;
 
@@ -312,9 +312,12 @@ function yearsReach(end: number, n: number, slack: number): number {
   return stampOf(nyCalendarDay(yearsBackStart(end, n) + slack)) + DAY_SEC;
 }
 
-/** Calendar start IB's window certainly reaches (New York session instruments only), in series time. */
+/**
+ * Calendar start IB's window certainly reaches (New York session instruments only), in series time.
+ * Not for the overnight venue: its days are nights that begin the evening before.
+ */
 function calendarStart(spec: HistorySpec, contract: ContractRef, end: number, duration: string): number | undefined {
-  if (!usSessions(contract)) return undefined;
+  if (!usSessions(contract) || isOvernightContract(contract)) return undefined;
   const m = /^(\d+) ([SDWMY])$/.exec(duration.trim());
   if (!m) return undefined;
   const n = Number(m[1]);

@@ -1030,3 +1030,94 @@ describe('intervals of seconds, merged buckets and quarters', () => {
     expect(t.asked().at(-1)?.[0]).toBe('2 Y');
   });
 });
+
+describe('overnight session', () => {
+  const epoch = (from: number, n: number, step: number, close: number): Row[] => Array.from({ length: n }, (_, i) => row(String(from + i * step), close + i));
+  /** A chart's 30-minute request: SMART with extended hours, and the OVERNIGHT venue's bars merged in. */
+  const chart: HistoryRequest = { contract: stock('AAPL'), timeframe: '30m', outsideRth: true, overnight: true, slot: 'chart' };
+  /** Answers by venue: the day's bars on SMART, the night's on OVERNIGHT (or an error). */
+  function venues(t: ReturnType<typeof setup>, dayRows: Row[], nightRows: Row[] | ((id: number) => void)) {
+    t.fake.onCall = (name, args) => {
+      const id = args[0] as number;
+      if (name === 'reqHeadTimestamp') queueMicrotask(() => t.fake.emit('headTimestamp', id, String(day('20240101'))));
+      if (name !== 'reqHistoricalData') return;
+      const exchange = (args[1] as { exchange?: string }).exchange;
+      queueMicrotask(() => {
+        const rows = exchange === 'OVERNIGHT' ? nightRows : dayRows;
+        if (typeof rows === 'function') return rows(id);
+        for (const r of rows) t.fake.emit('historicalData', id, ...r);
+        t.fake.emit('historicalData', id, 'finished', -1, -1, -1, -1, -1);
+      });
+    };
+  }
+  const exchanges = (t: ReturnType<typeof setup>) => t.hist().map((c) => (c[1] as { exchange?: string }).exchange);
+
+  it('merges the night between the days, each venue its own series', async () => {
+    const t = setup(ny('2026-10-28', '22:00'));
+    // Tue 18:00–20:00 and Wed 04:00–05:00 on SMART; Tue 20:00–21:30 overnight.
+    const day = [...epoch(nySec('2026-10-27', '18:00'), 4, 1800, 100), ...epoch(nySec('2026-10-28', '04:00'), 2, 1800, 200)];
+    const night = epoch(nySec('2026-10-27', '20:00'), 4, 1800, 150);
+    venues(t, day, night);
+    const bars = await t.get(chart);
+    expect(exchanges(t).sort()).toEqual(['OVERNIGHT', 'SMART']);
+    expect(closes(bars)).toEqual([100, 101, 102, 103, 150, 151, 152, 153, 200, 201]);
+    const spec = historySpec(chart);
+    expect(await t.ctx.db.bars.last(seriesKey(spec, 'STK:AAPL@OVERNIGHT'))).toBe(nySec('2026-10-27', '21:30'));
+    expect(await t.ctx.db.bars.last(seriesKey(spec, 'STK:AAPL'))).toBe(nySec('2026-10-28', '04:30'));
+  });
+
+  it('shows the day’s bars when IB refuses the night', async () => {
+    const t = setup(ny('2026-10-28', '22:00'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    venues(t, epoch(nySec('2026-10-28', '04:00'), 3, 1800, 100), (id) => t.fake.error(id, 162, 'Historical Market Data Service error message:No market data permissions for OVERNIGHT STK'));
+    expect(closes(await t.get(chart))).toEqual([100, 101, 102]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('is only for a chart’s minute and hour bars of a US stock with extended hours', async () => {
+    const t = setup(ny('2026-10-28', '22:00'));
+    venues(t, epoch(nySec('2026-10-28', '04:00'), 3, 1800, 100), epoch(nySec('2026-10-27', '20:00'), 2, 1800, 150));
+    await t.get({ ...chart, overnight: undefined });
+    await t.get({ ...chart, timeframe: '1D' });
+    await t.get({ ...chart, timeframe: '30s' });
+    await t.get({ ...chart, outsideRth: false });
+    await t.get({ ...chart, background: true, slot: undefined, timeframe: '1h' });
+    await t.get({ ...chart, contract: { ...stock('VOD'), currency: 'GBP', exchange: 'LSE' } });
+    expect(exchanges(t).every((e) => e !== 'OVERNIGHT')).toBe(true);
+  });
+
+  it('refreshes the night while it runs and the day while it does', async () => {
+    const t = setup(ny('2026-10-28', '21:00'));
+    venues(t, epoch(nySec('2026-10-28', '04:00'), 3, 1800, 100), epoch(nySec('2026-10-28', '20:00'), 2, 1800, 150));
+    await t.get(chart);
+    expect(exchanges(t)).toHaveLength(2);
+    // 21:30: the day settled at 20:30, the night is running: only the night is asked again.
+    vi.setSystemTime(ny('2026-10-28', '21:30'));
+    await t.get(chart);
+    await t.flush();
+    expect(exchanges(t).slice(2)).toEqual(['OVERNIGHT']);
+    // 10:00 the next morning: the night's rest is loaded once (it settled at 04:20), the day is running.
+    vi.setSystemTime(ny('2026-10-29', '10:00'));
+    await t.get(chart);
+    await t.flush();
+    expect(exchanges(t).slice(3).sort()).toEqual(['OVERNIGHT', 'SMART']);
+    // Later that morning only the day is asked.
+    vi.setSystemTime(ny('2026-10-29', '10:30'));
+    await t.get(chart);
+    await t.flush();
+    expect(exchanges(t).slice(5)).toEqual(['SMART']);
+  });
+
+  it('pages both venues back from the same time, the newest of them up to the limit', async () => {
+    const t = setup(ny('2026-10-28', '22:00'));
+    const day = [...epoch(nySec('2026-10-27', '04:00'), 32, 1800, 100), ...epoch(nySec('2026-10-28', '04:00'), 32, 1800, 300)];
+    const night = epoch(nySec('2026-10-27', '20:00'), 16, 1800, 200);
+    venues(t, day, night);
+    const page = await t.older(chart, nySec('2026-10-28', '06:00'), 20);
+    expect(page.bars).toHaveLength(20);
+    expect(page.done).toBe(false);
+    // The whole night (20:00–03:30), then SMART from 04:00 to 05:30.
+    expect(closes(page.bars)).toEqual([200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 300, 301, 302, 303]);
+  });
+});

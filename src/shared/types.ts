@@ -427,6 +427,11 @@ export interface HistoryRequest {
    * a view asking for the same bars meanwhile lifts it to the view's priority.
    */
   background?: boolean;
+  /**
+   * A chart's request: a US stock's minute and hour bars with extended hours also take IB's
+   * overnight session (the OVERNIGHT venue, 20:00–03:50 New York), merged in (main/market/history.ts).
+   */
+  overnight?: boolean;
 }
 
 export interface Bar {

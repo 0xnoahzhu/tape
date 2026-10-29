@@ -1,11 +1,12 @@
 // Historical data request parameters, the incremental (cached) fetch plan and bar
 // post-processing (pure, unit-tested).
 
+import { contractKey } from '@shared/contract';
 import { isTimeframe as isTimeframeKey } from '@shared/timeframes';
-import type { Bar, ContractRef, HistoryRequest, Timeframe } from '@shared/types';
+import type { Bar, ContractRef, HistoryPage, HistoryRequest, Timeframe } from '@shared/types';
 import type { BarRetention } from '../db/types';
 import type { SeriesCoverage } from './coverage';
-import { addDays, type CalendarDay, isWeekday, nyDay, nyWallToEpochMs, previousWeekday, RTH_CLOSE, RTH_OPEN } from './nyTime';
+import { addDays, type CalendarDay, isWeekday, nyDay, nyWallToEpochMs, previousWeekday, RTH_CLOSE, RTH_OPEN, weekday } from './nyTime';
 
 export type WhatToShow = NonNullable<HistoryRequest['whatToShow']>;
 /** Periods that bars are regrouped into after loading. */
@@ -385,6 +386,55 @@ export function historyKey(req: HistoryRequest, contractKey: string): string {
   return [contractKey, req.timeframe, spec.useRTH, spec.whatToShow].join('|');
 }
 
+// ---------------------------------------------------------------------------
+// Overnight session
+
+/** IB's venue of US stocks' overnight session (20:00–03:50 New York), whose bars SMART leaves out. */
+export const OVERNIGHT_EXCHANGE = 'OVERNIGHT';
+
+export const isOvernightContract = (c: Pick<ContractRef, 'exchange'>): boolean => c.exchange === OVERNIGHT_EXCHANGE;
+
+/** Key of a contract's bars in the cache: the overnight venue's are a series of their own. */
+export const historyContractKey = (c: ContractRef): string => (isOvernightContract(c) ? `${contractKey(c)}@${OVERNIGHT_EXCHANGE}` : contractKey(c));
+
+/**
+ * Whether a request also takes the overnight session's bars: a chart's (`overnight`) trades of a
+ * US stock routed SMART, in minute and hour bars with extended hours. Seconds bars are left out
+ * (IB counts their windows in session time, and a night of them is not worth the requests).
+ */
+export function withOvernight(req: HistoryRequest): boolean {
+  const c = req.contract;
+  if (req.overnight !== true || req.background || !req.outsideRth || (req.whatToShow && req.whatToShow !== 'TRADES')) return false;
+  if (c.secType !== 'STK' || (c.currency && c.currency !== 'USD') || (c.exchange && c.exchange !== 'SMART')) return false;
+  if (!isTimeframeKey(req.timeframe) || !TIMEFRAMES[req.timeframe].intraday) return false;
+  return (BAR_SIZE_SEC[TIMEFRAMES[req.timeframe].barSize] ?? 0) >= 60;
+}
+
+/** The overnight venue's part of a request (withOvernight): its own series, and its own slot so the two do not supersede each other. */
+export function overnightRequest(req: HistoryRequest): HistoryRequest {
+  const { overnight: _, ...rest } = req;
+  return { ...rest, contract: { ...req.contract, exchange: OVERNIGHT_EXCHANGE }, ...(req.slot ? { slot: `${req.slot}:overnight` } : {}) };
+}
+
+/** A day's bars (SMART, 04:00–20:00) and the nights' between them, in time order; a time in both keeps the day's. */
+export function mergeSessions(day: readonly Bar[], night: readonly Bar[]): Bar[] {
+  if (!night.length) return day.slice();
+  const times = new Set(day.map((b) => b.time));
+  return [...day, ...night.filter((b) => !times.has(b.time))].sort((a, b) => a.time - b.time);
+}
+
+/**
+ * A page of both sessions' bars before the same time: the newest `limit` of them. It is done once
+ * both are (a night that failed counts as done: the day's bars go on paging).
+ */
+export function mergeSessionPages(day: HistoryPage, night: HistoryPage | null, limit: number): HistoryPage {
+  if (!night) return day;
+  const bars = mergeSessions(day.bars, night.bars);
+  const done = day.done && night.done && bars.length <= limit;
+  const page: HistoryPage = { bars: bars.slice(Math.max(0, bars.length - limit)), done };
+  return day.limited ? { ...page, limited: true } : page;
+}
+
 /** Bar cache series: contract + stored bar size + whatToShow + useRTH. */
 export function seriesKey(spec: HistorySpec, contractKey: string): string {
   return [contractKey, spec.seriesBarSize, spec.whatToShow, spec.useRTH].join('|');
@@ -486,10 +536,31 @@ export function lastSettledMs(nowMs: number, rthOnly: boolean): number | undefin
   return nyWallToEpochMs(previousWeekday(today), close);
 }
 
+/** IB's overnight session of US stocks: 20:00 on Sunday to Thursday until 03:50 the next morning, New York. */
+const OVERNIGHT_OPEN = 1200;
+const OVERNIGHT_CLOSE = 230;
+
+/**
+ * Unix ms since which bars of the overnight session cannot change any more (its last close plus
+ * SETTLE_MIN), or undefined while a night (or its settling time) is running.
+ */
+export function lastOvernightSettledMs(nowMs: number): number | undefined {
+  const settle = OVERNIGHT_CLOSE + SETTLE_MIN;
+  const now = nyDay(nowMs);
+  const today: CalendarDay = { y: now.y, m: now.m, d: now.d };
+  const wd = weekday(today);
+  // A night starts on Sunday to Thursday evenings and ends on Monday to Friday mornings.
+  if (now.minutes >= OVERNIGHT_OPEN && wd <= 4) return undefined;
+  if (now.minutes < settle && isWeekday(today)) return undefined;
+  let day = now.minutes < settle ? addDays(today, -1) : today;
+  while (!isWeekday(day)) day = addDays(day, -1);
+  return nyWallToEpochMs(day, settle);
+}
+
 /** Bars of a US instrument fetched after the last session settled stay final until the next session. */
 export function isSettled(spec: HistorySpec, contract: ContractRef, fetchedAt: number, nowMs: number): boolean {
   if (!usSessions(contract)) return false;
-  const at = lastSettledMs(nowMs, spec.useRTH === 1);
+  const at = isOvernightContract(contract) ? lastOvernightSettledMs(nowMs) : lastSettledMs(nowMs, spec.useRTH === 1);
   return at !== undefined && fetchedAt >= at;
 }
 

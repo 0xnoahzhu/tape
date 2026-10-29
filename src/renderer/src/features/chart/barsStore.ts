@@ -104,7 +104,7 @@ export function barsTtl(tf: Timeframe): number {
 }
 
 function historyRequest(contract: ContractRef, timeframe: Timeframe, slot?: string): HistoryRequest {
-  return { contract, timeframe, outsideRth: isIntraday(timeframe), ...(slot ? { slot } : {}) };
+  return { contract, timeframe, outsideRth: isIntraday(timeframe), overnight: isIntraday(timeframe), ...(slot ? { slot } : {}) };
 }
 
 const isSuperseded = (err: unknown) => /superseded/i.test(historyErrorMessage(err));

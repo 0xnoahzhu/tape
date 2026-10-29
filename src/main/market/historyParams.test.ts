@@ -18,7 +18,13 @@ import {
   historyKey,
   historySpec,
   historyTtlMs,
+  lastOvernightSettledMs,
   lastSettledMs,
+  mergeSessionPages,
+  mergeSessions,
+  historyContractKey,
+  overnightRequest,
+  withOvernight,
   MAX_STEP_SEC,
   mergeIntraday,
   mergeTail,
@@ -348,6 +354,55 @@ describe('windows and tails', () => {
     expect(lastSettledMs(ny('2026-09-30', '21:00'), false)).toBe(ny('2026-09-30', '20:30'));
     expect(lastSettledMs(ny('2026-10-01', '03:00'), false)).toBe(ny('2026-09-30', '20:30'));
     expect(lastSettledMs(ny('2026-10-01', '05:00'), false)).toBeUndefined();
+  });
+
+  it('knows when the overnight session is settled: 20:00 Sunday to Thursday until 03:50, plus 30 minutes', () => {
+    // Wed 2026-09-30 … Mon 2026-10-05.
+    expect(lastOvernightSettledMs(ny('2026-09-30', '21:00'))).toBeUndefined();
+    expect(lastOvernightSettledMs(ny('2026-10-01', '03:00'))).toBeUndefined();
+    expect(lastOvernightSettledMs(ny('2026-10-01', '04:10'))).toBeUndefined();
+    expect(lastOvernightSettledMs(ny('2026-10-01', '05:00'))).toBe(ny('2026-10-01', '04:20'));
+    expect(lastOvernightSettledMs(ny('2026-10-01', '19:59'))).toBe(ny('2026-10-01', '04:20'));
+    // No night from Friday to Saturday, nor Saturday to Sunday.
+    expect(lastOvernightSettledMs(ny('2026-10-02', '21:00'))).toBe(ny('2026-10-02', '04:20'));
+    expect(lastOvernightSettledMs(ny('2026-10-03', '12:00'))).toBe(ny('2026-10-02', '04:20'));
+    expect(lastOvernightSettledMs(ny('2026-10-04', '19:00'))).toBe(ny('2026-10-02', '04:20'));
+    expect(lastOvernightSettledMs(ny('2026-10-04', '21:00'))).toBeUndefined();
+    expect(lastOvernightSettledMs(ny('2026-10-05', '02:00'))).toBeUndefined();
+  });
+
+  it('takes the overnight venue for a chart’s minute and hour bars of a US stock, as a series of its own', () => {
+    const chart = { contract: stock('AAPL'), timeframe: '5m' as Timeframe, outsideRth: true, overnight: true, slot: 'chart' };
+    expect(withOvernight(chart)).toBe(true);
+    expect(withOvernight({ ...chart, timeframe: '4h' })).toBe(true);
+    for (const no of [
+      { ...chart, overnight: false },
+      { ...chart, outsideRth: false },
+      { ...chart, timeframe: '15s' as Timeframe },
+      { ...chart, timeframe: '1D' as Timeframe },
+      { ...chart, background: true },
+      { ...chart, whatToShow: 'MIDPOINT' as const },
+      { ...chart, contract: index('SPX', 'CBOE') },
+      { ...chart, contract: { ...stock('AAPL'), exchange: 'NASDAQ' } },
+      { ...chart, contract: { ...stock('SAP'), currency: 'EUR' } },
+    ])
+      expect(withOvernight(no)).toBe(false);
+    const night = overnightRequest(chart);
+    expect(night).toEqual({ contract: { ...stock('AAPL'), exchange: 'OVERNIGHT' }, timeframe: '5m', outsideRth: true, slot: 'chart:overnight' });
+    expect(withOvernight(night)).toBe(false);
+    expect(historyContractKey(night.contract)).toBe('STK:AAPL@OVERNIGHT');
+    expect(historyContractKey(chart.contract)).toBe('STK:AAPL');
+  });
+
+  it('merges a day’s and a night’s bars, and their pages', () => {
+    const at = (time: number, close: number): Bar => ({ time, open: close, high: close, low: close, close, volume: 1 });
+    expect(mergeSessions([at(1, 1), at(4, 4)], [at(2, 2), at(4, 40), at(3, 3)]).map((x) => x.close)).toEqual([1, 2, 3, 4]);
+    const day = { bars: [at(1, 1), at(5, 5)], done: true };
+    expect(mergeSessionPages(day, null, 10)).toBe(day);
+    expect(mergeSessionPages(day, { bars: [at(3, 3)], done: true }, 10)).toEqual({ bars: [at(1, 1), at(3, 3), at(5, 5)], done: true });
+    // Over the limit: the newest, and more to come.
+    expect(mergeSessionPages(day, { bars: [at(3, 3)], done: true }, 2)).toEqual({ bars: [at(3, 3), at(5, 5)], done: false });
+    expect(mergeSessionPages(day, { bars: [], done: false }, 10).done).toBe(false);
   });
 
   it('plans none, a tail or the full window from the coverage', () => {
