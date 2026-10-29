@@ -2048,6 +2048,17 @@ the user's and saved as edited. The renderer edits them with the pure functions 
 * Deleting a group removes its symbols (confirmed when it has any); a list keeps at least one
   group. The panel's `watchlist` quote owner is the current list's instruments, so the removed
   symbols' quotes are released with the next subscription set.
+* Rows and groups are dragged to reorder them (`GroupList.tsx`; the pointer followed on the window
+  from press to release, `ui/pointerDrag.ts → followPointer`, as the Positions headers, which share
+  it): a press that moves more than 4 px drags, a shorter one is a click (a row picks its symbol, a
+  header toggles its group). A row lands between the rows of any open group, an accent line marking
+  the place (above a row's lower half, `model.ts → dropIndex`), at the top of an open group from its
+  header, or at the end of a closed group dropped on its header (lit); a group lands between the
+  others. The places are read from the drawn rows and headers (`data-wl-row`, `data-wl-header`), the
+  dragged row or group left out, and the change is one `moveItemTo` / `moveGroupTo`. Near the
+  list's top or bottom it scrolls (`edgeScroll`); Escape, a blur or a context menu undoes the drag,
+  and the release's click is swallowed. Presses on the header's ✎ / × or in a name editor never
+  drag.
 * The current list and the collapsed groups are per-device preferences in `localStorage`
   (`prefs.ts`); collapsed entries of groups the list no longer has are dropped. The current list
   and each list's "Add symbol" target group (kept for the session only) live in `viewState.ts`, a

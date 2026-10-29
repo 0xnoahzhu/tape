@@ -78,6 +78,46 @@ export function moveItem(list: Watchlist, fromGroupId: string, toGroupId: string
   };
 }
 
+/**
+ * Moves the instrument `key` out of group `fromGroupId` to position `index` of group `toGroupId`
+ * (counted among that group's other items: 0 first, their count last); the same group reorders it.
+ * Unchanged when either group or the item is missing.
+ */
+export function moveItemTo(list: Watchlist, fromGroupId: string, key: string, toGroupId: string, index: number): Watchlist {
+  const item = list.groups.find((g) => g.id === fromGroupId)?.items.find((i) => itemKey(i) === key);
+  if (!item || !list.groups.some((g) => g.id === toGroupId)) return list;
+  const groups = list.groups.map((g) => (g.id === fromGroupId ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g));
+  return {
+    ...list,
+    groups: groups.map((g) => {
+      if (g.id !== toGroupId) return g;
+      const items = g.items.filter((i) => itemKey(i) !== key);
+      const at = Math.max(0, Math.min(items.length, Math.round(index)));
+      return { ...g, items: [...items.slice(0, at), item, ...items.slice(at)] };
+    }),
+  };
+}
+
+/** Moves group `groupId` to position `index` among the other groups (0 first, their count last). */
+export function moveGroupTo(list: Watchlist, groupId: string, index: number): Watchlist {
+  const group = list.groups.find((g) => g.id === groupId);
+  if (!group) return list;
+  const rest = list.groups.filter((g) => g.id !== groupId);
+  const at = Math.max(0, Math.min(rest.length, Math.round(index)));
+  return { ...list, groups: [...rest.slice(0, at), group, ...rest.slice(at)] };
+}
+
+/**
+ * Where a drag at height `y` lands among boxes in order (rows, or groups), each given by its top
+ * and bottom (any one frame): the number of them whose middle is above `y`, so a pointer on a box's
+ * upper half goes before it and on its lower half after it.
+ */
+export function dropIndex(boxes: ReadonlyArray<{ top: number; bottom: number }>, y: number): number {
+  let n = 0;
+  for (const b of boxes) if ((b.top + b.bottom) / 2 < y) n++;
+  return n;
+}
+
 /** Sets the display name of every occurrence of an instrument in one list. */
 export function setItemName(list: Watchlist, key: string, name: LocalizedName): Watchlist {
   if (!listHas(list, key)) return list;

@@ -11,6 +11,7 @@ import {
   currentListOf,
   deleteGroup,
   deleteList,
+  dropIndex,
   groupNameTaken,
   listAccepts,
   listContracts,
@@ -18,7 +19,9 @@ import {
   listItemCount,
   listKeys,
   looksLikeTicker,
+  moveGroupTo,
   moveItem,
+  moveItemTo,
   neighborGroupId,
   normalizeMatch,
   normalizeTicker,
@@ -117,6 +120,47 @@ describe('item operations', () => {
     expect(moveItem(main, 'g-tech', 'g-tech', 'STK:NVDA')).toBe(main);
     expect(moveItem(main, 'g-tech', 'nope', 'STK:NVDA')).toBe(main);
     expect(moveItem(main, 'g-auto', 'g-etf', 'STK:NVDA')).toBe(main);
+  });
+
+  it('moves an item to a place in its own group or another one (dragged)', () => {
+    const syms = (l: Watchlist, g: string) => l.groups.find((x) => x.id === g)!.items.map((i) => i.contract.symbol);
+    const tech = syms(main, 'g-tech');
+    // Within its group: to the top, and to the end.
+    const top = moveItemTo(main, 'g-tech', 'STK:NVDA', 'g-tech', 0);
+    expect(syms(top, 'g-tech')).toEqual(['NVDA', ...tech.filter((s) => s !== 'NVDA')]);
+    const end = moveItemTo(main, 'g-tech', 'STK:NVDA', 'g-tech', 99);
+    expect(syms(end, 'g-tech')).toEqual([...tech.filter((s) => s !== 'NVDA'), 'NVDA']);
+    // Into another group, before its first item.
+    const across = moveItemTo(main, 'g-tech', 'STK:NVDA', 'g-auto', 0);
+    expect(syms(across, 'g-auto')).toEqual(['NVDA', 'TSLA']);
+    expect(syms(across, 'g-tech')).not.toContain('NVDA');
+    expect(listItemCount(across)).toBe(listItemCount(main));
+    // Missing item or group: unchanged.
+    expect(moveItemTo(main, 'g-auto', 'STK:NVDA', 'g-etf', 0)).toBe(main);
+    expect(moveItemTo(main, 'g-tech', 'STK:NVDA', 'nope', 0)).toBe(main);
+  });
+
+  it('moves a group to a place among the others (dragged)', () => {
+    const ids = (l: Watchlist) => l.groups.map((g) => g.id);
+    const all = ids(main);
+    const last = all.at(-1)!;
+    expect(ids(moveGroupTo(main, last, 0))).toEqual([last, ...all.slice(0, -1)]);
+    expect(ids(moveGroupTo(main, all[0], 99))).toEqual([...all.slice(1), all[0]]);
+    expect(moveGroupTo(main, 'nope', 0)).toBe(main);
+  });
+
+  it('places a drop before a box when the pointer is on its upper half, after it on the lower', () => {
+    const rows = [
+      { top: 0, bottom: 50 },
+      { top: 50, bottom: 100 },
+      { top: 100, bottom: 150 },
+    ];
+    expect(dropIndex(rows, -10)).toBe(0);
+    expect(dropIndex(rows, 20)).toBe(0);
+    expect(dropIndex(rows, 30)).toBe(1);
+    expect(dropIndex(rows, 120)).toBe(2);
+    expect(dropIndex(rows, 140)).toBe(3);
+    expect(dropIndex([], 10)).toBe(0);
   });
 
   it('sets a name only when the item exists', () => {

@@ -234,7 +234,8 @@ input::placeholder {
 .pos-resizing * {
   cursor: col-resize !important;
 }
-/* While a header is dragged to move its column, the pointer keeps the grabbing hand. */
+/* While a header is dragged to move its column (or a watchlist row or group is dragged), the pointer
+   keeps the grabbing hand. */
 .pos-reordering,
 .pos-reordering * {
   cursor: grabbing !important;

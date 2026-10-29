@@ -1,7 +1,15 @@
 // Scrollable body of the watchlist: collapsible groups (rename / delete on the header), quote
 // rows and "+ New group".
+//
+// Rows and groups are dragged to reorder them (followPointer, as the Positions headers): a press
+// that moves more than DRAG_SLOP px drags; a shorter one is a click (a row picks its symbol, a
+// header opens or closes its group). A row goes between the rows of any open group (the accent line
+// says where), or to the end of a closed group dropped on its header (which lights up); a group
+// goes between the others. Near the list's top or bottom it scrolls; Escape undoes the drag, and the
+// release's click is swallowed. The landing place is read from the rows and headers drawn
+// (model.ts → dropIndex) and applied as one change (moveItemTo, moveGroupTo).
 
-import { memo, useCallback, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { contractKey, contractLabel, isTradable } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
 import type { Lang, WatchItem, Watchlist } from '@shared/types';
@@ -12,13 +20,82 @@ import { useStore } from '../../state/store';
 import { useRefocus } from '../../ui/focus';
 import { GlyphButton, TextInput } from '../../ui/primitives';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
+import { edgeScroll } from '../portfolio/columnsState';
+import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { askDeleteGroup, updateList } from './actions';
 import { useWatchlistMessages } from './messages';
-import { canDeleteGroup, createGroup, groupNameTaken, itemKey, newId, pruneClosedGroups, renameGroup } from './model';
+import { canDeleteGroup, createGroup, dropIndex, groupNameTaken, itemKey, moveGroupTo, moveItemTo, newId, pruneClosedGroups, renameGroup } from './model';
 import { groupPrefKey, loadClosedGroups, saveClosedGroups } from './prefs';
 
 /** IB error "requires additional subscription"; delayed data, when enabled, follows it. */
 const NO_LIVE_SUBSCRIPTION = 10089;
+
+/** A press moves this far (px) before it drags; less is a click. */
+const DRAG_SLOP = 4;
+/** Within this many px of the list's top or bottom a drag scrolls it, up to EDGE_SPEED px a frame. */
+const EDGE = 40;
+const EDGE_SPEED = 14;
+
+/** What is dragged: a row (its group and key) or a group. */
+type Dragged = { kind: 'item'; groupId: string; key: string } | { kind: 'group'; groupId: string };
+/**
+ * Where it lands: a row at `index` of a group (among its other rows), drawn as a line at `y`, or
+ * `into` a closed group (its header lit); a group at `index` among the others, a line at `y`. `y` is
+ * in the list's content (scrolled with it).
+ */
+type Drop = { kind: 'item'; groupId: string; index: number; y: number | null } | { kind: 'group'; index: number; y: number };
+
+interface Box {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * The landing place of `what` at viewport height `y` in the list `root`, from the headers
+ * (`data-wl-header`) and rows (`data-wl-row`) drawn; the dragged row or group itself is left out,
+ * as the model counts places among the others. `counts`: each group's rows, open or not.
+ */
+function dropAt(root: HTMLElement, what: Dragged, y: number, counts: ReadonlyMap<string, number>): Drop | null {
+  const top = root.getBoundingClientRect().top - root.scrollTop;
+  const inList = (b: Box): Box => ({ top: b.top - top, bottom: b.bottom - top });
+  const sections = [...root.querySelectorAll<HTMLElement>('[data-wl-header]')].map((h) => {
+    const groupId = h.dataset.wlHeader!;
+    const rows = [...root.querySelectorAll<HTMLElement>('[data-wl-row]')].filter((r) => r.dataset.group === groupId);
+    const head = h.getBoundingClientRect();
+    const last = rows.length ? rows[rows.length - 1].getBoundingClientRect() : head;
+    return { groupId, open: h.dataset.open === 'true', head, rows, box: { top: head.top, bottom: last.bottom } };
+  });
+  if (!sections.length) return null;
+  const gap = (a: Box, b: Box) => (b.top - a.bottom) / 2;
+
+  if (what.kind === 'group') {
+    const others = sections.filter((s) => s.groupId !== what.groupId);
+    if (!others.length) return null;
+    const index = dropIndex(others.map((s) => s.box), y);
+    const at =
+      index < others.length
+        ? inList(others[index].box).top - (index > 0 ? gap(others[index - 1].box, others[index].box) : 2)
+        : inList(others[others.length - 1].box).bottom + 2;
+    return { kind: 'group', index, y: at };
+  }
+
+  // The group under the pointer: the last whose top is above it (the first above all of them).
+  const s = [...sections].reverse().find((x) => x.box.top <= y) ?? sections[0];
+  const own = (r: HTMLElement) => r.dataset.group === what.groupId && r.dataset.key === what.key;
+  const rows = s.rows.filter((r) => !own(r)).map((r) => r.getBoundingClientRect());
+  if (!s.open) {
+    // Closed: to its end, onto its header.
+    const n = (counts.get(s.groupId) ?? 0) - (s.groupId === what.groupId ? 1 : 0);
+    return { kind: 'item', groupId: s.groupId, index: Math.max(0, n), y: null };
+  }
+  if (y < s.head.bottom || !rows.length) return { kind: 'item', groupId: s.groupId, index: 0, y: inList(s.head).bottom };
+  const index = dropIndex(rows, y);
+  const at = index < rows.length ? inList(rows[index]).top : inList(rows[rows.length - 1]).bottom;
+  return { kind: 'item', groupId: s.groupId, index, y: at };
+}
+
+const sameDrop = (a: Drop | null, b: Drop | null): boolean =>
+  a === b || (!!a && !!b && a.kind === b.kind && a.index === b.index && a.y === b.y && (a.kind === 'group' || (b.kind === 'item' && a.groupId === b.groupId)));
 
 export function GroupList({
   list,
@@ -72,6 +149,85 @@ export function GroupList({
     });
   };
 
+  // Dragging a row or a group (see the top of the file).
+  const [dragged, setDragged] = useState<Dragged | null>(null);
+  const [drop, setDrop] = useState<Drop | null>(null);
+  const listRef = useRef(list);
+  listRef.current = list;
+  /** Stops following the press (unmount). */
+  const stopDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopDrag.current?.(), []);
+  // The pointer keeps the grabbing hand wherever it goes while something is dragged.
+  useEffect(() => {
+    if (!dragged) return;
+    const html = document.documentElement;
+    html.classList.add('pos-reordering');
+    return () => html.classList.remove('pos-reordering');
+  }, [dragged]);
+
+  const press = useCallback((e: PointerEvent<HTMLElement>, what: Dragged) => {
+    const root = rootRef.current;
+    // Not from the header's ✎ and × or a name being edited; not a second press while one drags.
+    if (e.button !== 0 || e.pointerType === 'touch' || !root || stopDrag.current || (e.target as HTMLElement).closest('button, input')) return;
+    const { clientX: x0, clientY: y0 } = e;
+    let y = y0;
+    let started = false;
+    let frame = 0;
+    let mark: Drop | null = null;
+    const counts = new Map(listRef.current.groups.map((g) => [g.id, g.items.length]));
+    const follow = () => {
+      const next = dropAt(root, what, y, counts);
+      if (sameDrop(mark, next)) return;
+      mark = next;
+      setDrop(next);
+    };
+    // Each frame of the drag: near the list's top or bottom, scroll it (and follow the rows that moved).
+    const scroll = () => {
+      frame = requestAnimationFrame(scroll);
+      const r = root.getBoundingClientRect();
+      const step = edgeScroll(y, y0, r.top, r.bottom, EDGE, EDGE_SPEED);
+      if (!step) return;
+      const before = root.scrollTop;
+      root.scrollTop = before + step;
+      if (root.scrollTop !== before) follow();
+    };
+    const done = () => {
+      cancelAnimationFrame(frame);
+      stopDrag.current = null;
+      setDragged(null);
+      setDrop(null);
+    };
+    const unfollow = followPointer(
+      e.pointerId,
+      (ev) => {
+        y = ev.clientY;
+        if (!started) {
+          if (Math.hypot(ev.clientX - x0, ev.clientY - y0) <= DRAG_SLOP) return;
+          started = true;
+          setDragged(what);
+          frame = requestAnimationFrame(scroll);
+        }
+        follow();
+      },
+      (ev) => {
+        if (ev && started) {
+          y = ev.clientY;
+          follow();
+          const d = mark;
+          if (d?.kind === 'item' && what.kind === 'item') updateList(listRef.current.id, (l) => moveItemTo(l, what.groupId, what.key, d.groupId, d.index));
+          if (d?.kind === 'group' && what.kind === 'group') updateList(listRef.current.id, (l) => moveGroupTo(l, what.groupId, d.index));
+          // The release would pick the row or toggle the group under it.
+          swallowClick();
+        }
+        done();
+      },
+    );
+    stopDrag.current = () => {
+      unfollow();
+      done();
+    };
+  }, []);
+
   const pick = useCallback((item: WatchItem) => {
     const s = useStore.getState();
     if (!isTradable(item.contract)) {
@@ -109,6 +265,7 @@ export function GroupList({
     <div
       ref={rootRef}
       style={{
+        position: 'relative',
         flex: 1,
         overflow: 'auto',
         ...stableGutter,
@@ -121,6 +278,7 @@ export function GroupList({
       {list.groups.map((g) => {
         const open = !closed[groupPrefKey(list.id, g.id)];
         const name = nameOf(g.name, lang);
+        const groupDragged = dragged?.kind === 'group' && dragged.groupId === g.id;
         return (
           <GroupSection
             key={g.id}
@@ -128,6 +286,9 @@ export function GroupList({
             name={name}
             count={g.items.length}
             open={open}
+            dragged={groupDragged}
+            target={drop?.kind === 'item' && drop.y == null && drop.groupId === g.id}
+            onPress={(e) => press(e, { kind: 'group', groupId: g.id })}
             menuOpen={g.id === menuGroupId}
             canDelete={canDelete}
             editor={
@@ -149,11 +310,21 @@ export function GroupList({
           >
             {g.items.map((item) => {
               const k = itemKey(item);
-              return <WatchRow key={k} item={item} groupId={g.id} lang={lang} selected={k === selectedKey} onPick={pick} onMenu={onRowMenu} />;
+              const rowDragged = groupDragged || (dragged?.kind === 'item' && dragged.groupId === g.id && dragged.key === k);
+              return (
+                <WatchRow key={k} item={item} groupId={g.id} lang={lang} selected={k === selectedKey} dragged={rowDragged} onPick={pick} onMenu={onRowMenu} onPress={press} />
+              );
             })}
           </GroupSection>
         );
       })}
+      {drop?.y != null && (
+        <div
+          aria-hidden
+          data-wl="drop"
+          style={{ position: 'absolute', left: 8, right: 4, top: drop.y - 1, height: 2, zIndex: 2, background: 'var(--ac)', pointerEvents: 'none' }}
+        />
+      )}
       {naming ? (
         <GroupNameInput
           list={list}
@@ -213,6 +384,9 @@ function GroupSection({
   name,
   count,
   open,
+  dragged,
+  target,
+  onPress,
   menuOpen,
   canDelete,
   editor,
@@ -226,6 +400,12 @@ function GroupSection({
   name: string;
   count: number;
   open: boolean;
+  /** The group is being dragged (faded). */
+  dragged: boolean;
+  /** A row dragged onto this closed group's header goes in it (lit). */
+  target: boolean;
+  /** A press on the header (not its buttons) may start dragging the group. */
+  onPress: (e: PointerEvent<HTMLElement>) => void;
   menuOpen: boolean;
   canDelete: boolean;
   editor: ReactNode;
@@ -262,8 +442,11 @@ function GroupSection({
       >
         {editor ?? (
           <div
+            data-wl-header={id}
+            data-open={open}
             onClick={onToggle}
             onContextMenu={onMenu}
+            onPointerDown={onPress}
             style={{
               height: 34,
               display: 'flex',
@@ -271,9 +454,12 @@ function GroupSection({
               gap: LEAD.gap,
               padding: `0 4px 0 ${LEAD.inset}px`,
               cursor: 'pointer',
+              userSelect: 'none',
               fontSize: 12,
               color: 'var(--mu)',
-              background: menuOpen ? 'var(--p2)' : 'transparent',
+              background: target ? 'var(--sel)' : menuOpen ? 'var(--p2)' : 'transparent',
+              boxShadow: target ? 'inset 0 0 0 1px var(--ac)' : undefined,
+              opacity: dragged ? 0.45 : 1,
             }}
           >
             <Arrow open={open} />
@@ -306,15 +492,21 @@ const WatchRow = memo(function WatchRow({
   groupId,
   lang,
   selected,
+  dragged,
   onPick,
   onMenu,
+  onPress,
 }: {
   item: WatchItem;
   groupId: string;
   lang: Lang;
   selected: boolean;
+  /** Being dragged (or its group is): faded. */
+  dragged: boolean;
   onPick: (item: WatchItem) => void;
   onMenu: (e: MouseEvent, groupId: string, item: WatchItem) => void;
+  /** A press that may start dragging the row. */
+  onPress: (e: PointerEvent<HTMLElement>, what: Dragged) => void;
 }) {
   const m = useWatchlistMessages.for(lang);
   const key = contractKey(item.contract);
@@ -328,10 +520,16 @@ const WatchRow = memo(function WatchRow({
   const currency = item.contract.currency;
   return (
     <div
+      data-wl-row=""
+      data-group={groupId}
+      data-key={key}
       onClick={() => onPick(item)}
       onContextMenu={(e) => onMenu(e, groupId, item)}
+      onPointerDown={(e) => onPress(e, { kind: 'item', groupId, key })}
       style={{
         height: 52,
+        userSelect: 'none',
+        opacity: dragged ? 0.45 : 1,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
