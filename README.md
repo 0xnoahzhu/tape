@@ -94,7 +94,18 @@ Trades (⌘3 / Ctrl+3 opens Orders).
   anywhere: a vertical arrow over a band across the chart, the change from one price to another) and a
   **time arrow** (drag left or right anywhere: a horizontal arrow over a band down the chart, the change
   from the close of the bar it starts at to the close of the bar it ends at, and the bars between), each
-  read in the same bubble under its button, live bars from real-time quotes (a note says when
+  read in the same bubble under its button, and **pattern tools** (one button, ▾ picks the tool; drag
+  over a stretch of bars): the **triangle** (Tape draws the line along its highs and the one along its
+  lows, each through swing highs or lows with every bar within them, and says whether they make a
+  symmetrical (converging) triangle, or else an ascending / descending triangle, a rising / falling
+  wedge, a channel or a broadening pattern, with each line's touches, how much it narrowed, how near
+  the apex it ends, its volume trend and whether a later close broke out of the lines), **Elliott
+  waves** (the stretch's swings at the largest scale that gives 3 waves (A-B-C, zigzag or flat), 5 (an
+  impulse) or 8 (both), labelled on the chart and checked against the rules: wave 2 never retraces all
+  of wave 1, wave 3 is never the shortest, wave 4 stays out of wave 1, B short of A's start, C beyond A;
+  with the Fibonacci ratios, and the larger count it is not and why) and **head and shoulders / double
+  top or bottom** (selected with the moves into and out of it: shoulders, head or tops labelled, the
+  neckline, and whether a close broke it, with the measured-move target), live bars from real-time quotes (a note says when
   delayed data keeps seconds bars from being live), session status, the watchlist star and the alert bell
   in the header. The header's big price is the live one while any session trades (pre-market, regular,
   after hours, and US stocks' overnight session with today's close beside it); once nothing trades it is

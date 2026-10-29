@@ -47,6 +47,7 @@ import {
   fitView,
   formatBarTime,
   futureTimes,
+  isPatternTool,
   keepBarsInRange,
   measureBetween,
   measureEmpty,
@@ -93,6 +94,9 @@ import {
   type PriceRange,
 } from './chartMath';
 import { useChartMessages } from './messages';
+import { findReversal, type Reversal } from './reversals';
+import { findTriangle, linePrice, type Triangle } from './triangles';
+import { findWaves, type WaveCount } from './waves';
 import { useSize } from './useSize';
 
 export type ChartStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -140,6 +144,10 @@ interface Props {
 /** What a measure reads: the price change from its start to its end, its percent, the bars between. */
 export interface MeasureReadout {
   kind: MeasureKind;
+  /** A pattern tool's verdict on its stretch. */
+  triangle?: Triangle;
+  waves?: WaveCount;
+  reversal?: Reversal;
   change: number;
   pct: number | null;
   bars: number;
@@ -255,6 +263,132 @@ function MeasureArrow({ box, w, h }: { box: { kind: MeasureKind; x1: number; x2:
       )}
       <line x1={x1} y1={y1} x2={bx} y2={by} style={{ stroke: color, strokeWidth: 1.5 }} />
       {len > 0 && <polygon points={`${x2},${y2} ${bx - uy * ARROW_W},${by + ux * ARROW_W} ${bx + uy * ARROW_W},${by - ux * ARROW_W}`} style={{ fill: color }} />}
+    </g>
+  );
+}
+
+/** Wave and pattern labels: bold figures on a halo of the panel color, so lines behind them do not cut through. */
+const swingText: CSSProperties = { font: '600 11px var(--num)', fill: 'var(--tx)', paintOrder: 'stroke', stroke: 'var(--p)', strokeWidth: 3, strokeLinejoin: 'round' };
+
+/** A swing's label, above a high and below a low. */
+function SwingLabel({ x, y, high, text }: { x: number; y: number; high: boolean; text: string }) {
+  return (
+    <text x={x} y={high ? y - 8 : y + 15} textAnchor="middle" style={swingText}>
+      {text}
+    </text>
+  );
+}
+
+/** Whether the k-th of a run of alternating swings is a high (above its neighbour). */
+const isHigh = (points: ReadonlyArray<{ price: number }>, k: number) => points[k].price > (points[k - 1] ?? points[k + 1]).price;
+
+type Found = Pick<MeasureReadout, 'triangle' | 'waves' | 'reversal'>;
+type Place = { xAt: (index: number) => number; yAt: (price: number) => number };
+
+/**
+ * A pattern tool's stretch (a band down the plot) and what its bars make: a triangle's lines, a wave
+ * count's swings, a head and shoulders' or double top's swings and neckline; all within the plot (a
+ * nested svg clips them).
+ */
+function PatternOverlay({ found, x1, x2, w, h, xAt, yAt }: { found: Found; x1: number; x2: number; w: number; h: number } & Place) {
+  return (
+    <svg width={w} height={h}>
+      <rect x={Math.min(x1, x2)} y={0} width={Math.abs(x2 - x1)} height={h} style={{ fill: 'var(--ac)', opacity: 0.06 }} />
+      {found.triangle && <TriangleLines t={found.triangle} xAt={xAt} yAt={yAt} />}
+      {found.waves && <WaveLines count={found.waves} xAt={xAt} yAt={yAt} />}
+      {found.reversal && <ReversalLines r={found.reversal} xAt={xAt} yAt={yAt} />}
+    </svg>
+  );
+}
+
+/**
+ * A triangle's line along the highs and line along the lows (triangles.ts): solid over the stretch,
+ * dashed on towards the apex (or a quarter of the stretch beyond it), each swing touching a line
+ * ringed, the apex and the first close beyond a line after the stretch marked.
+ */
+function TriangleLines({ t, xAt, yAt }: { t: Triangle } & Place) {
+  if (!t.upper || !t.lower) return <g data-pattern="none" />;
+  const { from, to, apex, breakout } = t;
+  const reach = apex && apex.index > to ? Math.min(apex.index, to + (to - from)) : to + (to - from) / 4;
+  const stroke = { stroke: 'var(--ac)', strokeWidth: 1.5 };
+  return (
+    <g data-pattern={t.kind ?? 'none'}>
+      {[t.upper, t.lower].map((l, k) => (
+        <g key={k}>
+          <line x1={xAt(from)} y1={yAt(linePrice(l, from))} x2={xAt(to)} y2={yAt(linePrice(l, to))} style={stroke} />
+          <line x1={xAt(to)} y1={yAt(linePrice(l, to))} x2={xAt(reach)} y2={yAt(linePrice(l, reach))} style={{ ...stroke, strokeDasharray: '4 4', opacity: 0.7 }} />
+          {l.touches.map((i) => (
+            <circle key={i} data-touch={k ? 'low' : 'high'} cx={xAt(i)} cy={yAt(linePrice(l, i))} r={3} style={{ fill: 'var(--p)', stroke: 'var(--ac)', strokeWidth: 1.5 }} />
+          ))}
+        </g>
+      ))}
+      {apex && apex.index <= reach && <circle cx={xAt(apex.index)} cy={yAt(apex.price)} r={2.5} style={{ fill: 'var(--ac)' }} />}
+      {breakout && (
+        <circle
+          data-breakout={breakout.dir}
+          cx={xAt(breakout.index)}
+          cy={yAt(linePrice(breakout.dir === 'up' ? t.upper : t.lower, breakout.index))}
+          r={4.5}
+          style={{ fill: 'none', stroke: breakout.dir === 'up' ? 'var(--up)' : 'var(--dn)', strokeWidth: 2 }}
+        />
+      )}
+    </g>
+  );
+}
+
+/** A wave count's swings joined and labelled 1 … 5, A … C (waves.ts); dashed and muted when it breaks a rule. */
+function WaveLines({ count, xAt, yAt }: { count: WaveCount } & Place) {
+  if (!count.points.length) return <g data-waves="none" />;
+  const color = count.ok ? 'var(--ac)' : 'var(--mu)';
+  return (
+    <g data-waves={count.waves ?? 'none'} data-ok={count.ok}>
+      <polyline
+        points={count.points.map((p) => `${xAt(p.index)},${yAt(p.price)}`).join(' ')}
+        style={{ fill: 'none', stroke: color, strokeWidth: 1.5, ...(count.ok ? {} : { strokeDasharray: '4 3' }) }}
+      />
+      {count.points.map((p, k) => (
+        <g key={k}>
+          <circle cx={xAt(p.index)} cy={yAt(p.price)} r={2.5} style={{ fill: color }} />
+          {p.label && <SwingLabel x={xAt(p.index)} y={yAt(p.price)} high={isHigh(count.points, k)} text={p.label} />}
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/**
+ * A head and shoulders' or double top's swings joined and labelled (LS, H, RS; T1, T2), its neckline
+ * solid under the pattern and dashed on to the breakout (or a quarter of the pattern beyond it), the
+ * breakout ringed and the measured move's target a dashed level from there.
+ */
+function ReversalLines({ r, xAt, yAt }: { r: Reversal } & Place) {
+  if (!r.kind || !r.neckline) return <g data-reversal="none" />;
+  const neck = r.neckline;
+  const at = (i: number) => neck.price + neck.slope * (i - neck.index);
+  const first = r.points[0].index;
+  const last = r.points[r.points.length - 1].index;
+  const reach = r.breakout?.index ?? last + (last - first) / 4;
+  const top = r.kind === 'headShouldersTop' || r.kind === 'doubleTop';
+  return (
+    <g data-reversal={r.kind}>
+      <polyline points={r.points.map((p) => `${xAt(p.index)},${yAt(p.price)}`).join(' ')} style={{ fill: 'none', stroke: 'var(--ac)', strokeWidth: 1.5 }} />
+      <line x1={xAt(first)} y1={yAt(at(first))} x2={xAt(last)} y2={yAt(at(last))} style={{ stroke: 'var(--ac)', strokeWidth: 1.5 }} />
+      <line x1={xAt(last)} y1={yAt(at(last))} x2={xAt(reach)} y2={yAt(at(reach))} style={{ stroke: 'var(--ac)', strokeWidth: 1.5, strokeDasharray: '4 4', opacity: 0.7 }} />
+      {r.points.map((p, k) =>
+        p.label === 'N' ? null : <SwingLabel key={k} x={xAt(p.index)} y={yAt(p.price)} high={top} text={p.label} />,
+      )}
+      {r.breakout && (
+        <>
+          <circle data-breakout cx={xAt(r.breakout.index)} cy={yAt(at(r.breakout.index))} r={4.5} style={{ fill: 'none', stroke: top ? 'var(--dn)' : 'var(--up)', strokeWidth: 2 }} />
+          <line
+            x1={xAt(r.breakout.index)}
+            y1={yAt(r.breakout.target)}
+            x2={xAt(r.breakout.index + (last - first) / 2)}
+            y2={yAt(r.breakout.target)}
+            style={{ stroke: top ? 'var(--dn)' : 'var(--up)', strokeWidth: 1, strokeDasharray: '3 3' }}
+          />
+        </>
+      )}
     </g>
   );
 }
@@ -785,9 +919,19 @@ export const PriceChart = memo(function PriceChart({
 
   // The measure in px: the ruler a line and a box from bar to bar; the price arrow straight up or down
   // from where it started, over a band across the plot; the time arrow straight back or forward from
-  // there, over a band down the plot, with the closes it measures from and to marked. Its figures are not drawn by it (they would cover the bars) but
-  // reported (onMeasure) for the header, under its tool.
+  // there, over a band down the plot, with the closes it measures from and to marked; a pattern
+  // tool its stretch and what its bars make (PatternOverlay). Its figures are not drawn by it (they
+  // would cover the bars) but reported (onMeasure) for the header, under its tool.
   const meas = geo && measure ? measureBetween(bars, measure.a, measure.b, measure.kind) : null;
+  const tool = measure && isPatternTool(measure.kind) ? measure.kind : null;
+  const stretchFrom = tool && meas ? Math.min(meas.from, meas.to) : -1;
+  const stretchTo = tool && meas ? Math.max(meas.from, meas.to) : -1;
+  const found = useMemo((): Found => {
+    if (!tool || stretchFrom < 0) return {};
+    if (tool === 'triangle') return { triangle: findTriangle(bars, stretchFrom, stretchTo) };
+    if (tool === 'waves') return { waves: findWaves(bars, stretchFrom, stretchTo) };
+    return { reversal: findReversal(bars, stretchFrom, stretchTo) };
+  }, [bars, tool, stretchFrom, stretchTo]);
   const measureBox =
     geo && measure && meas && size.w > 0 && size.h > 0
       ? (() => {
@@ -799,7 +943,9 @@ export const PriceChart = memo(function PriceChart({
           const y2 = kind === 'time' ? y1 : toPx(geo.y(b.price));
           // The ends whose prices it marks: the ruler's and the price arrow's own, the time arrow's bars' closes.
           const ends: { index: number; price: number; snap?: MeasurePoint['snap'] }[] =
-            kind === 'time'
+            isPatternTool(kind)
+              ? []
+              : kind === 'time'
               ? [
                   { index: meas.from, price: bars[meas.from].close },
                   { index: meas.to, price: bars[meas.to].close },
@@ -814,7 +960,7 @@ export const PriceChart = memo(function PriceChart({
             x2,
             y1,
             y2,
-            color: meas.change >= 0 ? 'var(--up)' : 'var(--dn)',
+            color: isPatternTool(kind) ? 'var(--ac)' : meas.change >= 0 ? 'var(--up)' : 'var(--dn)',
             ends: ends.map((e) => ({ ...e, x: xAt(e.index), y: toPx(geo.y(e.price)) })),
           };
         })()
@@ -858,6 +1004,7 @@ export const PriceChart = memo(function PriceChart({
   const latestSpot = latestButtonSpot([...extremes, ...measureEnds].map((e) => e.box), size.w, size.h, latestSize.w, latestSize.h);
 
   const readKind = measure?.kind;
+  const readFound = readKind && isPatternTool(readKind) ? found : undefined;
   const readChange = meas?.change;
   const readPct = meas?.pct;
   const readBars = meas?.bars;
@@ -865,9 +1012,9 @@ export const PriceChart = memo(function PriceChart({
     onMeasure?.(
       readKind === undefined || readChange === undefined || readBars === undefined
         ? null
-        : { kind: readKind, change: readChange, pct: readPct ?? null, bars: readBars },
+        : { kind: readKind, change: readChange, pct: readPct ?? null, bars: readBars, ...readFound },
     );
-  }, [readKind, readChange, readPct, readBars, onMeasure]);
+  }, [readKind, readChange, readPct, readBars, readFound, onMeasure]);
 
   const olderLoading = older?.status === 'loading';
   const olderError = older?.status === 'error' && near ? m.olderError(older.error ?? '') : undefined;
@@ -974,7 +1121,18 @@ export const PriceChart = memo(function PriceChart({
                   <line x1={measureBox.x1} y1={measureBox.y1} x2={measureBox.x2} y2={measureBox.y2} style={{ stroke: measureBox.color, strokeWidth: 1.5 }} />
                 </>
               )}
-              {measureBox.kind !== 'ruler' && <MeasureArrow box={measureBox} w={size.w} h={size.h} />}
+              {(measureBox.kind === 'price' || measureBox.kind === 'time') && <MeasureArrow box={measureBox} w={size.w} h={size.h} />}
+              {isPatternTool(measureBox.kind) && geo && (
+                <PatternOverlay
+                  found={found}
+                  x1={measureBox.x1}
+                  x2={measureBox.x2}
+                  w={size.w}
+                  h={size.h}
+                  xAt={(i) => (geo.centerX(i) / VB_W) * size.w}
+                  yAt={(p) => toPx(geo.y(p))}
+                />
+              )}
               {/* A snapped end is a ring (the magnet held it to the bar's price), a free one a dot; the price arrow's are its own ends. */}
               {measureBox.kind !== 'price' &&
                 measureBox.ends.map((p, i) =>

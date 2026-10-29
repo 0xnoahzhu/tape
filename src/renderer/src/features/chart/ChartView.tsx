@@ -32,19 +32,23 @@ import { useQuote, useQuoteSubscriptions, useMarketDataAvailable } from '../../h
 import { nameOf, useClock, useLang } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
+import { Dropdown, MenuChoice } from '../../ui/select';
 import { alertLevel } from '../alerts/model';
 import { WatchStar } from '../watchlist/WatchStar';
 import { barsKey, CHART_SLOT, loadBars, loadOlder, MAX_OLDER_PAGE, olderPageSize, scheduleOlderRetry, useBarsStore } from './barsStore';
 import { useChartPrefs } from './chartPrefs';
-import { advanceLiveBars, isIntraday, MA_PERIODS, priceDecimals, shownTimeZone, withLiveBars, type MeasureKind } from './chartMath';
+import { advanceLiveBars, isIntraday, MA_PERIODS, PATTERN_TOOLS, priceDecimals, shownTimeZone, withLiveBars, type MeasureKind, type PatternTool } from './chartMath';
 import { useContractInfo } from './contractInfo';
 import { exposeChartDebugHandles } from './debug';
 import { useChartMessages } from './messages';
 import { PRICE_AXIS_W, PriceChart, type MeasureReadout } from './PriceChart';
 import { missingBars, rangeLoaded, rangeStartSec } from './ranges';
+import type { Reversal } from './reversals';
 import { TimeframeBar } from './TimeframeBar';
+import type { Triangle } from './triangles';
 import { useNow } from './useNow';
 import { useSize } from './useSize';
+import type { WaveCount } from './waves';
 
 const REFRESH_MS = 60_000;
 /** Header spacing from the design (px): view side padding, gap between price, bell and timeframes. */
@@ -55,8 +59,10 @@ const PRICE_GAP = 14;
 const BELL_W = 30;
 /** Gap between the star, the bell and the measure tools (as between the ringed indicator chips). */
 const BUTTON_GAP = 6;
-/** The star, the bell and the three measure tools side by side. */
-const BUTTONS_W = 5 * BELL_W + 4 * BUTTON_GAP;
+/** The pattern tool's menu part (▾) beside its icon. */
+const MENU_W = 14;
+/** The star, the bell, the three measure tools and the pattern tool with its menu side by side. */
+const BUTTONS_W = 6 * BELL_W + MENU_W + 5 * BUTTON_GAP;
 const MIN_TITLE_W = 120;
 
 function BellButton({ title, active, onClick }: { title: string; active: boolean; onClick: () => void }) {
@@ -86,14 +92,21 @@ function BellButton({ title, active, onClick }: { title: string; active: boolean
   );
 }
 
-/** The measure tools' icons: the ruler, the price arrow (up from a bar to a bar), the time arrow (right from a bar to a bar). */
+/**
+ * The measure tools' icons: the ruler, the price arrow (up from a bar to a bar), the time arrow (right
+ * from a bar to a bar); the pattern tools: the triangle (two lines closing in), the waves (a zigzag
+ * of five legs), the head and shoulders (three peaks on a neckline).
+ */
 const MEASURE_ICONS: Record<MeasureKind, string> = {
   ruler: 'M1.7 5.2h12.6v5.6H1.7z M4.7 5.2v2.4 M7.7 5.2v3.2 M10.7 5.2v2.4',
   price: 'M3.2 2.2h9.6 M3.2 13.8h9.6 M8 13.8V5 M4.8 8.2 8 5l3.2 3.2',
   time: 'M2.2 3.2v9.6 M13.8 3.2v9.6 M2.2 8H11 M7.8 4.8 11 8l-3.2 3.2',
+  triangle: 'M1.8 2.6 14.2 7.2 M1.8 13.4 14.2 8.8',
+  waves: 'M1.5 13 4.5 7.5 6.5 10 10 3 12 6.5 14.5 2.5',
+  reversal: 'M1.5 13 4 8 6 10.5 8 3.5 10 10.5 12 8 14.5 13 M2.5 10.5h11',
 };
 /** Their switches' data-chart names. */
-const MEASURE_NAMES: Record<MeasureKind, string> = { ruler: 'ruler', price: 'price-range', time: 'time-range' };
+const MEASURE_NAMES: Record<MeasureKind, string> = { ruler: 'ruler', price: 'price-range', time: 'time-range', triangle: 'triangle', waves: 'waves', reversal: 'reversal' };
 
 /**
  * A measure tool (the ruler, the price arrow, the time arrow): on, the next drag on the chart draws it
@@ -102,10 +115,24 @@ const MEASURE_NAMES: Record<MeasureKind, string> = { ruler: 'ruler', price: 'pri
  * large, in the up or down color, and the price change and (but for the price arrow) the bars between;
  * while the tool is on and nothing is drawn yet, what to do.
  */
-function MeasureButton({ kind, title, on, onClick, readout }: { kind: MeasureKind; title: string; on: boolean; onClick: () => void; readout: ReactNode }) {
+function MeasureButton({
+  kind,
+  title,
+  on,
+  onClick,
+  onMenu,
+  readout,
+}: {
+  kind: MeasureKind;
+  title: string;
+  on: boolean;
+  onClick: () => void;
+  onMenu?: (anchor: HTMLElement) => void;
+  readout: ReactNode;
+}) {
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
-      <MeasureSwitch kind={kind} title={title} on={on} onClick={onClick} />
+      <MeasureSwitch kind={kind} title={title} on={on} onClick={onClick} onMenu={onMenu} />
       {readout && (
         <div
           data-chart="measure-readout"
@@ -145,13 +172,14 @@ function MeasureButton({ kind, title, on, onClick, readout }: { kind: MeasureKin
   );
 }
 
-/** The measure tools, in the header's order. */
+/** The measure tools, in the header's order (then the pattern tool, PATTERN_TOOLS behind its menu). */
 const MEASURE_KINDS: readonly MeasureKind[] = ['ruler', 'price', 'time'];
 
 /** The measure bubble's caret (px, the side of the square it is). */
 const CARET = 8;
 
-function MeasureSwitch({ kind, title, on, onClick }: { kind: MeasureKind; title: string; on: boolean; onClick: () => void }) {
+/** A measure tool's switch; with `onMenu`, a ▾ part beside the icon opens the tool's menu. */
+function MeasureSwitch({ kind, title, on, onClick, onMenu }: { kind: MeasureKind; title: string; on: boolean; onClick: () => void; onMenu?: (anchor: HTMLElement) => void }) {
   return (
     <div
       role="switch"
@@ -162,7 +190,9 @@ function MeasureSwitch({ kind, title, on, onClick }: { kind: MeasureKind; title:
       className={on ? undefined : 'hover-tx hover-p2'}
       style={{
         height: 30,
-        width: BELL_W,
+        width: BELL_W + (onMenu ? MENU_W : 0),
+        paddingLeft: onMenu ? 4 : 0,
+        boxSizing: 'border-box',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
@@ -175,8 +205,96 @@ function MeasureSwitch({ kind, title, on, onClick }: { kind: MeasureKind; title:
       <svg viewBox="0 0 16 16" width={14} height={14} style={{ display: 'block' }} aria-hidden>
         <path d={MEASURE_ICONS[kind]} stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="square" />
       </svg>
+      {onMenu && (
+        <div
+          data-chart="pattern-menu"
+          aria-haspopup="menu"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMenu(e.currentTarget.parentElement!);
+          }}
+          style={{ width: MENU_W, alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--mu)' }}
+        >
+          ▾
+        </div>
+      )}
     </div>
   );
+}
+
+/** A pattern tool's verdict: a title (accent when the pattern is there) and lines of detail, left-aligned. */
+function Verdict({ title, tone, lines, name }: { title: string; tone: 'yes' | 'other' | 'none'; lines: string[]; name: string }) {
+  return (
+    <div data-chart={`${name}-readout`} style={{ textAlign: 'left' }}>
+      <div style={{ font: '600 14px/1.3 var(--sans)', color: tone === 'yes' ? 'var(--ac)' : tone === 'other' ? 'var(--tx)' : 'var(--dm)' }}>{title}</div>
+      {lines.map((l) => (
+        <div key={l} style={{ font: '11px/1.5 var(--sans)', color: 'var(--mu)' }}>
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The triangle tool's verdict: whether the stretch is a symmetrical (converging) triangle, what it is
+ * otherwise, then the touches of each line, how much it narrowed and how near the apex it ends, its
+ * volume, and whether a close after it broke out of the lines.
+ */
+function TriangleReadout({ t }: { t: Triangle | undefined }) {
+  const m = useChartMessages().triangle;
+  if (!t) return null;
+  const yes = t.kind === 'symmetrical';
+  const lines: string[] = [];
+  if (!t.kind) lines.push(m.why[t.why ?? 'lines']);
+  else if (!yes) lines.push(m.kinds[t.kind]);
+  if (t.upper && t.lower) lines.push(m.touches(t.upper.touches.length, t.lower.touches.length));
+  if (t.kind) {
+    const shape = [
+      t.narrowing != null && t.narrowing < 0 ? m.narrowed(Math.round(-t.narrowing * 100)) : null,
+      t.progress != null && t.narrowing != null && t.narrowing < 0 ? m.toApex(Math.round(t.progress * 100)) : null,
+    ].filter(Boolean);
+    if (shape.length) lines.push(shape.join(' · '));
+    if (t.volume != null) lines.push(m.volume(pct(t.volume * 100)));
+    lines.push(t.breakout ? m.breakout[t.breakout.dir] : m.inside);
+  }
+  return <Verdict name="triangle" title={yes ? m.yes : m.no} tone={yes ? 'yes' : t.kind ? 'other' : 'none'} lines={lines} />;
+}
+
+/**
+ * The waves tool's verdict: the count read (an impulse, an A-B-C, a full cycle) and its direction, or
+ * that none keeps the rules; each rule kept (✓) or broken (✗); the ratios; a larger count it is not.
+ */
+function WavesReadout({ c }: { c: WaveCount | undefined }) {
+  const m = useChartMessages().waves;
+  if (!c) return null;
+  if (!c.waves) return <Verdict name="waves" title={m.none} tone="none" lines={[m.why[c.why ?? 'none']]} />;
+  const r = c.ratios;
+  const p = (x: number | undefined) => Math.round((x ?? 0) * 100);
+  const x = (v: number | undefined) => (v ?? 0).toFixed(1);
+  const title = c.ok ? `${m.title[c.waves]} ${m.dir[c.dir]}${c.waves === 3 && c.correction ? ` · ${m.correction[c.correction]}` : ''}` : m.none;
+  const lines = [
+    ...(c.ok ? [] : [m.count(c.waves)]),
+    ...c.rules.map((rule) => `${rule.ok ? '✓' : '✗'} ${m.rules[rule.id]}`),
+    ...(c.waves === 3 ? [] : [m.ratios5(p(r.w2), x(r.w3), p(r.w4), x(r.w5))]),
+    ...(c.waves === 5 ? [] : [m.ratios3(p(r.b), x(r.c))]),
+    ...(c.rejected ? [m.rejected(c.rejected.waves!, c.rejected.rules.filter((rule) => !rule.ok).map((rule) => m.rules[rule.id]).join('; '))] : []),
+  ];
+  return <Verdict name="waves" title={title} tone={c.ok ? 'yes' : 'other'} lines={lines} />;
+}
+
+/** The reversal tool's verdict: the pattern found, its neckline and height, and whether a close broke the neckline (with the target). */
+function ReversalReadout({ r, fmt }: { r: Reversal | undefined; fmt: (v: number) => string }) {
+  const m = useChartMessages().reversal;
+  if (!r) return null;
+  if (!r.kind || !r.neckline) return <Verdict name="reversal" title={m.none} tone="none" lines={r.why === 'short' ? [m.short] : []} />;
+  const last = r.points[r.points.length - 1].index;
+  const top = r.kind === 'headShouldersTop' || r.kind === 'doubleTop';
+  const lines = [
+    m.neckline(fmt(r.neckline.price + r.neckline.slope * (last - r.neckline.index)), fmt(r.height ?? 0)),
+    r.breakout ? m.broke[top ? 'top' : 'bottom'](fmt(r.breakout.target)) : m.notYet,
+  ];
+  return <Verdict name="reversal" title={m.kinds[r.kind]} tone="yes" lines={lines} />;
 }
 
 /** Indicator toggle (design chip): accent ring when on; a moving average's chip carries a swatch of its line color. */
@@ -328,6 +446,9 @@ export function ChartView() {
   // The measure tool on: the next drag on the chart draws it; it turns off once one is drawn (or on Esc).
   const [measuring, setMeasuring] = useState<MeasureKind | null>(null);
   const endMeasuring = useCallback(() => setMeasuring(null), []);
+  // The pattern tool on the header (the last one picked from its menu), and its menu's anchor while open.
+  const [patternTool, setPatternTool] = useState<PatternTool>('triangle');
+  const [patternMenu, setPatternMenu] = useState<HTMLElement | null>(null);
   // The measure drawn on the chart: its figures go under its tool, not over the bars.
   const [measured, setMeasured] = useState<MeasureReadout | null>(null);
   useEffect(() => setHoverBar(null), [key]);
@@ -415,6 +536,26 @@ export function ChartView() {
   const barWidth = viewWidth > 0 ? Math.max(0, viewWidth - 2 * PAD_X - MIN_TITLE_W - 2 * HEADER_GAP - BUTTONS_W) : 0;
   // The plot: the view less its left padding and the price axis (the chart runs to the right edge).
   const plotWidth = viewWidth > 0 ? Math.max(0, viewWidth - PAD_X - PRICE_AXIS_W) : undefined;
+  /** What a measure tool's bubble reads: the measure drawn with it, else (while it is on) what to do. */
+  const readoutOf = (kind: MeasureKind): ReactNode => {
+    if (measured && kind === measured.kind && (!measuring || measuring === kind)) {
+      if (kind === 'triangle') return <TriangleReadout t={measured.triangle} />;
+      if (kind === 'waves') return <WavesReadout c={measured.waves} />;
+      if (kind === 'reversal') return <ReversalReadout r={measured.reversal} fmt={fmt} />;
+      return (
+        <>
+          <div style={{ font: '600 15px/1.2 var(--num)', color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)' }}>
+            {measured.pct == null ? '—' : pct(measured.pct * 100)}
+          </div>
+          <div style={{ font: '11px/1.4 var(--num)', color: 'var(--mu)' }}>
+            {sg(measured.change, fmt)}
+            {kind !== 'price' && ` · ${m.measureBars(Math.abs(measured.bars))}`}
+          </div>
+        </>
+      );
+    }
+    return measuring === kind ? <div style={{ font: '11px/1.4 var(--sans)', color: 'var(--dm)' }}>{m.measureDrags[kind]}</div> : null;
+  };
   const tools = (
     <div ref={toolsRef} style={{ display: 'flex', alignItems: 'flex-start', gap: HEADER_GAP, flexShrink: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', gap: BUTTON_GAP, flexShrink: 0 }}>
@@ -427,23 +568,34 @@ export function ChartView() {
             title={m.measureHints[kind]}
             on={measuring === kind}
             onClick={() => setMeasuring((on) => (on === kind ? null : kind))}
-            readout={
-              measured && kind === measured.kind && (!measuring || measuring === kind) ? (
-                <>
-                  <div style={{ font: '600 15px/1.2 var(--num)', color: measured.change >= 0 ? 'var(--up)' : 'var(--dn)' }}>
-                    {measured.pct == null ? '—' : pct(measured.pct * 100)}
-                  </div>
-                  <div style={{ font: '11px/1.4 var(--num)', color: 'var(--mu)' }}>
-                    {sg(measured.change, fmt)}
-                    {kind !== 'price' && ` · ${m.measureBars(Math.abs(measured.bars))}`}
-                  </div>
-                </>
-              ) : measuring === kind ? (
-                <div style={{ font: '11px/1.4 var(--sans)', color: 'var(--dm)' }}>{m.measureDrags[kind]}</div>
-              ) : null
-            }
+            readout={readoutOf(kind)}
           />
         ))}
+        <MeasureButton
+          kind={patternTool}
+          title={m.measureHints[patternTool]}
+          on={measuring === patternTool}
+          onClick={() => setMeasuring((on) => (on === patternTool ? null : patternTool))}
+          onMenu={setPatternMenu}
+          readout={readoutOf(patternTool)}
+        />
+        {patternMenu && (
+          <Dropdown anchor={patternMenu} onClose={() => setPatternMenu(null)} width={280}>
+            {PATTERN_TOOLS.map((k) => (
+              <MenuChoice
+                key={k}
+                label={m.patternTools[k]}
+                hint={m.patternToolHints[k]}
+                active={k === patternTool}
+                onPick={() => {
+                  setPatternTool(k);
+                  setMeasuring(k);
+                  setPatternMenu(null);
+                }}
+              />
+            ))}
+          </Dropdown>
+        )}
       </div>
       <TimeframeBar maxWidth={barWidth} plotWidth={plotWidth} />
     </div>

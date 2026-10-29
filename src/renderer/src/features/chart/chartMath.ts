@@ -264,9 +264,17 @@ export function measurePoint(bars: readonly Bar[], slot: number, price: number, 
 
 /**
  * What a measure draws: the ruler (a line from point to point), the price arrow (up or down from
- * where it starts, at that bar) or the time arrow (back or forward from where it starts, at that price).
+ * where it starts, at that bar), the time arrow (back or forward from where it starts, at that price)
+ * or a pattern tool (PatternTool).
  */
-export type MeasureKind = 'ruler' | 'price' | 'time';
+export type MeasureKind = 'ruler' | 'price' | 'time' | PatternTool;
+/**
+ * The pattern tools: a stretch of bars and what they make, a triangle (triangles.ts), an Elliott wave
+ * count (waves.ts) or a head and shoulders / double top or bottom (reversals.ts).
+ */
+export type PatternTool = 'triangle' | 'waves' | 'reversal';
+export const PATTERN_TOOLS: readonly PatternTool[] = ['triangle', 'waves', 'reversal'];
+export const isPatternTool = (k: MeasureKind): k is PatternTool => (PATTERN_TOOLS as readonly string[]).includes(k);
 
 /**
  * The bars and the price change between two measure ends; null without bars. The ruler and the
@@ -278,7 +286,7 @@ export function measureBetween(bars: readonly Bar[], a: MeasurePoint, b: Measure
   const at = (t: number) => clamp(firstAtOrAfter(bars, t), 0, bars.length - 1);
   const from = at(a.time);
   const to = at(b.time);
-  const [start, end] = kind === 'time' ? [bars[from].close, bars[to].close] : [a.price, b.price];
+  const [start, end] = kind === 'time' || isPatternTool(kind) ? [bars[from].close, bars[to].close] : [a.price, b.price];
   const change = end - start;
   return { from, to, change, pct: start > 0 ? change / start : null, bars: to - from };
 }
@@ -286,7 +294,7 @@ export function measureBetween(bars: readonly Bar[], a: MeasurePoint, b: Measure
 /** Whether a measure's ends are where it started: nothing to draw (a click with a measure tool on). */
 export function measureEmpty(kind: MeasureKind, a: MeasurePoint, b: MeasurePoint): boolean {
   if (kind === 'price') return a.price === b.price;
-  if (kind === 'time') return a.time === b.time;
+  if (kind === 'time' || isPatternTool(kind)) return a.time === b.time;
   return a.time === b.time && a.price === b.price;
 }
 

@@ -4,6 +4,10 @@ import type { Timeframe } from '@shared/types';
 import type { MarketSession } from '@shared/session';
 import type { RefKind } from '@shared/sessionQuote';
 import type { ChartRange } from './ranges';
+import type { PatternTool } from './chartMath';
+import { MIN_REVERSAL_BARS, type ReversalKind } from './reversals';
+import { MIN_TRIANGLE_BARS, type TriangleKind } from './triangles';
+import { MIN_WAVE_BARS, type WaveCountSize, type WaveRuleId } from './waves';
 import type { PickerSectionId } from './timeframePicker';
 import { createMessages } from '../../i18n';
 import { useCommon } from '../../i18n/common';
@@ -107,9 +111,84 @@ export const useChartMessages = createMessages({
       price:
         'Price range: drag up or down on the chart for the change from one price to another; the ends snap to a bar’s open, high, low or close (hold ⌥ to place them freely) · click the chart or Esc to clear',
       time: 'Time range: drag left or right on the chart for the change from the close of the bar it starts at to the close of the bar it ends at · click the chart or Esc to clear',
+      triangle:
+        'Triangle: drag over a stretch of bars; Tape draws the line along its highs and the one along its lows and tells whether they make a symmetrical (converging) triangle · ▾ for the other pattern tools · click the chart or Esc to clear',
+      waves:
+        'Elliott waves: drag over a stretch of bars; Tape finds its swings and tells whether they make 3 waves (A-B-C), 5 (an impulse) or 8 (both), checked against the rules · ▾ for the other pattern tools · click the chart or Esc to clear',
+      reversal:
+        'Head and shoulders, double top / bottom: drag over a stretch of bars, with the move into the pattern and out of it; Tape finds the pattern, its neckline and whether a close broke it · ▾ for the other pattern tools · click the chart or Esc to clear',
     },
+    /** The pattern tools' menu. */
+    patternTools: { triangle: 'Triangle', waves: 'Elliott waves (3 · 5 · 8)', reversal: 'Head and shoulders · double top / bottom' } as Record<PatternTool, string>,
+    patternToolHints: {
+      triangle: 'Symmetrical, ascending or descending; wedges',
+      waves: 'A-B-C, impulse or full cycle, checked against the rules',
+      reversal: 'Tops and bottoms, the neckline and its target',
+    } as Record<PatternTool, string>,
     measureBars: (n: number) => (n === 1 ? '1 bar' : `${n} bars`),
-    measureDrags: { ruler: 'Drag on the chart', price: 'Drag up or down', time: 'Drag left or right' },
+    measureDrags: {
+      ruler: 'Drag on the chart',
+      price: 'Drag up or down',
+      time: 'Drag left or right',
+      triangle: 'Drag over a stretch of bars',
+      waves: 'Drag over a stretch of bars',
+      reversal: 'Drag over the pattern and the moves around it',
+    },
+    /** The triangle tool's verdict (triangles.ts). */
+    triangle: {
+      yes: 'Symmetrical triangle',
+      no: 'Not a symmetrical triangle',
+      kinds: {
+        symmetrical: 'Symmetrical triangle',
+        ascending: 'Ascending triangle (flat highs)',
+        descending: 'Descending triangle (flat lows)',
+        risingWedge: 'Rising wedge (both lines rising)',
+        fallingWedge: 'Falling wedge (both lines falling)',
+        broadening: 'Broadening (the lines open out)',
+        channel: 'Channel (the lines run side by side)',
+      } as Record<TriangleKind, string>,
+      why: { short: `Select at least ${MIN_TRIANGLE_BARS} bars`, lines: 'No line along the highs or the lows' },
+      touches: (high: number, low: number) => `Highs touch ${high}× · lows ${low}×`,
+      narrowed: (pct: number) => `${pct}% narrower`,
+      toApex: (pct: number) => `${pct}% of the way to the apex`,
+      volume: (change: string) => `Volume ${change} (last third vs first)`,
+      breakout: { up: 'Broke out upward after it', down: 'Broke out downward after it' },
+      inside: 'No breakout after it yet',
+    },
+    /** The waves tool's verdict (waves.ts). */
+    waves: {
+      title: { 3: 'A-B-C correction', 5: '5-wave impulse', 8: '8 waves: impulse + A-B-C' } as Record<WaveCountSize, string>,
+      dir: { up: '↑', down: '↓' },
+      correction: { zigzag: 'zigzag', flat: 'flat' },
+      none: 'No clean 3, 5 or 8-wave count',
+      count: (n: number) => `As ${n} waves:`,
+      why: { short: `Select at least ${MIN_WAVE_BARS} bars`, none: 'Its swings never make 3, 5 or 8 waves' },
+      rules: {
+        w2: 'Wave 2 retraces less than all of wave 1',
+        w3: 'Wave 3 is not the shortest of 1, 3, 5',
+        w4: 'Wave 4 stays out of wave 1’s range',
+        b: 'B retraces less than all of A',
+        c: 'C ends beyond A',
+        start: 'A-B-C stays short of the impulse’s start',
+      } as Record<WaveRuleId, string>,
+      ratios5: (w2: number, w3: string, w4: number, w5: string) => `W2 ${w2}% of W1 · W3 ${w3}× W1 · W4 ${w4}% of W3 · W5 ${w5}× W1`,
+      ratios3: (b: number, c: string) => `B ${b}% of A · C ${c}× A`,
+      rejected: (n: number, why: string) => `Not ${n} waves: ✗ ${why}`,
+    },
+    /** The reversal tool's verdict (reversals.ts). */
+    reversal: {
+      kinds: {
+        headShouldersTop: 'Head and shoulders top',
+        headShouldersBottom: 'Head and shoulders bottom (inverse)',
+        doubleTop: 'Double top (M)',
+        doubleBottom: 'Double bottom (W)',
+      } as Record<ReversalKind, string>,
+      none: 'No head and shoulders or double top / bottom',
+      short: `Select at least ${MIN_REVERSAL_BARS} bars, with the moves into and out of the pattern`,
+      neckline: (price: string, height: string) => `Neckline ${price} · height ${height}`,
+      broke: { top: (target: string) => `Broke below the neckline · target ${target}`, bottom: (target: string) => `Broke above the neckline · target ${target}` },
+      notYet: 'Neckline not broken yet',
+    },
     autoScale: 'Auto',
     autoScaleHint: 'Fit the prices to the bars in view (double-click the price axis)',
     olderLoading: 'Loading older bars…',
@@ -217,9 +296,61 @@ export const useChartMessages = createMessages({
       ruler: '测量：在图上从一点拖到另一点（或按住 Shift 拖动）；端点会吸附到K线的开、高、低、收（按住 ⌥ 可自由放置）· 点击图表或按 Esc 清除',
       price: '价格区间：在图上向上或向下拖动，量出从一个价格到另一个价格的涨跌；端点会吸附到K线的开、高、低、收（按住 ⌥ 可自由放置）· 点击图表或按 Esc 清除',
       time: '时间区间：在图上向左或向右拖动，量出从起点K线收盘价到终点K线收盘价的涨跌 · 点击图表或按 Esc 清除',
+      triangle: '三角形：在图上拖选一段K线，Tape 画出高点连线和低点连线，并判断是否构成收敛三角形 · ▾ 选其他形态工具 · 点击图表或按 Esc 清除',
+      waves: '艾略特波浪：在图上拖选一段K线，Tape 找出其中的波段，并按波浪规则判断是 3 浪（A-B-C）、5 浪（推动浪）还是 8 浪（两者合一）· ▾ 选其他形态工具 · 点击图表或按 Esc 清除',
+      reversal: '头肩顶 / 头肩底、双顶 / 双底：在图上拖选形态及其前后的走势，Tape 找出形态、颈线，以及是否已有收盘价突破颈线 · ▾ 选其他形态工具 · 点击图表或按 Esc 清除',
     },
+    patternTools: { triangle: '三角形', waves: '艾略特波浪（3 · 5 · 8 浪）', reversal: '头肩顶 / 头肩底 · 双顶 / 双底' },
+    patternToolHints: { triangle: '收敛、上升、下降三角形；楔形', waves: 'A-B-C、推动浪或完整周期，按规则检验', reversal: '顶部和底部形态、颈线及目标价' },
     measureBars: (n: number) => `${n} 根K线`,
-    measureDrags: { ruler: '在图上拖动', price: '向上或向下拖动', time: '向左或向右拖动' },
+    measureDrags: { ruler: '在图上拖动', price: '向上或向下拖动', time: '向左或向右拖动', triangle: '拖选一段K线', waves: '拖选一段K线', reversal: '拖选形态及其前后的走势' },
+    triangle: {
+      yes: '收敛三角形',
+      no: '不是收敛三角形',
+      kinds: {
+        symmetrical: '收敛三角形',
+        ascending: '上升三角形（高点持平）',
+        descending: '下降三角形（低点持平）',
+        risingWedge: '上升楔形（两线同向上）',
+        fallingWedge: '下降楔形（两线同向下）',
+        broadening: '扩散形态（两线张开）',
+        channel: '通道（两线平行）',
+      } as Record<TriangleKind, string>,
+      why: { short: `至少选 ${MIN_TRIANGLE_BARS} 根K线`, lines: '高点或低点连不成线' },
+      touches: (high: number, low: number) => `高点触线 ${high} 次 · 低点 ${low} 次`,
+      narrowed: (pct: number) => `收窄 ${pct}%`,
+      toApex: (pct: number) => `已走到顶点的 ${pct}%`,
+      volume: (change: string) => `成交量 ${change}（后三分之一对比前三分之一）`,
+      breakout: { up: '之后向上突破', down: '之后向下突破' },
+      inside: '之后尚未突破',
+    },
+    waves: {
+      title: { 3: 'A-B-C 调整浪', 5: '5 浪推动', 8: '8 浪：推动浪 + A-B-C' } as Record<WaveCountSize, string>,
+      dir: { up: '↑', down: '↓' },
+      correction: { zigzag: '锯齿形', flat: '平台形' },
+      none: '数不出符合规则的 3、5 或 8 浪',
+      count: (n: number) => `按 ${n} 浪数：`,
+      why: { short: `至少选 ${MIN_WAVE_BARS} 根K线`, none: '其中的波段数不出 3、5 或 8 浪' },
+      rules: {
+        w2: '第 2 浪没有回撤掉第 1 浪的全部',
+        w3: '第 3 浪不是 1、3、5 浪中最短的',
+        w4: '第 4 浪没有进入第 1 浪的区间',
+        b: 'B 浪没有回撤掉 A 浪的全部',
+        c: 'C 浪越过 A 浪的终点',
+        start: 'A-B-C 没有跌回（涨回）推动浪的起点',
+      } as Record<WaveRuleId, string>,
+      ratios5: (w2: number, w3: string, w4: number, w5: string) => `第 2 浪回撤第 1 浪 ${w2}% · 第 3 浪是第 1 浪的 ${w3} 倍 · 第 4 浪回撤第 3 浪 ${w4}% · 第 5 浪是第 1 浪的 ${w5} 倍`,
+      ratios3: (b: number, c: string) => `B 回撤 A ${b}% · C 是 A 的 ${c} 倍`,
+      rejected: (n: number, why: string) => `不是 ${n} 浪：✗ ${why}`,
+    },
+    reversal: {
+      kinds: { headShouldersTop: '头肩顶', headShouldersBottom: '头肩底', doubleTop: '双顶（M 头）', doubleBottom: '双底（W 底）' } as Record<ReversalKind, string>,
+      none: '没有头肩顶 / 头肩底或双顶 / 双底',
+      short: `至少选 ${MIN_REVERSAL_BARS} 根K线，并包含形态前后的走势`,
+      neckline: (price: string, height: string) => `颈线 ${price} · 形态高度 ${height}`,
+      broke: { top: (target: string) => `已跌破颈线 · 目标 ${target}`, bottom: (target: string) => `已突破颈线 · 目标 ${target}` },
+      notYet: '尚未突破颈线',
+    },
     autoScale: '自动',
     autoScaleHint: '价格随可见K线自动适配（或双击价格轴）',
     olderLoading: '正在加载更早数据…',
