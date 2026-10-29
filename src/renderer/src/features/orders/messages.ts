@@ -65,6 +65,8 @@ export const useOrdersMessages = createMessages({
     stWorking: 'Submitted',
     stPreSubmitted: 'Pre-submitted',
     stSubmitting: 'Submitting',
+    /** TWS / IB Gateway keeps the order without sending it to IB (ApiPending; main/ib/orders.ts › Held orders). */
+    stHeld: 'Held by TWS / IB Gateway',
     stCancelling: 'Cancelling',
     stUnknown: 'Unknown',
     /** IB's list of open orders no longer has it (WorkingOrder.notReported). */
@@ -136,6 +138,7 @@ export const useOrdersMessages = createMessages({
     stWorking: '已提交',
     stPreSubmitted: '预提交',
     stSubmitting: '提交中',
+    stHeld: '被 TWS / IB Gateway 扣住',
     stCancelling: '撤单中',
     stUnknown: '未知',
     stNotReported: 'IB 未再报告',

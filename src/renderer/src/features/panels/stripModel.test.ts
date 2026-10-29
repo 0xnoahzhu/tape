@@ -69,6 +69,8 @@ describe('status strip', () => {
     expect(stripView(sent(), live([order({ status: 'PreSubmitted' })]), m, side)).toMatchObject({ status: 'Pre-submitted', working: { orderId: 1234 } });
     const working = stripView(sent(), live([order()]), m, side);
     expect(working).toMatchObject({ tone: 'working', status: 'Working', short: 'Buy 100 · Working' });
+    // TWS / IB Gateway holds it: red, with its hint, and still cancellable.
+    expect(stripView(sent(), live([order({ status: 'ApiPending' })]), m, side)).toMatchObject({ tone: 'held', status: m.held, error: m.heldHint, working: { orderId: 1234 } });
 
     const partial = stripView(sent(), live([order({ filled: 60, remaining: 40, avgFillPrice: 227.55 })], 260, [exec(60, 0.6)]), m, side);
     expect(partial).toMatchObject({ status: 'Partially filled', progress: { filled: 60, total: 100 }, short: 'Buy 100 · 60/100', lead: 'Buy 100', state: '60/100' });

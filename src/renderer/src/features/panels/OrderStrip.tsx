@@ -17,7 +17,7 @@ import { usePanelMessages } from './messages';
 import type { PanelId } from './model';
 import { sentPosition, stripView, type StripTone, type StripView } from './stripModel';
 
-const TONE: Record<StripTone, string> = { busy: 'var(--dm)', working: 'var(--ac)', filled: 'var(--ac)', muted: 'var(--dm)', error: 'var(--r)' };
+const TONE: Record<StripTone, string> = { busy: 'var(--dm)', working: 'var(--ac)', filled: 'var(--ac)', muted: 'var(--dm)', error: 'var(--r)', held: 'var(--r)' };
 
 /** The strip's view of panel `id`'s latest order, or null when there is none. */
 export function useStripView(id: PanelId): StripView | null {
@@ -81,14 +81,14 @@ export function OrderStrip({ id }: { id: PanelId }) {
         </div>
       )}
       {view.details.length > 0 && <div className="num selectable" style={{ color: 'var(--mu)', lineHeight: 1.45 }}>{view.details.join(' · ')}</div>}
-      {view.tone === 'error' && (
+      {(view.tone === 'error' || view.tone === 'held') && (
         <>
           {view.error && (
             <div className="selectable" style={{ color: 'var(--r)', lineHeight: 1.45 }}>
               {view.error}
             </div>
           )}
-          {sent.phase !== 'unconfirmed' && (
+          {view.tone === 'error' && sent.phase !== 'unconfirmed' && (
             <div onClick={dismiss} style={{ ...link, color: 'var(--ac)', alignSelf: 'flex-start' }}>
               {m.fix}
             </div>

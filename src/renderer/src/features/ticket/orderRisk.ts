@@ -8,7 +8,7 @@
 // own (`unchecked`), so a review never looks clean for want of data.
 
 import { contractKey } from '@shared/contract';
-import type { ContractRef, OrderRequest, OrderType, Quote, SecType } from '@shared/types';
+import type { ContractRef, OrderRequest, OrderType, Quote, SecType, WorkingOrder } from '@shared/types';
 import type { StoreState } from '../../state/store';
 
 /**
@@ -33,6 +33,11 @@ export function worseData(a: MarketDataQuality, b: MarketDataQuality): MarketDat
 }
 
 export type OrderRisk =
+  /**
+   * TWS / IB Gateway holds `count` orders this client sent without sending them to IB (ApiPending;
+   * main/ib/orders.ts › Held orders): this one would most likely be held too, and adds to them.
+   */
+  | { kind: 'heldOrders'; count: number }
   /** A sell that opens a short position, or adds to one (`before` ≤ 0). */
   | { kind: 'opensShort'; before: number; after: number }
   /** A long position turns short, or a short one long. */
@@ -81,6 +86,8 @@ export interface RiskContext {
   marketData: MarketDataQuality;
   /** The limit price follows the bid / ask: nobody typed it. */
   priceFromQuote?: boolean;
+  /** Orders of this client TWS / IB Gateway holds (see the heldOrders risk); 0 or absent: none. */
+  heldOrders?: number;
   /**
    * A modify: the working order's quantity and what of it has filled (already in `position`). Its
    * position checks count only when the quantity grows; a smaller or equal one opens nothing new.
@@ -110,7 +117,7 @@ const positive = (n: number | undefined): n is number => n != null && Number.isF
  * shows it). Strategy combos use strategyRisks.
  */
 export function orderRisks(req: OrderRequest, est: number | undefined, ctx: RiskContext): OrderRisk[] {
-  const risks: OrderRisk[] = [];
+  const risks: OrderRisk[] = ctx.heldOrders ? [{ kind: 'heldOrders', count: ctx.heldOrders }] : [];
   const missing: UncheckedInput[] = [];
   const buy = req.action === 'BUY';
   const qty = req.quantity;
@@ -188,7 +195,7 @@ export function strategyRisks(
   ctx: Omit<RiskContext, 'position' | 'positionsKnown' | 'bid' | 'ask' | 'last' | 'priceFromQuote' | 'modified'>,
   currency?: string,
 ): OrderRisk[] {
-  const risks: OrderRisk[] = [];
+  const risks: OrderRisk[] = ctx.heldOrders ? [{ kind: 'heldOrders', count: ctx.heldOrders }] : [];
   const value = amount != null && Number.isFinite(amount) && positive(ctx.rate) ? Math.abs(amount) * ctx.rate : undefined;
   const accountCurrency = ctx.accountCurrency ?? 'USD';
   if (value != null && value > 0 && positive(ctx.netLiq) && value > LARGE_NOTIONAL_SHARE * ctx.netLiq) {
@@ -233,11 +240,12 @@ export function accountPosition(s: Pick<StoreState, 'connection' | 'positions'>,
  * (main/ib/account.ts), so another account's position is not known.
  */
 export function accountRiskContext(
-  s: Pick<StoreState, 'connection' | 'positions' | 'positionsLoaded' | 'account'>,
+  s: Pick<StoreState, 'connection' | 'positions' | 'positionsLoaded' | 'account'> & Partial<Pick<StoreState, 'orders'>>,
   contract: ContractRef,
   account = s.connection.account,
-): Pick<RiskContext, 'position' | 'positionsKnown' | 'netLiq' | 'buyingPower' | 'accountCurrency' | 'rate'> {
+): Pick<RiskContext, 'position' | 'positionsKnown' | 'netLiq' | 'buyingPower' | 'accountCurrency' | 'rate' | 'heldOrders'> {
   const position = accountPosition(s, contract, account);
+  const held = heldOrderCount(s.orders ?? [], s.connection.clientId);
   const summary = s.account && (!account || s.account.account === account) ? s.account : null;
   const listed = !account || !s.connection.account || account === s.connection.account;
   return {
@@ -247,5 +255,11 @@ export function accountRiskContext(
     buyingPower: summary?.buyingPower,
     accountCurrency: summary?.currency,
     rate: rateTo(contract.currency, summary),
+    ...(held ? { heldOrders: held } : {}),
   };
+}
+
+/** Orders of this client TWS / IB Gateway holds without sending them to IB (status ApiPending). */
+export function heldOrderCount(orders: readonly WorkingOrder[], clientId: number | undefined): number {
+  return orders.filter((o) => o.status === 'ApiPending' && !o.notReported && o.clientId === clientId).length;
 }

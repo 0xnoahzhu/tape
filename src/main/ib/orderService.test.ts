@@ -607,6 +607,51 @@ describe('OrderService', () => {
     expect(t.svc.getOrders().find((o) => o.orderId === 50)?.status).toBe('Cancelled');
   });
 
+  it('lists an order TWS / IB Gateway holds (ApiPending), announces it once and lets it be cancelled', async () => {
+    const t = await loaded();
+    t.notices.length = 0;
+    const p = t.svc.place(req);
+    await tick();
+    // IB Gateway reports the order only as ApiPending, never with an openOrder (API log of 2026-10-29): no confirmation.
+    t.emit('orderStatus', 50, 'ApiPending', 0, 100, 0, 0, 0, 0, CLIENT_ID, '');
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(p).resolves.toMatchObject({ orderId: 50, confirmed: false });
+    expect(t.svc.getOrders().find((o) => o.orderId === 50)).toMatchObject({ status: 'ApiPending', clientId: CLIENT_ID, action: 'BUY', totalQuantity: 100, limitPrice: 226.95 });
+    expect(t.notices.map((n) => n.title.en)).toEqual(['Buy 100 AAPL held by TWS / IB Gateway · PAPER DU1']);
+    // The next full list: IB's open orders leave it out, IB Gateway reports it again. It stays, announced once.
+    t.calls.length = 0;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(t.calls.map((c) => c[0])).toContain('reqAllOpenOrders');
+    t.emit('openOrder', 7, ibAapl, lmt(7, 0), { status: 'Submitted' });
+    t.emit('orderStatus', 50, 'ApiPending', 0, 100, 0, 0, 0, 0, CLIENT_ID, '');
+    t.emit('openOrderEnd');
+    t.emit('completedOrdersEnd');
+    await vi.advanceTimersByTimeAsync(5_000);
+    const held = t.svc.getOrders().find((o) => o.orderId === 50);
+    expect(held).toMatchObject({ status: 'ApiPending' });
+    expect(held?.notReported).toBeUndefined();
+    expect(t.notices).toHaveLength(1);
+    const c = t.svc.cancel({ orderId: 50, clientId: CLIENT_ID });
+    expect(t.calls.at(-1)).toEqual(['cancelOrder', 50]);
+    t.emit('orderStatus', 50, 'Cancelled', 0, 100, 0, 0, 0, 0, CLIENT_ID, '');
+    await expect(c).resolves.toEqual({ status: 'Cancelled' });
+  });
+
+  it('drops a held order once IB Gateway no longer reports it (it was quit)', async () => {
+    const t = await loaded();
+    void t.svc.place(req);
+    await tick();
+    t.emit('orderStatus', 50, 'ApiPending', 0, 100, 0, 0, 0, 0, CLIENT_ID, '');
+    await vi.advanceTimersByTimeAsync(30_000);
+    t.emit('openOrder', 7, ibAapl, lmt(7, 0), { status: 'Submitted' });
+    t.emit('openOrderEnd');
+    await tick();
+    expect(t.svc.getOrders().find((o) => o.orderId === 50)).toMatchObject({ notReported: true });
+    t.emit('completedOrdersEnd');
+    await tick();
+    expect(t.svc.getOrders().find((o) => o.orderId === 50)).toBeUndefined();
+  });
+
   it('treats orders of a previous client id as another client', async () => {
     const t = await loaded();
     t.emit('openOrder', 40, ibAapl, lmt(40), { status: 'Submitted' });

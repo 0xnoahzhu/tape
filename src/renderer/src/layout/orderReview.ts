@@ -45,6 +45,8 @@ export function riskRows(risks: readonly OrderRisk[]): ConfirmRow[] {
   const red = (label: string, value: string): ConfirmRow => ({ label, value, color: 'var(--r)', prose: true });
   return risks.flatMap((k): ConfirmRow | ConfirmRow[] => {
     switch (k.kind) {
+      case 'heldOrders':
+        return red(r.held, r.heldOrders(k.count));
       case 'opensShort':
         return red(r.position, (k.before < 0 ? r.addsShort : r.opensShort)(qty(k.before), qty(k.after)));
       case 'flips':

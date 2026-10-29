@@ -433,9 +433,11 @@ const m = createMessages({
     cancelRefused: (side: string, qty: string, label: string) => `Cancel of ${side} ${qty} ${label} refused`,
     modifyRefused: (side: string, qty: string, label: string) => `Modify of ${side} ${qty} ${label} refused – order unchanged`,
     unconfirmed: (side: string, qty: string, label: string) => `${side} ${qty} ${label} not confirmed`,
+    held: (side: string, qty: string, label: string) => `${side} ${qty} ${label} held by TWS / IB Gateway`,
     notReported: (side: string, qty: string, label: string) => `${side} ${qty} ${label} no longer working`,
     filled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} filled`,
     unconfirmedBody: 'The connection closed after the order was sent, before IB confirmed it: IB may have it. Check Orders after reconnecting before sending it again',
+    heldBody: 'TWS / IB Gateway has not sent it to IB: look in its window for a message waiting for you. Sending the order again adds another one; cancel this one in Orders if you no longer want it',
     notReportedBody: 'IB no longer lists it as working',
     endedOfflineBody: 'IB no longer lists it as working: it ended while Tape was disconnected',
     avg: (p: string) => `Avg ${p}`,
@@ -499,9 +501,11 @@ const m = createMessages({
     cancelRefused: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 撤单被拒绝`,
     modifyRefused: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 改单被拒绝，订单未变`,
     unconfirmed: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 未确认`,
+    held: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 被 TWS / IB Gateway 扣住`,
     notReported: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已不在挂单中`,
     filled: (side: string, qty: string, label: string) => `${side} ${qty} ${label} 已成交`,
     unconfirmedBody: '订单发出后、IB 确认前连接已断开：IB 可能已收到该订单。重新连接后请先在订单中查看，再决定是否重新下单',
+    heldBody: 'TWS / IB Gateway 没有把它发给 IB：请查看它的窗口里是否有等你处理的提示。再次下单会多出一笔订单；不需要的话请在订单中撤销这一笔',
     notReportedBody: 'IB 不再将其列为挂单',
     endedOfflineBody: 'IB 不再将其列为挂单：它在 Tape 断开连接期间已结束',
     avg: (p: string) => `均价 ${p}`,
@@ -630,10 +634,11 @@ export interface NoticeText {
 /**
  * Kinds of order notice: IB's answers (submitted, cancelled, rejected), a cancel or modify IB
  * refused after Tape's wait, an order the connection lost before IB confirmed it (unconfirmed),
+ * one TWS / IB Gateway holds without sending it to IB (held: status ApiPending),
  * one IB's full list of open orders no longer has (notReported), and another app's or client's
  * order IB's completed orders show filled (filled: this client gets no executions of it).
  */
-export type OrderNoticeKind = 'submitted' | 'cancelled' | 'rejected' | 'cancelRefused' | 'modifyRefused' | 'unconfirmed' | 'notReported' | 'filled';
+export type OrderNoticeKind = 'submitted' | 'cancelled' | 'rejected' | 'cancelRefused' | 'modifyRefused' | 'unconfirmed' | 'held' | 'notReported' | 'filled';
 
 /**
  * "Buy 100 AAPL submitted" / "Limit 226.95 · DAY · Overnight + Day · awaiting fill". A GTD expiry
@@ -652,6 +657,7 @@ export function orderNotice(o: NoticeOrder, kind: OrderNoticeKind, reason?: stri
     if (kind === 'cancelled' && o.filled > 0) parts.push(t.filledOf(qtyText(o.filled), qty));
     if (kind === 'filled' && o.avgFillPrice) parts.push(t.avg(px(o.avgFillPrice)));
     if (kind === 'unconfirmed') return t.unconfirmedBody;
+    if (kind === 'held') return t.heldBody;
     if (kind === 'notReported') return opts.offline ? t.endedOfflineBody : t.notReportedBody;
     return (kind === 'rejected' || kind === 'cancelRefused' || kind === 'modifyRefused') && reason ? reason : parts.join(' · ');
   });

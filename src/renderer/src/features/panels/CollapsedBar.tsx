@@ -15,7 +15,7 @@ export function CollapsedBar({ id, handle, actions, expandTitle }: { id: PanelId
   const sent = useOrderFeedback((s) => s.sent[id]);
   const view = useStripView(id);
   const expand = () => setCollapsed(id, false);
-  const tone = view?.tone === 'error' ? 'var(--r)' : view?.tone === 'busy' || view?.tone === 'muted' ? 'var(--mu)' : 'var(--ac)';
+  const tone = view?.tone === 'error' || view?.tone === 'held' ? 'var(--r)' : view?.tone === 'busy' || view?.tone === 'muted' ? 'var(--mu)' : 'var(--ac)';
   return (
     <div data-testid={`bar-${id}`} style={{ height: '100%', display: 'flex', alignItems: 'center', background: 'var(--p)', fontSize: 13, userSelect: 'none' }}>
       <div onPointerDown={frame?.startDrag} style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '0 10px 0 12px', flexShrink: 0, cursor: 'grab' }}>

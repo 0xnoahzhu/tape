@@ -142,6 +142,12 @@ describe('timeCell', () => {
 describe('orderStatusText', () => {
   const now = Date.UTC(2026, 9, 5, 12, 0);
 
+  it('shows an order TWS / IB Gateway holds in red', () => {
+    expect(orderStatusText(order({ status: 'ApiPending' }), en, CLOCK_24H, now)).toMatchObject({ tone: 'r' });
+    expect(orderStatusText(order({ status: 'ApiPending' }), en, CLOCK_24H, now).text).toMatch(/^Held by TWS \/ IB Gateway · /);
+    expect(orderStatusText(order({ status: 'PendingSubmit' }), en, CLOCK_24H, now)).toMatchObject({ tone: 'mu' });
+  });
+
   it('shows a pending price condition', () => {
     const o = order({ status: 'PreSubmitted', condition: { symbol: 'AAPL', operator: '>=', price: 235, outsideRth: false } });
     expect(orderStatusText(o, en, CLOCK_24H, now)).toEqual({ text: 'Waiting · AAPL ≥ 235.00', tone: 'ac' });

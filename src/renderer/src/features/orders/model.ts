@@ -194,7 +194,7 @@ export function parseGoodAfter(raw: string, clock: Clock = CLOCK_24H): GoodAfter
 // ---------------------------------------------------------------------------
 // Status column
 
-export type StatusTone = 'ac' | 'mu';
+export type StatusTone = 'ac' | 'mu' | 'r';
 
 export interface OrderStatusText {
   text: string;
@@ -223,7 +223,9 @@ export function orderStatusText(o: WorkingOrder, m: OrdersMessages, clock: Clock
   // IB's list of open orders no longer has it: how it ended follows (orders.ts → sweep).
   if (o.notReported) return { text: `${m.stNotReported} · ${tif}`, tone: 'mu' };
   if (o.status === 'PendingCancel') return { text: m.stCancelling + extra, tone: 'mu' };
-  if (o.status === 'ApiPending' || o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
+  // ApiPending: TWS / IB Gateway holds it, IB has not got it (main/ib/orders.ts › Held orders).
+  if (o.status === 'ApiPending') return { text: `${m.stHeld} · ${tif}${extra}`, tone: 'r' };
+  if (o.status === 'PendingSubmit') return { text: `${m.stSubmitting} · ${tif}${extra}`, tone: 'mu' };
 
   // IB keeps conditional and good-after orders PreSubmitted until they are released (an order
   // that conditions cancel works meanwhile).

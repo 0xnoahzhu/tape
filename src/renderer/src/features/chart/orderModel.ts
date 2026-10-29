@@ -18,6 +18,8 @@ export interface StatusLabels {
   cancelling: string;
   /** IB's list of open orders no longer has it (WorkingOrder.notReported). */
   notReported: string;
+  /** TWS / IB Gateway keeps it without sending it to IB (ApiPending; main/ib/orders.ts › Held orders). */
+  held: string;
   working: string;
   iceberg: string;
   filled: (n: string) => string;
@@ -31,6 +33,8 @@ export interface OrderStatusText {
   text: string;
   /** Accent color (scheduled / conditional orders), else muted. */
   accent: boolean;
+  /** Red: an order TWS / IB Gateway holds. */
+  warn?: boolean;
 }
 
 /** States in which IB has accepted the order but it is not working at the exchange yet. */
@@ -45,6 +49,7 @@ export function orderStatusText(o: WorkingOrder, L: StatusLabels, clock: Clock):
   const early = isEarly(o);
   // TIF with its GTD expiry and any session other than regular hours, as on Portfolio › Orders.
   const tif = timingText(o, L.sessions, clock);
+  if (o.status === 'ApiPending') return { text: `${L.held} · ${tif}`, accent: false, warn: true };
   if (o.conditions?.items.length && !o.conditions.cancel && early) {
     return { text: `${L.waiting} · ${conditionsShort(o.conditions, L.attr, clock)}`, accent: true };
   }

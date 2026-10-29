@@ -263,7 +263,7 @@ function OrderRow({ o, fresh, quote, withLast }: { o: WorkingOrder; fresh: boole
           {lastPriceText(last)}
         </div>
       )}
-      <div className="ellipsis" title={o.message ?? o.whyHeld ?? st.text} style={{ color: st.accent ? 'var(--ac)' : 'var(--mu)' }}>
+      <div className="ellipsis" title={o.message ?? o.whyHeld ?? st.text} style={{ color: st.warn ? 'var(--r)' : st.accent ? 'var(--ac)' : 'var(--mu)' }}>
         {st.text}
       </div>
       <div style={{ display: 'flex', gap: 14, justifyContent: 'flex-end', whiteSpace: 'nowrap', minWidth: 0 }}>

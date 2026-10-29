@@ -11,6 +11,7 @@ const L: StatusLabels = {
   pending: 'Pending',
   cancelling: 'Cancelling…',
   notReported: 'Not reported by IB',
+  held: 'Held by TWS / IB Gateway',
   working: 'Working',
   iceberg: 'ice',
   filled: (n) => `${n} filled`,

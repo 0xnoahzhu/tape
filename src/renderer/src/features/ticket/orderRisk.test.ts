@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
 import type { ContractRef, OrderRequest, Position, Quote } from '@shared/types';
-import { accountPosition, accountRiskContext, marketDataOf, orderRisks, rateTo, strategyRisks, worseData, type RiskContext } from './orderRisk';
+import { accountPosition, accountRiskContext, heldOrderCount, marketDataOf, orderRisks, rateTo, strategyRisks, worseData, type RiskContext } from './orderRisk';
 
 const AAPL = stock('AAPL');
 const EURUSD: ContractRef = { symbol: 'EUR', secType: 'CASH', exchange: 'IDEALPRO', currency: 'USD' };
@@ -35,6 +35,14 @@ describe('market data quality', () => {
 describe('orderRisks', () => {
   it('finds nothing in an ordinary order', () => {
     expect(orderRisks(order(), 22_749, ctx())).toEqual([]);
+  });
+
+  it('warns first when TWS / IB Gateway holds orders sent earlier, also for a combo', () => {
+    expect(orderRisks(order(), 22_749, ctx({ heldOrders: 6 }))).toEqual([{ kind: 'heldOrders', count: 6 }]);
+    expect(strategyRisks(false, 140, { netLiq: 10_000, buyingPower: 1_000, accountCurrency: 'USD', rate: 1, marketData: 'live', heldOrders: 1 })).toEqual([{ kind: 'heldOrders', count: 1 }]);
+    // Only this client's orders that are held and still reported count.
+    const o = (status: string, clientId = 7, notReported?: true) => ({ status, clientId, ...(notReported ? { notReported } : {}) }) as never;
+    expect(heldOrderCount([o('ApiPending'), o('ApiPending'), o('Submitted'), o('ApiPending', 0), o('ApiPending', 7, true)], 7)).toBe(2);
   });
 
   it('a sell without a position opens a short; with one held short it adds to it', () => {

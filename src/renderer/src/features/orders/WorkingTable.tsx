@@ -106,7 +106,7 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
             <div className="num ellipsis" style={{ textAlign: 'right', color: 'var(--mu)' }} title={f0(o.filled)}>
               {f0(o.filled)}
             </div>
-            <div className="ellipsis" style={{ color: st.tone === 'ac' ? 'var(--ac)' : 'var(--mu)' }} title={st.text}>
+            <div className="ellipsis" style={{ color: st.tone === 'ac' ? 'var(--ac)' : st.tone === 'r' ? 'var(--r)' : 'var(--mu)' }} title={st.text}>
               {st.text}
             </div>
             <div style={{ display: 'flex', gap: 14, justifyContent: 'flex-end', whiteSpace: 'nowrap', minWidth: 0 }}>

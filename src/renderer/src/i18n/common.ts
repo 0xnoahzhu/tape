@@ -49,6 +49,9 @@ export const useCommon = createMessages({
     noDataNote: (data: string) => `${data}: Est. amount cannot be checked against the market`,
     /** The review's pre-trade checks (features/ticket/orderRisk.ts), each a red row. */
     risk: {
+      held: 'TWS / IB Gateway',
+      heldOrders: (n: number) =>
+        `${n === 1 ? '1 order' : `${n} orders`} sent earlier ${n === 1 ? 'is' : 'are'} held there, not sent to IB: this one will most likely be held too. Look in its window for a message first; cancel the held ones in Orders`,
       position: 'Position',
       size: 'Size',
       buyingPower: 'Buying power',
@@ -243,6 +246,8 @@ export const useCommon = createMessages({
     staleNote: (data: string) => `${data}：预估金额和买卖价可能已过时`,
     noDataNote: (data: string) => `${data}：无法据行情核对预估金额`,
     risk: {
+      held: 'TWS / IB Gateway',
+      heldOrders: (n: number) => `之前发出的 ${n} 笔订单被它扣住，没有发给 IB：这一笔很可能也会被扣住。请先查看它窗口里的提示；被扣住的订单可在订单中撤销`,
       position: '持仓',
       size: '金额',
       buyingPower: '购买力',

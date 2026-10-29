@@ -9,7 +9,8 @@ import type { Execution, Position, WorkingOrder } from '@shared/types';
 import type { SentOrder } from '../../state/orderFeedback';
 import type { PanelMessages } from './messages';
 
-export type StripTone = 'busy' | 'working' | 'filled' | 'muted' | 'error';
+/** held: TWS / IB Gateway keeps the order without sending it to IB (ApiPending): red, with Cancel. */
+export type StripTone = 'busy' | 'working' | 'filled' | 'muted' | 'error' | 'held';
 
 export interface StripView {
   tone: StripTone;
@@ -92,6 +93,8 @@ export function stripView(
   // IB's list of open orders no longer has it: how it ended follows (no Modify / Cancel meanwhile).
   if (o.notReported) return { tone: 'muted', head, status: m.notReported, details: [...fills, ...position, ...paid], ...line(m.notReported) };
   switch (o.status) {
+    case 'ApiPending':
+      return { tone: 'held', head, status: m.held, details: [], error: m.heldHint, working: o, ...line(m.held) };
     case 'Inactive':
       return { tone: 'error', head: m.rejected, details: [], error: o.message, ...line(m.rejected) };
     case 'Filled':

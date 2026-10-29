@@ -42,12 +42,21 @@
 // IB's silence is never reported as success. place() and modify() resolve with `confirmed: false`
 // when IB has not answered within the wait (a refusal arriving within LATE_REFUSAL_MS after it is
 // still announced), cancel() with status 'sent' (or 'PendingCancel'; IB's 202 counts as cancelled),
-// and a cancel IB refuses after the wait is announced too. A socket that closes during the wait
+// and a cancel IB refuses after the wait is announced too (an ApiPending status is no answer: see
+// Held orders). A socket that closes during the wait
 // ends it according to what was written: a frame the client still held never reached IB ("nothing
 // was sent"), one written may be at IB (placed: an "unconfirmed" notice, never "rejected"; the key
 // stays sent, so a reconnect to the same account lists the order and announces it). When one leg
 // of a bracket fails, the legs still alive are cancelled (unless the entry has filled: the other
 // exit then keeps protecting the position), and the error and notice say what happened.
+//
+// Held orders. TWS / IB Gateway may keep an order of this client without sending it to IB (status
+// ApiPending, permId 0), e.g. while a message of its own waits for a click (seen 2026-10-29: after
+// a margin rejection every order, what-if ones included, stayed ApiPending until IB Gateway was
+// quit). It then sends no openOrder, only an orderStatus with each list of open orders, and IB's
+// apps do not list the order. Such an order is listed from the request this client sent
+// (sentOrders), stays while TWS / IB Gateway reports it in each full list (sweep), can be cancelled,
+// and is announced once (held), so it is not taken for lost and sent again.
 //
 // Reconciliation: one open-orders request is outstanding at a time (openOrderEnd names none). At the
 // end of a full list (reqAllOpenOrders: on every handshake, every ORDERS_REFRESH_MS, before and
@@ -364,6 +373,10 @@ export function createOrderService(ctx: MainContext): OrderService {
 
   /** Keys of orders this client sent and IB has not reported back yet (see ownOrder). */
   const sentKeys = new Set<string>();
+  /** What this client sent per order key, to list an order TWS / IB Gateway holds (see Held orders). */
+  const sentOrders = new Map<string, { contract: Contract; order: Order }>();
+  /** Held orders already announced. */
+  const heldNoticed = new Set<string>();
 
   /** Last notified state per order, so repeated statuses notify once. */
   const notified = new Map<string, 'submitted' | 'cancelled' | 'rejected' | 'filled' | 'other'>();
@@ -540,6 +553,7 @@ export function createOrderService(ctx: MainContext): OrderService {
     }
     orders.set(key, next);
     sentKeys.delete(key);
+    if (next.status !== 'ApiPending') sentOrders.delete(key);
     if (next.permId) keyByPermId.set(next.permId, key);
     markDirty(true, false);
     // A failed bracket leg withdraws the rest before its rejection is announced (the notice says so).
@@ -606,12 +620,36 @@ export function createOrderService(ctx: MainContext): OrderService {
     const update: StatusUpdate = { status, filled, remaining, avgFillPrice, permId, parentId, whyHeld };
     const key = orderKey(clientId ?? myClientId(), orderId, permId);
     const found = orders.has(key) ? ([key, orders.get(key)!] as const) : findByPermId(permId);
+    const round = openRequest != null;
     if (!found) {
-      earlyStatus.set(key, update);
+      // An order TWS / IB Gateway holds gets no openOrder: it is listed from what was sent (see Held orders).
+      const sent = status === 'ApiPending' ? sentOrders.get(key) : undefined;
+      if (!sent) {
+        earlyStatus.set(key, update);
+        return;
+      }
+      const now = Date.now();
+      // The request carries no client id: the order is this client's (its key says so).
+      const order = { ...sent.order, clientId: clientId ?? myClientId() };
+      const held = applyOrderStatus(mapOpenOrder(orderId, sent.contract, order, undefined, undefined, now, symbolOf, smartRouted), update, now);
+      snapshotKeys?.add(key);
+      store(key, undefined, held, { round });
+      announceHeld(key, held);
       return;
     }
     const [k, prev] = found;
-    store(k, prev, applyOrderStatus(prev, update, Date.now()), { round: openRequest != null });
+    const next = applyOrderStatus(prev, update, Date.now());
+    // A held order is in no list of IB's: TWS / IB Gateway reporting it keeps it (sweep).
+    if (next.status === 'ApiPending') snapshotKeys?.add(k);
+    store(k, prev, next, { round });
+    if (next.status === 'ApiPending') announceHeld(k, next);
+  }
+
+  /** An order of this client TWS / IB Gateway holds without sending it to IB: announced once (see Held orders). */
+  function announceHeld(key: string, o: WorkingOrder): void {
+    if (heldNoticed.has(key) || o.clientId !== myClientId()) return;
+    heldNoticed.add(key);
+    notify(orderNotice(o, 'held'), o, 'order', false, true);
   }
 
   function onCompletedOrder(contract: Contract, order: Order, state: OrderState): void {
@@ -1278,11 +1316,13 @@ export function createOrderService(ctx: MainContext): OrderService {
     });
     const ids = built.map((b) => b.orderId);
     const bracket = built.length > 1 ? trackBracket(api, clientId, session, built) : undefined;
-    const wait = awaitOrders(ids, ACK_MS, { failInactive: true });
+    // ApiPending is TWS / IB Gateway holding the order, not IB taking it (see Held orders).
+    const wait = awaitOrders(ids, ACK_MS, { failInactive: true, accept: (o) => o.status !== 'ApiPending' });
     const writes = watchWrites(OUT_MSG_ID.PLACE_ORDER, ids);
     for (const b of built) {
       const key = orderKey(clientId, b.orderId, undefined);
       sentKeys.add(key);
+      sentOrders.set(key, { contract: b.contract, order: b.order });
       orderErrors.delete(key);
       api.placeOrder(b.orderId, b.contract, b.order);
     }
@@ -1749,6 +1789,8 @@ export function createOrderService(ctx: MainContext): OrderService {
     failWaiting();
     for (const m of [orders, keyByPermId, earlyStatus, executions, execAvgPrice, commissions, notified, orderErrors, echoes, previewCache, brackets, legOutcomes, cancelWaits]) m.clear();
     sentKeys.clear();
+    sentOrders.clear();
+    heldNoticed.clear();
     rejectionNoticed.clear();
     completedFills.clear();
     // What was watched for the previous login goes without a word: its ids name other orders now.

@@ -88,6 +88,8 @@ describe('the order review', () => {
     ]);
     // A check that could not run needs the tick like any other risk.
     expect(needsAcknowledgement(pending({ risks: [{ kind: 'unchecked', missing: ['positions'] }] }))).toBe(true);
+    expect(riskRows([{ kind: 'heldOrders', count: 6 }])[0]).toMatchObject({ label: 'TWS / IB Gateway', color: 'var(--r)' });
+    expect(riskRows([{ kind: 'heldOrders', count: 6 }])[0].value).toMatch(/^6 orders sent earlier are held there, not sent to IB/);
     lang('zh');
     expect(riskRows([{ kind: 'opensShort', before: 0, after: -100 }])[0]).toEqual({ label: '持仓', value: '0 → −100：开立空头仓位', color: 'var(--r)', prose: true });
     expect(riskRows([{ kind: 'unchecked', missing: ['rate'], currency: 'HKD', accountCurrency: 'USD' }])[0]).toMatchObject({ label: '未检查', value: 'IBKR 未提供 HKD → USD 汇率：未检查金额和购买力' });
