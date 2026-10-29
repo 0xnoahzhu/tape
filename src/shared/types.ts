@@ -221,7 +221,10 @@ export interface Quote {
   bidSize?: number;
   askSize?: number;
   lastSize?: number;
-  /** Previous session close (tick 9). Used as the change reference. */
+  /**
+   * Previous session close (tick 9), or for a US stock whose line sends none the last completed
+   * session's close from IB's daily bars (market/quotes.ts). Used as the change reference.
+   */
   close?: number;
   open?: number;
   high?: number;
@@ -309,8 +312,9 @@ export interface Quote {
    */
   ticksRefused?: 'addOns' | 'all';
   /**
-   * IB's dividend summary (profile 'dividends', tick 59). An empty object: IB reports no
-   * dividend for the instrument. Absent: not asked, or not sent (delayed lines carry none).
+   * IB's dividend summary (profile 'dividends', tick 59), or the last one IB sent for the
+   * instrument when its line sends none (kept on disk, market/quotes.ts). An empty object: IB
+   * reports no dividend for the instrument. Absent: not asked, or never sent.
    */
   dividends?: QuoteDividends;
   marketDataType?: MarketDataType;

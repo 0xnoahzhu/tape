@@ -23,10 +23,22 @@
 //
 // Previous close. IB sends it (tick 9, or 75 delayed) with a request's first ticks and otherwise
 // only when it changes; tickMap.ts never lets a "not available" close erase the close its line
-// sent. A line that streams prices without a close CLOSE_WAIT_MS after its first price (it started
-// without its subscription image: seen live on lines opened during a competing session, whose data
-// resumed without tick 9) is requested again, which brings the close: for instruments that have a
-// close, at most once per CLOSE_RETRY_MS per contract, doubling while the requests bring none.
+// sent. A line may stream prices without a close (it started without its subscription image: seen
+// live on lines opened during a competing session, and in the API log of 2026-10-29 on 395 of 594
+// stock lines, mostly lines requested again right after their cancel, which were also how a
+// missing close was retried: 29 of 159 such requests brought one). CLOSE_WAIT_MS after its first
+// price such a quote takes, for a US stock, the close of the last session before the trading day
+// (shared/session.ts → tradingDay) from IB's daily bars (a background history request, cached;
+// once per contract and trading day, again CLOSE_RETRY_MS after a failure), and keeps that close
+// until the trading day changes or the line sends its own; the line is not requested again. Other
+// instruments that have a close, and a stock whose bars bring none, get their line requested
+// again, at most once per CLOSE_RETRY_MS per contract.
+//
+// Dividends. IB sends its dividend summary (tick 59) once, with a line's first ticks, and not on
+// every line (none of 335 requests on 2026-10-29, though every one on 2026-10-24). The last summary
+// IB sent is kept per contract (in memory and in the kv namespace DIVIDENDS_NS) and stands in on a
+// line asking for it (456) until the line sends its own, while its next ex-date is not past and it
+// is at most DIVIDENDS_MAX_AGE_MS old.
 //
 // Primary-exchange fallback. IB may send an account a stock's SMART (consolidated) quote delayed
 // while the same stock's own exchange sends live data (seen on the paper account: AAPL on SMART
@@ -61,17 +73,18 @@
 // new line asks for it too). A line whose data type changes between live (1, 2) and delayed (3, 4)
 // loses those IB sends on live lines only, and the yields (clearLiveOnlyFields); it keeps the ones IB
 // sends on delayed lines too, some only once a line (the week ranges, open interest). So a field IB
-// does not send there shows "—" instead of an older value.
+// does not send there shows "—" instead of an older value (the dividends excepted, see Dividends).
 
 import { EventName } from '../ib/tws';
 import { contractLabel } from '@shared/contract';
-import type { ContractRef, MarketDataType, Quote, QuoteSubscription, SecType } from '@shared/types';
+import { nyClock, tradingDay } from '@shared/session';
+import type { Bar, ContractRef, MarketDataType, Quote, QuoteDividends, QuoteSubscription, SecType } from '@shared/types';
 import type { FallbackFinding, MainContext, ProbeEvent, QuoteService } from '../context';
 import { DEMO_TICK_MS, demoMarket } from './demo';
 import { toIbContract } from './ibContract';
 import { afterStartup, isIbConnected, isWarningCode } from './ibRequest';
 import { allocateLines, coversTicks, genericTicksFor, LINE_LIMIT_ERROR, lineServes, MAX_MARKET_DATA_LINES, SubscriptionBook, type TickLevel, type WantedContract } from './subscriptions';
-import { applyTick, clearGenericFields, clearLiveOnlyFields, type TickContext, type TickEvent } from './tickMap';
+import { applyTick, clearGenericFields, clearLiveOnlyFields, parseDividends, TICK, type TickContext, type TickEvent } from './tickMap';
 
 const FLUSH_MS = 100;
 /** Owner changes within this window are reconciled in one pass. */
@@ -108,10 +121,14 @@ export const SMART_RETRY_MS = 10 * 60_000;
 const NO_LINE_RETRY_MS = 60_000;
 /** The end of a 10197 episode re-probes routes at most this often. */
 export const COMPETING_END_MIN_MS = 60_000;
-/** A line whose quote has prices but no previous close this long after the first one is requested again. */
+/** A quote with prices but no previous close this long after the first one gets one from daily bars, or its line is requested again. */
 export const CLOSE_WAIT_MS = 12_000;
-/** The first wait before a contract's line is requested again for its close a second time; it doubles after each until a close comes. */
+/** The least time between two requests of a contract's line, or two failed daily-bar loads, for its close. */
 export const CLOSE_RETRY_MS = 15 * 60_000;
+/** Known dividend summaries (IB's tick 59) per contract key. */
+export const DIVIDENDS_NS = 'dividends';
+/** A kept dividend summary older than this no longer stands in for IB's. */
+export const DIVIDENDS_MAX_AGE_MS = 14 * 24 * 3_600_000;
 /** Instruments that have a previous close (an option may never have traded, a combo has none of its own). */
 const CLOSE_TYPES: ReadonlySet<SecType> = new Set(['STK', 'IND', 'FUT', 'CASH', 'CFD']);
 
@@ -193,6 +210,30 @@ function hasData(q: Quote): boolean {
 
 const hasPrice = (q: Quote): boolean => q.last !== undefined || q.bid !== undefined || q.ask !== undefined;
 
+/** Instruments whose missing close comes from daily bars: US stocks, whose trading day tradingDay() tells. */
+const barsCloseFor = (c: ContractRef): boolean => c.secType === 'STK' && (c.currency ?? 'USD') === 'USD';
+
+/**
+ * The previous close for trading day `day` (YYYYMMDD): the close of the newest daily bar (stamped
+ * 00:00 UTC on its date) before that day, or undefined.
+ */
+export function previousCloseFromBars(bars: readonly Bar[], day: string): number | undefined {
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    if (new Date(b.time * 1000).toISOString().slice(0, 10).replaceAll('-', '') >= day) continue;
+    return Number.isFinite(b.close) && b.close > 0 ? b.close : undefined;
+  }
+  return undefined;
+}
+
+/** Whether a kept dividend summary (stored at `at`) may stand in at `now`: recent, and its next ex-date not past. */
+export function keptDividendsUsable(d: QuoteDividends, at: number, now: number): boolean {
+  return now - at <= DIVIDENDS_MAX_AGE_MS && (!d.nextDate || d.nextDate >= nyClock(new Date(now)).ymd);
+}
+
+const sameDividends = (a: QuoteDividends, b: QuoteDividends): boolean =>
+  a.past12m === b.past12m && a.next12m === b.next12m && a.nextDate === b.nextDate && a.nextAmount === b.nextAmount;
+
 /**
  * What the renderer needs to bring its copy (`prev`, the last batch sent for the key) up to `q`:
  * the changed fields (cleared ones as undefined, so the renderer's merge clears them too), or
@@ -232,8 +273,18 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const dirty = new Set<string>();
   /** Pending checks for a priced quote without a previous close (checkClose). */
   const closeChecks = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Lines requested again for their close, per contract, since its last close: the last time and how often (for the back-off). */
-  const closeRetries = new Map<string, { at: number; count: number }>();
+  /** Lines requested again for their close, per contract, since its last close: the last time. */
+  const closeRetries = new Map<string, number>();
+  /** Previous closes read from daily bars, per contract, with the trading day they are the reference of. */
+  const barCloses = new Map<string, { day: string; close: number }>();
+  /** The latest daily-bar load for a close per contract: in flight (no `done`), or how it ended. */
+  const barLoads = new Map<string, { at: number; done?: 'ok' | 'failed' }>();
+  /** Quotes whose close came from daily bars, with its trading day (dropped when the line sends its own). */
+  const closeFromBars = new Map<string, string>();
+  /** The last dividend summary IB sent per contract (DIVIDENDS_NS), and the contracts read from disk already. */
+  const keptDividends = new Map<string, { value: QuoteDividends; at: number }>();
+  const dividendsRead = new Set<string>();
+  let dayCache = { at: -Infinity, day: '' };
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let sweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -288,6 +339,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
   const deleteQuote = (key: string) => {
     forgetRoute(key);
     clearCloseCheck(key);
+    closeFromBars.delete(key);
     quotes.delete(key);
     sent.delete(key);
     dirty.delete(key);
@@ -417,8 +469,9 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     // A fresh request starts without the previous line's error; IB repeats it if it still applies.
     if (quotes.get(w.key)?.error) setError(w.key, undefined);
     const q = ensureQuote(w.key);
-    // Nor with its generic values: the new line sends again what it still gets.
+    // Nor with its generic values: the new line sends again what it still gets (the kept dividends stand in).
     let changed = clearGenericFields(q, line.ticks);
+    changed = restoreDividends(q, line) || changed;
     if (q.ticksRefused !== refused) {
       q.ticksRefused = refused;
       changed = true;
@@ -699,6 +752,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     // The old line's generic values go with it; the side line brings its own.
     clearGenericFields(q, next.ticks);
     for (const t of side.buffer.values()) applyTick(q, t, next.tickContext);
+    restoreDividends(q, next);
     publish(q);
   };
 
@@ -811,27 +865,128 @@ export function createQuoteService(ctx: MainContext): QuoteService {
     armCloseCheck(line.key, CLOSE_WAIT_MS);
   };
 
-  /** Requests a line again when its quote still streams prices without a previous close (see the header). */
+  /** The trading day now (shared/session.ts → tradingDay), worked out at most once a second. */
+  const today = (): string => {
+    const now = Date.now();
+    if (now - dayCache.at >= 1_000 || now < dayCache.at) dayCache = { at: now, day: tradingDay(now) };
+    return dayCache.day;
+  };
+
+  /** Gives a quote without a close the one daily bars brought for today's trading day; true when it did. */
+  const applyBarClose = (q: Quote): boolean => {
+    const b = barCloses.get(q.key);
+    if (q.close !== undefined || !b || b.day !== today()) return false;
+    q.close = b.close;
+    closeFromBars.set(q.key, b.day);
+    return true;
+  };
+
+  /** Reads a stock's previous close from its daily bars; the quote then takes it, or is checked again. */
+  const loadBarClose = (key: string, contract: ContractRef) => {
+    const day = today();
+    const load: { at: number; done?: 'ok' | 'failed' } = { at: Date.now() };
+    barLoads.set(key, load);
+    void ctx.history
+      .get({ contract, timeframe: '1D', background: true })
+      .then(
+        (bars) => previousCloseFromBars(bars, day),
+        () => undefined,
+      )
+      .then((close) => {
+        if (barLoads.get(key) !== load) return;
+        load.done = close === undefined ? 'failed' : 'ok';
+        if (close !== undefined) barCloses.set(key, { day, close });
+        const q = quotes.get(key);
+        if (!q || q.close !== undefined) return;
+        if (applyBarClose(q)) publish(q);
+        else if (lines.has(key)) armCloseCheck(key, 0); // the line is requested again
+      });
+  };
+
+  /**
+   * A quote that still streams prices without a previous close (see the header): a US stock takes
+   * the close from its daily bars, other instruments (and a stock whose bars brought none within
+   * CLOSE_RETRY_MS) get their line requested again.
+   */
   const checkClose = (key: string) => {
     const line = lines.get(key);
     const q = quotes.get(key);
     if (!line || line.dead || !q || q.close !== undefined || !hasPrice(q) || !book.published(key)) return;
+    if (applyBarClose(q)) {
+      publish(q);
+      return;
+    }
+    const w = book.wanted().find((x) => x.key === key);
+    if (!w) return;
     const now = Date.now();
+    if (barsCloseFor(w.contract) && ctx.history) {
+      const load = barLoads.get(key);
+      if (load && !load.done) return; // in flight: its answer checks again
+      // 'ok' without a close for today: the trading day changed since.
+      if (!load || load.done === 'ok' || now - load.at >= CLOSE_RETRY_MS) {
+        loadBarClose(key, w.contract);
+        return;
+      }
+    }
     const last = closeRetries.get(key);
-    const due = last ? last.at + CLOSE_RETRY_MS * 2 ** (last.count - 1) : now;
-    // Not before the back-off ends, nor while the fallback resolves the contract or tests another
-    // route (a switch brings a new line).
+    const due = last !== undefined ? last + CLOSE_RETRY_MS : now;
+    // Not before CLOSE_RETRY_MS has passed, nor while the fallback resolves the contract or tests
+    // another route (a switch brings a new line).
     const r = routes.get(key);
     if (due > now || r?.side || r?.resolving) {
       armCloseCheck(key, Math.max(due - now, CLOSE_WAIT_MS));
       return;
     }
-    const w = book.wanted().find((x) => x.key === key);
-    if (!w || !liveApi()) return;
-    closeRetries.set(key, { at: now, count: (last?.count ?? 0) + 1 });
+    if (!liveApi()) return;
+    closeRetries.set(key, now);
     cancelLine(line);
     // The same contract: one resolved after error 200 keeps its conId (requestLine keeps the primary route).
     requestLine(w, line.route === 'smart' && line.resolved ? line.contract : w.contract, line.resolved);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Dividends (see the header)
+
+  /** A line asks for IB's dividend summary. */
+  const asksDividends = (line: Line): boolean => line.ticks.split(',').includes('456');
+
+  /**
+   * Gives a quote without dividends the kept summary, when its line asks for them; reads the
+   * contract's from disk first if it has not yet. True when the quote changed now.
+   */
+  const restoreDividends = (q: Quote, line: Line): boolean => {
+    if (q.dividends !== undefined || !asksDividends(line)) return false;
+    const kept = keptDividends.get(q.key);
+    if (kept) {
+      if (!keptDividendsUsable(kept.value, kept.at, Date.now())) return false;
+      q.dividends = kept.value;
+      return true;
+    }
+    if (dividendsRead.has(q.key) || !ctx.db) return false;
+    dividendsRead.add(q.key);
+    const key = q.key;
+    void ctx.db.kv.get<QuoteDividends>(DIVIDENDS_NS, key).then(
+      (row) => {
+        if (!row || keptDividends.has(key)) return;
+        keptDividends.set(key, { value: row.value, at: row.updatedAt });
+        const now = quotes.get(key);
+        const l = lines.get(key);
+        if (now && l && restoreDividends(now, l)) publish(now);
+      },
+      () => undefined,
+    );
+    return false;
+  };
+
+  /** IB sent a line's dividend summary: it is kept (memory and disk) when it differs from the kept one. */
+  const keepDividends = (key: string, d: QuoteDividends) => {
+    const kept = keptDividends.get(key);
+    const now = Date.now();
+    // Rewritten once a day even when unchanged, so its age says when IB last confirmed it.
+    if (kept && sameDividends(kept.value, d) && now - kept.at < 24 * 3_600_000) return;
+    keptDividends.set(key, { value: d, at: now });
+    dividendsRead.add(key);
+    void ctx.db?.kv.set(DIVIDENDS_NS, key, d).catch(() => undefined);
   };
 
   // ---------------------------------------------------------------------------
@@ -940,8 +1095,21 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       q.error = undefined; // data is flowing again
       changed = true;
     }
+    if (closeFromBars.size) {
+      const barDay = closeFromBars.get(line.key);
+      // The line's own close replaces the bars'; a new trading day makes theirs a session old.
+      if (line.tickContext.hasClose) closeFromBars.delete(line.key);
+      else if (barDay !== undefined && barDay !== today()) {
+        closeFromBars.delete(line.key);
+        q.close = undefined;
+        changed = true;
+      }
+    }
+    // IB's "not available" on a line that sent no close, or a new day: the bars' close for today, if known.
+    if (q.close === undefined && applyBarClose(q)) changed = true;
+    if (tick.kind === 'string' && tick.field === TICK.IB_DIVIDENDS && q.dividends && parseDividends(tick.value)) keepDividends(line.key, q.dividends);
     if (q.close === undefined) watchClose(line, q);
-    else if (closeRetries.size) closeRetries.delete(line.key); // a close came: the back-off starts over
+    else if (closeRetries.size) closeRetries.delete(line.key); // a close came: a later missing one is retried at once
     if (changed) publish(q);
   };
 
@@ -1113,6 +1281,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
       if (prev !== undefined && delayedType(prev) !== delayedType(type as MarketDataType)) {
         line.tickContext.hasNav = false;
         cleared = clearLiveOnlyFields(q);
+        restoreDividends(q, line);
       }
       if (q.marketDataType === type && !cleared) return;
       q.marketDataType = type as MarketDataType;

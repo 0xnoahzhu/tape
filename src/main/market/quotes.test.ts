@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contractKey, index, option, stock } from '@shared/contract';
 import type { TapeEvent } from '@shared/ipc';
-import type { ContractRef, Quote } from '@shared/types';
-import type { ContractService } from '../context';
+import type { Bar, ContractRef, HistoryRequest, Quote } from '@shared/types';
+import type { ContractService, HistoryService } from '../context';
 import { createFakeContext, createFakeIb, settle } from './fakeIb';
 import {
   CLOSE_RETRY_MS,
   CLOSE_WAIT_MS,
+  DIVIDENDS_NS,
+  keptDividendsUsable,
   LINGER_MS,
   createQuoteService,
+  previousCloseFromBars,
   PRIMARY_GIVE_UP_MS,
   quotePatch,
   RECONCILE_MS,
@@ -576,10 +579,12 @@ describe('generic ticks of a line', () => {
     fake.emit('tickPrice', id2, TICK.DELAYED_LAST, 333.9);
     const q = svc.getQuote('STK:AAPL')!;
     expect(q).toMatchObject({ last: 333.9, marketDataType: 3 });
-    expect([q.dividends, q.week52High, q.avgVolume]).toEqual([undefined, undefined, undefined]);
+    expect([q.week52High, q.avgVolume]).toEqual([undefined, undefined]);
+    // The summary IB sent last stands in ('kept dividends' below).
+    expect(q.dividends).toMatchObject({ next12m: 1.1 });
     vi.advanceTimersByTime(100);
     const patch = quoteEvents(events).at(-1)!.quotes['STK:AAPL'];
-    for (const k of ['dividends', 'week52High', 'avgVolume'] as const) {
+    for (const k of ['week52High', 'avgVolume'] as const) {
       expect(k in patch, k).toBe(true);
       expect(patch[k]).toBeUndefined();
     }
@@ -609,8 +614,9 @@ describe('generic ticks of a line', () => {
     const q = svc.getQuote('STK:AAPL')!;
     // IB sends the ranges once a line, on delayed lines too: they stay.
     expect(q).toMatchObject({ marketDataType: 3, mark: 334, week52High: 345.34 });
-    expect(q.dividends).toBeUndefined();
     expect(q.lastRthTrade).toBeUndefined();
+    // The dividend summary IB sent stands in: delayed lines carry none.
+    expect(q.dividends).toMatchObject({ next12m: 1.1 });
     // What the delayed line sends counts again.
     fake.emit('tickPrice', id, TICK.LAST_RTH_TRADE, 333.7);
     fake.emit('marketDataType', id, 4);
@@ -1238,7 +1244,7 @@ describe('a missing previous close', () => {
     expect(fake.callsOf('cancelMktData')).toHaveLength(1);
   });
 
-  it('backs off for an instrument that has no close', async () => {
+  it('requests the line of an instrument that has no close again every CLOSE_RETRY_MS', async () => {
     const { fake, svc } = await setup();
     fake.ready();
     svc.setRendererSubscriptions('watchlist', [{ contract: stock('NEWCO'), profile: 'basic' }]);
@@ -1248,17 +1254,14 @@ describe('a missing previous close', () => {
     priced();
     vi.advanceTimersByTime(CLOSE_WAIT_MS);
     expect(requests()).toBe(2);
-    // Its first trading day: still no close. The next request comes CLOSE_RETRY_MS later, then twice that.
-    priced();
-    vi.advanceTimersByTime(CLOSE_RETRY_MS - 1);
-    expect(requests()).toBe(2);
-    vi.advanceTimersByTime(1);
-    expect(requests()).toBe(3);
-    priced();
-    vi.advanceTimersByTime(2 * CLOSE_RETRY_MS - 1);
-    expect(requests()).toBe(3);
-    vi.advanceTimersByTime(1);
-    expect(requests()).toBe(4);
+    // Its first trading day: still no close. The next requests come CLOSE_RETRY_MS apart, never further.
+    for (const n of [3, 4, 5]) {
+      priced();
+      vi.advanceTimersByTime(CLOSE_RETRY_MS - 1);
+      expect(requests()).toBe(n - 1);
+      vi.advanceTimersByTime(1);
+      expect(requests()).toBe(n);
+    }
   });
 
   it('starts the back-off over once a close comes', async () => {
@@ -1405,5 +1408,122 @@ describe('quote subscriptions in demo mode', () => {
     expect(fake.calls).toEqual([]);
     const keys = new Set(quoteEvents(events).flatMap((e) => Object.keys(e.quotes)));
     expect(keys).toEqual(new Set(['STK:AAPL', 'IND:VIX']));
+  });
+});
+
+/** A daily bar stamped like IB's (00:00 UTC on its date). */
+const day = (ymd: string, close: number): Bar => ({
+  time: Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6))) / 1000,
+  open: close,
+  high: close,
+  low: close,
+  close,
+  volume: 1,
+});
+
+describe('previous close from daily bars', () => {
+  it('takes the newest bar before the trading day', () => {
+    const bars = [day('20261027', 180), day('20261028', 182.34), day('20261029', 185)];
+    expect(previousCloseFromBars(bars, '20261029')).toBe(182.34);
+    expect(previousCloseFromBars(bars, '20261030')).toBe(185);
+    expect(previousCloseFromBars(bars, '20261027')).toBeUndefined();
+    expect(previousCloseFromBars([], '20261029')).toBeUndefined();
+  });
+
+  /** NVDA's line streams prices without a close (as in the API log of 2026-10-29); `bars` answers the history request. */
+  async function streaming(bars: (req: HistoryRequest) => Promise<Bar[]>) {
+    const t = await setup();
+    const get = vi.fn(bars);
+    t.ctx.history = { get, getOlder: vi.fn() } as unknown as HistoryService;
+    // Thursday 2026-10-29, 10:00 New York.
+    vi.setSystemTime(new Date('2026-10-29T14:00:00Z'));
+    t.fake.ready();
+    t.svc.setRendererSubscriptions('portfolio', [{ contract: stock('NVDA'), profile: 'dividends' }]);
+    reconciled();
+    const id = reqIdOf(t.fake, 'NVDA');
+    t.fake.emit('marketDataType', id, 1);
+    t.fake.emit('tickPrice', id, TICK.LAST, 201.5);
+    return { ...t, get, id };
+  }
+
+  it('gives a stock whose line sends no close the bars\' close, without requesting the line again', async () => {
+    const { fake, svc, events, get, id } = await streaming(async () => [day('20261027', 190), day('20261028', 195.2), day('20261029', 201)]);
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls[0][0]).toMatchObject({ contract: { symbol: 'NVDA' }, timeframe: '1D', background: true });
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(195.2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(quoteEvents(events).at(-1)!.quotes['STK:NVDA']).toMatchObject({ close: 195.2 });
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+    expect(fake.callsOf('cancelMktData')).toEqual([]);
+    // IB's "not available" does not erase it; the line's own close replaces it.
+    fake.emit('tickPrice', id, TICK.CLOSE, -1);
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(195.2);
+    fake.emit('tickPrice', id, TICK.CLOSE, 195.25);
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(195.25);
+    await vi.advanceTimersByTimeAsync(4 * CLOSE_RETRY_MS);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(fake.callsOf('reqMktData')).toHaveLength(1);
+  });
+
+  it('reads the bars again for a new trading day (20:00 New York)', async () => {
+    const bars = [day('20261028', 195.2)];
+    const { fake, svc, get, id } = await streaming(async () => bars);
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS);
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(195.2);
+    // 20:30 New York: the overnight session belongs to Friday, whose previous close is Thursday's.
+    vi.setSystemTime(new Date('2026-10-30T00:30:00Z'));
+    bars.push(day('20261029', 201.1));
+    fake.emit('tickPrice', id, TICK.LAST, 202);
+    expect(svc.getQuote('STK:NVDA')?.close).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(svc.getQuote('STK:NVDA')?.close).toBe(201.1);
+  });
+
+  it('requests the line again when the bars bring no close, and tries them again later', async () => {
+    const { fake, svc, get } = await streaming(async () => {
+      throw new Error('No market data permissions');
+    });
+    // The failure checks the quote again at once.
+    await vi.advanceTimersByTimeAsync(CLOSE_WAIT_MS + 1);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(fake.callsOf('reqMktData')).toHaveLength(2);
+    expect(svc.getQuote('STK:NVDA')?.close).toBeUndefined();
+    // The new line sends no close either: the bars are asked again once CLOSE_RETRY_MS has passed.
+    fake.emit('tickPrice', reqIdOf(fake, 'NVDA'), TICK.LAST, 201.6);
+    await vi.advanceTimersByTimeAsync(CLOSE_RETRY_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('kept dividends', () => {
+  const aapl = { past12m: 1.06, next12m: 1.1, nextDate: '20261109', nextAmount: 0.27 };
+
+  it('stand in for IB\'s on a line that sends none, across restarts, until the ex-date passes', async () => {
+    const { fake, svc, ctx } = await setup();
+    vi.setSystemTime(new Date('2026-10-29T14:00:00Z'));
+    await ctx.db.kv.set(DIVIDENDS_NS, 'STK:AAPL', aapl);
+    fake.ready();
+    svc.setRendererSubscriptions('watchlist', [{ contract: stock('MSFT'), profile: 'basic' }]);
+    svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'dividends' }]);
+    reconciled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(svc.getQuote('STK:AAPL')?.dividends).toEqual(aapl);
+    // Not on a line that does not ask for them.
+    expect(svc.getQuote('STK:MSFT')?.dividends).toBeUndefined();
+    // IB's own replaces it, and is kept.
+    fake.emit('tickString', reqIdOf(fake, 'AAPL'), TICK.IB_DIVIDENDS, '1.06,1.12,20270210,0.28');
+    expect(svc.getQuote('STK:AAPL')?.dividends).toMatchObject({ next12m: 1.12, nextDate: '20270210' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await ctx.db.kv.get(DIVIDENDS_NS, 'STK:AAPL'))?.value).toMatchObject({ nextDate: '20270210' });
+  });
+
+  it('are used while recent and their next ex-date is not past', () => {
+    const now = Date.parse('2026-10-29T14:00:00Z');
+    expect(keptDividendsUsable(aapl, now - 3_600_000, now)).toBe(true);
+    expect(keptDividendsUsable({}, now - 3_600_000, now)).toBe(true);
+    expect(keptDividendsUsable({ ...aapl, nextDate: '20261028' }, now, now)).toBe(false);
+    expect(keptDividendsUsable(aapl, now - 15 * 24 * 3_600_000, now)).toBe(false);
   });
 });
