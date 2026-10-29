@@ -75,7 +75,7 @@ describe('column catalog', () => {
     const groups = COLUMN_IDS.map((id) => COLUMNS[id].group);
     expect(groups.filter((g, i) => g !== groups[i - 1])).toEqual([...COLUMN_GROUPS]);
     expect(COLUMN_GROUPS).toEqual(['position', 'contract', 'quote', 'stats', 'short', 'income', 'options', 'other', 'calc']);
-    expect(COLUMN_IDS).toHaveLength(126);
+    expect(COLUMN_IDS).toHaveLength(127);
   });
 
   it('keeps one column per datum: IB’s figures merged, Tape’s calculations in their own group', () => {
@@ -379,6 +379,9 @@ describe('calculated columns', () => {
     // reqPnLSingle's unrealized P&L against the cost basis.
     expect(value('unrealizedPct', c)).toBeCloseTo(2_748 / 20_000, 10);
     expect(text('unrealizedPct', c)).toBe('+13.74%');
+    // reqPnLSingle's daily P&L against the value it started the day at.
+    expect(value('dayPnlPct', c)).toBeCloseTo(150 / (22_748 - 150), 10);
+    expect(text('dayPnlPct', c)).toBe('+0.66%');
     expect(value('pctNetLiq', c)).toBeCloseTo(0.22748, 10);
     // Without a net liquidation, or a last trade, there is nothing to show.
     expect(value('pctNetLiq', { ...c, netLiq: undefined })).toBeUndefined();
@@ -386,11 +389,13 @@ describe('calculated columns', () => {
   });
 
   it('compares a short’s unrealized P&L with what it was sold for, and converts its value at IB’s rate', () => {
-    const short = position(aaplStock, { quantity: -100, averageCost: 250, pnlUnrealized: 2_252, pnlValue: -22_748 });
+    const short = position(aaplStock, { quantity: -100, averageCost: 250, pnlUnrealized: 2_252, pnlValue: -22_748, dailyPnL: -300 });
     const c = { ...ctx(short, { quote: aaplQuote, fx: 0.5 }), netLiq: 100_000 };
     expect(value('costBasis', c)).toBe(-25_000);
     expect(value('unrealizedPct', c)).toBeCloseTo(2_252 / 25_000, 10);
     expect(value('pctNetLiq', c)).toBeCloseTo(-0.11374, 10);
+    // The short lost 300 today on the 22,448 it started the day at.
+    expect(value('dayPnlPct', c)).toBeCloseTo(-300 / 22_448, 10);
   });
 
   it('takes an option’s 0 bid in the mid, and no crossed quote', () => {

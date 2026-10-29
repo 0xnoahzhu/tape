@@ -161,6 +161,7 @@ export const COLUMN_IDS = [
   'spread',
   'costBasis',
   'unrealizedPct',
+  'dayPnlPct',
   'pctNetLiq',
   'divYield',
   'putCallVolume',
@@ -926,6 +927,13 @@ const CALC: Partial<Record<ColumnId, Def>> = {
   unrealizedPct: calc('pct', 88, (c) => {
     const basis = costBasis(c);
     return basis !== undefined && finite(c.row.unrealized) ? c.row.unrealized / Math.abs(basis) : undefined;
+  }, { color: 'sign' }),
+  // Against the day's starting value (Value − Day P&L: Position × the previous close, or the fill
+  // price for what was bought today), so it matches IB's Day P&L however the position was opened;
+  // a short's gain is positive as its P&L is.
+  dayPnlPct: calc('pct', 92, (c) => {
+    const { value, dayPnl } = c.row;
+    return finite(value) && finite(dayPnl) ? ratio(dayPnl, Math.abs(value - dayPnl)) : undefined;
   }, { color: 'sign' }),
   // In the account's currency at IB's exchange rate; a short's share is negative.
   pctNetLiq: calc('pct', 88, (c) => (finite(c.row.value) && finite(c.row.fx) ? ratio(c.row.value * c.row.fx, c.netLiq) : undefined)),
