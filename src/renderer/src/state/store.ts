@@ -40,6 +40,7 @@ import type {
   TimeInForce,
   TradingSession,
   TriggerMethod,
+  VaultState,
   Watchlist,
   WorkingOrder,
 } from '@shared/types';
@@ -298,6 +299,8 @@ interface DataState {
   priceAlerts: PriceAlert[];
   /** Whether main watches each alert (`alertStatuses` events; values as of the last change, getAlertStatuses for current ones). */
   alertStatuses: AlertStatus[];
+  /** The data folder and the account whose watchlists, alerts and notifications are shown. */
+  vault: VaultState;
   /** Mirror of main's lock state (main is the only authority). */
   lock: LockState;
 }
@@ -536,6 +539,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   watchlists: [],
   priceAlerts: [],
   alertStatuses: [],
+  vault: { path: null, status: 'unset', account: null },
   lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui
@@ -651,6 +655,9 @@ function selectedTicket(t: TicketState, contract: ContractRef, prev: ContractRef
 
 /** Whether the lock screen covers the app (locked, or still animating the unlock). */
 export const isCovered = (s: Pick<StoreState, 'lock' | 'unlocking'>): boolean => s.lock.locked || s.unlocking;
+
+/** No usable data folder: VaultSetup covers the app (below the lock screen) and main refuses the rest. */
+export const needsVault = (s: Pick<StoreState, 'vault'>): boolean => s.vault.status !== 'ok';
 
 /**
  * Whether a dialog holds the screen: the order review, a confirmation, Cancel all, the alert

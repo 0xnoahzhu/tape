@@ -42,6 +42,7 @@ import type {
   Settings,
   SymbolMatch,
   UnlockResult,
+  VaultState,
   VerifyResult,
   Watchlist,
   WorkingOrder,
@@ -73,6 +74,7 @@ export type TapeEvent =
   | { type: 'notifications'; notifications: AppNotification[] }
   | { type: 'watchlists'; watchlists: Watchlist[] }
   | { type: 'priceAlerts'; alerts: PriceAlert[] }
+  | { type: 'vault'; vault: VaultState }
   /**
    * Whether main is watching each alert, in list order: sent when what the list shows changes (a
    * state, its reason or message), at most every 200 ms. The values in it are as of then; views that
@@ -263,6 +265,21 @@ export interface TapeApi {
   exportApiLog(): Promise<string | null>;
   revealLogFile(): Promise<void>;
 
+  // Data folder ------------------------------------------------------------
+  /**
+   * Shows a folder dialog and uses the folder picked as the data folder (main/vault.ts): the
+   * first launch's choice, or another one. 'open' uses what the folder holds (a vault made on another
+   * computer; an empty folder becomes a new one), 'move' copies the current folder's data into it
+   * first (it must be empty). The current folder is never deleted. Picking the folder in use while it
+   * is unavailable looks at it again. Null when the dialog was cancelled; throws when the folder
+   * cannot be used (it holds other files, was written by a later version of Tape, or is gone).
+   * While the data folder cannot be used, this and revealVaultFolder are the only actions main takes.
+   */
+  setVaultFolder(how: 'open' | 'move'): Promise<VaultState | null>;
+  /** Looks at the unavailable data folder again: usable once it is back as it was. */
+  recheckVaultFolder(): Promise<VaultState>;
+  revealVaultFolder(): Promise<void>;
+
   // Misc -------------------------------------------------------------------
   openExternal(url: string): Promise<void>;
 
@@ -346,6 +363,9 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   apiLogExpiring: 'deny',
   exportApiLog: 'deny',
   revealLogFile: 'deny',
+  setVaultFolder: 'deny',
+  recheckVaultFolder: 'deny',
+  revealVaultFolder: 'deny',
   openExternal: 'deny',
   getLockState: 'allow',
   lock: 'allow',

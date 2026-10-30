@@ -1,9 +1,9 @@
 // Pure helpers for the bell panel.
 
+import { maskAccountIds } from '@shared/accountMask';
 import { resolveTimeTokens, type Clock } from '@shared/timeFormat';
 import type { NotificationView } from '@shared/ipc';
-import type { AppNotification, Lang } from '@shared/types';
-import { maskAccounts } from '../../lib/account';
+import type { AppNotification, ConnectionState, Lang, VaultState } from '@shared/types';
 import type { Page } from '../../state/store';
 import type { NotificationsMessages } from './messages';
 
@@ -33,20 +33,17 @@ export function filterNotifications(list: AppNotification[], filter: Notificatio
  * risk alert to the option chain, a fill to Portfolio › Trades, an order update to Portfolio ›
  * Orders; any other notification about an instrument, a cancelled or rejected order's too
  * (`orderDone`: Orders does not list it), leaves Settings for the chart, and on another page only
- * selects the instrument (null: the page stays, design nt.items open). So does a fill or order
- * notice of an account the connected login does not manage (`accounts`; an earlier session's, paper
- * or live): Orders and Trades list the connected login's, so its order or fill is not there.
+ * selects the instrument (null: the page stays, design nt.items open). The bell holds the shown
+ * account's notices only (main/store.ts), so its orders and fills are the ones the lists show.
  */
-export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone' | 'account'>, page: Page, accounts: readonly string[]): NotificationView | null {
-  const listed = !n.account || accounts.includes(n.account);
+export function notificationTarget(n: Pick<AppNotification, 'kind' | 'orderDone'>, page: Page): NotificationView | null {
   switch (n.kind) {
     case 'opt':
       return 'opt';
     case 'fill':
-      if (listed) return 'trades';
-      break;
+      return 'trades';
     case 'order':
-      if (!n.orderDone && listed) return 'orders';
+      if (!n.orderDone) return 'orders';
       break;
   }
   return page === 'set' ? 'chart' : null;
@@ -77,18 +74,21 @@ export function relativeTime(t: number, now: number, m: Pick<NotificationsMessag
   return m.daysAgo(Math.round(hours / 24));
 }
 
-/** The id of an account tag in a notice's title ("PAPER DUP899854", "实盘 U18630011"): orders.ts, riskWatcher.ts. */
-const TAGGED_ID_RE = /(PAPER|LIVE|模拟|实盘) (?:D[A-Z]{1,2}|U|F)\d{5,}\b/g;
+/** The account ids a notice may name (shared/accountMask.ts): the login's, the shown account's, its own. */
+export function knownAccountIds(s: { connection: Pick<ConnectionState, 'accounts' | 'account'>; vault: Pick<VaultState, 'account'> }, n: Pick<AppNotification, 'account'>): Array<string | null | undefined> {
+  return [...s.connection.accounts, s.connection.account, s.vault.account, n.account];
+}
 
 /**
- * Title and body in a language, with their clock times (stored as tokens) in `clock`'s format. While
- * Settings › Privacy hides account IDs (`showAccountId` false) they are left out of notices stored
- * before: a tag keeps PAPER / LIVE alone, as a notice posted now has it, and any other id reads "—".
+ * Title and body in a language, with their clock times (stored as tokens) in `clock`'s format.
+ * `hideIds` (Settings › Privacy & Security hides account IDs: knownAccountIds) are left out, also
+ * of notices stored before: a tag keeps PAPER / LIVE alone, as a notice posted now has it, and any
+ * other mention reads "—". Null: shown.
  */
-export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lang: Lang, clock: Clock, showAccountId = true): { title: string; body: string } {
+export function notificationText(n: Pick<AppNotification, 'title' | 'body'>, lang: Lang, clock: Clock, hideIds: Iterable<string | null | undefined> | null = null): { title: string; body: string } {
   const text = (s: string) => {
     const resolved = resolveTimeTokens(s, clock);
-    return showAccountId ? resolved : maskAccounts(resolved.replace(TAGGED_ID_RE, '$1'), false);
+    return hideIds ? maskAccountIds(resolved, hideIds) : resolved;
   };
   return { title: text(n.title[lang]), body: text(n.body[lang]) };
 }

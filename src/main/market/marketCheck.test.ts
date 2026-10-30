@@ -13,6 +13,7 @@ import {
   DEPTH_TIMEOUT_MS,
   isMarketDataCheck,
   MARKET_CHECK_NS,
+  marketCheckKey,
   nearStrikes,
   pickExpiry,
   PROBE_TIMEOUT_MS,
@@ -155,7 +156,7 @@ describe('market data check', () => {
     // Kept, pushed (running, then the result) and persisted.
     expect(svc.getState()).toEqual({ result: r, running: false });
     expect(checkEvents(events).map((e) => e.state.running)).toEqual([true, false]);
-    expect((await ctx.db.kv.get(MARKET_CHECK_NS, 'last'))?.value).toEqual(r);
+    expect((await ctx.db.kv.get(MARKET_CHECK_NS, marketCheckKey(r.account)))?.value).toEqual(r);
     // Quotes only the check wanted never reach the renderer.
     expect(events.some((e) => e.type === 'quotes')).toBe(false);
   });
@@ -501,12 +502,17 @@ describe('market data check', () => {
 
   it('loads the persisted result on startup and checks quietly after a handshake', async () => {
     const first = await setup({ lines: { 'SPY:SMART': { type: 1 }, 'SPY:ARCA': { type: 1 }, 'SPX:CBOE': { type: 1 }, OPT: { type: 1 } } });
+    // Results are kept per account (marketCheckKey).
+    const state = first.ctx.ib.getState;
+    first.ctx.ib.getState = () => ({ ...state(), accounts: ['DU1'], account: 'DU1' });
     const r = await finish(first.svc.run({ trigger: 'user' }));
     vi.useRealTimers();
     // A new process with the same database.
     const fake = createFakeIb();
     const { ctx, events } = createFakeContext(fake.ib);
     ctx.db = first.ctx.db;
+    // Not connected yet: the data folder serves the account of the last launch.
+    ctx.store.getVault = () => ({ path: '/vault', status: 'ok', account: 'DU1' });
     ctx.quotes = createQuoteService(ctx);
     const svc = createMarketCheckService(ctx);
     await settle();

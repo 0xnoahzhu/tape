@@ -7,7 +7,7 @@ import { useStore } from '../../state/store';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { knownName, openNotificationTarget } from '../orders/navigation';
 import { useNotificationsMessages } from './messages';
-import { filterNotifications, NOTIFICATION_FILTERS, notificationTarget, notificationText, relativeTime, stampText, type NotificationFilter } from './model';
+import { filterNotifications, knownAccountIds, NOTIFICATION_FILTERS, notificationTarget, notificationText, relativeTime, stampText, type NotificationFilter } from './model';
 
 // The panel unmounts when closed; keep the filter for the session like the design does.
 let lastFilter: NotificationFilter = 'all';
@@ -31,7 +31,7 @@ function openNotification(n: AppNotification): void {
   const s = useStore.getState();
   s.setBell(false);
   if (!n.contract) return;
-  const target = notificationTarget(n, s.page, s.connection.accounts);
+  const target = notificationTarget(n, s.page);
   if (target) openNotificationTarget(n.contract, target);
   else s.selectSymbol(n.contract, knownName(n.contract));
 }
@@ -42,6 +42,8 @@ export function NotificationsTab() {
   const clock = useClock();
   const all = useStore((s) => s.notifications);
   const showAccountId = useStore((s) => s.settings.appearance.showAccountId);
+  const connection = useStore((s) => s.connection);
+  const vault = useStore((s) => s.vault);
   const [filter, setFilter] = useState<NotificationFilter>(lastFilter);
   const items = useMemo(() => filterNotifications(all, filter), [all, filter]);
   const now = useNow(30_000);
@@ -75,7 +77,7 @@ export function NotificationsTab() {
           <div style={{ padding: `32px ${lessGutter(18)} 32px 18px`, textAlign: 'center', fontSize: 13, color: 'var(--dm)' }}>{m.empty}</div>
         )}
         {items.map((n) => {
-          const text = notificationText(n, lang, clock, showAccountId);
+          const text = notificationText(n, lang, clock, showAccountId ? null : knownAccountIds({ connection, vault }, n));
           return (
           <div
             key={n.id}

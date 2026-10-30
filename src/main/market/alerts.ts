@@ -473,7 +473,8 @@ export function createAlertService(ctx: MainContext): AlertService {
    * Rebuilds what the list implies: the watched instruments, gate states (kept while a trigger is
    * unchanged), indicator feeds, the quote subscriptions and the 1 s timer.
    */
-  const reindex = () => {
+  /** `loaded`: the alerts come from the file (startup, another account), not from a change. */
+  const reindex = (loaded = !started) => {
     const now = Date.now();
     const evaluated = alerts.filter((a) => a.active && !a.unsupported);
     const groups = new Map<string, PriceAlert[]>();
@@ -512,7 +513,7 @@ export function createAlertService(ctx: MainContext): AlertService {
       ids.add(a.id);
       const sig = alertSignature(a);
       if (gates.get(a.id)?.sig === sig) continue;
-      gates.set(a.id, { sig, state: initialGate(a, !started), newsFrom: ctx.news.sequence() });
+      gates.set(a.id, { sig, state: initialGate(a, loaded), newsFrom: ctx.news.sequence() });
       if (a.rule.type === 'news') armedNews.add(contractKey(a.contract));
     }
     for (const id of [...gates.keys()]) if (!ids.has(id)) gates.delete(id);
@@ -621,11 +622,27 @@ export function createAlertService(ctx: MainContext): AlertService {
     refreshAll();
   };
 
+  /**
+   * Another account's alerts (or another data folder's): they replace the list, as if loaded at
+   * startup. Only the account the data folder serves is watched.
+   */
+  const reload = () => {
+    const stored = ctx.store.getPriceAlerts();
+    alerts = Array.isArray(stored) ? stored : [];
+    gates.clear();
+    lineNoticed.clear();
+    reindex(true);
+    ctx.emit({ type: 'priceAlerts', alerts });
+    changedShape = true;
+    refreshAll();
+  };
+
   afterStartup(() => {
     const stored = ctx.store.getPriceAlerts();
     alerts = Array.isArray(stored) ? stored : [];
     reindex();
     started = true;
+    ctx.store.onVaultChanged(reload);
     ctx.quotes.onQuote(onQuote);
     ctx.ib.onClosed(onClosed);
     ctx.ib.onReady(onReady, { current: false });

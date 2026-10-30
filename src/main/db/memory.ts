@@ -67,7 +67,7 @@ const kvKey = (ns: string, key: string) => `${ns}\u0000${key}`;
 /** Coverage documents of bar series, as in sqlite.ts (the bundles share no runtime code). */
 const COVERAGE_KV_NS = 'coverage';
 /** kv namespaces of cached market data, as sqlite.ts → MARKET_DATA_NS. */
-export const MEMORY_MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef'];
+export const MEMORY_MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef', 'dividends'];
 
 export function createMemoryDatabase(): MemoryDatabase {
   /** Ascending, unique times per series (kept sorted on write, so reads never sort). */

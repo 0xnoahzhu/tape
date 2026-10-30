@@ -32,8 +32,9 @@
 // switch stays on, so only the latest Level 2 check decides, and nothing does when the session
 // closes or IB drops the market data (1101) first.
 //
-// The last result is kept here, persisted in the kv table (namespace MARKET_CHECK_NS) and pushed as
-// `marketDataCheck` events. A quiet check (without depth) runs AUTO_AFTER_READY_MS after each
+// The last result is kept here, persisted per account in the kv table (namespace MARKET_CHECK_NS,
+// marketCheckKey) and pushed as `marketDataCheck` events: the data folder's account's (another
+// account's result is loaded when the data folder serves it). A quiet check (without depth) runs AUTO_AFTER_READY_MS after each
 // handshake unless one ran within AUTO_MIN_INTERVAL_MS for the same account.
 
 import { EventName } from '../ib/tws';
@@ -58,7 +59,8 @@ import { nyDay, yyyymmdd } from './nyTime';
 import { LINE_LIMIT_ERROR, MARKET_CHECK_OWNER } from './subscriptions';
 
 export const MARKET_CHECK_NS = 'mdcheck';
-const MARKET_CHECK_KEY = 'last';
+/** The kv key of an account's last result (what IB lets a login see is that login's). */
+export const marketCheckKey = (account: string | undefined): string => `last|${account ?? ''}`;
 /** A line without an answer by then counts as no data. */
 export const PROBE_TIMEOUT_MS = 8_000;
 /** How long a line is watched after its first answer (a later error or data type may change it). */
@@ -655,7 +657,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
         result = r;
         fresh = true;
         inflight = null;
-        void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, r);
+        void ctx.db?.kv.set(MARKET_CHECK_NS, marketCheckKey(r.account), r);
         emit();
         let shown = r.items.find((i) => i.market === 'depth');
         if (late) late((probe, open) => (shown = shown && patchDepth(shown, probe, open)));
@@ -689,7 +691,7 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     const items = [...result.items];
     items[i] = next;
     result = { ...result, items };
-    void ctx.db?.kv.set(MARKET_CHECK_NS, MARKET_CHECK_KEY, result);
+    void ctx.db?.kv.set(MARKET_CHECK_NS, marketCheckKey(result.account), result);
     emit();
     return next;
   };
@@ -709,15 +711,29 @@ export function createMarketCheckService(ctx: MainContext): MarketCheckService {
     }, AUTO_AFTER_READY_MS);
   };
 
-  afterStartup(() => {
+  /** Shows `account`'s last result, read from the kv table (unless a check of it finished first). */
+  const loadFor = (account: string | null) => {
+    if (!account) return;
     ctx.db?.kv
-      .get<MarketDataCheck>(MARKET_CHECK_NS, MARKET_CHECK_KEY)
+      .get<MarketDataCheck>(MARKET_CHECK_NS, marketCheckKey(account))
       .then((row) => {
-        if (fresh || !row || !isMarketDataCheck(row.value)) return;
+        if (fresh || !row || !isMarketDataCheck(row.value) || row.value.account !== account) return;
         result = row.value;
         emit();
       })
       .catch(() => undefined);
+  };
+
+  afterStartup(() => {
+    loadFor(ctx.store.getVault().account);
+    // Another account's data: its own result, never the previous account's.
+    ctx.store.onVaultChanged((vault) => {
+      if (result?.account === vault.account) return;
+      result = null;
+      fresh = false;
+      emit();
+      loadFor(vault.account);
+    });
     if (ctx.demo) return;
     ctx.ib.onReady(scheduleAuto);
     ctx.ib.onClosed(() => {

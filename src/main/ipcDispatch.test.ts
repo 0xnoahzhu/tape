@@ -83,3 +83,18 @@ describe('IPC dispatch while locked', () => {
     expect(await createDispatch('connect', handlers, () => false)({}, [])).toEqual({ ok: false, message: 'refused' });
   });
 });
+
+describe('IPC dispatch without a usable data folder', () => {
+  it('refuses what the lock refuses, with the reason, and lets the rest through', async () => {
+    const { handlers, calls } = fakeHandlers();
+    const reason = 'Choose a data folder first';
+    for (const m of denied) {
+      expect(await createDispatch(m, handlers, () => false, () => reason)(null, [])).toEqual({ ok: false, message: reason });
+    }
+    expect(calls).toEqual([]);
+    for (const m of allowed) expect((await createDispatch(m, handlers, () => false, () => reason)(null, [])).ok).toBe(true);
+    // The lock speaks first; a usable folder refuses nothing.
+    expect(await createDispatch('placeOrder', handlers, () => true, () => reason)(null, [])).toEqual({ ok: false, message: LOCKED_MESSAGE });
+    expect((await createDispatch('placeOrder', handlers, () => false, () => null)(null, [])).ok).toBe(true);
+  });
+});

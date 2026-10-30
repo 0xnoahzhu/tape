@@ -31,6 +31,7 @@ import type {
   Execution,
   HistoryPage,
   HistoryRequest,
+  LocalizedText,
   OptionChainParams,
   OrderPreview,
   OrderRef,
@@ -42,6 +43,7 @@ import type {
   QuoteSubscription,
   Settings,
   SymbolMatch,
+  VaultState,
   Watchlist,
   WorkingOrder,
 } from '@shared/types';
@@ -65,12 +67,31 @@ export interface AppStore {
   /** Deep-merges, validates, persists and notifies listeners. Returns the new settings. */
   updateSettings(patch: DeepPartial<Settings>): Settings;
   onSettingsChanged(listener: (next: Settings, prev: Settings) => void): Unsubscribe;
+  /** The data folder (vault.ts) and the account whose watchlists, alerts and notifications are served. */
+  getVault(): VaultState;
+  /** Why the data folder cannot be used, in the user's language; null while it can. */
+  vaultProblem(): string | null;
+  /** Serves `account`'s data from now on (the connected login's): its files replace the current ones. */
+  setAccount(account: string): void;
+  /**
+   * Uses another data folder, `how` as TapeApi.setVaultFolder (the folder in use again while it is
+   * unavailable: looked at again). Throws, in the user's language, when the folder cannot be used.
+   */
+  setVaultDir(path: string, how: 'open' | 'move'): VaultState;
+  /** Looks at an unavailable data folder again (a drive connected again). */
+  recheckVault(): VaultState;
+  /** The account or the data folder changed: the lists below are another account's or folder's now. */
+  onVaultChanged(listener: (vault: VaultState) => void): Unsubscribe;
   getWatchlists(): Watchlist[];
+  /** Throws when no account's files are open (VaultState.account null, or the folder unavailable). */
   setWatchlists(lists: Watchlist[]): void;
   getPriceAlerts(): PriceAlert[];
+  /** Throws like setWatchlists. */
   setPriceAlerts(alerts: PriceAlert[]): void;
   getNotifications(): AppNotification[];
   setNotifications(list: AppNotification[]): void;
+  /** Adds a notification to another account's list (a notice owed to an earlier login), not shown now. */
+  addNotificationFor(account: string, item: AppNotification): void;
   getWindowBounds(): { x?: number; y?: number; width: number; height: number; maximized?: boolean } | null;
   setWindowBounds(b: { x?: number; y?: number; width: number; height: number; maximized?: boolean }): void;
   /** Writes pending changes synchronously (called on quit). */
@@ -137,6 +158,11 @@ export interface ApiLog {
 export interface Notifier {
   /** Adds to the in-app list and, depending on settings, shows an OS notification. */
   notify(n: NewNotification): AppNotification;
+  /**
+   * A problem that stops Tape from working (the data folder is gone): critical, shown as an OS
+   * notification whatever do-not-disturb or the 'sys' switch say.
+   */
+  alarm(title: LocalizedText, body: LocalizedText): AppNotification;
   markRead(ids: string[] | 'all'): void;
   /**
    * Without a category: the test notification (added to the list). With one (it may come from

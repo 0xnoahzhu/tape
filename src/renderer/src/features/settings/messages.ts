@@ -283,6 +283,21 @@ const en = {
   test: 'Send test notification',
   testD: 'The OS asks for permission the first time',
 
+  // Data folder
+  vaultTitle: 'Data folder',
+  vaultDesc:
+    'Watchlists, price alerts and notifications, kept per IB account. Copy the folder to back it up, or keep it in a synced folder (iCloud Drive, Dropbox …) to use it on another computer.',
+  vaultAccount: (id: string) => `Account shown: ${id}`,
+  vaultNoAccount: 'No account yet: connect to IB to keep watchlists and price alerts',
+  vaultUnavailable: 'Not available: the folder is missing. Reconnect its drive, or choose another folder',
+  vaultNewer: 'Written by a newer version of Tape: update Tape to use it',
+  vaultReveal: 'Open folder',
+  vaultMove: 'Move to…',
+  vaultMoveTip: 'Copies the data into an empty folder and uses it from then on. The current folder stays as it is',
+  vaultSwitch: 'Use another folder…',
+  vaultSwitchTip: 'Uses a Tape data folder, e.g. one synced from another computer. An empty folder becomes a new one',
+  vaultChanged: 'Data folder changed',
+
   // General
   accountId: 'Account ID',
   show: 'Show',
@@ -669,6 +684,19 @@ const zh: typeof en = {
   dndChipTip: (until: string) => `勿扰模式开启至 ${until}：只有订单异常（被拒、撤单或改单被拒）、连接中断和期权风险提醒会推送到系统通知中心。点击打开 设置 › 通知。`,
   test: '发送测试通知',
   testD: '首次使用时系统会请求通知权限',
+
+  vaultTitle: '数据目录',
+  vaultDesc: '自选列表、价格提醒和通知，按 IB 账户分别保存。复制这个文件夹即可备份；放在同步文件夹（iCloud 云盘、Dropbox 等）里，就能在另一台电脑上使用。',
+  vaultAccount: (id: string) => `当前账户：${id}`,
+  vaultNoAccount: '还没有账户：连接 IB 后才能保存自选列表和价格提醒',
+  vaultUnavailable: '不可用：找不到这个文件夹。请重新接上它所在的硬盘，或选择其他文件夹',
+  vaultNewer: '由更新版本的 Tape 写入：请先更新 Tape',
+  vaultReveal: '打开文件夹',
+  vaultMove: '移动到…',
+  vaultMoveTip: '把数据复制到一个空文件夹，之后就使用它。当前文件夹保持不变',
+  vaultSwitch: '使用其他文件夹…',
+  vaultSwitchTip: '使用一个 Tape 数据目录，例如从另一台电脑同步过来的。选择空文件夹会新建一个',
+  vaultChanged: '数据目录已更改',
 
   accountId: '账户号',
   show: '显示',

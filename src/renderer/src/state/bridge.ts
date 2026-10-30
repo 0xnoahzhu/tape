@@ -2,12 +2,12 @@
 
 import type { TapeEvent } from '@shared/ipc';
 import type { ApiLogEntry, AppNotification, ConnectionState, Quote } from '@shared/types';
-import { newCriticalNotifications, notificationText } from '../features/notifications/model';
+import { knownAccountIds, newCriticalNotifications, notificationText } from '../features/notifications/model';
 import { openNotificationTarget } from '../features/orders/navigation';
 import { currentClock, currentLang } from '../i18n';
 import { applyLockState } from './lockActions';
 import { resetSessionState } from './sessionReset';
-import { initialTicket, isCovered, useStore } from './store';
+import { initialTicket, isCovered, needsVault, useStore } from './store';
 
 const MAX_LOG = 5000;
 
@@ -25,6 +25,7 @@ const SNAPSHOT_EVENTS: ReadonlySet<TapeEvent['type']> = new Set([
   'notifications',
   'lock',
   'marketDataCheck',
+  'vault',
 ]);
 
 let started = false;
@@ -63,6 +64,7 @@ export async function startBridge(): Promise<void> {
     notifications: snap.notifications,
     lock: snap.lock,
     marketDataCheck: snap.marketDataCheck,
+    vault: snap.vault,
     biometricsSeen: s.biometricsSeen || snap.lock.biometrics.available,
     ticket: { ...initialTicket(snap.settings, s.symbol), side: s.ticket.side },
     // After a Forgot-PIN reset Tape opens on Settings › Connection, as on a fresh install.
@@ -171,6 +173,9 @@ function apply(e: TapeEvent): void {
     case 'marketDataCheck':
       set({ marketDataCheck: e.state });
       break;
+    case 'vault':
+      set({ vault: e.vault });
+      break;
     case 'apiLog':
       set((s) => ({ apiLog: e.reset ? e.entries : appendLog(s.apiLog, e.entries), logFilePath: e.logFilePath || s.logFilePath }));
       break;
@@ -194,10 +199,10 @@ function apply(e: TapeEvent): void {
       break;
     // Nothing behind the lock screen changes while it is up (main does not send these then either).
     case 'openContract':
-      if (!isCovered(useStore.getState())) openNotificationTarget(e.contract, e.view);
+      if (!isCovered(useStore.getState()) && !needsVault(useStore.getState())) openNotificationTarget(e.contract, e.view);
       break;
     case 'command':
-      if (!isCovered(useStore.getState())) commandListeners.forEach((l) => l(e.command));
+      if (!isCovered(useStore.getState()) && !needsVault(useStore.getState())) commandListeners.forEach((l) => l(e.command));
       break;
   }
 }
@@ -211,7 +216,7 @@ function toastCritical(prev: AppNotification[], next: AppNotification[]): void {
   const s = useStore.getState();
   const [latest] = newCriticalNotifications(prev, next);
   if (!latest || isCovered(s)) return;
-  const { title, body } = notificationText(latest, currentLang(), currentClock(), s.settings.appearance.showAccountId);
+  const { title, body } = notificationText(latest, currentLang(), currentClock(), s.settings.appearance.showAccountId ? null : knownAccountIds(s, latest));
   s.showToast(`${title} · ${body}`, 'error');
 }
 

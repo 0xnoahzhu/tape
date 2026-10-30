@@ -1,4 +1,5 @@
-// Settings › Privacy & Security: account id visibility and the lock screen (auto-lock, unlock
+// Settings › Privacy & Security: account id visibility, the data folder (main/vault.ts: where the
+// watchlists, alerts and notifications of each account are kept) and the lock screen (auto-lock, unlock
 // method, sound, PIN). The preferences are settings; the PIN lives in main only and is set through
 // the PIN dialog. Until a PIN exists the lock rows are visible but dimmed.
 //
@@ -14,7 +15,7 @@ import { useStore } from '../../state/store';
 import { Toggle } from '../../ui/primitives';
 import { customMinutesInput } from './logic';
 import { useSettingsMessages, type SettingsMessages } from './messages';
-import { disabledRow, LabelBlock, OptionRow, SectionHeader, saveSettings } from './parts';
+import { disabledRow, LabelBlock, OptionRow, SectionHeader, saveSettings, SubHeader } from './parts';
 
 type LockPatch = Partial<Settings['lock']>;
 
@@ -75,6 +76,7 @@ export function PrivacySection() {
         value={showAccountId ? 'show' : 'hide'}
         onChange={(k) => saveSettings({ appearance: { showAccountId: k === 'show' } })}
       />
+      <DataFolder />
 
       <div style={{ marginTop: 20 }}>
         {/* What the lock does not do (README › Lock screen): IB Gateway stays logged in. */}
@@ -125,6 +127,59 @@ export function PrivacySection() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Where the data folder is, the account it serves (its id hidden like everywhere else) and why it
+ * cannot be used; buttons to open it, move the data elsewhere or switch to another folder.
+ */
+function DataFolder() {
+  const m = useSettingsMessages();
+  const vault = useStore((s) => s.vault);
+  const showAccountId = useStore((s) => s.settings.appearance.showAccountId);
+  const showToast = useStore((s) => s.showToast);
+  const [busy, setBusy] = useState(false);
+
+  const change = (how: 'open' | 'move') => {
+    if (busy) return;
+    setBusy(true);
+    window.tape
+      .setVaultFolder(how)
+      .then(
+        (next) => next && showToast(m.vaultChanged),
+        (err: unknown) => showToast(errorText(err), 'error'),
+      )
+      .finally(() => setBusy(false));
+  };
+  const reveal = () => window.tape.revealVaultFolder().catch((err: unknown) => showToast(errorText(err), 'error'));
+
+  const problem = vault.status === 'unavailable' ? m.vaultUnavailable : vault.status === 'newer' ? m.vaultNewer : null;
+  const account = vault.account ? m.vaultAccount(showAccountId ? vault.account : '—') : m.vaultNoAccount;
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <SubHeader title={m.vaultTitle} desc={m.vaultDesc} />
+      <div style={{ padding: '4px 0 14px', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+          <div className="ellipsis" title={vault.path ?? undefined} style={{ font: '13px/1.3 var(--num)' }}>
+            {vault.path}
+          </div>
+          <div style={{ fontSize: 12, color: problem ? 'var(--r)' : 'var(--dm)' }}>{problem ?? account}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', opacity: busy ? 0.5 : 1 }}>
+          {vault.status === 'ok' && <RowButton onClick={reveal}>{m.vaultReveal}</RowButton>}
+          {vault.status === 'ok' && (
+            <RowButton onClick={() => change('move')} title={m.vaultMoveTip}>
+              {m.vaultMove}
+            </RowButton>
+          )}
+          <RowButton onClick={() => change('open')} title={m.vaultSwitchTip}>
+            {m.vaultSwitch}
+          </RowButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -180,10 +235,11 @@ function CustomDuration({ minutes, disabled }: { minutes: number; disabled: bool
 }
 
 /** The design's outlined row button (Change). */
-function RowButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function RowButton({ onClick, title, children }: { onClick: () => void; title?: string; children: React.ReactNode }) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
       className="hover-p2"
       style={{ padding: '7px 14px', border: 'none', background: 'transparent', fontSize: 13, lineHeight: 'normal', cursor: 'pointer', boxShadow: 'inset 0 0 0 1px var(--ln)', whiteSpace: 'nowrap' }}

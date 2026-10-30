@@ -1410,6 +1410,29 @@ export interface AppSnapshot {
   afterReset: boolean;
   /** The last market data check and whether one runs now. */
   marketDataCheck: MarketDataCheckState;
+  /** The data folder and the account whose data it serves now (updates: `vault` events). */
+  vault: VaultState;
+}
+
+/**
+ * The data folder (main/vault.ts): watchlists, price alerts and notifications, one folder per IB
+ * account. Only the account named here is read and written. Tape cannot be used without a usable
+ * folder: the renderer covers the app with VaultSetup until it is.
+ */
+export interface VaultState {
+  /** The folder the user chose; null before the first launch's choice. */
+  path: string | null;
+  /**
+   * 'unset': none chosen yet; 'unavailable': the chosen folder is not there (moved, deleted, an
+   * unplugged drive), also when it goes away while Tape runs; 'newer': written by a later version
+   * of Tape. Nothing is read or written unless 'ok'.
+   */
+  status: 'ok' | 'unset' | 'unavailable' | 'newer';
+  /**
+   * The account whose data is shown: the connected login's, else the last one connected on this
+   * computer; null before the first. Watchlists and alerts cannot be changed without one.
+   */
+  account: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -46,9 +46,10 @@ export const COVERAGE_KV_NS = 'coverage';
 /**
  * kv namespaces of cached market data, deleted by clearMarketData: coverage and head timestamps,
  * contract details (market/contracts.ts → CONTRACT_NS), option chain parameters
- * (market/options.ts → SECDEF_NS). memory.ts keeps the same list.
+ * (market/options.ts → SECDEF_NS), dividend summaries (market/quotes.ts → DIVIDENDS_NS). memory.ts
+ * keeps the same list.
  */
-export const MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef'];
+export const MARKET_DATA_NS: readonly string[] = [COVERAGE_KV_NS, 'contract', 'secdef', 'dividends'];
 /** Namespace for the database's own bookkeeping (exempt from the TTL). */
 const META_NS = '__tape';
 const DAY_MS = 86_400_000;

@@ -47,6 +47,9 @@ function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin')
   const player = { play: (file: string) => void played.push(file) };
   /** The connected login's accounts (ConnectionState.accounts). */
   const accounts = ['DU1'];
+  /** The account the data folder serves (VaultState.account). */
+  const vault = { account: 'DU1' as string | null };
+  const elsewhere: Array<{ account: string; item: AppNotification }> = [];
   const ctx = {
     ib: { getState: () => ({ accounts }) },
     lock: { isLocked: () => lock.locked },
@@ -58,6 +61,8 @@ function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin')
       getSettings: () => settings,
       getNotifications: () => list,
       setNotifications: (l: AppNotification[]) => void (list = l),
+      getVault: () => ({ path: '/vault', status: 'ok', account: vault.account }),
+      addNotificationFor: (account: string, item: AppNotification) => void elsewhere.push({ account, item }),
     },
   } as unknown as MainContext;
   return {
@@ -69,6 +74,8 @@ function setup(patch: (s: Settings) => Settings = (s) => s, platform = 'darwin')
     setSettings: (s: Settings) => void (settings = s),
     lock,
     accounts,
+    vault,
+    elsewhere,
   };
 }
 
@@ -190,17 +197,54 @@ describe('Notifier', () => {
     expect(t.list().find((x) => x.id === n.id)?.read).toBe(true);
   });
 
-  it('clicking a fill or order of an account no longer connected opens its instrument, not the lists', () => {
+  it('clicking a fill opens Portfolio › Trades, an order Portfolio › Orders', () => {
     const t = setup();
     t.notifier.notify({ kind: 'fill', title: text('Filled'), body: text('100 AAPL'), contract: aapl, account: 'DU1' });
     t.notifier.notify({ kind: 'order', title: text('Submitted'), body: text('Buy 100 AAPL'), contract: aapl, account: 'DU1' });
     os.shown[0].emitter.emit('click');
     expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'trades' });
-    // Tape moved to the live account: the paper order is not in Portfolio › Orders.
-    t.accounts.splice(0, 1, 'U18630011');
-    t.events.length = 0;
     os.shown[1].emitter.emit('click');
-    expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'chart' });
+    expect(t.events).toContainEqual({ type: 'openContract', contract: aapl, view: 'orders' });
+  });
+
+  it('a notice owed to an earlier login goes to that account’s list only: not shown, not announced', () => {
+    const t = setup();
+    // Tape moved to the live account; the paper session's rejection arrives late.
+    t.accounts.splice(0, 1, 'U18630011');
+    t.vault.account = 'U18630011';
+    t.events.length = 0;
+    const n = t.notifier.notify({ kind: 'order', title: text('Rejected'), body: text('Buy 100 AAPL'), contract: aapl, account: 'DU1', critical: true });
+    expect(t.elsewhere).toEqual([{ account: 'DU1', item: n }]);
+    expect(t.list()).toEqual([]);
+    expect(t.events).toEqual([]);
+    expect(os.shown).toHaveLength(0);
+    // A sub-account of the connected login is the shown account's.
+    t.accounts.push('U2');
+    t.notifier.notify({ kind: 'fill', title: text('Filled'), body: text('100 AAPL'), account: 'U2' });
+    expect(t.list()).toHaveLength(1);
+    expect(os.shown).toHaveLength(1);
+  });
+
+  it('leaves the known account ids out of the OS text while they are hidden, IB’s own words too', () => {
+    const t = setup((s) => ({ ...s, appearance: { ...s.appearance, showAccountId: false } }));
+    t.notifier.notify({
+      kind: 'order',
+      title: text('Buy 100 AAPL rejected · PAPER DU1'),
+      body: { en: 'Order rejected - reason: account DU1 cannot trade DU10', zh: '' },
+      account: 'DU1',
+    });
+    expect(os.shown[0].options).toMatchObject({ title: 'Buy 100 AAPL rejected · PAPER', body: 'Order rejected - reason: account — cannot trade DU10' });
+    // The bell keeps the text; the renderer leaves the ids out when it draws it.
+    expect(t.list()[0].title.en).toBe('Buy 100 AAPL rejected · PAPER DU1');
+  });
+
+  it('an alarm is critical and shown whatever do-not-disturb and the system switch say', () => {
+    const t = setup((s) => ({ ...s, notifications: { ...s.notifications, ...DND(), system: { ...s.notifications.system, sys: false } } }));
+    const n = t.notifier.alarm(text('Data folder not available'), text('Gone'));
+    expect(n).toMatchObject({ kind: 'sys', critical: true });
+    expect(os.shown).toHaveLength(1);
+    // A system notice from the renderer never is.
+    expect(t.notifier.notify({ kind: 'sys', title: text('a'), body: text('b'), critical: true }).critical).toBeUndefined();
   });
 
   it('clicking while Tape is locked only shows the window: nothing behind the lock changes', () => {

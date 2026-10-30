@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { onCommand } from './state/bridge';
 import { confirmCancel } from './state/orderActions';
-import { isCovered, isDialogOpen, useStore } from './state/store';
+import { isCovered, isDialogOpen, needsVault, useStore } from './state/store';
 import type { AppCommand } from '@shared/ipc';
 import { useCommon } from './i18n/common';
 import { lastCancellableOrder, otherAppsOrders } from './lib/orders';
@@ -17,6 +17,7 @@ import { ErrorBoundary } from './ui/ErrorBoundary';
 import { GlobalTip } from './ui/GlobalTip';
 import { requestLock } from './features/lock/actions';
 import { LockScreen } from './features/lock/LockScreen';
+import { VaultSetup } from './features/vault/VaultSetup';
 import { PinDialogHost } from './features/lock/PinDialog';
 import { FloatingPanels } from './features/panels/FloatingPanels';
 
@@ -97,6 +98,7 @@ export function App() {
   const colorBlind = useStore((s) => s.settings.appearance.colorBlind);
   const lang = useStore((s) => s.settings.appearance.language);
   const covered = useStore(isCovered);
+  const setup = useStore(needsVault);
   const lockSeq = useStore((s) => s.lockSeq);
   const dark = useDark();
 
@@ -120,7 +122,7 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       const s = useStore.getState();
-      if (!mod || isCovered(s)) return;
+      if (!mod || isCovered(s) || needsVault(s)) return;
       const k = e.key.toLowerCase();
       let cmd: AppCommand | null = null;
       if (k === 'l' && !e.shiftKey && !e.altKey) cmd = 'set-pin-and-lock';
@@ -143,8 +145,8 @@ export function App() {
 
   return (
     <div style={{ height: '100%', background: 'var(--bg)', overflow: 'hidden', position: 'relative' }}>
-      {/* While the lock screen covers it, the app can be neither clicked nor tabbed into. */}
-      <div inert={covered} style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
+      {/* While the lock screen or the data folder screen covers it, the app can be neither clicked nor tabbed into. */}
+      <div inert={covered || setup} style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
       <ErrorBoundary name="Top bar">
         <TopBar />
       </ErrorBoundary>
@@ -171,6 +173,14 @@ export function App() {
       <PinDialogHost />
       <ToastHost />
       </div>
+      {setup && (
+        <ErrorBoundary name="Data folder" style={{ position: 'absolute', inset: 0, zIndex: 35 }}>
+          {/* Above the app's own stacked layers (panels, popovers), below the lock screen. */}
+          <div inert={covered} style={{ position: 'absolute', inset: 0, zIndex: 35 }}>
+            <VaultSetup />
+          </div>
+        </ErrorBoundary>
+      )}
       {covered && (
         <ErrorBoundary name="Lock screen" style={{ position: 'absolute', inset: 0, zIndex: 40 }}>
           <LockScreen key={lockSeq} />

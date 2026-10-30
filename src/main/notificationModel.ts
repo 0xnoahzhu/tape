@@ -64,18 +64,18 @@ export function shouldShowSystem(settings: Settings, kind: NotificationKind, for
 /**
  * Where a click on a notification about an instrument leads: an option risk alert to the option
  * chain, a fill to Portfolio › Trades, an order update to Portfolio › Orders (a cancelled or
- * rejected order, `orderDone`, is not listed there: the chart), anything else to the chart. A fill
- * or order notice of an account the connected login does not manage (`otherAccount`: an earlier
- * session's, paper or live) goes to the chart too: Orders and Trades list the connected login's.
+ * rejected order, `orderDone`, is not listed there: the chart), anything else to the chart. Only
+ * the account the data folder serves has its notices shown (store.ts), so its orders and fills are
+ * the ones Orders and Trades list.
  */
-export function viewForKind(kind: NotificationKind, orderDone = false, otherAccount = false): NotificationView {
+export function viewForKind(kind: NotificationKind, orderDone = false): NotificationView {
   switch (kind) {
     case 'opt':
       return 'opt';
     case 'fill':
-      return otherAccount ? 'chart' : 'trades';
+      return 'trades';
     case 'order':
-      return orderDone || otherAccount ? 'chart' : 'orders';
+      return orderDone ? 'chart' : 'orders';
     default:
       return 'chart';
   }

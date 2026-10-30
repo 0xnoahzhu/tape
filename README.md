@@ -462,6 +462,7 @@ builds).
 | `TAPE_NO_CONNECT=1` | Do not auto-connect on launch |
 | `TAPE_CLIENT_ID=<n>` | Override the API client id |
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
+| `TAPE_VAULT_DIR=<dir>` | Development builds only: the data folder of a profile that has none yet, instead of the first launch's choice (`scripts/capture.ts` sets it; ignored when packaged) |
 | `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` (absolute, or relative to the repository; `main`, `preload` and `renderer` all go there) |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
 | `TAPE_FAKE_BIOMETRICS=[touchId:\|windowsHello:]ok\|fail\|cancel\|unavailable` | Development builds only: a fake Touch ID / Windows Hello that never shows a system prompt (ignored when packaged) |
@@ -472,18 +473,42 @@ builds).
 
 ## Data on disk
 
-Everything is stored locally in the user data folder (macOS `~/Library/Application Support/Tape`,
+### Data folder
+
+What you keep of each IB account lives in a **data folder you choose**. Tape asks for it on first launch
+and cannot be used without one: choose an empty folder to start a new one, or a Tape data folder made on
+another computer. Copy the folder to back it up, or keep it in a synced folder (iCloud Drive, Dropbox …) to
+use it on another computer; only one computer uses an IB login at a time, so Tape writes the files whole and
+never merges them. *Settings › Privacy & Security › Data folder* moves the data to another (empty) folder or
+switches to another data folder; the folder left behind is never deleted.
+
+| File | Contents |
+| --- | --- |
+| `tape-vault.json` | Marks the folder as a Tape data folder, with its format (a folder written by a newer Tape is not opened) |
+| `accounts/<account>/watchlists.json` | Watchlists and groups |
+| `accounts/<account>/alerts.json` | Alerts: rule, frequency, sessions, note and on / off. Price alerts are also written in the format Tape 0.12 reads, and alerts of a newer version are kept as written (not run here) |
+| `accounts/<account>/notifications.json` | The last 200 notifications |
+
+Every account's data is kept apart: Tape shows, watches and writes only the account of the connected login
+(after a disconnect, and at the next launch, the last one connected on this computer). Another account's
+watchlists, alerts and notifications never appear, and a notice still owed to an earlier login when the
+login changed goes to that account's list without being shown. Until an account has been connected there is
+nothing to keep watchlists and alerts under: they cannot be changed. If the folder goes away while Tape runs
+(moved, deleted, its drive disconnected), Tape raises a critical notification, covers the app until the
+folder is back or another one is chosen, saves nothing meanwhile, and never makes the folder again where it was.
+
+### This computer
+
+The rest is stored in the user data folder (macOS `~/Library/Application Support/Tape`,
 Windows `%APPDATA%\Tape`, Linux `~/.config/Tape`):
 
 | File | Contents |
 | --- | --- |
 | `settings.json` | Settings (validated on load; unknown keys are dropped) |
-| `watchlists.json` | Watchlists and groups |
-| `alerts.json` | Alerts: rule, frequency, sessions, note and on / off. Price alerts are also written in the format Tape 0.12 reads, and alerts of a newer version are kept as written (not run here) |
-| `notifications.json` | The last 200 notifications |
+| `vault.json` | Where the data folder is, and the account it served last |
 | `window.json` | Window position and size |
 | `lock.json` | The lock PIN as a salted scrypt hash and the count of wrong PINs (mode 0600; never the PIN itself) |
-| `tape.db` | SQLite database (with `-wal` / `-shm` files) caching market data from IB: bars, contract details and option chain parameters; seconds bars expire after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days. Tape keeps no trade or account history of its own (older versions kept net liquidation samples and an executions journal here; they are dropped on upgrade) |
+| `tape.db` | SQLite database (with `-wal` / `-shm` files) caching data from IB: bars, contract details, option chain parameters, dividend summaries and each account's last market data check; seconds bars expire after 6 days, minute bars after 30, 30-minute and hour bars after 400, other entries after 180 days. Tape keeps no trade or account history of its own (older versions kept net liquidation samples and an executions journal here; they are dropped on upgrade) |
 
 JSON files are written atomically. A file that cannot be read is kept as `<name>.corrupt-<timestamp>.json`
 and the defaults are used instead; an unreadable `tape.db` is moved aside as `tape.db.corrupt-<timestamp>`
@@ -604,14 +629,15 @@ everything a user would do (orders, settings, watchlists, alerts, logs) until th
   keep working on IB's servers and alerts keep firing.
 - **What it does not protect**: IB Gateway / TWS stays logged in and accepts any local API client, so anyone
   at the computer can still use IBKR through another program, and the files in the user data folder are
-  readable by your user account. *Forgot PIN?* needs no PIN either: anyone at the computer can reset Tape
-  (losing its local data) and connect it to the running IB Gateway again. Use the lock as a privacy screen;
+  and the data folder are readable by your user account. *Forgot PIN?* needs no PIN either: anyone at the
+  computer can reset Tape, choose the data folder again and connect it to the running IB Gateway. Use the lock as a privacy screen;
   to prevent trading, lock the computer itself or log out of IB Gateway. *Settings › Privacy & Security* and
   the *Reset Tape* dialog say so too.
-- **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes all of
-  Tape's local data: settings, watchlists, alerts, notifications, API logs, the PIN, the database
-  (market data caches) and the window position; only the language and the theme are kept. Tape then
-  restarts like a fresh install, on *Settings › Connection*, without connecting. Your IBKR account,
+- **Forgot PIN?** The PIN cannot be recovered. *Reset Tape* on the lock screen (type RESET / 重置) deletes
+  Tape's files on this computer: settings, API logs, the PIN, the database (market data caches) and the
+  window position; only the language and the theme are kept. The data folder (watchlists, alerts,
+  notifications) is not deleted, since it may be synced to other computers: Tape forgets it and asks for a
+  folder again. Tape then restarts like a fresh install, on *Settings › Connection*, without connecting. Your IBKR account,
   positions and orders on IB's servers are not affected.
 - **Touch ID** (macOS) needs a Mac or Magic Keyboard with Touch ID and an enrolled fingerprint; it is not
   available while the lid is closed without a Touch ID keyboard. The system sheet may also offer your Mac

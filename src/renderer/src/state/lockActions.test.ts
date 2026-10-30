@@ -153,6 +153,7 @@ describe('lock state in the renderer', () => {
       lock: state({ locked: true }),
       afterReset: false,
       marketDataCheck: s0.marketDataCheck,
+      vault: s0.vault,
     };
     let emit: (e: TapeEvent) => void = () => undefined;
     vi.stubGlobal('window', {

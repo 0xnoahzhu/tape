@@ -68,10 +68,15 @@ const m = createMessages({
   en: {
     resetIncompleteTitle: 'Reset incomplete',
     resetIncompleteBody: (names: string) => `These files of Tape could not be deleted: ${names}. You can delete them yourself.`,
+    vaultGoneTitle: 'Data folder not available',
+    vaultGoneBody: (path: string) =>
+      `${path} is gone (moved, deleted, or its drive was disconnected). Tape cannot be used until it is back or another folder is chosen; nothing is saved meanwhile.`,
   },
   zh: {
     resetIncompleteTitle: '重置未完成',
     resetIncompleteBody: (names: string) => `以下 Tape 文件未能删除：${names}。可以手动删除。`,
+    vaultGoneTitle: '数据目录不可用',
+    vaultGoneBody: (path: string) => `${path} 已不存在（被移动、删除，或所在的硬盘已断开）。在它恢复或选择其他文件夹之前，Tape 无法使用，期间不会保存任何数据。`,
   },
 });
 
@@ -85,6 +90,9 @@ const ctx = {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(EVENT_CHANNEL, event);
     }
+    // The data folder serves the login's account from the moment the connection names it, before
+    // the services hear of the new session (store.ts, onVaultChanged below).
+    if (event.type === 'connection' && event.state.account) ctx.store.setAccount(event.state.account);
   },
   getMainWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
   showMainWindow() {
@@ -129,6 +137,23 @@ const settingsGuard = createSettingsGuard({ store: ctx.store, lock: ctx.lock });
 
 // Appearance subscribes first (in its factory), so the theme is applied before this broadcast.
 ctx.store.onSettingsChanged((settings) => ctx.emit({ type: 'settings', settings, dark: ctx.appearance.isDark() }));
+// Another account or data folder: its lists replace the shown ones (the alerts service sends its own).
+// The folder in use going away is an alarm: the renderer covers the app until it is back.
+let vaultStatus = ctx.store.getVault().status;
+/** The launch's auto-connect waits for a usable data folder (the first launch's choice, a drive back). */
+let connectWaiting = false;
+ctx.store.onVaultChanged((vault) => {
+  const wasOk = vaultStatus === 'ok';
+  vaultStatus = vault.status;
+  ctx.emit({ type: 'vault', vault });
+  ctx.emit({ type: 'watchlists', watchlists: ctx.store.getWatchlists() });
+  ctx.emit({ type: 'notifications', notifications: ctx.store.getNotifications() });
+  if (wasOk && vault.status === 'unavailable') {
+    const path = vault.path ?? '';
+    ctx.notifier.alarm(m.both((t) => t.vaultGoneTitle), m.both((t) => t.vaultGoneBody(path)));
+  }
+  if (connectWaiting && vault.status === 'ok') autoConnect();
+});
 // Windows: the caption buttons keep the lock screen's background until its unlock animation has
 // played (lock/LockScreen: at most ~1.1 s after main reports unlocked); locking switches at once.
 const UNLOCK_ANIMATION_MS = 1100;
@@ -186,6 +211,7 @@ function snapshot(): AppSnapshot {
     lock: ctx.lock.getState(),
     afterReset: takeAfterReset(),
     marketDataCheck: ctx.marketCheck.getState(),
+    vault: ctx.store.getVault(),
   };
 }
 
@@ -221,8 +247,12 @@ const handlers: TapeHandlers = {
   refreshOrders: () => ctx.orders.refreshOrders(),
   refreshExecutions: () => ctx.orders.refreshExecutions(),
   saveWatchlists: async (lists) => {
-    ctx.store.setWatchlists(lists);
-    ctx.emit({ type: 'watchlists', watchlists: ctx.store.getWatchlists() });
+    try {
+      ctx.store.setWatchlists(lists);
+    } finally {
+      // Refused (no account): the renderer's optimistic copy goes back to what is stored.
+      ctx.emit({ type: 'watchlists', watchlists: ctx.store.getWatchlists() });
+    }
   },
   upsertPriceAlert: async (alert) => ctx.alerts.upsert(alert),
   setPriceAlertsActive: async (ids, active) => ctx.alerts.setActive(ids, active),
@@ -254,6 +284,21 @@ const handlers: TapeHandlers = {
     return res.filePath;
   },
   revealLogFile: async () => shell.showItemInFolder(ctx.apiLog.filePath()),
+  setVaultFolder: async (how) => {
+    if (how !== 'open' && how !== 'move') throw new Error('Invalid action');
+    const win = ctx.getMainWindow();
+    const options = { ...(ctx.store.getVault().path ? { defaultPath: ctx.store.getVault().path! } : {}), properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> };
+    const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+    if (res.canceled || !res.filePaths[0]) return null;
+    // Locking cannot close the native dialog (see exportApiLog).
+    if (ctx.lock.isLocked()) throw new Error(LOCKED_MESSAGE);
+    return ctx.store.setVaultDir(res.filePaths[0], how);
+  },
+  recheckVaultFolder: async () => ctx.store.recheckVault(),
+  revealVaultFolder: async () => {
+    const path = ctx.store.getVault().path;
+    if (path) await shell.openPath(path);
+  },
   openExternal: async (url) => {
     if (/^https:\/\//.test(url)) await shell.openExternal(url);
   },
@@ -270,9 +315,11 @@ const handlers: TapeHandlers = {
   resetApp,
 };
 
-// While locked, only the methods LOCK_POLICY allows reach their handler (ipcDispatch.ts).
+// While locked, only the methods LOCK_POLICY allows reach their handler (ipcDispatch.ts); without a
+// usable data folder, neither do the other ones it denies, but choosing a folder.
+const VAULT_METHODS: ReadonlySet<string> = new Set(['setVaultFolder', 'recheckVaultFolder', 'revealVaultFolder']);
 for (const method of INVOKE_METHODS) {
-  const dispatch = createDispatch(method, handlers, () => ctx.lock.isLocked());
+  const dispatch = createDispatch(method, handlers, () => ctx.lock.isLocked(), VAULT_METHODS.has(method) ? undefined : () => ctx.store.vaultProblem());
   ipcMain.handle(invokeChannel(method), (event, ...args: unknown[]) => dispatch(event.sender, args));
 }
 
@@ -346,6 +393,18 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+/**
+ * Connects at launch when the settings say so, once there is a usable data folder (a first launch
+ * waits for the choice, connectWaiting). After a reset Tape starts disconnected (the user reviews Settings ›
+ * Connection first).
+ */
+function autoConnect(): void {
+  connectWaiting = false;
+  if (resetMarker || !ctx.store.getSettings().connection.autoConnect || process.env.TAPE_NO_CONNECT === '1') return;
+  if (ctx.store.getVault().status !== 'ok') return void (connectWaiting = true);
+  ctx.ib.connect().catch(() => undefined);
+}
+
 app.on('second-instance', () => ctx.showMainWindow());
 
 // A failure in the main process must not leave a packaged app running without a window.
@@ -367,10 +426,7 @@ app.whenReady().then(async () => {
   }
   installMenu(ctx);
   createWindow();
-  // After a reset Tape starts disconnected (the user reviews Settings › Connection first).
-  if (!resetMarker && ctx.store.getSettings().connection.autoConnect && process.env.TAPE_NO_CONNECT !== '1') {
-    ctx.ib.connect().catch(() => undefined);
-  }
+  autoConnect();
   ctx.lock.startAutoLock();
   // Time asleep counts as idle; Touch ID availability changes with the lid and keyboard. Checked
   // only when the lock screen may offer it (Windows Hello's check starts a PowerShell helper);

@@ -12,7 +12,8 @@
 //    leaves the marker, so the next launch finishes the job.
 //
 // Only Tape's own files are deleted, never the whole folder: Chromium keeps its own files and the
-// single-instance lock there.
+// single-instance lock there. The data folder the user chose is never deleted (it may be synced to
+// other computers): Tape only forgets it, with vault.json, and asks for a folder again.
 
 import { join } from 'node:path';
 import { isResetConfirmation } from '@shared/lock';
@@ -40,8 +41,9 @@ export interface ResetFs {
   closeSync(fd: number): void;
 }
 
-// 'nav': nav.json of older versions (no longer read), still removed by a reset.
-const JSON_FILES = ['settings', 'watchlists', 'alerts', 'notifications', 'nav', 'window', 'lock'];
+// 'nav': nav.json of older versions (no longer read), still removed by a reset; so are the
+// watchlists, alerts and notifications of versions before the data folder.
+const JSON_FILES = ['settings', 'watchlists', 'alerts', 'notifications', 'nav', 'window', 'lock', 'vault'];
 
 /**
  * Tape's files in userData: the JSON documents, their corrupt backups and temporary files, the

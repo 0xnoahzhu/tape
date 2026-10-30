@@ -13,6 +13,7 @@ import { CONTRACT_NS } from '../market/contracts';
 import { COVERAGE_NS } from '../market/history';
 import { historySpec, seriesKey } from '../market/historyParams';
 import { SECDEF_NS } from '../market/options';
+import { DIVIDENDS_NS } from '../market/quotes';
 import { unpackBars } from './client';
 import { configure, migrate, SCHEMA_VERSION, schemaVersion } from './schema';
 import { MEMORY_MARKET_DATA_NS } from './memory';
@@ -480,7 +481,7 @@ describe('tape.db retention', () => {
 describe('conventions shared with the market services', () => {
   it('kv namespaces are the ones the services write', () => {
     expect(COVERAGE_KV_NS).toBe(COVERAGE_NS);
-    expect(MARKET_DATA_NS).toEqual([COVERAGE_NS, CONTRACT_NS, SECDEF_NS]);
+    expect(MARKET_DATA_NS).toEqual([COVERAGE_NS, CONTRACT_NS, SECDEF_NS, DIVIDENDS_NS]);
     expect(MEMORY_MARKET_DATA_NS).toEqual(MARKET_DATA_NS);
   });
 

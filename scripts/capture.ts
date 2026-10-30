@@ -43,6 +43,8 @@ const env: NodeJS.ProcessEnv = {
   TAPE_CAPTURE_DELAY: values.delay,
   TAPE_USER_DATA: resolve(values['user-data'] ?? join(dir, 'user-data')),
 };
+// The profile's data folder, so a capture never waits on the first launch's folder choice.
+env.TAPE_VAULT_DIR = join(env.TAPE_USER_DATA!, 'vault');
 delete env.VITE_DEV_SERVER_URL;
 if (steps) env.TAPE_CAPTURE_STEPS = steps;
 if (values.demo) env.TAPE_DEMO = '1';

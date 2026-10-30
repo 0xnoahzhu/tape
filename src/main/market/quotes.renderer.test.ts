@@ -78,6 +78,7 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
     lock: { locked: false, hasPin: false, biometrics: { available: false } } as unknown as AppSnapshot['lock'],
     afterReset: false,
     marketDataCheck: { running: false } as unknown as AppSnapshot['marketDataCheck'],
+    vault: { path: '/vault', status: 'ok', account: null },
   });
   const tape = {
     onEvent: (l: (e: TapeEvent) => void) => {

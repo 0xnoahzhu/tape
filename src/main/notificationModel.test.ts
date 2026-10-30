@@ -141,9 +141,5 @@ describe('shouldShowSystem', () => {
     expect(viewForKind('order', true)).toBe('chart');
     expect(viewForKind('price')).toBe('chart');
     expect(viewForKind('conn')).toBe('chart');
-    // A fill or order of an account the connected login does not manage is not in its lists.
-    expect(viewForKind('fill', false, true)).toBe('chart');
-    expect(viewForKind('order', false, true)).toBe('chart');
-    expect(viewForKind('opt', false, true)).toBe('opt');
   });
 });

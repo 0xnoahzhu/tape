@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Notification } from 'electron';
 import type { NewNotification } from '@shared/ipc';
 import { SOUND_CATEGORIES, type SoundCategory } from '@shared/notificationSounds';
+import { maskAccountIds } from '@shared/accountMask';
 import { createClock, resolveTimeTokens } from '@shared/timeFormat';
 import type { AppNotification, NotificationKind } from '@shared/types';
 import type { MainContext, Notifier } from './context';
@@ -105,6 +106,17 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     return item;
   }
 
+  /**
+   * The account of an earlier login a notice is about (one owed to that session, given after the
+   * switch: orders.ts → resetSession), or null: it is the shown account's. Such a notice goes to
+   * its own account's list only, never shown or announced under another account.
+   */
+  function earlierAccount(n: NewNotification): string | null {
+    if (!n.account) return null;
+    const shown = ctx.store.getVault().account;
+    return n.account !== shown && !ctx.ib.getState().accounts.includes(n.account) ? n.account : null;
+  }
+
   function markRead(ids: string[] | 'all'): void {
     const list = ctx.store.getNotifications();
     const next = markNotificationsRead(list, ids);
@@ -121,8 +133,11 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     const dark = ctx.appearance.isDark();
     const icon = platform === 'darwin' ? null : iconImage(dark, 'window');
     const locked = ctx.lock.isLocked();
-    const title = locked ? m(lang).locked[lockedTitle(item)] : resolveTimeTokens(item.title[lang], clock);
-    const body = locked ? m(lang).lockedBody : resolveTimeTokens(item.body[lang], clock);
+    // Account IDs hidden: the bell's rule (renderer notifications/model.ts → notificationText).
+    const ids = settings.appearance.showAccountId ? [] : [...ctx.ib.getState().accounts, ctx.store.getVault().account, item.account];
+    const text = (s: string) => maskAccountIds(resolveTimeTokens(s, clock), ids);
+    const title = locked ? m(lang).locked[lockedTitle(item)] : text(item.title[lang]);
+    const body = locked ? m(lang).lockedBody : text(item.body[lang]);
     const sound = notificationSound(settings, item.kind, platform);
     const file = soundFile(platform, sound);
     const os = new Notification({
@@ -140,9 +155,7 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
       // Behind the lock the click only shows the window (the OS text was generic): the notice stays
       // unread in the bell.
       if (!ctx.lock.isLocked()) markRead([item.id]);
-      // Orders and Trades list the connected login's accounts: another account's notice opens the chart.
-      const otherAccount = !!item.account && !ctx.ib.getState().accounts.includes(item.account);
-      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone, otherAccount) });
+      if (item.contract) showAndEmit(ctx, { type: 'openContract', contract: item.contract, view: viewForKind(item.kind, item.orderDone) });
       else ctx.showMainWindow();
     });
     os.on('close', release);
@@ -170,8 +183,20 @@ export function createNotifier(ctx: MainContext, platform: string = process.plat
     notify(raw) {
       const n = sanitizeNewNotification(raw);
       if (!n) throw new Error('Invalid notification');
+      const other = earlierAccount(n);
+      if (other) {
+        const item = createNotification(n, randomUUID(), Date.now());
+        ctx.store.addNotificationFor(other, item);
+        return item;
+      }
       const item = add(n);
       if (shouldShowSystem(ctx.store.getSettings(), item.kind, false, item.critical)) showSystem(item);
+      return item;
+    },
+    alarm(title, body) {
+      // Critical whatever the kind's rules (sanitizeNewNotification keeps 'sys' from the renderer from it).
+      const item = add({ kind: 'sys', title, body, critical: true });
+      if (shouldShowSystem(ctx.store.getSettings(), item.kind, true, true)) showSystem(item);
       return item;
     },
     markRead(ids) {

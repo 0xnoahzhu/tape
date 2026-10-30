@@ -20,6 +20,11 @@ export interface JsonFileOptions<T> {
   pretty?: boolean;
   delayMs?: number;
   onError?(message: string, err?: unknown): void;
+  /**
+   * Checked before each write: false drops the change instead of writing it (the data folder is
+   * gone, store.ts: writing would make its folders again where it was).
+   */
+  canWrite?(): boolean;
 }
 
 export interface JsonFile<T> {
@@ -79,6 +84,7 @@ export function openJsonFile<T>(path: string, opts: JsonFileOptions<T>): JsonFil
     timer = null;
     if (!dirty) return;
     dirty = false;
+    if (opts.canWrite && !opts.canWrite()) return report(`${path} not written: its folder is gone`);
     const data = JSON.stringify(value, null, opts.pretty ? 2 : undefined) + '\n';
     const tmp = `${path}.${process.pid}.tmp`;
     try {

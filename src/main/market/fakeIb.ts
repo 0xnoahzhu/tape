@@ -281,6 +281,9 @@ export function createFakeContext(ib: IbConnection, demo = false): FakeContext {
     store: {
       getPriceAlerts: () => stored.alerts,
       setPriceAlerts: (a: PriceAlert[]) => void (stored.alerts = a),
+      // The data folder serves the connected login's account (index.ts → setAccount).
+      getVault: () => ({ path: '/vault', status: 'ok' as const, account: ib.getState().account ?? null }),
+      onVaultChanged: () => () => undefined,
       getSettings: () => stored.settings,
       updateSettings: (patch: DeepPartial<Settings>) => (stored.settings = applySettingsPatch(stored.settings, patch)),
     },
