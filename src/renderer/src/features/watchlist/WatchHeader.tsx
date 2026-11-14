@@ -4,15 +4,16 @@
 // A click on a column's name sorts by it (model.ts → nextWatchSort). The columns after Symbol are
 // dragged sideways to move them among themselves (a press that moves more than DRAG_SLOP px drags,
 // a shorter one sorts; Escape undoes it); Symbol stays first. The strip on a column's right edge
-// sizes it, Symbol's too (the columns after it move along; the rightmost column, which takes any
-// room left, has none). A double-click on the strip gives the column its default width back. Both
-// follow the pointer on the window from press to release (followPointer), as the Positions table's
-// header does. In a narrow panel the columns give way from the right (model.ts → fitColumns).
+// sizes it, Symbol's too, against the rightmost column, which takes or gives the difference (it has
+// no strip: it takes the room left; model.ts → resizeColumn). A double-click on the strip gives the
+// column its default width back. Both follow the pointer on the window from press to release
+// (followPointer), as the Positions table's header does. When the panel is resized, the rightmost
+// column gives way first (model.ts → reconcileColumns).
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { useWatchlistMessages } from './messages';
-import { clampColWidth, COL_WIDTHS, dropIndex, mostWidth, moveColumn, nextWatchSort, SYMBOL_MIN_W, SYMBOL_W, type WatchCol, type WatchColumns, type WatchSortBy } from './model';
+import { COL_WIDTHS, dropIndex, moveColumn, nextWatchSort, resizeColumn, SYMBOL_W, type WatchCol, type WatchColumns, type WatchSortBy } from './model';
 import { useWatchlistView } from './viewState';
 
 /** A press moves this far (px) before it drags; less is a click. */
@@ -20,13 +21,10 @@ const DRAG_SLOP = 4;
 /** Width of the sizing strip on a column's right edge (px); it straddles the gap. */
 const GRIP = 8;
 
-/** A column's set width, Symbol's or another's, and the columns with it changed. */
+/** A column's width, Symbol's or another's. */
 const widthOf = (cols: WatchColumns, col: WatchCol | 'symbol') => (col === 'symbol' ? cols.symbol : cols.widths[col]);
-const withWidth = (cols: WatchColumns, col: WatchCol | 'symbol', w: number): WatchColumns =>
-  col === 'symbol' ? { ...cols, symbol: w } : { ...cols, widths: { ...cols.widths, [col]: w } };
 
-/** `room`: the width the row's columns have (GroupList → useRowRoom). */
-export function WatchHeader({ template, gap, pad, room }: { template: string; gap: number; pad: string; room: number }) {
+export function WatchHeader({ template, gap, pad }: { template: string; gap: number; pad: string }) {
   const m = useWatchlistMessages();
   const sort = useWatchlistView((s) => s.sort);
   const setSort = useWatchlistView((s) => s.setSort);
@@ -105,15 +103,14 @@ export function WatchHeader({ template, gap, pad, room }: { template: string; ga
     };
   };
 
-  /** A press on a column's right edge sizes it: wider as the edge goes right, up to what the row leaves it (model.ts → mostWidth). */
+  /** A press on a column's right edge sizes it: wider as the edge goes right, the rightmost column giving way (model.ts → resizeColumn). */
   const pressSize = (e: PointerEvent<HTMLElement>, col: WatchCol | 'symbol') => {
     if (e.button !== 0 || stop.current) return;
     e.stopPropagation();
     e.preventDefault();
     const x0 = e.clientX;
-    const w0 = widthOf(live.current, col);
-    const most = Math.max(w0, mostWidth(live.current, col, room, gap));
-    const widthAt = (x: number) => Math.min(clampColWidth(w0 + (x - x0), col === 'symbol' ? SYMBOL_MIN_W : undefined), most);
+    const start = live.current;
+    const w0 = widthOf(start, col);
     setSizing(true);
     const done = () => {
       stop.current = null;
@@ -121,10 +118,11 @@ export function WatchHeader({ template, gap, pad, room }: { template: string; ga
     };
     const unfollow = followPointer(
       e.pointerId,
-      (ev) => setColumns(withWidth(live.current, col, widthAt(ev.clientX)), false),
+      // From the columns as the press found them, so the rightmost one gives back what it took as the edge returns.
+      (ev) => setColumns(resizeColumn(start, col, w0 + (ev.clientX - x0)), false),
       (ev) => {
-        // Undone (Escape): the width it had.
-        setColumns(withWidth(live.current, col, ev ? widthAt(ev.clientX) : w0), true);
+        // Undone (Escape): the columns as they were.
+        setColumns(ev ? resizeColumn(start, col, w0 + (ev.clientX - x0)) : start, true);
         swallowClick();
         done();
       },
@@ -169,7 +167,7 @@ export function WatchHeader({ template, gap, pad, room }: { template: string; ga
       data-wl-size={col}
       title={m.resizeColumn}
       onPointerDown={(e) => pressSize(e, col)}
-      onDoubleClick={() => setColumns(withWidth(live.current, col, col === 'symbol' ? SYMBOL_W : COL_WIDTHS[col]), true)}
+      onDoubleClick={() => setColumns(resizeColumn(live.current, col, col === 'symbol' ? SYMBOL_W : COL_WIDTHS[col]), true)}
       style={grip}
     />
   );

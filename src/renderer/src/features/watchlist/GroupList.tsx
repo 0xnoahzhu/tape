@@ -27,7 +27,7 @@ import { edgeScroll } from '../portfolio/columnsState';
 import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { updateList } from './actions';
 import { useWatchlistMessages } from './messages';
-import { ALL_TAB, addItem, allDrop, columnsTemplate, dropIndex, fitColumns, groupHas, heldKeys, itemKey, moveItem, moveItemTo, sortRows, tabRows, type TabRow, type WatchCol } from './model';
+import { ALL_TAB, addItem, allDrop, columnsTemplate, dropIndex, reconcileColumns, groupHas, heldKeys, itemKey, moveItem, moveItemTo, sortRows, tabRows, type TabRow, type WatchCol } from './model';
 import { WatchHeader } from './WatchHeader';
 import { useWatchlistView } from './viewState';
 import { DEFAULT_GROUP_NAME } from './messages';
@@ -88,13 +88,16 @@ export function GroupList({
   const sort = useWatchlistView((s) => s.sort);
   const base = useMemo(() => tabRows(list, tab), [list, tab]);
   const columns = useWatchlistView((s) => s.columns);
-  // The row's width as drawn decides the columns' widths (model.ts → fitColumns: the right gives way first).
+  const setColumns = useWatchlistView((s) => s.setColumns);
+  // The columns follow the row's width as drawn (model.ts → reconcileColumns): a narrower panel takes
+  // from the rightmost column first, a wider one gives only to it. The fitted widths are kept.
   const headRef = useRef<HTMLDivElement>(null);
   const room = useRowRoom(headRef);
-  const template = useMemo(() => {
-    const fit = fitColumns(columns, room, COL_GAP);
-    return fit ? fit.map((w) => `${w}px`).join(' ') : columnsTemplate(columns);
-  }, [columns, room]);
+  useLayoutEffect(() => {
+    const next = reconcileColumns(columns, room, COL_GAP);
+    if (next !== columns) setColumns(next, true);
+  }, [columns, room, setColumns]);
+  const template = useMemo(() => columnsTemplate(columns), [columns]);
   // The sorted column's value of each row, read only while sorting by a number (so quotes do not re-render the list otherwise).
   const by = sort && sort.by !== 'symbol' ? sort.by : null;
   const values = useStore(useShallow((s) => (by ? base.map((r) => valueOf(by, s.quotes[itemKey(r.item)]) ?? NaN) : NO_VALUES)));
@@ -255,7 +258,7 @@ export function GroupList({
     <div role="tabpanel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* Over the rows' scroller, not in it, with the same room for its scrollbar (scrollGutter.ts), so the columns line up. */}
       <div ref={headRef} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, padding: `0 max(3px, ${lessGutter(8)}) 0 8px`, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-        <WatchHeader template={template} gap={COL_GAP} pad={ROW_PAD} room={room} />
+        <WatchHeader template={template} gap={COL_GAP} pad={ROW_PAD} />
       </div>
       {/* Adding rows makes the list scroll; the rows keep their width (scrollGutter.ts). */}
       <div
@@ -325,7 +328,8 @@ function useRowRoom(ref: RefObject<HTMLDivElement | null>): number {
     if (!el) return;
     const measure = () => {
       const cs = getComputedStyle(el);
-      setRoom(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - ROW_PAD_X);
+      // Whole pixels, so fitting the columns to it settles (model.ts → reconcileColumns).
+      setRoom(Math.floor(el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - ROW_PAD_X));
     };
     measure();
     const ro = new ResizeObserver(measure);

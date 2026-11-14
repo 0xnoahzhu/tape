@@ -185,36 +185,58 @@ export function columnsTemplate(cols: WatchColumns): string {
   return sets.map((w, i) => (i === sets.length - 1 ? `minmax(${mins[i]}px,1fr)` : `minmax(${mins[i]}px,${w}px)`)).join(' ');
 }
 
-/**
- * The columns' widths (Symbol first) in a row `room` px wide (gaps of `gap` px between them): each
- * at least the least it gives way to (SYMBOL_MIN_W, COL_FIT_W, or its set width when less); what is
- * left goes from left to right, each column up to its set width, and any room after that to the
- * rightmost column. So a narrowing panel takes from the right first (the last column's extra room,
- * then its own width, then the next column left's, Symbol's last), and a widening one gives back
- * from the left. Null before the row is measured.
- */
-export function fitColumns(cols: WatchColumns, room: number, gap: number): number[] | null {
-  if (!(room > 0)) return null;
-  const { sets, mins } = setAndLeast(cols);
-  let left = room - gap * (sets.length - 1) - mins.reduce((a, b) => a + b, 0);
-  const widths = mins.map((min, i) => {
-    const add = Math.max(0, Math.min(left, sets[i] - min));
-    left -= add;
-    return min + add;
-  });
-  widths[widths.length - 1] += Math.max(0, left);
-  return widths;
+/** The columns' widths from left to right, Symbol first, and the columns with them. */
+const widthsOf = (cols: WatchColumns): number[] => [cols.symbol, ...cols.order.map((c) => cols.widths[c])];
+function withWidths(cols: WatchColumns, ws: readonly number[]): WatchColumns {
+  const widths = { ...cols.widths };
+  cols.order.forEach((c, i) => (widths[c] = ws[i + 1]));
+  return { ...cols, symbol: ws[0], widths };
 }
 
 /**
- * The most a column (`col`, or Symbol) can be set to in a row `room` px wide: the room less the
- * gaps and the least the other columns give way to (at most COL_MAX_W).
+ * The columns fitted to a row `room` px wide (gaps of `gap` px between them); the widths are the
+ * columns' state, kept as they are fitted. Short of room, the rightmost column narrows first, down
+ * to the least it gives way to (COL_FIT_W, Symbol SYMBOL_MIN_W, or its width when less), then the
+ * next one left, Symbol last. With room to spare, only the rightmost column widens. So narrowing
+ * takes from the right, and widening again gives only to the rightmost column. `cols` itself when
+ * nothing changes (or the row is not measured yet).
  */
-export function mostWidth(cols: WatchColumns, col: WatchCol | 'symbol', room: number, gap: number): number {
+export function reconcileColumns(cols: WatchColumns, room: number, gap: number): WatchColumns {
+  if (!(room > 0)) return cols;
+  const ws = widthsOf(cols);
   const { mins } = setAndLeast(cols);
+  const total = ws.reduce((a, b) => a + b, 0) + gap * (ws.length - 1);
+  if (total === room) return cols;
+  if (total < room) {
+    ws[ws.length - 1] += room - total;
+  } else {
+    let short = total - room;
+    for (let i = ws.length - 1; i >= 0 && short > 0; i--) {
+      const take = Math.min(short, Math.max(0, ws[i] - mins[i]));
+      ws[i] -= take;
+      short -= take;
+    }
+  }
+  return withWidths(cols, ws);
+}
+
+/**
+ * Sets a column's width (`col`, or Symbol), the rightmost column giving or taking the difference so
+ * the row stays as wide: as wide as asked within COL_MIN_W..COL_MAX_W (Symbol SYMBOL_MIN_W..), and
+ * no wider than the rightmost column can give down to its least. The rightmost column itself is not
+ * sized this way: it takes the row's room left.
+ */
+export function resizeColumn(cols: WatchColumns, col: WatchCol | 'symbol', width: number): WatchColumns {
+  const ws = widthsOf(cols);
   const at = col === 'symbol' ? 0 : cols.order.indexOf(col) + 1;
-  const others = mins.reduce((a, b, i) => (i === at ? a : a + b), 0);
-  return Math.min(COL_MAX_W, Math.floor(room - gap * (mins.length - 1) - others));
+  const last = ws.length - 1;
+  if (at < 0 || at === last) return cols;
+  const lastMin = Math.min(COL_FIT_W[cols.order[last - 1]], ws[last]);
+  const w = Math.min(clampColWidth(width, col === 'symbol' ? SYMBOL_MIN_W : COL_MIN_W), ws[at] + ws[last] - lastMin);
+  if (w === ws[at]) return cols;
+  ws[last] += ws[at] - w;
+  ws[at] = w;
+  return withWidths(cols, ws);
 }
 
 /** Moves column `col` to `index` among the other columns after Symbol. */

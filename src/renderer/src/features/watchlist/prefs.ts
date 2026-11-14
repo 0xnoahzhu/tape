@@ -5,7 +5,8 @@ import { sanitizeColumns, WATCH_COLS, type WatchColumns, type WatchSort } from '
 
 const TAB_KEY = 'tape.watchlist.tab';
 const SORT_KEY = 'tape.watchlist.sort';
-const COLUMNS_KEY = 'tape.watchlist.columns';
+/** v2: Symbol has a width of its own and columns are sized from their right edge; widths start again from the defaults. */
+const COLUMNS_KEY = 'tape.watchlist.columns.v2';
 
 export function loadTab(): string | null {
   try {

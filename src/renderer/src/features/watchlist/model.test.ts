@@ -12,8 +12,8 @@ import {
   deleteGroup,
   dropIndex,
   fitTabs,
-  fitColumns,
-  mostWidth,
+  reconcileColumns,
+  resizeColumn,
   SYMBOL_MIN_W,
   COL_MAX_W,
   COL_MIN_W,
@@ -265,27 +265,36 @@ describe('columns', () => {
     expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,64px) minmax(52px,64px) minmax(44px,50px) minmax(52px,1fr)');
   });
 
-  it('gives room left to right up to the set widths, the rest to the rightmost column', () => {
-    // Set widths 64 | 64 / 50 / 54, least 44 | 52 / 44 / 52, gaps 6: all as set needs 232 + 18 = 250.
-    expect(fitColumns(DEFAULT_COLUMNS, 300, 6)).toEqual([64, 64, 50, 104]);
-    expect(fitColumns(DEFAULT_COLUMNS, 250, 6)).toEqual([64, 64, 50, 54]);
+  it('fits the row: short of room from the right, Symbol last; room to spare to the rightmost only', () => {
+    const ws = (c: typeof DEFAULT_COLUMNS) => [c.symbol, ...c.order.map((k) => c.widths[k])];
+    // Defaults 64 | 64 / 50 / 54 with 6 px gaps: 250 wide.
+    expect(reconcileColumns(DEFAULT_COLUMNS, 250, 6)).toBe(DEFAULT_COLUMNS);
+    expect(reconcileColumns(DEFAULT_COLUMNS, 0, 6)).toBe(DEFAULT_COLUMNS);
+    expect(ws(reconcileColumns(DEFAULT_COLUMNS, 300, 6))).toEqual([64, 64, 50, 104]);
+    // Narrowing: Chg % to its least (52), then Chg (44), then Last (52), then Symbol.
+    expect(ws(reconcileColumns(DEFAULT_COLUMNS, 248, 6))).toEqual([64, 64, 50, 52]);
+    expect(ws(reconcileColumns(DEFAULT_COLUMNS, 242, 6))).toEqual([64, 64, 44, 52]);
+    expect(ws(reconcileColumns(DEFAULT_COLUMNS, 230, 6))).toEqual([64, 52, 44, 52]);
+    expect(ws(reconcileColumns(DEFAULT_COLUMNS, 220, 6))).toEqual([54, 52, 44, 52]);
   });
 
-  it('narrows from the right: the last column first, Symbol last', () => {
-    expect(fitColumns(DEFAULT_COLUMNS, 248, 6)).toEqual([64, 64, 50, 52]);
-    expect(fitColumns(DEFAULT_COLUMNS, 242, 6)).toEqual([64, 64, 44, 52]);
-    expect(fitColumns(DEFAULT_COLUMNS, 230, 6)).toEqual([64, 52, 44, 52]);
-    expect(fitColumns(DEFAULT_COLUMNS, 220, 6)).toEqual([54, 52, 44, 52]);
-    // The order counts, not the column: Chg % first here, so Chg is the one at the right edge.
-    expect(fitColumns(moveColumn(DEFAULT_COLUMNS, 'chg', 2), 242, 6)).toEqual([64, 64, 52, 44]);
-    expect(fitColumns(DEFAULT_COLUMNS, 0, 6)).toBeNull();
+  it('widens only the rightmost column after narrowing: the narrowed ones stay as they were fitted', () => {
+    const ws = (c: typeof DEFAULT_COLUMNS) => [c.symbol, ...c.order.map((k) => c.widths[k])];
+    const narrow = reconcileColumns(DEFAULT_COLUMNS, 230, 6); // 64 | 52 / 44 / 52
+    expect(ws(reconcileColumns(narrow, 260, 6))).toEqual([64, 52, 44, 82]);
+    // A wide rightmost column gives its room back first when it narrows again.
+    expect(ws(reconcileColumns(reconcileColumns(narrow, 260, 6), 240, 6))).toEqual([64, 52, 44, 62]);
   });
 
-  it('caps a column at what the row leaves it beside the others at their least', () => {
-    // 250 - 18 gaps - (44 + 44 + 52) for the others.
-    expect(mostWidth(DEFAULT_COLUMNS, 'last', 250, 6)).toBe(92);
-    expect(mostWidth(DEFAULT_COLUMNS, 'symbol', 250, 6)).toBe(84);
-    expect(mostWidth(DEFAULT_COLUMNS, 'last', 999, 6)).toBe(COL_MAX_W);
+  it('sizes a column against the rightmost one, which takes or gives the difference', () => {
+    const ws = (c: typeof DEFAULT_COLUMNS) => [c.symbol, ...c.order.map((k) => c.widths[k])];
+    const wide = reconcileColumns(DEFAULT_COLUMNS, 300, 6); // 64 | 64 / 50 / 104
+    expect(ws(resizeColumn(wide, 'symbol', 84))).toEqual([84, 64, 50, 84]);
+    expect(ws(resizeColumn(wide, 'last', 40))).toEqual([64, 40, 50, 128]);
+    // No wider than the rightmost column can give, down to its least (52).
+    expect(ws(resizeColumn(wide, 'chg', 200))).toEqual([64, 64, 102, 52]);
+    // The rightmost column is not sized this way.
+    expect(resizeColumn(wide, 'pct', 60)).toBe(wide);
   });
 });
 
