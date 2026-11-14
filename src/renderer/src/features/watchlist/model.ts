@@ -5,7 +5,7 @@
 // TABS_LIST_ID), with "All" before them. A symbol may be in several tabs, once per tab; All shows
 // each symbol once. The ticker list (TICKER_LIST_ID) holds the top bar's indices.
 
-import { contractKey } from '@shared/contract';
+import { contractKey, contractLabel } from '@shared/contract';
 import { TABS_LIST_ID, TICKER_LIST_ID } from '@shared/defaults';
 import type { ContractRef, Lang, LocalizedName, SymbolMatch, WatchItem, WatchGroup, Watchlist } from '@shared/types';
 import { rankMatches } from '../search/listing';
@@ -128,6 +128,53 @@ export function fitTabs(tabs: readonly number[], room: number, moreWidth: number
   let n = 0;
   while (n < tabs.length && used + tabs[n] <= room) used += tabs[n++];
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Sorting the rows
+
+/** The rows' order: by symbol or by today's change, either way; null keeps the tab's own order. */
+export type WatchSort = { by: 'symbol' | 'change'; dir: 'asc' | 'desc' } | null;
+
+/**
+ * A click on a sort header: symbol A–Z, then Z–A; change biggest gain first, then biggest loss
+ * first; a third click goes back to the tab's own order. Another header starts over.
+ */
+export function nextWatchSort(cur: WatchSort, by: 'symbol' | 'change'): WatchSort {
+  const first = by === 'symbol' ? 'asc' : 'desc';
+  if (cur?.by !== by) return { by, dir: first };
+  return cur.dir === first ? { by, dir: first === 'asc' ? 'desc' : 'asc' } : null;
+}
+
+/**
+ * `rows` in `sort`'s order (stable: equal ones keep the tab's order). By symbol: the contract's
+ * label, ignoring case. By change: `changeOf` (today's change, %); rows without one come last
+ * either way.
+ */
+export function sortRows(rows: readonly TabRow[], sort: WatchSort, changeOf: (key: string) => number | undefined): TabRow[] {
+  if (!sort) return [...rows];
+  const sign = sort.dir === 'asc' ? 1 : -1;
+  const keyed = rows.map((r, i) => ({ r, i, label: contractLabel(r.item.contract), chg: sort.by === 'change' ? changeOf(itemKey(r.item)) : undefined }));
+  keyed.sort((a, b) => {
+    if (sort.by === 'symbol') return sign * a.label.localeCompare(b.label, 'en', { sensitivity: 'base', numeric: true }) || a.i - b.i;
+    const ha = a.chg != null && Number.isFinite(a.chg);
+    const hb = b.chg != null && Number.isFinite(b.chg);
+    if (ha !== hb) return ha ? -1 : 1;
+    return (ha ? sign * (a.chg! - b.chg!) : 0) || a.i - b.i;
+  });
+  return keyed.map((k) => k.r);
+}
+
+/**
+ * The order rows are drawn in while a re-sort is held back (the pointer over the list, or a
+ * second not yet over): the drawn keys that are still there keep their places, new ones come
+ * last in the wanted order.
+ */
+export function heldKeys(drawn: readonly string[], wanted: readonly string[]): string[] {
+  const live = new Set(wanted);
+  const kept = drawn.filter((k) => live.has(k));
+  const had = new Set(kept);
+  return [...kept, ...wanted.filter((k) => !had.has(k))];
 }
 
 /**

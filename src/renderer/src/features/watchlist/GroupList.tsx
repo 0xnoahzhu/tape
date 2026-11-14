@@ -1,13 +1,21 @@
-// Scrollable body of the watchlist: the rows of the tab shown (GroupTabs), one group's symbols or,
-// on All, every symbol once (model.ts → tabRows).
+// Body of the watchlist: a header row and, under it, the rows of the tab shown (GroupTabs), one
+// group's symbols or, on All, every symbol once (model.ts → tabRows). A row is one line: symbol (its
+// name on hover), last price and today's change, each in its column under the header.
+//
+// The header sorts the rows (model.ts → sortRows, nextWatchSort): a click on Symbol goes A–Z, Z–A,
+// then back to the tab's own order; on Chg % biggest gain first, biggest loss first, own order. The
+// sort is kept per device for every tab. Sorted by change, the rows re-sort at most once a second,
+// and not while the pointer is over them, so a row never moves away under a click (heldKeys).
 //
 // Rows are dragged (followPointer, as the tabs): a press that moves more than DRAG_SLOP px drags;
 // a shorter one is a click (picks the symbol). A row goes between the others (the accent line says
-// where; on All into the group of its neighbours, model.ts → allDrop), or onto a tab of the bar,
+// where; on All into the group of its neighbours, model.ts → allDrop; not while the rows are sorted,
+// when a place among them would mean nothing), or onto a tab of the bar,
 // which lights up: from a tab it moves there, from All it is added there too. Near the list's top
 // or bottom it scrolls; Escape undoes the drag, and the release's click is swallowed.
 
-import { memo, useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { contractKey, contractLabel } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
 import type { Lang, WatchItem, Watchlist } from '@shared/types';
@@ -19,7 +27,8 @@ import { edgeScroll } from '../portfolio/columnsState';
 import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { updateList } from './actions';
 import { useWatchlistMessages } from './messages';
-import { ALL_TAB, addItem, allDrop, dropIndex, groupHas, itemKey, moveItem, moveItemTo, tabRows, type TabRow } from './model';
+import { ALL_TAB, addItem, allDrop, dropIndex, groupHas, heldKeys, itemKey, moveItem, moveItemTo, nextWatchSort, sortRows, tabRows, type TabRow } from './model';
+import { useWatchlistView } from './viewState';
 import { DEFAULT_GROUP_NAME } from './messages';
 
 /** IB error "requires additional subscription"; delayed data, when enabled, follows it. */
@@ -30,6 +39,12 @@ const DRAG_SLOP = 4;
 /** Within this many px of the list's top or bottom a drag scrolls it, up to EDGE_SPEED px a frame. */
 const EDGE = 40;
 const EDGE_SPEED = 14;
+/** Sorted by change, the rows re-sort at most this often (ms). */
+const RESORT_MS = 1000;
+/** Columns of a row and of the header: symbol, last, change. */
+const ROW_COLS = 'minmax(0,1fr) 80px 64px';
+const ROW_PAD = '0 12px 0 16px';
+const NO_CHANGES: number[] = [];
 
 /** What is dragged: a row, by the group it is shown for and its key. */
 interface Dragged {
@@ -65,12 +80,30 @@ export function GroupList({
   const lang = useLang();
   const selectedKey = useStore((s) => contractKey(s.symbol));
   const rootRef = useRef<HTMLDivElement>(null);
-  const rows = tabRows(list, tab);
+  const sort = useWatchlistView((s) => s.sort);
+  const setSort = useWatchlistView((s) => s.setSort);
+  const base = useMemo(() => tabRows(list, tab), [list, tab]);
+  // Today's change of each row, read only while sorting by it (so quotes do not re-render the list otherwise).
+  const changes = useStore(useShallow((s) => (sort?.by === 'change' ? base.map((r) => changePct(s.quotes[itemKey(r.item)]) ?? NaN) : NO_CHANGES)));
+  const wanted = useMemo(() => {
+    const byKey = new Map(base.map((r, i) => [itemKey(r.item), changes[i]]));
+    return sortRows(base, sort, (k) => byKey.get(k));
+  }, [base, sort, changes]);
+  const [hold, setHold] = useState(false);
+  const order = useHeldOrder(
+    wanted.map((r) => itemKey(r.item)),
+    `${tab}|${sort?.by ?? ''}|${sort?.dir ?? ''}`,
+    hold,
+  );
+  const rows = useMemo(() => {
+    const byKey = new Map(wanted.map((r) => [itemKey(r.item), r]));
+    return order.flatMap((k) => byKey.get(k) ?? []);
+  }, [order, wanted]);
 
   const [dragged, setDragged] = useState<Dragged | null>(null);
   const [drop, setDrop] = useState<Drop | null>(null);
-  const live = useRef({ list, tab });
-  live.current = { list, tab };
+  const live = useRef({ list, tab, sort });
+  live.current = { list, tab, sort };
   /** Stops following the press (unmount). */
   const stopDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => stopDrag.current?.(), []);
@@ -101,7 +134,8 @@ export function GroupList({
         });
         if (over) return over.dataset.wlGroup === live.current.tab ? null : { kind: 'tab', groupId: over.dataset.wlGroup! };
         const r = root.getBoundingClientRect();
-        if (y < r.top - 8) return null;
+        // Sorted, a place among the rows would mean nothing.
+        if (y < r.top - 8 || live.current.sort) return null;
         const top = r.top - root.scrollTop;
         const others = [...root.querySelectorAll<HTMLElement>('[data-wl-row]')].filter((el) => el.dataset.key !== what.key).map((el) => el.getBoundingClientRect());
         if (!others.length) return null;
@@ -204,58 +238,122 @@ export function GroupList({
   // An index opens too: its chart (and options), without the order ticket.
   const pick = useCallback((item: WatchItem) => useStore.getState().selectSymbol(item.contract, item.name), []);
 
+  const header = (by: 'symbol' | 'change' | null, label: string, title: string, right: boolean) => {
+    const on = by != null && sort?.by === by;
+    const arrow = on ? (sort!.dir === 'asc' ? '▲' : '▼') : '';
+    const style = { display: 'flex', alignItems: 'center', gap: 3, justifyContent: right ? 'flex-end' : 'flex-start', minWidth: 0, color: on ? 'var(--tx)' : undefined };
+    if (!by) return <div style={style}>{label}</div>;
+    return (
+      <button
+        type="button"
+        title={title}
+        aria-sort={on ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+        onClick={() => setSort(nextWatchSort(sort, by))}
+        className="hover-tx focus-ring"
+        style={{ ...style, border: 'none', background: 'transparent', padding: 0, font: 'inherit', cursor: 'pointer' }}
+      >
+        {right && <span style={{ fontSize: 8, color: 'var(--ac)' }}>{arrow}</span>}
+        <span>{label}</span>
+        {!right && <span style={{ fontSize: 8, color: 'var(--ac)' }}>{arrow}</span>}
+      </button>
+    );
+  };
+
   return (
-    // Adding rows makes the list scroll; the rows keep their width (scrollGutter.ts).
-    <div
-      ref={rootRef}
-      role="tabpanel"
-      style={{
-        position: 'relative',
-        flex: 1,
-        overflow: 'auto',
-        ...stableGutter,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--rowGap)',
-        padding: `4px max(3px, ${lessGutter(8)}) 8px 8px`,
-      }}
-    >
-      {rows.map((r: TabRow) => {
-        const k = itemKey(r.item);
-        return (
-          <WatchRow
-            key={k}
-            item={r.item}
-            groupId={r.groupId}
-            lang={lang}
-            selected={k === selectedKey}
-            dragged={dragged?.key === k}
-            onPick={pick}
-            onMenu={onRowMenu}
-            onPress={press}
-          />
-        );
-      })}
-      {!rows.length && (
-        <div style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, fontSize: 12, color: 'var(--dm)' }}>
-          <div>{tab === ALL_TAB ? m.emptyAll : m.emptyTab}</div>
-          <button type="button" onClick={onAdd} className="hover-tx focus-ring" style={{ border: 'none', background: 'transparent', padding: 0, fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>
-            + {m.addSymbol}
-          </button>
+    <div role="tabpanel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      {/* Over the rows' scroller, not in it, with the same room for its scrollbar (scrollGutter.ts), so the columns line up. */}
+      <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, padding: `0 max(3px, ${lessGutter(8)}) 0 8px`, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
+        <div style={{ height: 28, display: 'grid', gridTemplateColumns: ROW_COLS, gap: 8, alignItems: 'center', padding: ROW_PAD, fontSize: 11, color: 'var(--dm)' }}>
+          {header('symbol', m.colSymbol, m.sortSymbol, false)}
+          {header(null, m.colLast, '', true)}
+          {header('change', m.colChange, m.sortChange, true)}
         </div>
-      )}
-      {drop?.kind === 'row' && (
-        <div
-          aria-hidden
-          data-wl="drop"
-          style={{ position: 'absolute', left: 8, right: 4, top: drop.y - 1, height: 2, zIndex: 2, background: 'var(--ac)', pointerEvents: 'none' }}
-        />
-      )}
+      </div>
+      {/* Adding rows makes the list scroll; the rows keep their width (scrollGutter.ts). */}
+      <div
+        ref={rootRef}
+        onPointerEnter={() => setHold(true)}
+        onPointerLeave={() => setHold(false)}
+        style={{
+          position: 'relative',
+          flex: 1,
+          overflow: 'auto',
+          ...stableGutter,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--rowGap)',
+          padding: `4px max(3px, ${lessGutter(8)}) 8px 8px`,
+        }}
+      >
+        {rows.map((r: TabRow) => {
+          const k = itemKey(r.item);
+          return (
+            <WatchRow
+              key={k}
+              item={r.item}
+              groupId={r.groupId}
+              lang={lang}
+              selected={k === selectedKey}
+              dragged={dragged?.key === k}
+              onPick={pick}
+              onMenu={onRowMenu}
+              onPress={press}
+            />
+          );
+        })}
+        {!rows.length && (
+          <div style={{ padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10, fontSize: 12, color: 'var(--dm)' }}>
+            <div>{tab === ALL_TAB ? m.emptyAll : m.emptyTab}</div>
+            <button type="button" onClick={onAdd} className="hover-tx focus-ring" style={{ border: 'none', background: 'transparent', padding: 0, fontSize: 12, color: 'var(--ac)', cursor: 'pointer' }}>
+              + {m.addSymbol}
+            </button>
+          </div>
+        )}
+        {drop?.kind === 'row' && (
+          <div
+            aria-hidden
+            data-wl="drop"
+            style={{ position: 'absolute', left: 8, right: 4, top: drop.y - 1, height: 2, zIndex: 2, background: 'var(--ac)', pointerEvents: 'none' }}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-/** One instrument: symbol and name on the left, last price and change on the right. */
+/**
+ * The keys in the order the rows are drawn: a new tab or sort, or the pointer leaving the rows,
+ * takes the wanted order at once; while the pointer is over them (`hold`), and within RESORT_MS of
+ * the last re-sort, the drawn rows keep their places (model.ts → heldKeys), and a held-back re-sort
+ * runs when that second is over. As the Positions table does its rows.
+ */
+function useHeldOrder(wanted: readonly string[], sig: string, hold: boolean): readonly string[] {
+  const drawn = useRef<readonly string[]>(wanted);
+  const sortedAt = useRef(0);
+  const prev = useRef({ sig, hold });
+  const [woken, wake] = useReducer((n: number) => n + 1, 0);
+  const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
+
+  const resort = prev.current.sig !== sig || (prev.current.hold && !hold);
+  let next: readonly string[] = resort || (!hold && Date.now() - sortedAt.current >= RESORT_MS) ? wanted : heldKeys(drawn.current, wanted);
+  if (same(next, drawn.current)) next = drawn.current;
+
+  useLayoutEffect(() => {
+    if (next !== drawn.current && same(next, wanted)) sortedAt.current = Date.now();
+    drawn.current = next;
+    prev.current = { sig, hold };
+  });
+
+  const pending = !hold && !same(next, wanted);
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(wake, Math.max(0, sortedAt.current + RESORT_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [pending, woken]);
+  return next;
+}
+
+/** One instrument on one line: symbol (its name on hover), last price, today's change. */
 const WatchRow = memo(function WatchRow({
   item,
   groupId,
@@ -287,6 +385,8 @@ const WatchRow = memo(function WatchRow({
   // a bare "—". 10089 (no live subscription) is followed by delayed data when that is enabled.
   const noData = q?.error != null && q.error.code !== NO_LIVE_SUBSCRIPTION && last == null;
   const currency = item.contract.currency;
+  // The symbol's tooltip: the name, and where its quotes come from when not SMART ("Live · NASDAQ").
+  const symbolTip = [name, q?.source ? m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType) : ''].filter(Boolean).join('\n') || undefined;
   return (
     <div
       data-wl-row=""
@@ -296,48 +396,43 @@ const WatchRow = memo(function WatchRow({
       onContextMenu={(e) => onMenu(e, groupId, item)}
       onPointerDown={(e) => onPress(e, { groupId, key })}
       style={{
-        height: 52,
+        height: 36,
         userSelect: 'none',
         opacity: dragged ? 0.45 : 1,
         flexShrink: 0,
-        display: 'flex',
+        display: 'grid',
+        gridTemplateColumns: ROW_COLS,
+        gap: 8,
         alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 12px 0 24px',
+        padding: ROW_PAD,
         cursor: 'pointer',
         background: selected ? 'var(--sel)' : 'transparent',
         boxShadow: selected ? 'inset 2px 0 0 var(--ac)' : 'none',
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, flexShrink: 0 }}>{contractLabel(item.contract)}</div>
-          {/* Non-USD listings look like the US one otherwise ("IBM" on IBIS is quoted in EUR). */}
-          {currency && currency !== 'USD' && <div style={{ font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>{currency}</div>}
-          {/* Served by its primary exchange because SMART is delayed for this stock: "Live · NASDAQ". */}
-          {q?.source && (
-            <div
-              data-wl="via"
-              className="ellipsis"
-              title={m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType)}
-              style={{ fontSize: 11, lineHeight: 1, color: 'var(--dm)', minWidth: 0 }}
-            >
-              {m.via(q.source.exchange, q.marketDataType)}
-            </div>
-          )}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
+        <div className="ellipsis" title={symbolTip} style={{ fontWeight: 600, minWidth: 0 }}>
+          {contractLabel(item.contract)}
         </div>
-        <div className="ellipsis" title={name || undefined} style={{ fontSize: 12, color: 'var(--dm)' }}>
-          {name || ' '}
+        {/* Non-USD listings look like the US one otherwise ("IBM" on IBIS is quoted in EUR). */}
+        {currency && currency !== 'USD' && <div style={{ flexShrink: 0, font: '10.5px/1 var(--mono)', color: 'var(--dm)' }}>{currency}</div>}
+        {/* Served by its primary exchange because SMART is delayed for this stock: a dot, the details on hover. */}
+        {q?.source && (
+          <div data-wl="via" title={m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType)} style={{ flexShrink: 0, width: 5, height: 5, borderRadius: '50%', background: 'var(--dm)', alignSelf: 'center' }} />
+        )}
+      </div>
+      <div className="num ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined} style={{ textAlign: 'right' }}>
+        {px(last)}
+      </div>
+      {noData ? (
+        <div className="ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined} style={{ textAlign: 'right', fontSize: 12, color: 'var(--dm)' }}>
+          {m.noData}
         </div>
-      </div>
-      <div
-        className="num"
-        title={q?.error ? `${q.error.code} · ${q.error.message}` : q?.source ? m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType) : undefined}
-        style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', flexShrink: 0, paddingLeft: 8 }}
-      >
-        <div>{px(last)}</div>
-        {noData ? <div style={{ fontSize: 12, color: 'var(--dm)' }}>{m.noData}</div> : <div style={{ fontSize: 12, color: signColor(chg) }}>{pct(chg)}</div>}
-      </div>
+      ) : (
+        <div className="num" style={{ textAlign: 'right', fontSize: 12, color: signColor(chg) }}>
+          {pct(chg)}
+        </div>
+      )}
     </div>
   );
 });
