@@ -59,12 +59,21 @@ const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 // View window (pan / zoom)
 
 /**
- * Zoom limits in bars per screen. The widest zoom holds a range's bars (ranges.ts: about 1,000
- * one-hour bars of extended hours for 3M, all of a stock's months since 1980); the candles are
- * then a pixel wide, drawn as one path per kind as always.
+ * Bars per screen a range is fitted to (fitView) and the automatic zoom keeps to. The widest holds
+ * a range's bars (ranges.ts: about 1,000 one-hour bars of extended hours for 3M, all of a stock's
+ * months since 1980); the candles are then a pixel wide, drawn as one path per kind as always.
  */
 export const MIN_SPAN = 20;
 export const MAX_SPAN = 1200;
+
+/**
+ * The user's own zoom (wheel, pinch, keys, time axis) is all but free: in to a single candle across
+ * the screen, out over every loaded bar, or out to ZOOM_MAX slots when fewer are loaded (older pages
+ * load as the view nears the oldest bar, so zooming out keeps bringing in history). ZOOM_MAX only
+ * keeps the empty future slots' times (futureTimes) a bounded amount of work.
+ */
+export const ZOOM_MIN = 1;
+export const ZOOM_MAX = 10_000;
 
 /**
  * The view's right edge, anchored to a bar time: `f` bars after the start of the first bar at or
@@ -110,23 +119,24 @@ export function firstAtOrAfter(bars: readonly Bar[], time: number): number {
   return lo;
 }
 
-/** Zoom range for `n` loaded bars: out to all of them (at least MIN_BARS slots), at most MAX_SPAN. */
+/** Zoom range for `n` loaded bars: in to one bar, out to all of them (at least ZOOM_MAX slots). */
 export function spanLimits(n: number): { min: number; max: number } {
+  return { min: ZOOM_MIN, max: Math.max(ZOOM_MAX, n) };
+}
+
+/** Range of the automatic zoom and of a fitted range for `n` loaded bars: MIN_SPAN, out to all of them (at least MIN_BARS slots), at most MAX_SPAN. */
+function fitLimits(n: number): { min: number; max: number } {
   return { min: MIN_SPAN, max: Math.max(MIN_BARS, Math.min(MAX_SPAN, n)) };
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/**
- * Panned past the newest bar, the view shows empty future slots until this share of the screen
- * (at least FUTURE_KEEP_MIN bars, or the whole series) is left to the bars.
- */
-export const FUTURE_KEEP = 0.1;
-export const FUTURE_KEEP_MIN = 3;
+/** Panned past the newest bar, the view shows empty future slots until this many bars are left at the left edge. */
+export const FUTURE_KEEP = 1;
 
-/** Bars of `n` that stay in view however far the view is panned into the future. */
+/** Bars of `n` that stay in view however far the view is panned into the future (`span` bars per screen). */
 export function futureKeep(n: number, span: number): number {
-  return Math.min(n, Math.max(FUTURE_KEEP_MIN, Math.ceil(span * FUTURE_KEEP)));
+  return Math.min(n, FUTURE_KEEP, Math.ceil(span));
 }
 
 /**
@@ -156,7 +166,7 @@ export function anchorIndex(bars: readonly Bar[], a: ViewAnchor): number {
  */
 export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: number): ViewWindow {
   const n = bars.length;
-  const { min, max } = spanLimits(n);
+  const { min, max } = view.span == null ? fitLimits(n) : spanLimits(n);
   const span = clamp(view.span ?? autoSpan, min, max);
   const following = !view.end || !n;
   const end = clampEnd(following ? defaultEnd(span, n) + (view.ahead ?? 0) : anchorIndex(bars, view.end!), span, n);
@@ -165,11 +175,12 @@ export function resolveView(view: ChartView, bars: readonly Bar[], autoSpan: num
 
 /**
  * The view fitted to the bars from time `from` (null: all of them) to the newest: a range
- * (ranges.ts). resolveView keeps it within the zoom limits (at least MIN_SPAN bars).
+ * (ranges.ts), at least MIN_SPAN bars and at most MAX_SPAN.
  */
 export function fitView(bars: readonly Bar[], from: number | null): ChartView {
   const i = from == null ? 0 : firstAtOrAfter(bars, from);
-  return { span: Math.max(1, bars.length - i), end: null };
+  const { min, max } = fitLimits(bars.length);
+  return { span: clamp(bars.length - i, min, max), end: null };
 }
 
 /**
@@ -1419,12 +1430,13 @@ const everyYears =
 /** Clock steps (s) of second intervals and (min) of minute intervals; an interval uses those that are whole multiples of its bar and longer than it. */
 const SECOND_STEPS = [5, 10, 15, 30, 60, 90, 120, 180, 300, 360, 600, 900, 1800, 3600, 7200, 14_400, 21_600];
 const MINUTE_STEPS = [5, 15, 30, 60, 120, 240, 360];
-const CALENDAR_STEPS: TimeStep[] = [everyDay, everyWeek, everyMonths(1), everyMonths(3), everyYears(1)];
+/** Calendar steps of intraday intervals; the yearly ones keep a view zoomed out over years of minutes readable. */
+const CALENDAR_STEPS: TimeStep[] = [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), everyMonths(6), ...[1, 2, 5, 10].map(everyYears)];
 
 /**
  * Candidate steps of an intraday interval, finest first: clock steps that are whole multiples of
  * the bar (so ticks fall on bars: "09:31:30" for 45 s bars, never a bar inside a step), up to six
- * hours, then days, weeks, months, quarters and years. 2 to 4-hour bars on the UTC grid go by
+ * hours, then days, weeks, months, quarters, half years and years. 2 to 4-hour bars on the UTC grid go by
  * days and longer only.
  */
 function intradaySteps(barSec: number): TimeStep[] {
@@ -1446,8 +1458,8 @@ const CLOCK_STEP_COUNT: Record<Timeframe, number> = Object.fromEntries(
 /** Candidate steps per timeframe, finest first; the finest one whose labels stay timeTickGap apart is used. */
 const TIME_STEPS: Record<Timeframe, TimeStep[]> = {
   ...(Object.fromEntries(TIMEFRAMES.filter(isIntraday).map((tf) => [tf, intradaySteps(barSeconds(tf)!)])) as Record<Timeframe, TimeStep[]>),
-  '1D': [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
-  '1W': [everyMonths(1), everyMonths(2), everyMonths(3), ...[1, 2, 5, 10].map(everyYears)],
+  '1D': [everyDay, everyWeek, everyMonths(1), everyMonths(2), everyMonths(3), everyMonths(6), ...[1, 2, 5, 10, 20].map(everyYears)],
+  '1W': [everyMonths(1), everyMonths(2), everyMonths(3), everyMonths(6), ...[1, 2, 5, 10, 20].map(everyYears)],
   '1M': [everyMonths(3), everyMonths(6), ...[1, 2, 5, 10, 20].map(everyYears)],
   '1Q': [1, 2, 5, 10, 20, 50].map(everyYears),
   '1Y': [1, 2, 5, 10, 20, 50].map(everyYears),

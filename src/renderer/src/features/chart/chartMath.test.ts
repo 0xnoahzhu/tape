@@ -48,6 +48,8 @@ import {
   advanceLiveBars,
   withLiveBars,
   MIN_SPAN,
+  ZOOM_MAX,
+  ZOOM_MIN,
   movingAverages,
   nearOldest,
   NY_ZONE,
@@ -262,27 +264,32 @@ describe('view window', () => {
     expect(resolveView(LATEST_VIEW, bars, 60)).toEqual({ start: 940, span: 60, latest: true });
   });
 
-  it('limits the zoom to 20..1200 bars and to the loaded bars (at least 30 slots)', () => {
-    expect(spanLimits(5000)).toEqual({ min: MIN_SPAN, max: MAX_SPAN });
+  it('zooms from one bar out past the loaded bars, the automatic zoom within 20..1200 and the loaded bars', () => {
+    expect(spanLimits(100)).toEqual({ min: ZOOM_MIN, max: ZOOM_MAX });
+    expect(spanLimits(50_000)).toEqual({ min: 1, max: 50_000 });
+    expect(resolveView({ span: 0.2, end: null }, bars, 60).span).toBe(1);
+    expect(resolveView({ span: 5, end: null }, bars, 60).span).toBe(5);
+    // Zoomed out past the loaded bars, they sit at the left edge with empty slots after them.
+    expect(resolveView({ span: 5000, end: null }, bars, 60)).toEqual({ start: 0, span: 5000, latest: true });
+    expect(resolveView({ span: 50_000, end: null }, bars, 60).span).toBe(ZOOM_MAX);
+    // The automatic zoom keeps to the fitted limits.
+    expect(resolveView(LATEST_VIEW, bars, 5000).span).toBe(1000);
+    expect(resolveView(LATEST_VIEW, series(3000), 5000).span).toBe(MAX_SPAN);
     expect(MAX_SPAN).toBe(1200);
-    expect(spanLimits(100)).toEqual({ min: 20, max: 100 });
-    expect(spanLimits(10)).toEqual({ min: 20, max: 30 });
-    expect(resolveView({ span: 5, end: null }, bars, 60).span).toBe(20);
-    expect(resolveView({ span: 5000, end: null }, bars, 60).span).toBe(1000);
-    expect(resolveView({ span: 5000, end: null }, series(3000), 60).span).toBe(1200);
     expect(resolveView(LATEST_VIEW, series(45), 60)).toEqual({ start: 0, span: 45, latest: true });
     // A short series starts at the left edge: the empty slots are after its newest bar.
     expect(resolveView(LATEST_VIEW, series(10), 60)).toEqual({ start: 0, span: 30, latest: true });
     expect(resolveView(fitView(series(5), null), series(5), 60)).toEqual({ start: 0, span: MIN_SPAN, latest: true });
+    expect(fitView(series(5000), null).span).toBe(MAX_SPAN);
   });
 
   it('keeps a short series at the left edge when zoomed, and pans it into the future only', () => {
     const short = series(10);
     // Towards older bars it stays put: nothing comes before the first bar.
     expect(panView(LATEST_VIEW, short, 60, -5)).toEqual(LATEST_VIEW);
-    // Towards the future its bars move left until futureKeep (3) of them are left.
+    // Towards the future its bars move left until futureKeep (1) of them is left.
     expect(resolveView(panView(LATEST_VIEW, short, 60, 5), short, 60)).toEqual({ start: 5, span: 30, latest: true });
-    expect(resolveView(panView(LATEST_VIEW, short, 60, 50), short, 60)).toEqual({ start: 7, span: 30, latest: true });
+    expect(resolveView(panView(LATEST_VIEW, short, 60, 50), short, 60)).toEqual({ start: 9, span: 30, latest: true });
     expect(resolveView(zoomView(LATEST_VIEW, short, 60, 0.7, 0.5), short, 60)).toEqual({ start: 0, span: 21, latest: true });
     // Zoomed in below the bars it has, a series fills the screen and pans again.
     const some = series(25);
@@ -298,10 +305,12 @@ describe('view window', () => {
     expect(resolveView(panView(v, bars, 60, -10_000), bars, 60)).toMatchObject({ start: 0, latest: false });
     // Back to the newest bar: the view follows new bars again.
     expect(panView(v, bars, 60, 100)).toEqual(LATEST_VIEW);
-    // On past it: empty future slots, until futureKeep (6 of 60) bars are left in view.
-    expect(futureKeep(1000, 60)).toBe(6);
+    // On past it: empty future slots, until a single bar is left at the left edge.
+    expect(futureKeep(1000, 60)).toBe(1);
     expect(resolveView(panView(v, bars, 60, 110), bars, 60)).toEqual({ start: 950, span: 60, latest: true });
-    expect(resolveView(panView(v, bars, 60, 500), bars, 60)).toEqual({ start: 994, span: 60, latest: true });
+    expect(resolveView(panView(v, bars, 60, 500), bars, 60)).toEqual({ start: 999, span: 60, latest: true });
+    // So too zoomed in to a few bars per screen.
+    expect(resolveView(panView({ span: 3, end: null }, bars, 60, 50), bars, 60)).toEqual({ start: 999, span: 3, latest: true });
     expect(resolveView(panView(LATEST_VIEW, bars, 60, 10), bars, 60)).toEqual({ start: 950, span: 60, latest: true });
     // Fractions of a bar move the view smoothly.
     expect(resolveView(panView(v, bars, 60, 0.25), bars, 60).start).toBeCloseTo(840.25);
@@ -362,7 +371,7 @@ describe('view window', () => {
   });
 
   it('clamps zooming at the limits and the edges', () => {
-    const atMin = { span: 20, end: null };
+    const atMin = { span: 1, end: null };
     expect(zoomView(atMin, bars, 60, 0.5, 0.5)).toBe(atMin);
     // Zooming out at the oldest bar keeps it at the left edge.
     const oldest = panView(LATEST_VIEW, bars, 60, -10_000);
@@ -371,8 +380,10 @@ describe('view window', () => {
     expect(zoomView(LATEST_VIEW, bars, 60, 0.5, 1).end).toBeNull();
     expect(resolveView(zoomView(LATEST_VIEW, bars, 60, 0.5, 0.5), bars, 60)).toMatchObject({ span: 30, latest: false });
     expect(resolveView(zoomView(LATEST_VIEW, bars, 60, 2, 0.5), bars, 60)).toEqual({ start: 880, span: 120, latest: true });
-    // Not beyond the loaded bars.
-    expect(resolveView(zoomView(LATEST_VIEW, series(100), 60, 4, 0.5), series(100), 60)).toEqual({ start: 0, span: 100, latest: true });
+    // Beyond the loaded bars: they stay at the left edge (older pages then load in front).
+    expect(resolveView(zoomView(LATEST_VIEW, series(100), 60, 4, 0.5), series(100), 60)).toEqual({ start: 0, span: 240, latest: true });
+    // In to a single bar, no further.
+    expect(resolveView(zoomView(LATEST_VIEW, bars, 60, 0.001, 0.5), bars, 60).span).toBe(1);
   });
 
   it('keeps the view on the same bars when older bars are put in front', () => {
