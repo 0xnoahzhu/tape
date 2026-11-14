@@ -17,6 +17,22 @@ export function clampSplit(height: number, container: number, { min, minAbove }:
   return Math.round(Math.min(max, Math.max(min, height)));
 }
 
+/** A side pane's width limits. */
+export interface PaneLimits {
+  min: number;
+  max: number;
+}
+
+/**
+ * A side pane's width within its own limits and `room`, the most the page leaves it (its width less
+ * the other panes and the middle's minimum); short of room the pane keeps its minimum.
+ */
+export function clampPane(width: number, { min, max }: PaneLimits, room: number = Infinity): number {
+  const hi = Math.max(min, Math.min(max, room));
+  if (!Number.isFinite(width)) return min;
+  return Math.round(Math.min(hi, Math.max(min, width)));
+}
+
 /** A stored height, or `fallback` when storage is unavailable or holds something else. */
 export function loadSplit(key: string, fallback: number): number {
   try {

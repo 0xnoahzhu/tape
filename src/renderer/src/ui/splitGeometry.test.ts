@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clampSplit, loadFlag, loadSplit, saveFlag, saveSplit } from './splitGeometry';
+import { clampPane, clampSplit, loadFlag, loadSplit, saveFlag, saveSplit } from './splitGeometry';
 
 const limits = { min: 76, minAbove: 200 };
 
@@ -48,5 +48,20 @@ describe('persistence', () => {
     expect(loadSplit('h', 150)).toBe(150);
     expect(() => saveSplit('h', 200)).not.toThrow();
     expect(loadFlag('c')).toBe(false);
+  });
+});
+
+describe('clampPane', () => {
+  const limits = { min: 220, max: 520 };
+  it('keeps a side pane within its limits', () => {
+    expect(clampPane(300.4, limits)).toBe(300);
+    expect(clampPane(100, limits)).toBe(220);
+    expect(clampPane(900, limits)).toBe(520);
+    expect(clampPane(NaN, limits)).toBe(220);
+  });
+  it('gives way to the room the page leaves, never below its minimum', () => {
+    expect(clampPane(500, limits, 400)).toBe(400);
+    expect(clampPane(500, limits, 100)).toBe(220);
+    expect(clampPane(300, limits, 400)).toBe(300);
   });
 });
