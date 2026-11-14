@@ -179,13 +179,16 @@ describe('event chips', () => {
   const rows = [nvda, aapl, aaplCall, tslaCall, tslaPut];
   const targets = (by: GroupBy, list = rows) => chipTargets(groupRows(list.map((r) => ctx(r)), by), by, events);
 
-  it('puts an underlying’s chip on its group row, a lone row’s on the row', () => {
+  it('puts an underlying’s chip on its group row, a group of one row too', () => {
     const t = targets('underlying');
-    expect([...t.groups]).toEqual([
-      ['u:STK:AAPL', 'aapl'],
-      ['u:STK:TSLA', 'tsla'],
-    ]);
-    expect([...t.rows]).toEqual([[rowId(nvda), 'nvda']]);
+    expect(new Map(t.groups)).toEqual(
+      new Map([
+        ['u:STK:AAPL', 'aapl'],
+        ['u:STK:TSLA', 'tsla'],
+        ['u:STK:NVDA', 'nvda'],
+      ]),
+    );
+    expect(t.rows.size).toBe(0);
   });
 
   it('puts it on the stock row by sector and without grouping, else on each option row', () => {
@@ -201,8 +204,8 @@ describe('event chips', () => {
         ]),
       );
     }
-    // A lone option of an underlying with an event.
-    expect([...targets('underlying', [tslaCall]).rows]).toEqual([[rowId(tslaCall), 'tsla']]);
+    // A lone option of an underlying with an event: on its group row.
+    expect([...targets('underlying', [tslaCall]).groups]).toEqual([['u:STK:TSLA', 'tsla']]);
   });
 
   it('puts none without events', () => {

@@ -4,11 +4,10 @@
 // an option row's context menu also opens the option's own chart (it becomes the ticket's instrument).
 // Every cell is IB's own figure (columns.ts); Tape adds nothing up and derives nothing.
 //
-// Grouped by underlying (the default) or by sector, a group of two or more rows gets a group row
-// over them: a caret that collapses it (for the session), its name and count and its underlying's
+// Grouped by underlying (the default) or by sector, every group gets a group row over its rows, a
+// group of one row too: a caret that collapses it (for the session), its name and count and its underlying's
 // next corporate event (a chip); its other cells stay empty (no sums: IB sends no group figures). Its
-// rows are indented under it. A group of one row draws only that row, which stands for its group (it
-// carries the chip), as every row does without grouping. An option row's second line reads IB's
+// rows are indented under it. Without grouping every row stands for itself (and carries its chip). An option row's second line reads IB's
 // contract: "Call · 10/16" (the right and the expiry); other rows' read their type and sector.
 // Under the rows a quiet line says why earnings dates are missing, while they are.
 //
@@ -431,8 +430,8 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   for (const og of order) {
     const g = byKey.get(og.key);
     if (!g) continue;
-    // Only a group of two or more rows draws a group row.
-    const headed = groupBy !== 'none' && g.ctxs.length > 1;
+    // Grouped, every group draws its group row, one of a single row too.
+    const headed = groupBy !== 'none';
     const closed = headed && !!collapsed[g.key];
     if (headed) {
       body.push(

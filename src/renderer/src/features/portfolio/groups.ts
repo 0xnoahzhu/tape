@@ -3,9 +3,9 @@
 // row carries an underlying's next-event chip. Groups are structure only: a group row shows its
 // name, its count and its chip, never a sum (IB sends no group figures, and Tape adds none up).
 //
-// A group of one row draws no group row: the position row stands for its group (it carries the
-// chip), so a stock-only portfolio does not show every row twice. Without grouping every row stands
-// for itself. Futures and futures options are their own group (underlyingOf returns them); an
+// Grouped, every group draws its group row, a group of one row too, so the grouping always reads the
+// same (by underlying a stock held alone shows its symbol on the group row and on its row). Without
+// grouping every row stands for itself. Futures and futures options are their own group (underlyingOf returns them); an
 // option on a non-USD stock goes with the stock in its currency.
 
 import { contractKey, contractLabel } from '@shared/contract';
@@ -95,15 +95,15 @@ export function orderGroups(groups: readonly RowGroup[], sort: SortState | null,
 
 /**
  * Where each underlying's next event (`events`, by underlying key) shows: on its group row when
- * grouped by underlying with two or more rows; otherwise on its stock row (a lone row, a sector
- * group, no grouping), or on each of its option rows when no stock of it is held.
+ * grouped by underlying; otherwise on its stock row (a sector group, no grouping), or on each of its
+ * option rows when no stock of it is held.
  */
 export function chipTargets<E>(groups: readonly RowGroup[], by: GroupBy, events: ReadonlyMap<string, E>): { groups: Map<string, E>; rows: Map<string, E> } {
   const out = { groups: new Map<string, E>(), rows: new Map<string, E>() };
   if (!events.size) return out;
   const loose = new Map<string, CellCtx[]>();
   for (const g of groups) {
-    if (by === 'underlying' && g.underlying && g.ctxs.length > 1) {
+    if (by === 'underlying' && g.underlying) {
       const e = events.get(contractKey(g.underlying));
       if (e) out.groups.set(g.key, e);
       continue;
