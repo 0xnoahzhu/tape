@@ -7,7 +7,9 @@
 //
 // The tabs that do not fit the bar go into a dropdown in the last place (fitTabs: as many tabs as
 // fit before it, in order); it reads "More", or the name of the tab shown when that is one of them.
-// Its items show their tab, and right-click opens a tab's menu as on the bar.
+// Its items show their tab, right-click opens a tab's menu as on the bar, and an item is dragged up
+// or down to move it among the others there (as a tab on the bar: a press that moves more than
+// DRAG_SLOP px drags, a shorter one picks it; Escape undoes the drag).
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react';
 import type { WatchGroup, Watchlist } from '@shared/types';
@@ -108,6 +110,73 @@ export function GroupTabs({
   useEffect(() => {
     if (!hidden.length) setMoreOpen(false);
   }, [hidden.length]);
+
+  // Dragging an item of the dropdown (see the top of the file): where it lands among the other items, a line at `y` in the list.
+  const menuListRef = useRef<HTMLDivElement>(null);
+  const [menuDragged, setMenuDragged] = useState<string | null>(null);
+  const [menuDrop, setMenuDrop] = useState<{ index: number; y: number } | null>(null);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const stopMenuDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopMenuDrag.current?.(), []);
+  useEffect(() => {
+    if (!menuDragged) return;
+    const html = document.documentElement;
+    html.classList.add('pos-reordering');
+    return () => html.classList.remove('pos-reordering');
+  }, [menuDragged]);
+
+  const pressItem = (e: PointerEvent<HTMLElement>, groupId: string) => {
+    const box = menuListRef.current;
+    if (e.button !== 0 || e.pointerType === 'touch' || !box || stopMenuDrag.current) return;
+    const { clientX: x0, clientY: y0 } = e;
+    let y = y0;
+    let started = false;
+    let mark: { index: number; y: number } | null = null;
+    const follow = () => {
+      const top = box.getBoundingClientRect().top;
+      const others = [...box.querySelectorAll<HTMLElement>('[data-wl-more-item]')].filter((el) => el.dataset.wlMoreItem !== groupId).map((el) => el.getBoundingClientRect());
+      if (!others.length) return;
+      const index = dropIndex(others, y);
+      const at = index < others.length ? others[index].top - top : others[others.length - 1].bottom - top;
+      if (mark && mark.index === index && mark.y === at) return;
+      mark = { index, y: at };
+      setMenuDrop(mark);
+    };
+    const done = () => {
+      stopMenuDrag.current = null;
+      setMenuDragged(null);
+      setMenuDrop(null);
+    };
+    const unfollow = followPointer(
+      e.pointerId,
+      (ev) => {
+        y = ev.clientY;
+        if (!started) {
+          if (Math.hypot(ev.clientX - x0, ev.clientY - y0) <= DRAG_SLOP) return;
+          started = true;
+          setMenuDragged(groupId);
+        }
+        follow();
+      },
+      (ev) => {
+        if (ev && started) {
+          y = ev.clientY;
+          follow();
+          const d = mark;
+          // Counted among every other tab: the ones on the bar come first.
+          if (d) updateList(listRef.current.id, (l) => moveGroupTo(l, groupId, shownRef.current + d.index));
+          // The release would pick the item under it.
+          swallowClick();
+        }
+        done();
+      },
+    );
+    stopMenuDrag.current = () => {
+      unfollow();
+      done();
+    };
+  };
 
   // Dragging a tab (see the top of the file): where it lands among the others, drawn as a line at `x` (in the bar's content).
   const [dragged, setDragged] = useState<string | null>(null);
@@ -363,32 +432,37 @@ export function GroupTabs({
       </div>
       {moreOpen && (
         <Popover style={{ top: TAB_BAR_H, right: PAD_R, width: MENU_W, display: 'block', maxHeight: 320, overflowY: 'auto' }}>
-          {hidden.map((g) => {
-            const on = g.id === tab;
-            return (
-              <div
-                key={g.id}
-                role="menuitemradio"
-                aria-checked={on}
-                onClick={() => {
-                  setMoreOpen(false);
-                  onSelect(g.id);
-                }}
-                onContextMenu={(e) => {
-                  setMoreOpen(false);
-                  onMenu(e, g.id);
-                }}
-                className="hover-p2"
-                style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', color: 'var(--tx)' }}
-              >
-                <div style={{ width: 12, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
-                <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
-                  {nameOf(g.name, lang)}
+          <div ref={menuListRef} style={{ position: 'relative' }}>
+            {hidden.map((g) => {
+              const on = g.id === tab;
+              return (
+                <div
+                  key={g.id}
+                  role="menuitemradio"
+                  aria-checked={on}
+                  data-wl-more-item={g.id}
+                  onPointerDown={(e) => pressItem(e, g.id)}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onSelect(g.id);
+                  }}
+                  onContextMenu={(e) => {
+                    setMoreOpen(false);
+                    onMenu(e, g.id);
+                  }}
+                  className="hover-p2"
+                  style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', userSelect: 'none', color: 'var(--tx)', opacity: menuDragged === g.id ? 0.45 : 1 }}
+                >
+                  <div style={{ width: 12, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
+                  <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
+                    {nameOf(g.name, lang)}
+                  </div>
+                  {count(g.items.length)}
                 </div>
-                {count(g.items.length)}
-              </div>
-            );
-          })}
+              );
+            })}
+            {menuDrop && <div aria-hidden style={{ position: 'absolute', left: 8, right: 8, top: menuDrop.y - 1, height: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}
+          </div>
         </Popover>
       )}
     </div>
