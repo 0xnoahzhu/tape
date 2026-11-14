@@ -1,4 +1,6 @@
-// "+ Add symbol": IB symbol search with suggestions and the target group chips.
+// "+ Add symbol": IB symbol search with suggestions and the target tab chips. Symbols the target tab
+// has are not offered, and neither are indices: they cannot be traded, and have the top bar's
+// ticker (the chart star puts one there).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { contractKey, contractLabel, stock } from '@shared/contract';
@@ -11,7 +13,7 @@ import { listingTag } from '../search/listing';
 import { ListingName } from '../search/ListingName';
 import { fillMissingName, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
-import { addItem, listKeys, looksLikeTicker, normalizeTicker, suggestionsFrom, targetGroupOf, type Suggestion } from './model';
+import { addItem, itemKey, looksLikeTicker, normalizeTicker, suggestionsFrom, targetGroupOf, type Suggestion } from './model';
 import { useSymbolSearch, type SearchResult } from './useSymbolSearch';
 
 interface Row extends Suggestion {
@@ -25,7 +27,7 @@ function rowsFor(search: SearchResult, exclude: Set<string>): Row[] {
     const contract = stock(normalizeTicker(search.query));
     return exclude.has(contractKey(contract)) ? [] : [{ contract, fallback: true }];
   }
-  return suggestionsFrom(search.matches, search.query, exclude);
+  return suggestionsFrom(search.matches, search.query, exclude).filter((r) => r.contract.secType !== 'IND');
 }
 
 export function AddSymbol({ list, targetGroupId, onTarget, onClose }: { list: Watchlist; targetGroupId: string | undefined; onTarget: (groupId: string) => void; onClose: () => void }) {
@@ -37,9 +39,9 @@ export function AddSymbol({ list, targetGroupId, onTarget, onClose }: { list: Wa
   const inputRef = useRef<HTMLInputElement>(null);
   const enterPending = useRef(false);
   const search = useSymbolSearch(q);
-  const exclude = useMemo(() => listKeys(list), [list]);
-  const rows = useMemo(() => rowsFor(search, exclude), [search.query, search.status, search.matches, exclude]); // eslint-disable-line react-hooks/exhaustive-deps
   const target = targetGroupOf(list, targetGroupId);
+  const exclude = useMemo(() => new Set(target?.items.map(itemKey) ?? []), [target]);
+  const rows = useMemo(() => rowsFor(search, exclude), [search.query, search.status, search.matches, exclude]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const add = (row: Row) => {
     const item: WatchItem = { contract: row.contract, ...(row.name ? { name: row.name } : {}) };

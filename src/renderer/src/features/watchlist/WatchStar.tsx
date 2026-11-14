@@ -1,21 +1,20 @@
-// The chart header's add-to-watchlist star. A click opens a picker of every list that accepts the
-// charted instrument (Indices: indices only) or holds it, each list's groups under its name and
-// checked where it is. Clicking an unchecked group puts the instrument there (adds it to that list,
-// or moves it there within that list). Clicking a checked group takes it out of that list. The
-// picker stays open for more picks, with the lists it opened with (one click puts it back). The
-// star is filled while any list has the instrument.
+// The chart header's add-to-watchlist star. A click opens a picker: for a stock (anything but an
+// index), the watchlist's tabs, checked where it is; clicking an unchecked tab adds it there, a
+// checked one takes it out of that tab (the other tabs keep it). For an index, which cannot be
+// traded and so has no tab, one row puts it on the top bar's ticker or takes it off. The picker
+// stays open for more picks. The star is filled while the instrument is in a tab (or on the ticker).
 // Watchlists are local data, so this works while disconnected (only fillMissingName fails).
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import type { ContractRef, LocalizedName, WatchItem } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { MenuDivider, Popover } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
-import { fillMissingName, updateWatchlists } from './actions';
+import { fillMissingName, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
-import { starSections, toggleInGroup } from './model';
+import { listHas, starRows, tabsListOf, tickerListOf, toggleInTab, toggleInTicker } from './model';
 import { emptyItem, sectionLabel } from './RowMenu';
 import { useWatchlistView } from './viewState';
 
@@ -26,17 +25,17 @@ const MENU_MARGIN = 16;
 export function WatchStar({ contract, name, size }: { contract: ContractRef; name: LocalizedName | undefined; size: number }) {
   const m = useWatchlistMessages();
   const lang = useLang();
-  const lists = useStore((s) => s.watchlists);
+  const tabs = useStore((s) => tabsListOf(s.watchlists));
+  const ticker = useStore((s) => tickerListOf(s.watchlists));
   const setTarget = useWatchlistView((s) => s.setTarget);
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState({ right: 0, maxH: 400 });
-  // The lists shown when the picker opened stay while it is open: a stock unchecked in Indices
-  // would otherwise take that section away, moving the next section under the pointer.
-  const [shown, setShown] = useState<readonly string[]>([]);
-  const sections = useMemo(() => starSections(lists, contract, open ? shown : undefined), [lists, contract, open, shown]);
   const key = contractKey(contract);
   const label = contractLabel(contract);
+  const isIndex = contract.secType === 'IND';
+  const rows = tabs && !isIndex ? starRows(tabs, contract) : [];
+  const onTicker = !!ticker && listHas(ticker, key);
   // The chart's own contract is stored, so a click on the panel's row selects the same one.
   const itemName = (typeof name === 'string' ? name.trim() : name) || undefined;
   const item: WatchItem = { contract, ...(itemName ? { name: itemName } : {}) };
@@ -62,30 +61,39 @@ export function WatchStar({ contract, name, size }: { contract: ContractRef; nam
     };
   }, [open]);
 
-  // Every group holding it, "Watchlist · Tech", for the tooltip; the star is filled when there is one.
-  const places = sections.flatMap((s) => s.rows.flatMap((r) => (r.checked && r.group ? [m.place(nameOf(s.list.name, lang), nameOf(r.group.name, lang))] : [])));
-  const inAny = places.length > 0;
+  // Every tab holding it, for the tooltip; the star is filled when there is one (an index: on the ticker).
+  const places = rows.filter((r) => r.checked).map((r) => nameOf(r.group.name, lang));
+  const inAny = isIndex ? onTicker : places.length > 0;
 
   const openMenu = () => {
     const r = rootRef.current?.getBoundingClientRect();
     if (!r) return;
     // Right-aligned under the star, kept inside the window; a long menu scrolls.
     setPlace({ right: Math.min(0, r.right - STAR_MENU_W - MENU_MARGIN), maxH: Math.max(160, window.innerHeight - r.bottom - 4 - MENU_MARGIN) });
-    setShown(sections.map((s) => s.list.id));
     setOpen(true);
   };
 
-  /** Checks or unchecks one group (model.ts → toggleInGroup); the picker stays open and its checks update in place. */
-  const toggle = (listId: string, groupId: string | undefined) => {
-    // From the latest lists: one may have changed or gone while the picker was open.
-    const latest = useStore.getState().watchlists.find((l) => l.id === listId);
+  /** Checks or unchecks one tab (model.ts → toggleInTab); the picker stays open and its checks update in place. */
+  const toggle = (groupId: string) => {
+    // From the latest list: it may have changed while the picker was open.
+    const latest = tabsListOf(useStore.getState().watchlists);
     if (!latest) return;
-    const r = toggleInGroup(latest, groupId, item, DEFAULT_GROUP_NAME);
+    const r = toggleInTab(latest, groupId, item);
     if (!r.change) return;
-    updateWatchlists((ls) => ls.map((l) => (l === latest ? r.list : l)));
-    // A picked group becomes the list's "Add symbol" group (the panel's chips follow).
-    if (r.groupId) setTarget(listId, r.groupId);
-    if (r.change === 'added' && !itemName) fillMissingName(listId, contract);
+    updateList(latest.id, () => r.list);
+    // A picked tab becomes where "Add symbol" adds on All.
+    if (r.change === 'added') {
+      setTarget(groupId);
+      if (!itemName) fillMissingName(latest.id, contract);
+    }
+  };
+
+  const toggleTicker = () => {
+    const latest = tickerListOf(useStore.getState().watchlists);
+    if (!latest) return;
+    const r = toggleInTicker(latest, item, DEFAULT_GROUP_NAME);
+    updateList(latest.id, () => r.list);
+    useStore.getState().showToast(r.change === 'added' ? m.tickerAdded(label) : m.tickerRemoved(label));
   };
 
   const onClick = (e: React.MouseEvent) => {
@@ -95,11 +103,31 @@ export function WatchStar({ contract, name, size }: { contract: ContractRef; nam
     else openMenu();
   };
 
+  const checkRow = (id: string, text: string, checked: boolean, run: () => void) => (
+    <div
+      key={id}
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      // A double-click is one pick, not an add and a remove.
+      onClick={(e) => {
+        if (e.detail <= 1) run();
+      }}
+      title={text}
+      className="hover-p2"
+      style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', color: 'var(--tx)' }}
+    >
+      <div style={{ width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{checked ? '✓' : ''}</div>
+      <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: checked ? 600 : 400 }}>
+        {text}
+      </div>
+    </div>
+  );
+
   return (
     <div ref={rootRef} style={{ position: 'relative', flexShrink: 0 }}>
       <div
         onClick={onClick}
-        title={inAny ? m.starIn(places) : m.starPick}
+        title={isIndex ? (onTicker ? m.onTicker : m.showOnTicker) : inAny ? m.starIn(places) : m.starPick}
         aria-haspopup="menu"
         aria-expanded={open}
         className="hover-tx hover-p2"
@@ -131,40 +159,20 @@ export function WatchStar({ contract, name, size }: { contract: ContractRef; nam
       {open && (
         <Popover style={{ top: 'calc(100% + 4px)', right: place.right, width: STAR_MENU_W, display: 'block', maxHeight: place.maxH, overflowY: 'auto', ...stableGutter }}>
           <div style={{ padding: '6px 12px 8px', font: '600 12px/1 var(--mono)', color: 'var(--mu)' }}>{label}</div>
-          {sections.map((s, i) => {
-            const listName = nameOf(s.list.name, lang);
-            return (
-              <Fragment key={s.list.id}>
-                {i > 0 && <MenuDivider />}
-                <div className="ellipsis" title={listName} style={sectionLabel}>
-                  {listName}
-                </div>
-                {s.rows.map((row) => {
-                  const groupName = nameOf(row.group?.name ?? DEFAULT_GROUP_NAME, lang);
-                  return (
-                    <div
-                      key={row.group?.id ?? ''}
-                      role="menuitemcheckbox"
-                      aria-checked={row.checked}
-                      // A double-click is one pick, not an add and a remove.
-                      onClick={(e) => {
-                        if (e.detail <= 1) toggle(s.list.id, row.group?.id);
-                      }}
-                      title={m.place(listName, groupName)}
-                      className="hover-p2"
-                      style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', color: 'var(--tx)' }}
-                    >
-                      <div style={{ width: 14, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{row.checked ? '✓' : ''}</div>
-                      <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: row.checked ? 600 : 400 }}>
-                        {groupName}
-                      </div>
-                    </div>
-                  );
-                })}
-              </Fragment>
-            );
-          })}
-          {sections.length === 0 && <div style={emptyItem}>{m.noLists}</div>}
+          {isIndex ? (
+            <>
+              <div style={sectionLabel}>{m.ticker}</div>
+              {checkRow('ticker', m.showOnTicker, onTicker, toggleTicker)}
+              <MenuDivider />
+              <div style={{ padding: '4px 12px 6px', fontSize: 11, lineHeight: 1.45, color: 'var(--dm)' }}>{m.tickerHint}</div>
+            </>
+          ) : (
+            <>
+              <div style={sectionLabel}>{m.title}</div>
+              {rows.map((r) => checkRow(r.group.id, nameOf(r.group.name, lang), r.checked, () => toggle(r.group.id)))}
+              {rows.length === 0 && <div style={emptyItem}>{m.noOtherGroups}</div>}
+            </>
+          )}
         </Popover>
       )}
     </div>

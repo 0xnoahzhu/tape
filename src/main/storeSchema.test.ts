@@ -321,20 +321,41 @@ describe('sanitizeWatchlists', () => {
     expect(defaults.map((l) => l.id)).toEqual(['main', 'idx']);
   });
 
-  it('keeps a saved list the defaults no longer have (the sample Options watch of older versions)', () => {
+  it('folds a saved list of older versions into the tabs: its groups become tabs, after the others', () => {
     const sample = {
       id: 'w-options',
       name: { en: 'Options watch', zh: '期权观察' },
       groups: [{ id: 'g-hiv', name: { en: 'High IV', zh: '高 IV' }, items: [{ contract: stock('TSLA'), name: 'Tesla' }, { contract: stock('NVDA'), name: 'NVIDIA' }] }],
     };
-    expect(sanitizeWatchlists([...defaults, sample], defaults)).toEqual([...defaults, sample]);
+    const out = sanitizeWatchlists([...defaults, sample], defaults)!;
+    expect(out.map((l) => l.id)).toEqual(['main', 'idx']);
+    expect(out[0].groups).toEqual([...defaults[0].groups, sample.groups[0]]);
+    expect(out[1]).toEqual(defaults[1]);
+    // Read again (relaunch), nothing changes.
+    expect(sanitizeWatchlists(JSON.parse(JSON.stringify(out)), defaults)).toEqual(out);
+  });
+
+  it('keeps every folded group apart: a taken name gets its list name, a taken id a new one', () => {
+    const mine = {
+      id: 'mine',
+      name: 'Mine',
+      groups: [
+        { id: 'g-tech', name: { en: 'tech', zh: '科技' }, items: [{ contract: stock('AAPL') }] },
+        { id: 'g-new', name: 'Long', items: [] },
+      ],
+    };
+    const empty = { id: 'w-empty', name: 'Later', groups: [] };
+    const out = sanitizeWatchlists([...defaults, mine, empty], defaults)!;
+    const added = out[0].groups.slice(defaults[0].groups.length);
+    expect(added.map((g) => g.name)).toEqual([{ en: 'tech · Mine', zh: '科技 · Mine' }, 'Long', 'Later']);
+    expect(added.map((g) => g.id)).toEqual(['mine-g-tech', 'g-new', 'g-w-empty']);
+    expect(added[0].items).toEqual([{ contract: stock('AAPL') }]);
   });
 
   it('restores deleted built-in lists and their names', () => {
-    const user = { id: 'mine', name: 'Mine', groups: [] };
     const renamedMain = { ...defaults[0], name: 'Hacked', builtin: false };
-    const out = sanitizeWatchlists([renamedMain, user], defaults)!;
-    expect(out.map((l) => l.id)).toEqual(['main', 'idx', 'mine']);
+    const out = sanitizeWatchlists([renamedMain], defaults)!;
+    expect(out.map((l) => l.id)).toEqual(['main', 'idx']);
     expect(out[0].name).toEqual(defaults[0].name);
     expect(out[0].builtin).toBe(true);
   });

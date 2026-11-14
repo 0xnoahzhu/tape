@@ -7,7 +7,7 @@ import { currentLang, nameOf } from '../../i18n';
 import { errorText } from '../../state/orderActions';
 import { useStore } from '../../state/store';
 import { useWatchlistMessages } from './messages';
-import { canDeleteGroup, deleteGroup, neighborGroupId, removeItem, setItemName } from './model';
+import { canDeleteGroup, deleteGroup, neighborGroupId, removeFromList, removeItem, setItemName } from './model';
 
 export function commitWatchlists(next: Watchlist[]): void {
   if (next === useStore.getState().watchlists) return;
@@ -61,7 +61,6 @@ export function askDeleteGroup(listId: string, groupId: string, onDeleted?: (nei
     title: m.deleteGroup,
     rows: [
       { label: m.group, value: name },
-      { label: m.list, value: nameOf(list.name, lang) },
       { label: m.symbols, value: String(group.items.length) },
     ],
     note: m.deleteGroupNote(name, group.items.length),
@@ -71,21 +70,27 @@ export function askDeleteGroup(listId: string, groupId: string, onDeleted?: (nei
   });
 }
 
-/** Removes an instrument from one group of a list after a confirmation (a row menu's Remove). */
-export function askRemoveItem(listId: string, contract: ContractRef, groupId: string): void {
+/**
+ * Removes an instrument after a confirmation (a row menu's Remove): from one tab (`groupId`), or
+ * from every tab (null: the row of All).
+ */
+export function askRemoveItem(listId: string, contract: ContractRef, groupId: string | null): void {
   const list = useStore.getState().watchlists.find((l) => l.id === listId);
   if (!list) return;
   const m = useWatchlistMessages.now();
   const key = contractKey(contract);
+  const group = groupId == null ? undefined : list.groups.find((g) => g.id === groupId);
+  if (groupId != null && !group) return;
   useStore.getState().ask({
-    title: m.remove,
+    title: group ? m.removeFromTab(nameOf(group.name, currentLang())) : m.removeFromAll,
     rows: [
       { label: m.symbol, value: contractLabel(contract) },
-      { label: m.list, value: nameOf(list.name, currentLang()) },
+      ...(group ? [{ label: m.group, value: nameOf(group.name, currentLang()) }] : []),
     ],
+    note: group ? undefined : m.removeFromAllNote,
     label: m.removeLabel,
     danger: true,
-    run: () => updateList(listId, (l) => removeItem(l, groupId, key)),
+    run: () => updateList(listId, (l) => (groupId == null ? removeFromList(l, key) : removeItem(l, groupId, key))),
   });
 }
 

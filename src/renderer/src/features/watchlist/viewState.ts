@@ -1,26 +1,27 @@
-// Watchlist view state: the panel's current list (remembered per device, prefs.ts) and each list's
-// "Add symbol" target group (this session only), which the chart star's picker sets too. Kept in a
-// store so the panel's chips follow a group picked from the chart, and the target survives
-// collapsing the panel and switching pages.
+// Watchlist view state: the tab shown (remembered per device, prefs.ts) and the tab "Add symbol"
+// adds to while All is shown (this session only; the chart star's picker sets it too). Kept in a
+// store so it survives collapsing the panel and switching pages.
 
 import { create } from 'zustand';
-import { loadCurrentListId, saveCurrentListId } from './prefs';
+import { ALL_TAB } from './model';
+import { loadTab, saveTab } from './prefs';
 
 interface WatchlistView {
-  /** Remembered current list id; may be stale (resolve with model.ts → currentListOf). */
-  currentId: string | null;
-  /** Target group per list id: the panel's group chips, a new group, a group picked in the chart star's picker. */
-  targets: Readonly<Record<string, string>>;
-  selectList(id: string): void;
-  setTarget(listId: string, groupId: string): void;
+  /** Remembered tab: All or a group id; may be stale (resolve with model.ts → resolveTab). */
+  tab: string;
+  /** The tab "Add symbol" adds to on All; may be stale (model.ts → targetGroupOf). */
+  target: string | undefined;
+  /** Shows a tab; a group tab becomes the target too. */
+  selectTab(tab: string): void;
+  setTarget(groupId: string): void;
 }
 
 export const useWatchlistView = create<WatchlistView>()((set) => ({
-  currentId: loadCurrentListId(),
-  targets: {},
-  selectList: (id) => {
-    saveCurrentListId(id);
-    set({ currentId: id });
+  tab: loadTab() ?? ALL_TAB,
+  target: undefined,
+  selectTab: (tab) => {
+    saveTab(tab);
+    set(tab === ALL_TAB ? { tab } : { tab, target: tab });
   },
-  setTarget: (listId, groupId) => set((s) => (s.targets[listId] === groupId ? s : { targets: { ...s.targets, [listId]: groupId } })),
+  setTarget: (groupId) => set({ target: groupId }),
 }));

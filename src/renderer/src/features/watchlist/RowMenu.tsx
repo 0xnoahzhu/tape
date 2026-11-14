@@ -1,15 +1,16 @@
-// Right-click menu of a watchlist row: move to group, add to another list, add an alert, remove.
+// Right-click menu of a watchlist row: move to another tab (from a tab), add to more tabs, add an
+// alert, remove (from the tab shown; on All from every tab).
 
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { contractLabel } from '@shared/contract';
-import type { WatchItem, Watchlist } from '@shared/types';
+import type { WatchGroup, WatchItem, Watchlist } from '@shared/types';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { MenuDivider, MenuItem, Popover } from '../../ui/primitives';
 import { stableGutter } from '../../ui/scrollGutter';
 import { askRemoveItem, updateList } from './actions';
 import { DEFAULT_GROUP_NAME, useWatchlistMessages } from './messages';
-import { addItem, clampMenu, itemKey, listAccepts, listHas, moveItem } from './model';
+import { ALL_TAB, addItem, clampMenu, groupHas, itemKey, moveItem } from './model';
 
 export const ROW_MENU_WIDTH = 196;
 /** Distance kept between the menu and the panel edges. */
@@ -30,13 +31,14 @@ export const emptyItem: CSSProperties = { height: 32, display: 'flex', alignItem
 export function RowMenu({
   target,
   list,
-  lists,
+  tab,
   panelSize,
   onClose,
 }: {
   target: RowMenuTarget;
   list: Watchlist;
-  lists: Watchlist[];
+  /** The tab shown: from a tab a row moves to another one; on All it is added to more. */
+  tab: string;
   panelSize: () => { width: number; height: number };
   onClose: () => void;
 }) {
@@ -47,19 +49,19 @@ export function RowMenu({
   const { item, groupId } = target;
   const key = itemKey(item);
   const label = contractLabel(item.contract);
+  const onAll = tab === ALL_TAB;
 
   // Keep the whole menu inside the panel once its real height is known; a menu taller than
-  // the panel (many groups or lists) scrolls.
+  // the panel (many tabs) scrolls.
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
     const { width, height } = panelSize();
     const maxHeight = Math.max(0, height - 2 * MENU_MARGIN);
     setBox({ ...clampMenu(target.x, target.y, ROW_MENU_WIDTH, Math.min(el.offsetHeight, maxHeight), width, height, MENU_MARGIN), maxHeight });
-  }, [target, panelSize, list, lists]);
+  }, [target, panelSize, list]);
 
-  const otherGroups = list.groups.filter((g) => g.id !== groupId);
-  const otherLists = lists.filter((l) => l.id !== list.id && listAccepts(l, item.contract));
+  const otherGroups = list.groups.filter((g) => g.id !== groupId || onAll);
   const toast = (text: string) => useStore.getState().showToast(text);
 
   const moveTo = (toGroupId: string, toName: string) => {
@@ -68,10 +70,10 @@ export function RowMenu({
     toast(m.movedTo(label, toName));
   };
 
-  const copyTo = (l: Watchlist) => {
+  const addTo = (toGroupId: string, toName: string) => {
     onClose();
-    updateList(l.id, (x) => addItem(x, undefined, item, DEFAULT_GROUP_NAME));
-    toast(m.copiedTo(label, nameOf(l.name, lang)));
+    updateList(list.id, (l) => addItem(l, toGroupId, item, DEFAULT_GROUP_NAME));
+    toast(m.addedTo(label, toName));
   };
 
   const addAlert = () => {
@@ -81,12 +83,31 @@ export function RowMenu({
 
   const remove = () => {
     onClose();
-    askRemoveItem(list.id, item.contract, groupId);
+    askRemoveItem(list.id, item.contract, onAll ? null : groupId);
   };
 
   const close = (e: React.MouseEvent) => {
     e.preventDefault();
     onClose();
+  };
+
+  /** A tab of a section: picks it, or says the symbol is there already. */
+  const tabItem = (g: WatchGroup, run: (id: string, name: string) => void) => {
+    const name = nameOf(g.name, lang);
+    const has = groupHas(g, key);
+    return (
+      <div
+        key={g.id}
+        onClick={has ? undefined : () => run(g.id, name)}
+        className="hover-p2"
+        style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 0 20px', cursor: has ? 'default' : 'pointer', color: has ? 'var(--dm)' : 'var(--tx)' }}
+      >
+        <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
+          {name}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--dm)' }}>{has ? m.alreadyAdded : ''}</div>
+      </div>
+    );
   };
 
   return (
@@ -96,44 +117,22 @@ export function RowMenu({
         {/* Block layout keeps every row at its fixed height when the menu has to scroll. */}
         <Popover style={{ position: 'relative', zIndex: undefined, display: 'block', maxHeight: box.maxHeight, overflowY: 'auto', ...stableGutter }}>
           <div style={{ padding: '6px 12px 8px', font: '600 12px/1 var(--mono)', color: 'var(--mu)' }}>{label}</div>
-          <div style={sectionLabel}>{m.moveTo}</div>
-          {otherGroups.map((g) => {
-            const name = nameOf(g.name, lang);
-            return (
-              <MenuItem key={g.id} onClick={() => moveTo(g.id, name)} style={subItem}>
-                <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
-                  {name}
-                </div>
-              </MenuItem>
-            );
-          })}
+          {!onAll && (
+            <>
+              <div style={sectionLabel}>{m.moveTo}</div>
+              {otherGroups.map((g) => tabItem(g, moveTo))}
+              {otherGroups.length === 0 && <div style={emptyItem}>{m.noOtherGroups}</div>}
+              <MenuDivider />
+            </>
+          )}
+          <div style={sectionLabel}>{m.addToTab}</div>
+          {otherGroups.map((g) => tabItem(g, addTo))}
           {otherGroups.length === 0 && <div style={emptyItem}>{m.noOtherGroups}</div>}
-          <MenuDivider />
-          <div style={sectionLabel}>{m.copyTo}</div>
-          {otherLists.map((l) => {
-            const has = listHas(l, key);
-            return (
-              <div
-                key={l.id}
-                onClick={has ? undefined : () => copyTo(l)}
-                className="hover-p2"
-                style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 0 20px', cursor: has ? 'default' : 'pointer', color: has ? 'var(--dm)' : 'var(--tx)' }}
-              >
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                  <div className="ellipsis" style={{ flex: 1, minWidth: 0 }}>
-                    {nameOf(l.name, lang)}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--dm)' }}>{has ? m.alreadyAdded : ''}</div>
-                </div>
-              </div>
-            );
-          })}
-          {otherLists.length === 0 && <div style={emptyItem}>{m.noOtherLists}</div>}
           <MenuDivider />
           <MenuItem onClick={addAlert}>{m.addAlert}</MenuItem>
           <MenuDivider />
           <MenuItem onClick={remove} danger>
-            {m.remove}
+            {onAll ? m.removeFromAll : m.removeFromTab(nameOf(list.groups.find((g) => g.id === groupId)?.name ?? '', lang))}
           </MenuItem>
         </Popover>
       </div>

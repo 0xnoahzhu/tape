@@ -1,13 +1,17 @@
 // Pure watchlist operations. Every function returns new objects and never mutates its input,
 // so results can be written to the store and sent to the main process as they are.
+//
+// The watchlist is one level of tabs: the groups of the tabs list (shared/defaults.ts →
+// TABS_LIST_ID), with "All" before them. A symbol may be in several tabs, once per tab; All shows
+// each symbol once. The ticker list (TICKER_LIST_ID) holds the top bar's indices.
 
 import { contractKey } from '@shared/contract';
+import { TABS_LIST_ID, TICKER_LIST_ID } from '@shared/defaults';
 import type { ContractRef, Lang, LocalizedName, SymbolMatch, WatchItem, WatchGroup, Watchlist } from '@shared/types';
 import { rankMatches } from '../search/listing';
-import { groupPrefKey } from './prefs';
 
-/** The built-in Indices list only accepts indices. */
-export const INDEX_LIST_ID = 'idx';
+/** The tab that shows every symbol of the watchlist once. */
+export const ALL_TAB = 'all';
 /** Number of search suggestions shown under the add-symbol input (as in the design). */
 export const MAX_SUGGESTIONS = 6;
 
@@ -44,19 +48,23 @@ export function listHas(list: Watchlist, key: string): boolean {
   return list.groups.some((g) => g.items.some((i) => itemKey(i) === key));
 }
 
-/** Whether `contract` may be added to `list` from another list. */
-export function listAccepts(list: Watchlist, contract: ContractRef): boolean {
-  return list.id !== INDEX_LIST_ID || contract.secType === 'IND';
+export function groupHas(group: WatchGroup, key: string): boolean {
+  return group.items.some((i) => itemKey(i) === key);
 }
+
+/** The tabs list and the ticker list of the saved lists (shared/defaults.ts). */
+export const tabsListOf = (lists: Watchlist[]): Watchlist | undefined => lists.find((l) => l.id === TABS_LIST_ID);
+export const tickerListOf = (lists: Watchlist[]): Watchlist | undefined => lists.find((l) => l.id === TICKER_LIST_ID);
 
 /**
  * Appends an item to a group (the first group when `groupId` is unknown). A list without
- * groups gets one named `defaultGroupName`. Items already in the list are not added twice.
+ * groups gets one named `defaultGroupName`. A group never holds an item twice; other groups may
+ * hold it too.
  */
 export function addItem(list: Watchlist, groupId: string | undefined, item: WatchItem, defaultGroupName: LocalizedName, groupIdForNew: string = newId('g')): Watchlist {
-  if (listHas(list, itemKey(item))) return list;
   if (!list.groups.length) return { ...list, groups: [{ id: groupIdForNew, name: defaultGroupName, items: [item] }] };
   const target = list.groups.find((g) => g.id === groupId) ?? list.groups[0];
+  if (groupHas(target, itemKey(item))) return list;
   return { ...list, groups: list.groups.map((g) => (g.id === target.id ? { ...g, items: [...g.items, item] } : g)) };
 }
 
@@ -64,6 +72,7 @@ export function removeItem(list: Watchlist, groupId: string, key: string): Watch
   return { ...list, groups: list.groups.map((g) => (g.id === groupId ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g)) };
 }
 
+/** Moves an item to the end of another group (out of `fromGroupId`); a group that has it already keeps its own place. */
 export function moveItem(list: Watchlist, fromGroupId: string, toGroupId: string, key: string): Watchlist {
   if (fromGroupId === toGroupId) return list;
   const item = list.groups.find((g) => g.id === fromGroupId)?.items.find((i) => itemKey(i) === key);
@@ -125,8 +134,51 @@ export function setItemName(list: Watchlist, key: string, name: LocalizedName): 
 }
 
 /** The current list: the remembered one while it exists, else the first list (the fallback is never saved). */
-export function currentListOf(lists: Watchlist[], id: string | null | undefined): Watchlist | undefined {
-  return lists.find((l) => l.id === id) ?? lists[0];
+/** The tab to show: `tab` while the list still has that group (or it is All), else All. */
+export function resolveTab(list: Watchlist, tab: string | null | undefined): string {
+  return tab && list.groups.some((g) => g.id === tab) ? tab : ALL_TAB;
+}
+
+/** A row of a tab: the item and the group it is shown for (in All, the first group holding it). */
+export interface TabRow {
+  groupId: string;
+  item: WatchItem;
+}
+
+/** The rows of `tab`: one group's items, or for All every symbol once, in tab order. */
+export function tabRows(list: Watchlist, tab: string): TabRow[] {
+  if (tab !== ALL_TAB) return (list.groups.find((g) => g.id === tab)?.items ?? []).map((item) => ({ groupId: tab, item }));
+  const seen = new Set<string>();
+  const out: TabRow[] = [];
+  for (const g of list.groups) {
+    for (const item of g.items) {
+      const k = itemKey(item);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ groupId: g.id, item });
+    }
+  }
+  return out;
+}
+
+/**
+ * Where a row (`key`, shown for group `ownGroupId`) dropped at `index` among All's other rows
+ * lands: in the group of a neighbour, right after the row before it (or before the row after it,
+ * at the top). Between two groups the row's own group wins, so a row stays in its tab when it can.
+ * `others`: All's rows without the dragged one. The index is counted among the group's other
+ * items, as moveItemTo takes it. Null without other rows.
+ */
+export function allDrop(list: Watchlist, others: readonly TabRow[], index: number, key: string, ownGroupId: string): { groupId: string; index: number } | null {
+  if (!others.length) return null;
+  const at = Math.max(0, Math.min(others.length, index));
+  const before = others[at - 1];
+  const after = others[at];
+  const pos = (r: TabRow) =>
+    (list.groups.find((g) => g.id === r.groupId)?.items ?? [])
+      .filter((i) => itemKey(i) !== key)
+      .findIndex((i) => itemKey(i) === itemKey(r.item));
+  if (after && (!before || (after.groupId === ownGroupId && before.groupId !== ownGroupId))) return { groupId: after.groupId, index: Math.max(0, pos(after)) };
+  return { groupId: before.groupId, index: pos(before) + 1 };
 }
 
 /** The group "Add symbol" adds to: the remembered target while the list has it, else the first group (undefined: no groups). */
@@ -140,91 +192,41 @@ export function removeFromList(list: Watchlist, key: string): Watchlist {
   return { ...list, groups: list.groups.map((g) => (g.items.some((i) => itemKey(i) === key) ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g)) };
 }
 
-/**
- * Puts an instrument into one group of a list:
- * - 'added' (addItem: unknown group → first group, no groups → a default group) when the list lacks it;
- * - 'moved' there, out of every other group, keeping the stored item (its name), when it is elsewhere in the list;
- * - null when there is nothing to do: it is already only there, or the group is gone.
- */
-export function placeItem(
-  list: Watchlist,
-  groupId: string | undefined,
-  item: WatchItem,
-  defaultGroupName: LocalizedName,
-  groupIdForNew: string = newId('g'),
-): { list: Watchlist; change: 'added' | 'moved' | null } {
-  const key = itemKey(item);
-  if (!listHas(list, key)) {
-    const next = addItem(list, groupId, item, defaultGroupName, groupIdForNew);
-    return { list: next, change: next === list ? null : 'added' };
-  }
-  const target = list.groups.find((g) => g.id === groupId);
-  if (!target) return { list, change: null };
-  const holds = (g: WatchGroup) => g.items.some((i) => itemKey(i) === key);
-  if (!list.groups.some((g) => g !== target && holds(g))) return { list, change: null };
-  // The stored item moves (the target keeps its own when it already has one).
-  const kept = list.groups.flatMap((g) => g.items).find((i) => itemKey(i) === key) ?? item;
-  return {
-    list: {
-      ...list,
-      groups: list.groups.map((g) => {
-        if (g === target) return holds(g) ? g : { ...g, items: [...g.items, kept] };
-        return holds(g) ? { ...g, items: g.items.filter((i) => itemKey(i) !== key) } : g;
-      }),
-    },
-    change: 'moved',
-  };
-}
-
+/** A row of the chart star's picker: a tab, checked when it holds the instrument. */
 export interface StarRow {
-  /** undefined: the list has no group yet (picking it creates its default group). */
-  group: WatchGroup | undefined;
-  /** The instrument is in this group. */
+  group: WatchGroup;
   checked: boolean;
 }
 
-export interface StarSection {
-  list: Watchlist;
-  rows: StarRow[];
-}
-
-/**
- * The chart star's picker for `contract`: every list that accepts it (Indices: indices only),
- * already holds it, or is in `keep` (the lists shown when the picker opened, so a stock unchecked
- * in Indices keeps its section until the picker closes), in list order, with its groups in order,
- * checked where it is; a list without groups gets one unchecked row for its default group.
- * Membership is by contractKey (another conId or exchange of the same instrument is the same).
- */
-export function starSections(lists: Watchlist[], contract: ContractRef, keep: readonly string[] = []): StarSection[] {
+/** The chart star's picker for `contract`: every tab, in order, checked where it is (by contractKey). */
+export function starRows(list: Watchlist, contract: ContractRef): StarRow[] {
   const key = contractKey(contract);
-  return lists
-    .filter((l) => listAccepts(l, contract) || listHas(l, key) || keep.includes(l.id))
-    .map((l) => ({
-      list: l,
-      rows: l.groups.length ? l.groups.map((g) => ({ group: g, checked: g.items.some((i) => itemKey(i) === key) })) : [{ group: undefined, checked: false }],
-    }));
+  return list.groups.map((group) => ({ group, checked: groupHas(group, key) }));
 }
 
 /**
- * A click on one group row of the star's picker:
- * - a group holding the instrument: 'removed' from the whole list (removeFromList);
- * - otherwise placeItem: 'added' (unknown group → first group, no groups → a default group) or
- *   'moved' there from the list's other groups, keeping the stored item (its name);
- * - null when nothing changed (the group is gone while the list has it).
- * `groupId` is the group it is in now (only for 'added' / 'moved').
+ * A click on a tab of the star's picker: a tab holding the instrument loses it ('removed'), any
+ * other tab gets it at its end ('added'); the other tabs keep theirs. Null when the tab is gone.
  */
-export function toggleInGroup(
-  list: Watchlist,
-  groupId: string | undefined,
-  item: WatchItem,
-  defaultGroupName: LocalizedName,
-  groupIdForNew: string = newId('g'),
-): { list: Watchlist; change: 'added' | 'moved' | 'removed' | null; groupId?: string } {
+export function toggleInTab(list: Watchlist, groupId: string, item: WatchItem): { list: Watchlist; change: 'added' | 'removed' | null } {
+  const group = list.groups.find((g) => g.id === groupId);
+  if (!group) return { list, change: null };
   const key = itemKey(item);
-  if (list.groups.find((g) => g.id === groupId)?.items.some((i) => itemKey(i) === key)) return { list: removeFromList(list, key), change: 'removed' };
-  const r = placeItem(list, groupId, item, defaultGroupName, groupIdForNew);
-  if (!r.change) return { list, change: null };
-  return { ...r, groupId: r.list.groups.find((g) => g.items.some((i) => itemKey(i) === key))?.id };
+  if (groupHas(group, key)) return { list: removeItem(list, groupId, key), change: 'removed' };
+  return { list: { ...list, groups: list.groups.map((g) => (g === group ? { ...g, items: [...g.items, item] } : g)) }, change: 'added' };
+}
+
+/** The ticker's indices: every item of the ticker list once, in order. */
+export function tickerItems(list: Watchlist | undefined): WatchItem[] {
+  return list ? tabRows(list, ALL_TAB).map((r) => r.item) : [];
+}
+
+/** Puts an index on the ticker (at its end), or takes it off when it is there. */
+export function toggleInTicker(list: Watchlist, item: WatchItem, defaultGroupName: LocalizedName): { list: Watchlist; change: 'added' | 'removed' } {
+  const key = itemKey(item);
+  if (listHas(list, key)) return { list: removeFromList(list, key), change: 'removed' };
+  const last = list.groups[list.groups.length - 1];
+  return { list: addItem(list, last?.id, item, defaultGroupName), change: 'added' };
 }
 
 // ---------------------------------------------------------------------------
@@ -281,42 +283,6 @@ export function neighborGroupId(list: Watchlist, groupId: string): string | unde
   const i = list.groups.findIndex((g) => g.id === groupId);
   if (i < 0) return undefined;
   return (list.groups[i + 1] ?? list.groups[i - 1])?.id;
-}
-
-/**
- * Collapsed-group preferences (prefs.ts) without the entries of groups `list` no longer has.
- * Returns `closed` itself when there is nothing to drop.
- */
-export function pruneClosedGroups(closed: Record<string, boolean>, list: Watchlist): Record<string, boolean> {
-  const prefix = groupPrefKey(list.id, '');
-  const live = new Set(list.groups.map((g) => groupPrefKey(list.id, g.id)));
-  const stale = Object.keys(closed).filter((k) => k.startsWith(prefix) && !live.has(k));
-  if (!stale.length) return closed;
-  const next = { ...closed };
-  for (const k of stale) delete next[k];
-  return next;
-}
-
-// ---------------------------------------------------------------------------
-// Lists
-
-export function createList(lists: Watchlist[], name: string, defaultGroupName: LocalizedName, id: string = newId('w'), groupId: string = newId('g')): Watchlist[] {
-  const trimmed = name.trim();
-  if (!trimmed) return lists;
-  return [...lists, { id, name: trimmed, groups: [{ id: groupId, name: defaultGroupName, items: [] }] }];
-}
-
-/** Renames a user list. Built-in lists and empty names are ignored. */
-export function renameList(lists: Watchlist[], id: string, name: string): Watchlist[] {
-  const trimmed = name.trim();
-  const list = lists.find((l) => l.id === id);
-  if (!trimmed || !list || list.builtin || list.name === trimmed) return lists;
-  return lists.map((l) => (l === list ? { ...l, name: trimmed } : l));
-}
-
-/** Deletes a user list. Built-in lists cannot be deleted. */
-export function deleteList(lists: Watchlist[], id: string): Watchlist[] {
-  return lists.filter((l) => l.id !== id || l.builtin);
 }
 
 // ---------------------------------------------------------------------------

@@ -137,7 +137,9 @@ describe('createStore', () => {
     store.setWatchlists('garbage' as never);
     expect(store.getWatchlists()).toEqual(defaultWatchlists());
     store.setWatchlists([{ id: 'mine', name: 'Mine', groups: [] }]);
-    expect(store.getWatchlists().map((l) => l.id)).toEqual(['main', 'idx', 'mine']);
+    // A list besides the built-in ones becomes a tab.
+    expect(store.getWatchlists().map((l) => l.id)).toEqual(['main', 'idx']);
+    expect(store.getWatchlists()[0].groups.map((g) => g.id)).toContain('g-mine');
     store.setPriceAlerts([{ id: 'x' } as never]);
     expect(store.getPriceAlerts()).toEqual([]);
     warn.mockRestore();
@@ -230,14 +232,14 @@ describe('createStore: the data folder', () => {
     store.setWatchlists([{ id: 'live', name: 'Live', groups: [] }]);
     store.flush();
     expect(files(vault, 'DU1')).toEqual(['notifications.json', 'watchlists.json']);
-    expect(readIn(vault, 'DU1', 'watchlists.json').map((l: { id: string }) => l.id)).toContain('paper');
-    expect(readIn(vault, 'U2', 'watchlists.json').map((l: { id: string }) => l.id)).not.toContain('paper');
+    expect(readIn(vault, 'DU1', 'watchlists.json').flatMap((l: { groups: { id: string }[] }) => l.groups.map((g) => g.id))).toContain('g-paper');
+    expect(readIn(vault, 'U2', 'watchlists.json').flatMap((l: { groups: { id: string }[] }) => l.groups.map((g) => g.id))).not.toContain('g-paper');
     expect(changes).toEqual([null, 'DU1', 'U2']);
 
     // The next launch serves the last account until the connection names one.
     const next = createStore();
     expect(next.getVault()).toEqual({ path: vault, status: 'ok', account: 'U2' });
-    expect(next.getWatchlists().map((l) => l.id)).toContain('live');
+    expect(next.getWatchlists().flatMap((l) => l.groups.map((g) => g.id))).toContain('g-live');
     next.setAccount('DU1');
     expect(next.getNotifications().map((n) => n.id)).toEqual(['n1']);
   });
@@ -265,7 +267,7 @@ describe('createStore: the data folder', () => {
     const moved = join(env.dir, 'moved');
     store.setVaultDir(moved, 'move');
     expect(store.getVault()).toEqual({ path: moved, status: 'ok', account: 'DU1' });
-    expect(store.getWatchlists().map((l) => l.id)).toContain('mine');
+    expect(store.getWatchlists().flatMap((l) => l.groups.map((g) => g.id))).toContain('g-mine');
     // The old folder stays as it was.
     expect(existsSync(join(vault, 'accounts', 'DU1', 'watchlists.json'))).toBe(true);
   });

@@ -16,6 +16,7 @@ import { useStore } from '../state/store';
 import { BellIcon, Dot, LockIcon, LogoMark, SlidersIcon } from '../ui/icons';
 import { AccountTag, IconButton, TabItems } from '../ui/primitives';
 import { SymbolSearch } from '../features/search/SymbolSearch';
+import { IndexTicker } from '../features/watchlist/IndexTicker';
 import { requestLock } from '../features/lock/actions';
 import { useLockMessages } from '../features/lock/messages';
 import { useAlertMessages } from '../features/alerts/messages';
@@ -147,8 +148,8 @@ export function TopBar() {
         />
       </div>
       <SymbolSearch />
-      {/* Takes the free space only once the search box has reached its maximum width. */}
-      <div style={{ marginLeft: 'auto' }} />
+      {/* The index ticker takes the free space once the search box has reached its maximum width. */}
+      <IndexTicker />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <HealthChip />
         <ReadOnlyChip />
