@@ -3,13 +3,12 @@
 import { useEffect } from 'react';
 import { contractLabel } from '@shared/contract';
 import { f0, f2, px } from '@shared/format';
-import { timeColumn } from '@shared/timeFormat';
 import type { Execution } from '@shared/types';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
 import { useStore } from '../../state/store';
 import { useOrdersMessages } from './messages';
-import { priceOrUndefined, timeCell, tradeAmount } from './model';
+import { priceOrUndefined, timeCell, tradeAmount, tradeTimeColumn } from './model';
 import { openRowChart } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
@@ -19,7 +18,7 @@ export function TradesTable({ executions }: { executions: Execution[] }) {
   const m = useOrdersMessages();
   const c = useCommon();
   const clock = useClock();
-  const columns = tradeColumns(timeColumn(clock));
+  const columns = tradeColumns(tradeTimeColumn(clock));
   const connected = useStore((s) => s.connection.status === 'connected');
 
   // Executions arrive as they happen; re-request today's list when the tab opens.

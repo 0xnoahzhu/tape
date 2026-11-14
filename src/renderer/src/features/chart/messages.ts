@@ -212,7 +212,6 @@ export const useChartMessages = createMessages({
       ['Day P&L', "Today's P&L (IB)"],
     ] as Array<[string, string]>,
     orderHeaders: [
-      ['Time', 'When Tape first saw the order'],
       ['Side', 'Buy or sell'],
       ['Contract', 'Contract'],
       ['Qty @ Price', 'Quantity @ limit or stop price'],
@@ -372,7 +371,6 @@ export const useChartMessages = createMessages({
       ['今日盈亏', '今日盈亏（IB）'],
     ] as Array<[string, string]>,
     orderHeaders: [
-      ['时间', 'Tape 首次收到该订单的时间'],
       ['方向', '买入或卖出'],
       ['合约', '合约'],
       ['数量 @ 价格', '数量 @ 限价或止损价'],

@@ -5,7 +5,6 @@
 import { useEffect } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0 } from '@shared/format';
-import { timeColumn } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
 import { useClock } from '../../i18n';
 import { useCommon } from '../../i18n/common';
@@ -14,7 +13,7 @@ import { useOrdersMessages } from './messages';
 import { OrderActions } from './OrderActions';
 import { openTicket } from '../panels/actions';
 import { lastCellTitle, lastPriceText, orderLastPrice, ORDERS_QUOTE_OWNER, useOrderQuotes } from './lastPrice';
-import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder, timeCell } from './model';
+import { canModifyInTicket, isChildRow, orderPriceText, orderStatusText, orderTypeLabel, ticketPatchFromOrder } from './model';
 import { openInstrument, openRowChart } from './navigation';
 import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 
@@ -24,10 +23,9 @@ import { EmptyRow, HeaderRow, Row, TableBody } from './table';
 // 04:00 PM ET", about 248px) stay readable at the minimum window width before IB's messages.
 // Contract gets the next share, for option labels ("AAPL 10/16 230 Call"); at that width Price
 // and Last, beside it, keep room for "12,345.67", Qty and Filled for "100,000" (longer values, such
-// as a stop-limit's "240.00 / 239.50", are in full on hover). The time column is sized for the
-// clock format (timeColumn).
-export const workingColumns = (time: string): string =>
-  `${time} minmax(0,1.3fr) 60px 80px minmax(0,0.6fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(70px,2.75fr) 120px`;
+// as a stop-limit's "240.00 / 239.50", are in full on hover). There is no time column: IB does not
+// say when an open order was placed, and the time Tape first saw it is not that.
+const columns = 'minmax(0,1.3fr) 60px 80px minmax(0,0.6fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(70px,2.75fr) 120px';
 
 function modify(o: WorkingOrder): void {
   const s = useStore.getState();
@@ -42,7 +40,6 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
   const m = useOrdersMessages();
   const c = useCommon();
   const clock = useClock();
-  const columns = workingColumns(timeColumn(clock));
   const myClientId = useStore((s) => s.connection.clientId);
   const connected = useStore((s) => s.connection.status === 'connected');
   const quotes = useOrderQuotes(ORDERS_QUOTE_OWNER, orders);
@@ -56,7 +53,6 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
     <TableBody
       header={
         <HeaderRow columns={columns}>
-          <div>{m.time}</div>
           <div>{m.contract}</div>
           <div>{m.side}</div>
           <div>{m.type}</div>
@@ -83,9 +79,6 @@ export function WorkingTable({ orders }: { orders: WorkingOrder[] }) {
         const last = orderLastPrice(o.contract, quote);
         return (
           <Row key={o.permId ?? `${o.clientId}:${o.orderId}`} columns={columns} title={title} onOpen={() => openRowChart(o.contract)}>
-            <div className="num" style={{ color: 'var(--dm)', whiteSpace: 'nowrap' }}>
-              {timeCell(o.createdAt, clock)}
-            </div>
             <div className="ellipsis selectable" style={{ fontSize: 14 }}>
               {child && <span style={{ color: 'var(--dm)' }}>↳ </span>}
               {contractLabel(o.contract)}

@@ -17,7 +17,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { f0, f2, MINUS, px, sg, signColor } from '@shared/format';
-import { timeColumn } from '@shared/timeFormat';
 import { isOrderActive, type ContractRef, type Position, type Quote, type QuoteSubscription, type WorkingOrder } from '@shared/types';
 import { useQuotesByKey, useQuoteSubscriptionList } from '../../hooks/useQuotes';
 import { useClock } from '../../i18n';
@@ -61,9 +60,10 @@ const POS_GRID = 'minmax(0,2fr) repeat(5,minmax(0,1fr))';
 /** Under the options desk: DTE and Δ after Qty. */
 const POS_GRID_OPT = 'minmax(0,2fr) repeat(7,minmax(0,1fr))';
 /** With the Last column where it fits (orderModel.ts → orderColumns, lastColumnFits). */
-const orderGrid = (clock: Parameters<typeof timeColumn>[0], withLast: boolean) => orderColumns(timeColumn(clock), withLast);
-/** Where the Last column's name is in orderHeaders. */
-const LAST_HEADER = 4;
+const orderGrid = (withLast: boolean) => orderColumns(withLast);
+/** Where the Last column's name is in orderHeaders, and "Qty @ Price" (numeric, right-aligned). */
+const LAST_HEADER = 3;
+const QTY_HEADER = 2;
 
 /**
  * A list's header over its rows, which scroll on their own: the scrollbar runs beside the rows only.
@@ -233,7 +233,7 @@ function OrderRow({ o, fresh, quote, withLast }: { o: WorkingOrder; fresh: boole
       style={{
         cursor: 'pointer',
         display: 'grid',
-        gridTemplateColumns: orderGrid(clock, withLast),
+        gridTemplateColumns: orderGrid(withLast),
         gap: 12,
         padding: '0 24px',
         height: 34,
@@ -243,7 +243,6 @@ function OrderRow({ o, fresh, quote, withLast }: { o: WorkingOrder; fresh: boole
         ...(fresh ? { animation: 'tape-flash 2.4s ease-out' } : null),
       }}
     >
-      <div style={{ font: '13px/1 var(--num)', color: 'var(--dm)', whiteSpace: 'nowrap' }}>{clock.time(o.createdAt, { seconds: true })}</div>
       <div style={{ color: buy ? 'var(--up)' : 'var(--dn)', fontWeight: 500 }}>{buy ? common.buyShort : common.sellShort}</div>
       <div className="ellipsis">{contractLabel(o.contract)}</div>
       <div
@@ -279,14 +278,13 @@ function OrderRow({ o, fresh, quote, withLast }: { o: WorkingOrder; fresh: boole
  */
 function OrderList({ orders, withLast }: { orders: WorkingOrder[]; withLast: boolean }) {
   const m = useChartMessages();
-  const clock = useClock();
   const sent = useOrderFeedback((s) => s.sent);
   const now = useNow(5_000).getTime();
   const quotes = useOrderQuotes(SYMBOL_ORDERS_QUOTE_OWNER, orders);
   const headers = withLast ? m.orderHeaders : m.orderHeaders.filter((_, i) => i !== LAST_HEADER);
   return (
     // The actions column has no name.
-    <ScrollList header={<HeaderRow grid={orderGrid(clock, withLast)} headers={[...headers, ['', '']]} right={(i) => i === 3 || (withLast && i === LAST_HEADER)} />}>
+    <ScrollList header={<HeaderRow grid={orderGrid(withLast)} headers={[...headers, ['', '']]} right={(i) => i === QTY_HEADER || (withLast && i === LAST_HEADER)} />}>
       {/* orderId is unique per API client only (TWS orders all have 0). */}
       {orders.map((o) => (
         <OrderRow
@@ -405,10 +403,9 @@ export function SymbolActivityPanel({ onCollapse, options = false }: { onCollaps
     return { dte: optionDte(r, new Date(minute)), delta: positionDelta(r, quotes), expiry };
   };
   const posHeaders = options ? [m.posHeaders[0], m.posHeaders[1], m.dteHeader, m.deltaHeader, ...m.posHeaders.slice(2)] : m.posHeaders;
-  const clock = useClock();
   const root = useRef<HTMLDivElement>(null);
   const { w } = useSize(root);
-  const withLast = lastColumnFits(w, timeColumn(clock));
+  const withLast = lastColumnFits(w);
 
   return (
     // The tab bar and a list's header stay; rows added or the splitter dragged make only the rows

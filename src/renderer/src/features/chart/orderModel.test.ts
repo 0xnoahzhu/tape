@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { option, stock } from '@shared/contract';
-import { CLOCK_24H, createClock, timeColumn } from '@shared/timeFormat';
+import { CLOCK_24H, createClock } from '@shared/timeFormat';
 import type { WorkingOrder } from '@shared/types';
 import { useAttrM } from '../orders/attributeMessages';
 import { canModifyInTicket, lastColumnFits, orderColumns, orderPriceText, orderStatusText, ticketPatchFromOrder, type StatusLabels } from './orderModel';
@@ -197,31 +197,22 @@ describe('canModifyInTicket', () => {
 });
 
 describe('order row layout', () => {
-  const twelve = timeColumn(createClock('12h', 'en'));
-  const twentyFour = timeColumn(CLOCK_24H);
-
   it('adds the Last column after "qty @ price"', () => {
-    const plain = orderColumns(twelve, false).split(' ');
-    const withLast = orderColumns(twelve, true).split(' ');
-    // time, side, contract, qty @ price, (Last,) status, actions
-    expect(plain).toHaveLength(6);
-    expect(withLast).toHaveLength(7);
-    expect(withLast[0]).toBe('112px');
-    expect(withLast[4]).toBe('minmax(72px,0.6fr)');
-    expect(withLast[6]).toBe(plain[5]);
+    const plain = orderColumns(false).split(' ');
+    const withLast = orderColumns(true).split(' ');
+    // side, contract, qty @ price, (Last,) status, actions
+    expect(plain).toHaveLength(5);
+    expect(withLast).toHaveLength(6);
+    expect(withLast[3]).toBe('minmax(72px,0.6fr)');
+    expect(withLast[5]).toBe(plain[4]);
   });
 
   it('shows the Last column where contract and status keep room beside it', () => {
-    // The panel beside the docked ticket: about 566px in a 1180px window, 826px in a 1440px one
-    // (813px in a 1180px window with the watchlist collapsed).
-    expect(lastColumnFits(566, twelve)).toBe(false);
-    expect(lastColumnFits(826, twelve)).toBe(true);
-    expect(lastColumnFits(813, twelve)).toBe(true);
-    expect(lastColumnFits(757, twelve)).toBe(false);
-    expect(lastColumnFits(758, twelve)).toBe(true);
-    // The 24-hour clock's narrower time column leaves room sooner.
-    expect(lastColumnFits(736, twentyFour)).toBe(true);
-    expect(lastColumnFits(735, twentyFour)).toBe(false);
-    expect(lastColumnFits(0, twelve)).toBe(false);
+    // The panel beside the docked ticket: about 566px in a 1180px window, 826px in a 1440px one.
+    expect(lastColumnFits(566)).toBe(false);
+    expect(lastColumnFits(826)).toBe(true);
+    expect(lastColumnFits(633)).toBe(false);
+    expect(lastColumnFits(634)).toBe(true);
+    expect(lastColumnFits(0)).toBe(false);
   });
 });

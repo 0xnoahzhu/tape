@@ -132,10 +132,10 @@ describe('parseGoodAfter', () => {
 
 describe('timeCell', () => {
   const t = new Date(2026, 9, 5, 14, 35, 7).getTime();
-  it('shows the local time with seconds in the clock format', () => {
-    expect(timeCell(t, createClock('12h', 'en'))).toBe('02:35:07 PM');
-    expect(timeCell(t, createClock('12h', 'zh'))).toBe('下午 02:35:07');
-    expect(timeCell(t, createClock('24h', 'zh'))).toBe('14:35:07');
+  it('shows the full local date and time, with seconds, in the clock format', () => {
+    expect(timeCell(t, createClock('12h', 'en'))).toBe('2026-10-05 02:35:07 PM');
+    expect(timeCell(t, createClock('12h', 'zh'))).toBe('2026-10-05 下午 02:35:07');
+    expect(timeCell(t, createClock('24h', 'zh'))).toBe('2026-10-05 14:35:07');
   });
 });
 

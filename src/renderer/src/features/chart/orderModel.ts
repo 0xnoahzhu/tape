@@ -90,17 +90,17 @@ const GAP = 12;
 const TEXT_MIN_W = 200;
 
 /**
- * Columns of an order row and of the names above it. The time column is sized for the clock format
- * (timeColumn). "qty @ price" grows little beyond its least width, as does Last; the rest goes to
+ * Columns of an order row and of the names above it (no time: IB does not say when an open order
+ * was placed, and the time Tape first saw it is not that). "qty @ price" grows little beyond its least width, as does Last; the rest goes to
  * contract and status (with its good-after and GTD times), which clip first in a narrow window.
  * Without the Last column the status gets the larger share; beside it the contract keeps room for an
  * option ("AAPL 10/16 230 Call") in a 1440px window.
  */
-export function orderColumns(time: string, withLast: boolean): string {
+export function orderColumns(withLast: boolean): string {
   const qtyPrice = `minmax(${QTY_PRICE_W}px,0.5fr)`;
   return withLast
-    ? `${time} ${SIDE_W}px minmax(0,1.5fr) ${qtyPrice} minmax(${LAST_W}px,0.6fr) minmax(0,1.3fr) ${ACTIONS_W}px`
-    : `${time} ${SIDE_W}px minmax(0,1.2fr) ${qtyPrice} minmax(0,2fr) ${ACTIONS_W}px`;
+    ? `${SIDE_W}px minmax(0,1.5fr) ${qtyPrice} minmax(${LAST_W}px,0.6fr) minmax(0,1.3fr) ${ACTIONS_W}px`
+    : `${SIDE_W}px minmax(0,1.2fr) ${qtyPrice} minmax(0,2fr) ${ACTIONS_W}px`;
 }
 
 /**
@@ -108,9 +108,9 @@ export function orderColumns(time: string, withLast: boolean): string {
  * and TEXT_MIN_W for contract and status together, with the gaps and the side padding. Narrower, the
  * last price is in the tooltip of "qty @ price".
  */
-export function lastColumnFits(width: number, time: string): boolean {
-  const fixed = parseFloat(time) + SIDE_W + QTY_PRICE_W + LAST_W + ACTIONS_W;
-  return width >= 2 * ROW_PAD + fixed + TEXT_MIN_W + 6 * GAP;
+export function lastColumnFits(width: number): boolean {
+  const fixed = SIDE_W + QTY_PRICE_W + LAST_W + ACTIONS_W;
+  return width >= 2 * ROW_PAD + fixed + TEXT_MIN_W + 5 * GAP;
 }
 
 // Modify loads the order the same way from here and from Portfolio › Orders.

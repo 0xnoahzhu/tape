@@ -62,8 +62,18 @@ export function newestExecutions(executions: Execution[]): Execution[] {
 }
 
 /** Time column of the order and trade lists: "09:41:07 AM", "下午 02:35:07", "14:35:07". */
+/**
+ * A fill's time from IB in full, in this computer's time zone: the trades list holds the fills of
+ * several days ("2026-11-13 10:31:44 AM", "2026-11-13 下午 02:35:07", "2026-11-13 14:35:07").
+ */
 export function timeCell(t: number, clock: Clock): string {
-  return clock.time(t, { seconds: true });
+  return clock.time(t, { seconds: true, date: 'ymd' });
+}
+
+/** Width of the trades list's time column, which fits timeCell in `clock`'s format and language. */
+export function tradeTimeColumn(clock: Pick<Clock, 'format' | 'lang'>): string {
+  if (clock.format === '24h') return '156px';
+  return clock.lang === 'zh' ? '190px' : '182px';
 }
 
 /** Cash amount of a fill: shares × price × multiplier. */
