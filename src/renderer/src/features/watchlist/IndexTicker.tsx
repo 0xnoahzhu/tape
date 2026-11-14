@@ -1,10 +1,13 @@
 // The top bar's index ticker: the indices of the ticker list (shared/defaults.ts → TICKER_LIST_ID),
 // each its symbol, last value and change. Indices cannot be traded, so they are shown here rather
 // than in a watchlist tab. A click opens an index's chart on Trade (without the order ticket, as
-// for any index); the chart star of an index puts it on the ticker or takes it off. The row takes
-// the top bar's free space and scrolls sideways when it does not fit (the wheel scrolls it).
+// for any index); the chart star of an index puts it on the ticker or takes it off.
+//
+// The ticker takes the top bar's free space. When its indices do not fit, they run from right to
+// left, twice in a row so they go round without a seam (global.css → .ticker-track), and stop while
+// the pointer is over them. With reduced motion asked for, they stay put and the wheel scrolls them.
 
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
 import type { WatchItem } from '@shared/types';
@@ -14,18 +17,52 @@ import { useStore } from '../../state/store';
 import { useWatchlistMessages } from './messages';
 import { tickerItems, tickerListOf } from './model';
 
+/** Space between two indices (px); a copy ends with it too, so the two copies loop evenly. */
+const GAP = 18;
+/** How fast the indices run (px a second). */
+const SPEED = 32;
+
+const reducedMotion = () => {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+};
+
 export function IndexTicker() {
   const m = useWatchlistMessages();
   const list = useStore((s) => tickerListOf(s.watchlists));
   const items = useMemo(() => tickerItems(list), [list]);
   const contracts = useMemo(() => items.map((i) => i.contract), [items]);
   useQuoteSubscriptions('ticker', contracts, 'basic');
-  const rowRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const copyRef = useRef<HTMLDivElement>(null);
+  // The width of one copy of the indices, and whether it is more than the ticker has.
+  const [fit, setFit] = useState({ copy: 0, over: false });
+  const [still] = useState(reducedMotion);
 
-  // The wheel scrolls the row sideways (a mouse wheel only turns up / down).
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const copy = copyRef.current;
+    if (!box || !copy) return;
+    const update = () => {
+      const w = copy.offsetWidth;
+      // The last gap is the copies' seam, not content.
+      const over = w - GAP > box.clientWidth + 1;
+      setFit((f) => (f.copy === w && f.over === over ? f : { copy: w, over }));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(box);
+    ro.observe(copy);
+    return () => ro.disconnect();
+  }, [items.length]);
+
+  // Without the motion: the wheel scrolls the indices sideways (a mouse wheel only turns up / down).
   useEffect(() => {
-    const el = rowRef.current;
-    if (!el) return;
+    const el = boxRef.current;
+    if (!el || !still) return;
     const onWheel = (e: WheelEvent) => {
       const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
       if (!d || el.scrollWidth <= el.clientWidth) return;
@@ -34,40 +71,49 @@ export function IndexTicker() {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-    // The row is rendered once there are indices.
-  }, [items.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [still, items.length]);
 
-  if (!items.length) return <div style={{ marginLeft: 'auto' }} />;
+  if (!items.length) return null;
+  const running = fit.over && !still;
+  const copy = (hidden: boolean) => (
+    <div ref={hidden ? undefined : copyRef} aria-hidden={hidden || undefined} style={{ display: 'flex', alignItems: 'center', gap: GAP, paddingRight: GAP, flexShrink: 0 }}>
+      {items.map((item) => (
+        <TickerItem key={contractKey(item.contract)} item={item} hidden={hidden} />
+      ))}
+    </div>
+  );
   return (
     <div
-      ref={rowRef}
+      ref={boxRef}
       role="list"
       aria-label={m.ticker}
-      className="no-drag"
+      className="no-drag ticker"
       style={{
-        // Half the search box's share of the free space, then whatever is left once it is at its widest.
-        flex: '0.5 1 0',
+        // Half the search box's share of the free space (SymbolSearch: 2), and all of it once the box is at its widest.
+        flex: '1 1 0',
         minWidth: 0,
         alignSelf: 'stretch',
         display: 'flex',
         alignItems: 'center',
-        gap: 18,
-        overflowX: 'auto',
+        overflowX: still ? 'auto' : 'hidden',
         overflowY: 'hidden',
         scrollbarWidth: 'none',
-        // The row fades out at its right end where it is cut.
-        maskImage: 'linear-gradient(to right, #000 calc(100% - 24px), transparent)',
-        paddingRight: 24,
+        // Cut indices fade out at the edges.
+        maskImage: fit.over ? 'linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent)' : undefined,
       }}
     >
-      {items.map((item) => (
-        <TickerItem key={contractKey(item.contract)} item={item} />
-      ))}
+      <div
+        className={running ? 'ticker-track' : undefined}
+        style={{ display: 'flex', flexShrink: 0, ...(running ? ({ '--ticker-dur': `${Math.max(8, fit.copy / SPEED)}s` } as CSSProperties) : null) }}
+      >
+        {copy(false)}
+        {running && copy(true)}
+      </div>
     </div>
   );
 }
 
-const TickerItem = memo(function TickerItem({ item }: { item: WatchItem }) {
+const TickerItem = memo(function TickerItem({ item, hidden }: { item: WatchItem; hidden: boolean }) {
   const lang = useLang();
   const q = useStore((s) => s.quotes[contractKey(item.contract)]);
   const last = lastPrice(q);
@@ -76,7 +122,7 @@ const TickerItem = memo(function TickerItem({ item }: { item: WatchItem }) {
   const name = nameOf(item.name, lang);
   return (
     <div
-      role="listitem"
+      role={hidden ? undefined : 'listitem'}
       title={name ? `${name} · ${label}` : label}
       onClick={() => useStore.getState().openSymbol(item.contract, 'chart', item.name)}
       className="hover-p2"

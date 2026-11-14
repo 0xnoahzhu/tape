@@ -208,7 +208,7 @@ export function SymbolSearch() {
         }
       }}
       // The design's box is content-box: 420px plus 2 × 12px padding.
-      style={{ flex: 1, maxWidth: 444, height: 36, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--p2)', marginLeft: 12, cursor: 'text' }}
+      style={{ flex: '2 1 0', maxWidth: 444, height: 36, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--p2)', marginLeft: 12, cursor: 'text' }}
     >
       <SearchIcon />
       <input

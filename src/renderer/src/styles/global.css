@@ -144,6 +144,24 @@ a:hover {
   display: none;
 }
 
+/* The top bar's index ticker (IndexTicker.tsx) while it does not fit: its items, twice in a row,
+   slide left by one copy and start over, so they run on without a seam (--ticker-dur sets the
+   speed); the pointer over the ticker holds them. */
+@keyframes tape-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-track {
+  animation: tape-ticker var(--ticker-dur, 30s) linear infinite;
+}
+.ticker:hover .ticker-track {
+  animation-play-state: paused;
+}
+
 /* Window dragging: the top bar is the title bar. */
 .drag {
   -webkit-app-region: drag;

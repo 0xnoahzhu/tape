@@ -150,7 +150,8 @@ export function TopBar() {
       <SymbolSearch />
       {/* The index ticker takes the free space once the search box has reached its maximum width. */}
       <IndexTicker />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      {/* At the right edge, also when there is no ticker (no indices on it). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
         <HealthChip />
         <ReadOnlyChip />
         <AccountBadge />

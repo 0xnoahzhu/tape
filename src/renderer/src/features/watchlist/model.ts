@@ -117,6 +117,20 @@ export function moveGroupTo(list: Watchlist, groupId: string, index: number): Wa
 }
 
 /**
+ * How many tabs of the tab bar fit (the first ones, in order): all of them when their widths
+ * (`tabs`, each with its gap) fit `room`, else as many as fit with the dropdown of the others
+ * (`moreWidth`) after them, at least none.
+ */
+export function fitTabs(tabs: readonly number[], room: number, moreWidth: number): number {
+  const total = tabs.reduce((a, b) => a + b, 0);
+  if (total <= room) return tabs.length;
+  let used = moreWidth;
+  let n = 0;
+  while (n < tabs.length && used + tabs[n] <= room) used += tabs[n++];
+  return n;
+}
+
+/**
  * Where a drag at height `y` lands among boxes in order (rows, or groups), each given by its top
  * and bottom (any one frame): the number of them whose middle is above `y`, so a pointer on a box's
  * upper half goes before it and on its lower half after it.

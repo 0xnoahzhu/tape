@@ -11,6 +11,7 @@ import {
   createGroup,
   deleteGroup,
   dropIndex,
+  fitTabs,
   groupNameTaken,
   listContracts,
   listHas,
@@ -197,6 +198,16 @@ describe('tabs', () => {
     // At the very top: before the first row, in its tab.
     expect(allDrop(main, others('STK:QQQ'), 0, 'STK:QQQ', 'g-etf')).toEqual({ groupId: 'g-tech', index: 0 });
     expect(allDrop(single, [], 0, 'STK:IBM', 'g1')).toBeNull();
+  });
+});
+
+describe('the tab bar', () => {
+  it('shows every tab that fits, the rest in a dropdown after them', () => {
+    expect(fitTabs([60, 60, 60], 200, 70)).toBe(3);
+    expect(fitTabs([60, 60, 60], 179, 70)).toBe(1);
+    expect(fitTabs([60, 60, 60, 60], 190, 70)).toBe(2);
+    expect(fitTabs([60, 60, 60], 60, 70)).toBe(0);
+    expect(fitTabs([], 10, 70)).toBe(0);
   });
 });
 
