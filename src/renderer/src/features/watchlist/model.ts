@@ -131,6 +131,16 @@ export function fitTabs(tabs: readonly number[], room: number, moreWidth: number
 }
 
 /**
+ * Where a tab dragged on the tab bar or in its dropdown lands among the other tabs (moveGroupTo's
+ * index): at `index` among the other tabs on the bar, or at `index` among the other tabs in the
+ * dropdown, which come after them. `shown`: the tabs on the bar (the first ones); `fromBar`: the
+ * dragged tab is one of them.
+ */
+export function tabDropIndex(where: 'bar' | 'menu', index: number, shown: number, fromBar: boolean): number {
+  return where === 'bar' ? index : shown - (fromBar ? 1 : 0) + index;
+}
+
+/**
  * Where a drag at height `y` lands among boxes in order (rows, or groups), each given by its top
  * and bottom (any one frame): the number of them whose middle is above `y`, so a pointer on a box's
  * upper half goes before it and on its lower half after it.

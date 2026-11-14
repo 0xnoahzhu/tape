@@ -12,6 +12,7 @@ import {
   deleteGroup,
   dropIndex,
   fitTabs,
+  tabDropIndex,
   groupNameTaken,
   listContracts,
   listHas,
@@ -208,6 +209,22 @@ describe('the tab bar', () => {
     expect(fitTabs([60, 60, 60, 60], 190, 70)).toBe(2);
     expect(fitTabs([60, 60, 60], 60, 70)).toBe(0);
     expect(fitTabs([], 10, 70)).toBe(0);
+  });
+
+  it('places a tab dropped on the bar among the bar tabs, in the dropdown after them', () => {
+    // Three tabs on the bar, the rest in the dropdown.
+    expect(tabDropIndex('bar', 1, 3, true)).toBe(1);
+    expect(tabDropIndex('bar', 3, 3, false)).toBe(3);
+    // From the bar into the dropdown: two other tabs stay on the bar before it.
+    expect(tabDropIndex('menu', 0, 3, true)).toBe(2);
+    expect(tabDropIndex('menu', 2, 3, true)).toBe(4);
+    // Within the dropdown: after all three bar tabs.
+    expect(tabDropIndex('menu', 0, 3, false)).toBe(3);
+    // Check with moveGroupTo: Swing (last) into the dropdown's top, after Tech, Auto, ETF on the bar.
+    const tabs = createGroup(createGroup(main, 'Semis', 'gs'), 'Swing', 'gw');
+    expect(moveGroupTo(tabs, 'gw', tabDropIndex('menu', 0, 3, false)).groups.map((g) => g.id)).toEqual(['g-tech', 'g-auto', 'g-etf', 'gw', 'gs']);
+    // Tech from the bar to the dropdown's end.
+    expect(moveGroupTo(tabs, 'g-tech', tabDropIndex('menu', 2, 3, true)).groups.map((g) => g.id)).toEqual(['g-auto', 'g-etf', 'gs', 'gw', 'g-tech']);
   });
 });
 

@@ -1,15 +1,17 @@
 // The watchlist's tab bar: All, then one tab per group with its count, then "+" for a new tab.
 //
 // A click shows a tab; right-click opens a tab's menu (rename, delete) and a double-click renames
-// it in place. A tab is dragged sideways to move it among the others (followPointer, as the rows: a
-// press that moves more than DRAG_SLOP px drags, Escape undoes it); All stays first. While a row is
+// it in place. A tab is dragged to move it among the others (followPointer, as the rows: a press
+// that moves more than DRAG_SLOP px drags, Escape undoes it); All stays first. While a row is
 // dragged (GroupList), the tab under it lights up (`dropTab`). ← / → move between tabs.
 //
 // The tabs that do not fit the bar go into a dropdown in the last place (fitTabs: as many tabs as
 // fit before it, in order); it reads "More", or the name of the tab shown when that is one of them.
-// Its items show their tab, right-click opens a tab's menu as on the bar, and an item is dragged up
-// or down to move it among the others there (as a tab on the bar: a press that moves more than
-// DRAG_SLOP px drags, a shorter one picks it; Escape undoes the drag).
+// Its items show their tab, and right-click opens a tab's menu as on the bar.
+//
+// One drag moves a tab anywhere among the others, on the bar or in the dropdown: a tab dragged over
+// "More" opens the dropdown and goes between its tabs; one dragged from the dropdown up onto the bar
+// goes between the bar's tabs (model.ts → tabDropIndex). Released elsewhere, it stays where it was.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react';
 import type { WatchGroup, Watchlist } from '@shared/types';
@@ -20,7 +22,7 @@ import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { updateList } from './actions';
 import { GroupNameInput } from './GroupNameInput';
 import { useWatchlistMessages } from './messages';
-import { ALL_TAB, createGroup, dropIndex, fitTabs, listKeys, moveGroupTo, newId, renameGroup } from './model';
+import { ALL_TAB, createGroup, dropIndex, fitTabs, listKeys, moveGroupTo, newId, renameGroup, tabDropIndex } from './model';
 
 /** A press moves this far (px) before it drags; less is a click. */
 const DRAG_SLOP = 4;
@@ -111,78 +113,15 @@ export function GroupTabs({
     if (!hidden.length) setMoreOpen(false);
   }, [hidden.length]);
 
-  // Dragging an item of the dropdown (see the top of the file): where it lands among the other items, a line at `y` in the list.
+  // Dragging a tab, from the bar or the dropdown (see the top of the file): where it lands, a line at
+  // `x` in the bar or at `y` in the dropdown's list.
   const menuListRef = useRef<HTMLDivElement>(null);
-  const [menuDragged, setMenuDragged] = useState<string | null>(null);
-  const [menuDrop, setMenuDrop] = useState<{ index: number; y: number } | null>(null);
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
-  const stopMenuDrag = useRef<(() => void) | null>(null);
-  useEffect(() => () => stopMenuDrag.current?.(), []);
-  useEffect(() => {
-    if (!menuDragged) return;
-    const html = document.documentElement;
-    html.classList.add('pos-reordering');
-    return () => html.classList.remove('pos-reordering');
-  }, [menuDragged]);
-
-  const pressItem = (e: PointerEvent<HTMLElement>, groupId: string) => {
-    const box = menuListRef.current;
-    if (e.button !== 0 || e.pointerType === 'touch' || !box || stopMenuDrag.current) return;
-    const { clientX: x0, clientY: y0 } = e;
-    let y = y0;
-    let started = false;
-    let mark: { index: number; y: number } | null = null;
-    const follow = () => {
-      const top = box.getBoundingClientRect().top;
-      const others = [...box.querySelectorAll<HTMLElement>('[data-wl-more-item]')].filter((el) => el.dataset.wlMoreItem !== groupId).map((el) => el.getBoundingClientRect());
-      if (!others.length) return;
-      const index = dropIndex(others, y);
-      const at = index < others.length ? others[index].top - top : others[others.length - 1].bottom - top;
-      if (mark && mark.index === index && mark.y === at) return;
-      mark = { index, y: at };
-      setMenuDrop(mark);
-    };
-    const done = () => {
-      stopMenuDrag.current = null;
-      setMenuDragged(null);
-      setMenuDrop(null);
-    };
-    const unfollow = followPointer(
-      e.pointerId,
-      (ev) => {
-        y = ev.clientY;
-        if (!started) {
-          if (Math.hypot(ev.clientX - x0, ev.clientY - y0) <= DRAG_SLOP) return;
-          started = true;
-          setMenuDragged(groupId);
-        }
-        follow();
-      },
-      (ev) => {
-        if (ev && started) {
-          y = ev.clientY;
-          follow();
-          const d = mark;
-          // Counted among every other tab: the ones on the bar come first.
-          if (d) updateList(listRef.current.id, (l) => moveGroupTo(l, groupId, shownRef.current + d.index));
-          // The release would pick the item under it.
-          swallowClick();
-        }
-        done();
-      },
-    );
-    stopMenuDrag.current = () => {
-      unfollow();
-      done();
-    };
-  };
-
-  // Dragging a tab (see the top of the file): where it lands among the others, drawn as a line at `x` (in the bar's content).
   const [dragged, setDragged] = useState<string | null>(null);
-  const [drop, setDrop] = useState<{ index: number; x: number } | null>(null);
+  const [drop, setDrop] = useState<{ where: 'bar'; index: number; x: number } | { where: 'menu'; index: number; y: number } | null>(null);
   const listRef = useRef(list);
   listRef.current = list;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
   const stopDrag = useRef<(() => void) | null>(null);
   useEffect(() => () => stopDrag.current?.(), []);
   useEffect(() => {
@@ -193,25 +132,49 @@ export function GroupTabs({
   }, [dragged]);
 
   const press = useCallback(
-    (e: PointerEvent<HTMLElement>, groupId: string) => {
+    (e: PointerEvent<HTMLElement>, groupId: string, fromBar: boolean) => {
       const bar = barRef.current;
       if (e.button !== 0 || e.pointerType === 'touch' || !bar || stopDrag.current) return;
       const { clientX: x0, clientY: y0 } = e;
       let x = x0;
+      let y = y0;
       let started = false;
-      let mark: { index: number; x: number } | null = null;
-      const follow = () => {
-        const left = bar.getBoundingClientRect().left;
+      let mark: typeof drop = null;
+      const inside = (r: DOMRect, slack = 0) => x >= r.left - slack && x < r.right + slack && y >= r.top - slack && y < r.bottom + slack;
+      const at = (): typeof drop => {
+        // Over "More": the dropdown opens, to drop among its tabs.
+        const more = bar.querySelector<HTMLElement>('[data-wl-more-btn]');
+        if (more && inside(more.getBoundingClientRect())) {
+          setMoreOpen(true);
+          return null;
+        }
+        const menu = menuListRef.current;
+        if (menu && inside(menu.getBoundingClientRect(), 8)) {
+          const top = menu.getBoundingClientRect().top;
+          const others = [...menu.querySelectorAll<HTMLElement>('[data-wl-more-item]')].filter((el) => el.dataset.wlMoreItem !== groupId).map((el) => el.getBoundingClientRect());
+          const index = dropIndex(others, y);
+          const line = !others.length ? 0 : index < others.length ? others[index].top - top : others[others.length - 1].bottom - top;
+          return { where: 'menu', index, y: line };
+        }
+        const r = bar.getBoundingClientRect();
+        if (y < r.top - 8 || y > r.bottom + 8) return null;
         const others = [...bar.querySelectorAll<HTMLElement>('[data-wl-group]')].filter((t) => t.dataset.wlGroup !== groupId).map((t) => t.getBoundingClientRect());
-        if (!others.length) return;
+        if (!others.length) return null;
         const index = dropIndex(
-          others.map((r) => ({ top: r.left, bottom: r.right })),
+          others.map((b) => ({ top: b.left, bottom: b.right })),
           x,
         );
-        const at = index < others.length ? others[index].left - left - TAB_GAP / 2 : others[others.length - 1].right - left + TAB_GAP / 2;
-        if (mark && mark.index === index && mark.x === at) return;
-        mark = { index, x: at };
-        setDrop(mark);
+        const line = index < others.length ? others[index].left - r.left - TAB_GAP / 2 : others[others.length - 1].right - r.left + TAB_GAP / 2;
+        return { where: 'bar', index, x: line };
+      };
+      const follow = () => {
+        const next = at();
+        const same =
+          next === mark ||
+          (!!next && !!mark && next.where === mark.where && next.index === mark.index && (next.where === 'bar' ? mark.where === 'bar' && next.x === mark.x : mark.where === 'menu' && next.y === mark.y));
+        if (same) return;
+        mark = next;
+        setDrop(next);
       };
       const done = () => {
         stopDrag.current = null;
@@ -222,6 +185,7 @@ export function GroupTabs({
         e.pointerId,
         (ev) => {
           x = ev.clientX;
+          y = ev.clientY;
           if (!started) {
             if (Math.hypot(ev.clientX - x0, ev.clientY - y0) <= DRAG_SLOP) return;
             started = true;
@@ -232,9 +196,11 @@ export function GroupTabs({
         (ev) => {
           if (ev && started) {
             x = ev.clientX;
+            y = ev.clientY;
             follow();
             const d = mark;
-            if (d) updateList(listRef.current.id, (l) => moveGroupTo(l, groupId, d.index));
+            if (d) updateList(listRef.current.id, (l) => moveGroupTo(l, groupId, tabDropIndex(d.where, d.index, shownRef.current, fromBar)));
+            // The release would pick the tab under it, or toggle the dropdown.
             swallowClick();
           }
           done();
@@ -322,7 +288,7 @@ export function GroupTabs({
         onClick={() => onSelect(g.id)}
         onDoubleClick={() => onRename(g.id)}
         onContextMenu={(e) => onMenu(e, g.id)}
-        onPointerDown={(e) => press(e, g.id)}
+        onPointerDown={(e) => press(e, g.id, true)}
         onKeyDown={onKeyDown}
         className="focus-ring"
         style={{ ...tabStyle(on, dropTab === g.id, dragged === g.id), background: dropTab === g.id ? 'var(--sel)' : g.id === menuGroupId ? 'var(--p2)' : 'transparent' }}
@@ -390,6 +356,7 @@ export function GroupTabs({
                 aria-haspopup="menu"
                 aria-expanded={moreOpen}
                 data-wl-tab={hiddenShown?.id}
+                data-wl-more-btn=""
                 title={m.moreTip(hidden.length)}
                 onClick={() => setMoreOpen((o) => !o)}
                 onKeyDown={onKeyDown}
@@ -426,7 +393,7 @@ export function GroupTabs({
           +
         </button>
       )}
-      {drop && (
+      {drop?.where === 'bar' && (
         <div aria-hidden style={{ position: 'absolute', top: 9, bottom: 9, left: drop.x - 1, width: 2, background: 'var(--ac)', pointerEvents: 'none' }} />
       )}
       </div>
@@ -441,7 +408,7 @@ export function GroupTabs({
                   role="menuitemradio"
                   aria-checked={on}
                   data-wl-more-item={g.id}
-                  onPointerDown={(e) => pressItem(e, g.id)}
+                  onPointerDown={(e) => press(e, g.id, false)}
                   onClick={() => {
                     setMoreOpen(false);
                     onSelect(g.id);
@@ -451,7 +418,7 @@ export function GroupTabs({
                     onMenu(e, g.id);
                   }}
                   className="hover-p2"
-                  style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', userSelect: 'none', color: 'var(--tx)', opacity: menuDragged === g.id ? 0.45 : 1 }}
+                  style={{ height: 32, display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px', cursor: 'pointer', userSelect: 'none', color: 'var(--tx)', opacity: dragged === g.id ? 0.45 : 1 }}
                 >
                   <div style={{ width: 12, flexShrink: 0, color: 'var(--ac)', fontSize: 12 }}>{on ? '✓' : ''}</div>
                   <div className="ellipsis" style={{ flex: 1, minWidth: 0, fontWeight: on ? 600 : 400 }}>
@@ -461,7 +428,7 @@ export function GroupTabs({
                 </div>
               );
             })}
-            {menuDrop && <div aria-hidden style={{ position: 'absolute', left: 8, right: 8, top: menuDrop.y - 1, height: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}
+            {drop?.where === 'menu' && <div aria-hidden style={{ position: 'absolute', left: 8, right: 8, top: drop.y - 1, height: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}
           </div>
         </Popover>
       )}
