@@ -105,23 +105,36 @@ a:hover {
   color: var(--r) !important;
 }
 
-/* One scrollbar everywhere, on every platform: square (no rounded thumb), 8px wide both
-   ways, in the theme's colors. Styling them turns macOS's overlay scrollbars into classic ones that
-   take room; scrollGutter.ts measures that room (--sbw) and the stable gutters give it back, so the
-   layout is the same as on Windows / Linux. The track and the corner are see-through. */
+/* One scrollbar everywhere, on every platform: square (no rounded thumb), in the theme's colors.
+   It takes 10px both ways and draws a 4px thumb in the middle (a 3px see-through border), so it
+   reads thin and is still easy to grab. Styling them turns macOS's overlay scrollbars into classic
+   ones that take room; scrollGutter.ts measures that room (--sbw) and the stable gutters give it
+   back, so the layout is the same as on Windows / Linux. The track and the corner are see-through. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--dm);
+  background-color: var(--dm);
+  background-clip: content-box;
+  border: 3px solid transparent;
   border-radius: 0;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--mu);
-}
+/* Under the pointer the thumb widens to 8px (a 1px border) and lights up: over its bar
+   (data-sb-hover, set by scrollbarHover.ts for the vertical "y" or horizontal "x" one), brighter
+   still over the thumb itself and while dragging it. The bar keeps its 10px, so nothing moves. */
+[data-sb-hover='y']::-webkit-scrollbar-thumb:vertical,
+[data-sb-hover='x']::-webkit-scrollbar-thumb:horizontal,
+::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:active {
-  background: var(--tx);
+  border-width: 1px;
+  background-color: var(--mu);
+}
+[data-sb-hover]::-webkit-scrollbar-thumb:hover,
+[data-sb-hover]::-webkit-scrollbar-thumb:active,
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--tx);
 }
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-corner {
