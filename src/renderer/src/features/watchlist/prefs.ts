@@ -1,10 +1,11 @@
-// Per-device watchlist view preferences kept in localStorage: the tab shown and the rows' sort.
-// Storage can be unavailable, so every access is guarded.
+// Per-device watchlist view preferences kept in localStorage: the tab shown, the rows' sort and the
+// columns' order and widths. Storage can be unavailable, so every access is guarded.
 
-import type { WatchSort } from './model';
+import { sanitizeColumns, WATCH_COLS, type WatchColumns, type WatchSort } from './model';
 
 const TAB_KEY = 'tape.watchlist.tab';
 const SORT_KEY = 'tape.watchlist.sort';
+const COLUMNS_KEY = 'tape.watchlist.columns';
 
 export function loadTab(): string | null {
   try {
@@ -28,7 +29,7 @@ export function loadSort(): WatchSort {
     const v: unknown = JSON.parse(window.localStorage.getItem(SORT_KEY) ?? 'null');
     if (v && typeof v === 'object') {
       const { by, dir } = v as Record<string, unknown>;
-      if ((by === 'symbol' || by === 'change') && (dir === 'asc' || dir === 'desc')) return { by, dir };
+      if ((by === 'symbol' || WATCH_COLS.includes(by as never)) && (dir === 'asc' || dir === 'desc')) return { by: by as 'symbol', dir };
     }
   } catch {
     // Unreadable: the tabs' own order.
@@ -41,5 +42,22 @@ export function saveSort(sort: WatchSort): void {
     window.localStorage.setItem(SORT_KEY, JSON.stringify(sort));
   } catch {
     // Not persisted; the sort lasts for this session.
+  }
+}
+
+/** The saved columns, made whole (model.ts → sanitizeColumns). */
+export function loadColumns(): WatchColumns {
+  try {
+    return sanitizeColumns(JSON.parse(window.localStorage.getItem(COLUMNS_KEY) ?? 'null'));
+  } catch {
+    return sanitizeColumns(null);
+  }
+}
+
+export function saveColumns(cols: WatchColumns): void {
+  try {
+    window.localStorage.setItem(COLUMNS_KEY, JSON.stringify(cols));
+  } catch {
+    // Not persisted; the columns last for this session.
   }
 }

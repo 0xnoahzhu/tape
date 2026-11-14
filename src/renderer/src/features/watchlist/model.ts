@@ -133,34 +133,77 @@ export function fitTabs(tabs: readonly number[], room: number, moreWidth: number
 // ---------------------------------------------------------------------------
 // Sorting the rows
 
-/** The rows' order: by symbol or by today's change, either way; null keeps the tab's own order. */
-export type WatchSort = { by: 'symbol' | 'change'; dir: 'asc' | 'desc' } | null;
+/** The watchlist's columns after Symbol (always first): last price, today's change and change in %. */
+export const WATCH_COLS = ['last', 'chg', 'pct'] as const;
+export type WatchCol = (typeof WATCH_COLS)[number];
+export type WatchSortBy = 'symbol' | WatchCol;
+
+/** Default widths (px) of the columns after Symbol, and the range they are sized in; Symbol takes the rest, at least SYMBOL_MIN_W. */
+export const COL_WIDTHS: Readonly<Record<WatchCol, number>> = { last: 64, chg: 50, pct: 54 };
+export const COL_MIN_W = 36;
+export const COL_MAX_W = 180;
+export const SYMBOL_MIN_W = 44;
+
+/** The columns' order after Symbol and their widths, as the user arranged them. */
+export interface WatchColumns {
+  order: WatchCol[];
+  widths: Record<WatchCol, number>;
+}
+
+export const DEFAULT_COLUMNS: WatchColumns = { order: [...WATCH_COLS], widths: { ...COL_WIDTHS } };
+
+export const clampColWidth = (w: number): number => Math.round(Math.min(COL_MAX_W, Math.max(COL_MIN_W, Number.isFinite(w) ? w : COL_MIN_W)));
+
+/** Saved columns made whole: known columns in their saved order, any missing one after them, widths in range (else the default). */
+export function sanitizeColumns(raw: unknown): WatchColumns {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const saved = Array.isArray(o.order) ? o.order.filter((c, i, a): c is WatchCol => WATCH_COLS.includes(c as WatchCol) && a.indexOf(c) === i) : [];
+  const widths = { ...COL_WIDTHS };
+  const w = o.widths && typeof o.widths === 'object' ? (o.widths as Record<string, unknown>) : {};
+  for (const c of WATCH_COLS) if (typeof w[c] === 'number') widths[c] = clampColWidth(w[c] as number);
+  return { order: [...saved, ...WATCH_COLS.filter((c) => !saved.includes(c))], widths };
+}
+
+/** The grid columns of a row and the header: Symbol takes what the others leave. */
+export function columnsTemplate(cols: WatchColumns): string {
+  return [`minmax(${SYMBOL_MIN_W}px,1fr)`, ...cols.order.map((c) => `${cols.widths[c]}px`)].join(' ');
+}
+
+/** Moves column `col` to `index` among the other columns after Symbol. */
+export function moveColumn(cols: WatchColumns, col: WatchCol, index: number): WatchColumns {
+  const rest = cols.order.filter((c) => c !== col);
+  const at = Math.max(0, Math.min(rest.length, Math.round(index)));
+  return { ...cols, order: [...rest.slice(0, at), col, ...rest.slice(at)] };
+}
+
+/** The rows' order: by a column, either way; null keeps the tab's own order. */
+export type WatchSort = { by: WatchSortBy; dir: 'asc' | 'desc' } | null;
 
 /**
- * A click on a sort header: symbol A–Z, then Z–A; change biggest gain first, then biggest loss
+ * A click on a column's header: Symbol A–Z, then Z–A; a number biggest first, then smallest
  * first; a third click goes back to the tab's own order. Another header starts over.
  */
-export function nextWatchSort(cur: WatchSort, by: 'symbol' | 'change'): WatchSort {
+export function nextWatchSort(cur: WatchSort, by: WatchSortBy): WatchSort {
   const first = by === 'symbol' ? 'asc' : 'desc';
   if (cur?.by !== by) return { by, dir: first };
   return cur.dir === first ? { by, dir: first === 'asc' ? 'desc' : 'asc' } : null;
 }
 
 /**
- * `rows` in `sort`'s order (stable: equal ones keep the tab's order). By symbol: the contract's
- * label, ignoring case. By change: `changeOf` (today's change, %); rows without one come last
- * either way.
+ * `rows` in `sort`'s order (stable: equal ones keep the tab's order). By Symbol: the contract's
+ * label, ignoring case. By a number: `valueOf` (the column's value for a row's key); rows without
+ * one come last either way.
  */
-export function sortRows(rows: readonly TabRow[], sort: WatchSort, changeOf: (key: string) => number | undefined): TabRow[] {
+export function sortRows(rows: readonly TabRow[], sort: WatchSort, valueOf: (key: string) => number | undefined): TabRow[] {
   if (!sort) return [...rows];
   const sign = sort.dir === 'asc' ? 1 : -1;
-  const keyed = rows.map((r, i) => ({ r, i, label: contractLabel(r.item.contract), chg: sort.by === 'change' ? changeOf(itemKey(r.item)) : undefined }));
+  const keyed = rows.map((r, i) => ({ r, i, label: contractLabel(r.item.contract), v: sort.by === 'symbol' ? undefined : valueOf(itemKey(r.item)) }));
   keyed.sort((a, b) => {
     if (sort.by === 'symbol') return sign * a.label.localeCompare(b.label, 'en', { sensitivity: 'base', numeric: true }) || a.i - b.i;
-    const ha = a.chg != null && Number.isFinite(a.chg);
-    const hb = b.chg != null && Number.isFinite(b.chg);
+    const ha = a.v != null && Number.isFinite(a.v);
+    const hb = b.v != null && Number.isFinite(b.v);
     if (ha !== hb) return ha ? -1 : 1;
-    return (ha ? sign * (a.chg! - b.chg!) : 0) || a.i - b.i;
+    return (ha ? sign * (a.v! - b.v!) : 0) || a.i - b.i;
   });
   return keyed.map((k) => k.r);
 }

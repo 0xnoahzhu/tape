@@ -17,9 +17,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { contractKey, contractLabel } from '@shared/contract';
-import { pct, px, signColor } from '@shared/format';
-import type { Lang, WatchItem, Watchlist } from '@shared/types';
-import { changePct, lastPrice } from '../../hooks/useQuotes';
+import { pct, px, sg, signColor } from '@shared/format';
+import type { Lang, Quote, WatchItem, Watchlist } from '@shared/types';
+import { changeAbs, changePct, lastPrice } from '../../hooks/useQuotes';
 import { nameOf, useLang } from '../../i18n';
 import { useStore } from '../../state/store';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
@@ -27,7 +27,8 @@ import { edgeScroll } from '../portfolio/columnsState';
 import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { updateList } from './actions';
 import { useWatchlistMessages } from './messages';
-import { ALL_TAB, addItem, allDrop, dropIndex, groupHas, heldKeys, itemKey, moveItem, moveItemTo, nextWatchSort, sortRows, tabRows, type TabRow } from './model';
+import { ALL_TAB, addItem, allDrop, columnsTemplate, dropIndex, groupHas, heldKeys, itemKey, moveItem, moveItemTo, sortRows, tabRows, type TabRow, type WatchCol } from './model';
+import { WatchHeader } from './WatchHeader';
 import { useWatchlistView } from './viewState';
 import { DEFAULT_GROUP_NAME } from './messages';
 
@@ -41,10 +42,13 @@ const EDGE = 40;
 const EDGE_SPEED = 14;
 /** Sorted by change, the rows re-sort at most this often (ms). */
 const RESORT_MS = 1000;
-/** Columns of a row and of the header: symbol, last, change. */
-const ROW_COLS = 'minmax(0,1fr) 80px 64px';
-const ROW_PAD = '0 12px 0 16px';
-const NO_CHANGES: number[] = [];
+/** A row's and the header's side padding and the gap between columns (model.ts → columnsTemplate for the columns). */
+const ROW_PAD = '0 10px 0 14px';
+const COL_GAP = 6;
+const NO_VALUES: number[] = [];
+
+/** A column's value for sorting: the last price, the change or the change in %. */
+const valueOf = (col: WatchCol, q: Quote | undefined): number | undefined => (col === 'last' ? lastPrice(q) : col === 'chg' ? changeAbs(q) : changePct(q));
 
 /** What is dragged: a row, by the group it is shown for and its key. */
 interface Dragged {
@@ -81,14 +85,16 @@ export function GroupList({
   const selectedKey = useStore((s) => contractKey(s.symbol));
   const rootRef = useRef<HTMLDivElement>(null);
   const sort = useWatchlistView((s) => s.sort);
-  const setSort = useWatchlistView((s) => s.setSort);
   const base = useMemo(() => tabRows(list, tab), [list, tab]);
-  // Today's change of each row, read only while sorting by it (so quotes do not re-render the list otherwise).
-  const changes = useStore(useShallow((s) => (sort?.by === 'change' ? base.map((r) => changePct(s.quotes[itemKey(r.item)]) ?? NaN) : NO_CHANGES)));
+  const columns = useWatchlistView((s) => s.columns);
+  const template = useMemo(() => columnsTemplate(columns), [columns]);
+  // The sorted column's value of each row, read only while sorting by a number (so quotes do not re-render the list otherwise).
+  const by = sort && sort.by !== 'symbol' ? sort.by : null;
+  const values = useStore(useShallow((s) => (by ? base.map((r) => valueOf(by, s.quotes[itemKey(r.item)]) ?? NaN) : NO_VALUES)));
   const wanted = useMemo(() => {
-    const byKey = new Map(base.map((r, i) => [itemKey(r.item), changes[i]]));
+    const byKey = new Map(base.map((r, i) => [itemKey(r.item), values[i]]));
     return sortRows(base, sort, (k) => byKey.get(k));
-  }, [base, sort, changes]);
+  }, [base, sort, values]);
   const [hold, setHold] = useState(false);
   const order = useHeldOrder(
     wanted.map((r) => itemKey(r.item)),
@@ -238,36 +244,11 @@ export function GroupList({
   // An index opens too: its chart (and options), without the order ticket.
   const pick = useCallback((item: WatchItem) => useStore.getState().selectSymbol(item.contract, item.name), []);
 
-  const header = (by: 'symbol' | 'change' | null, label: string, title: string, right: boolean) => {
-    const on = by != null && sort?.by === by;
-    const arrow = on ? (sort!.dir === 'asc' ? '▲' : '▼') : '';
-    const style = { display: 'flex', alignItems: 'center', gap: 3, justifyContent: right ? 'flex-end' : 'flex-start', minWidth: 0, color: on ? 'var(--tx)' : undefined };
-    if (!by) return <div style={style}>{label}</div>;
-    return (
-      <button
-        type="button"
-        title={title}
-        aria-sort={on ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-        onClick={() => setSort(nextWatchSort(sort, by))}
-        className="hover-tx focus-ring"
-        style={{ ...style, border: 'none', background: 'transparent', padding: 0, font: 'inherit', cursor: 'pointer' }}
-      >
-        {right && <span style={{ fontSize: 8, color: 'var(--ac)' }}>{arrow}</span>}
-        <span>{label}</span>
-        {!right && <span style={{ fontSize: 8, color: 'var(--ac)' }}>{arrow}</span>}
-      </button>
-    );
-  };
-
   return (
     <div role="tabpanel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* Over the rows' scroller, not in it, with the same room for its scrollbar (scrollGutter.ts), so the columns line up. */}
       <div style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, padding: `0 max(3px, ${lessGutter(8)}) 0 8px`, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-        <div style={{ height: 28, display: 'grid', gridTemplateColumns: ROW_COLS, gap: 8, alignItems: 'center', padding: ROW_PAD, fontSize: 11, color: 'var(--dm)' }}>
-          {header('symbol', m.colSymbol, m.sortSymbol, false)}
-          {header(null, m.colLast, '', true)}
-          {header('change', m.colChange, m.sortChange, true)}
-        </div>
+        <WatchHeader template={template} gap={COL_GAP} pad={ROW_PAD} />
       </div>
       {/* Adding rows makes the list scroll; the rows keep their width (scrollGutter.ts). */}
       <div
@@ -293,6 +274,8 @@ export function GroupList({
               item={r.item}
               groupId={r.groupId}
               lang={lang}
+              template={template}
+              order={columns.order}
               selected={k === selectedKey}
               dragged={dragged?.key === k}
               onPick={pick}
@@ -358,6 +341,8 @@ const WatchRow = memo(function WatchRow({
   item,
   groupId,
   lang,
+  template,
+  order,
   selected,
   dragged,
   onPick,
@@ -367,6 +352,9 @@ const WatchRow = memo(function WatchRow({
   item: WatchItem;
   groupId: string;
   lang: Lang;
+  /** The columns' grid and order (WatchHeader). */
+  template: string;
+  order: readonly WatchCol[];
   selected: boolean;
   /** Being dragged (or its group is): faded. */
   dragged: boolean;
@@ -380,6 +368,7 @@ const WatchRow = memo(function WatchRow({
   const q = useStore((s) => s.quotes[key]);
   const last = lastPrice(q);
   const chg = changePct(q);
+  const chgAbs = changeAbs(q);
   const name = nameOf(item.name, lang);
   // IB refused the subscription (e.g. 354 not subscribed) and nothing arrived: say so instead of
   // a bare "—". 10089 (no live subscription) is followed by delayed data when that is enabled.
@@ -401,8 +390,8 @@ const WatchRow = memo(function WatchRow({
         opacity: dragged ? 0.45 : 1,
         flexShrink: 0,
         display: 'grid',
-        gridTemplateColumns: ROW_COLS,
-        gap: 8,
+        gridTemplateColumns: template,
+        gap: COL_GAP,
         alignItems: 'center',
         padding: ROW_PAD,
         cursor: 'pointer',
@@ -421,18 +410,28 @@ const WatchRow = memo(function WatchRow({
           <div data-wl="via" title={m.viaTip(q.source.exchange, contractLabel(item.contract), q.marketDataType)} style={{ flexShrink: 0, width: 5, height: 5, borderRadius: '50%', background: 'var(--dm)', alignSelf: 'center' }} />
         )}
       </div>
-      <div className="num ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined} style={{ textAlign: 'right' }}>
-        {px(last)}
-      </div>
-      {noData ? (
-        <div className="ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined} style={{ textAlign: 'right', fontSize: 12, color: 'var(--dm)' }}>
-          {m.noData}
-        </div>
-      ) : (
-        <div className="num" style={{ textAlign: 'right', fontSize: 12, color: signColor(chg) }}>
-          {pct(chg)}
-        </div>
-      )}
+      {order.map((col) => {
+        if (col === 'last')
+          return (
+            <div key={col} className="num ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : px(last)} style={{ textAlign: 'right' }}>
+              {px(last)}
+            </div>
+          );
+        if (noData)
+          return col === 'pct' ? (
+            <div key={col} className="ellipsis" title={q?.error ? `${q.error.code} · ${q.error.message}` : undefined} style={{ textAlign: 'right', fontSize: 12, color: 'var(--dm)' }}>
+              {m.noData}
+            </div>
+          ) : (
+            <div key={col} />
+          );
+        const text = col === 'chg' ? sg(chgAbs, px) : pct(chg);
+        return (
+          <div key={col} className="num ellipsis" title={text} style={{ textAlign: 'right', fontSize: 12, color: signColor(chg) }}>
+            {text}
+          </div>
+        );
+      })}
     </div>
   );
 });

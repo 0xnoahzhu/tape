@@ -83,6 +83,11 @@ export function changePct(q: Quote | undefined): number | undefined {
   return (last / q.close - 1) * 100;
 }
 
+/** Change of the last price against the previous close, in price; undefined where changePct is. */
+export function changeAbs(q: Quote | undefined): number | undefined {
+  return changePct(q) == null ? undefined : lastPrice(q)! - q!.close!;
+}
+
 /**
  * Whether market data requests (quotes, bars, depth, chains, contract details) can be answered:
  * connected to IB, or the built-in simulator (TAPE_DEMO=1, development builds only), which

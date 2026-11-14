@@ -1,10 +1,11 @@
-// Watchlist view state: the tab shown and the rows' sort (remembered per device, prefs.ts), and the
+// Watchlist view state: the tab shown, the rows' sort and the columns (remembered per device,
+// prefs.ts), and the
 // tab "Add symbol" adds to while All is shown (this session only; the chart star's picker sets it too). Kept in a
 // store so it survives collapsing the panel and switching pages.
 
 import { create } from 'zustand';
-import { ALL_TAB, type WatchSort } from './model';
-import { loadSort, loadTab, saveSort, saveTab } from './prefs';
+import { ALL_TAB, type WatchColumns, type WatchSort } from './model';
+import { loadColumns, loadSort, loadTab, saveColumns, saveSort, saveTab } from './prefs';
 
 interface WatchlistView {
   /** Remembered tab: All or a group id; may be stale (resolve with model.ts → resolveTab). */
@@ -17,6 +18,9 @@ interface WatchlistView {
   /** The rows' order in every tab (model.ts → sortRows); null keeps each tab's own order. */
   sort: WatchSort;
   setSort(sort: WatchSort): void;
+  /** The columns after Symbol: their order and widths. `persist`: saved (the end of a drag), else only shown. */
+  columns: WatchColumns;
+  setColumns(columns: WatchColumns, persist: boolean): void;
 }
 
 export const useWatchlistView = create<WatchlistView>()((set) => ({
@@ -31,5 +35,10 @@ export const useWatchlistView = create<WatchlistView>()((set) => ({
   setSort: (sort) => {
     saveSort(sort);
     set({ sort });
+  },
+  columns: loadColumns(),
+  setColumns: (columns, persist) => {
+    if (persist) saveColumns(columns);
+    set({ columns });
   },
 }));

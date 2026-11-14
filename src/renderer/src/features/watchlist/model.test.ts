@@ -12,6 +12,14 @@ import {
   deleteGroup,
   dropIndex,
   fitTabs,
+  COL_MAX_W,
+  COL_MIN_W,
+  COL_WIDTHS,
+  clampColWidth,
+  columnsTemplate,
+  DEFAULT_COLUMNS,
+  moveColumn,
+  sanitizeColumns,
   heldKeys,
   nextWatchSort,
   sortRows,
@@ -206,17 +214,17 @@ describe('tabs', () => {
 });
 
 describe('sorting the rows', () => {
-  it('cycles a header: symbol A–Z, Z–A, own order; change gainers, losers, own order', () => {
+  it('cycles a header: symbol A–Z, Z–A, own order; a number biggest, smallest, own order', () => {
     expect(nextWatchSort(null, 'symbol')).toEqual({ by: 'symbol', dir: 'asc' });
     expect(nextWatchSort({ by: 'symbol', dir: 'asc' }, 'symbol')).toEqual({ by: 'symbol', dir: 'desc' });
     expect(nextWatchSort({ by: 'symbol', dir: 'desc' }, 'symbol')).toBeNull();
-    expect(nextWatchSort(null, 'change')).toEqual({ by: 'change', dir: 'desc' });
-    expect(nextWatchSort({ by: 'change', dir: 'desc' }, 'change')).toEqual({ by: 'change', dir: 'asc' });
-    expect(nextWatchSort({ by: 'change', dir: 'asc' }, 'change')).toBeNull();
-    expect(nextWatchSort({ by: 'symbol', dir: 'desc' }, 'change')).toEqual({ by: 'change', dir: 'desc' });
+    expect(nextWatchSort(null, 'pct')).toEqual({ by: 'pct', dir: 'desc' });
+    expect(nextWatchSort({ by: 'pct', dir: 'desc' }, 'pct')).toEqual({ by: 'pct', dir: 'asc' });
+    expect(nextWatchSort({ by: 'pct', dir: 'asc' }, 'pct')).toBeNull();
+    expect(nextWatchSort({ by: 'symbol', dir: 'desc' }, 'chg')).toEqual({ by: 'chg', dir: 'desc' });
   });
 
-  it('sorts by symbol or by change, rows without a change last, ties in the tab order', () => {
+  it('sorts by symbol or by a number, rows without one last, ties in the tab order', () => {
     const rows = tabRows(main, 'g-tech'); // AAPL NVDA MSFT AMD META AMZN
     const sym = (rs: ReturnType<typeof tabRows>) => rs.map((r) => r.item.contract.symbol);
     expect(sym(sortRows(rows, null, () => undefined))).toEqual(['AAPL', 'NVDA', 'MSFT', 'AMD', 'META', 'AMZN']);
@@ -224,15 +232,33 @@ describe('sorting the rows', () => {
     expect(sym(sortRows(rows, { by: 'symbol', dir: 'desc' }, () => undefined))).toEqual(['NVDA', 'MSFT', 'META', 'AMZN', 'AMD', 'AAPL']);
     const chg: Record<string, number> = { 'STK:AAPL': 1.3, 'STK:NVDA': -2.1, 'STK:MSFT': 0.4, 'STK:AMD': 1.9 };
     const of = (k: string) => chg[k];
-    // META and AMZN have no change: last, in the tab's order, either way.
-    expect(sym(sortRows(rows, { by: 'change', dir: 'desc' }, of))).toEqual(['AMD', 'AAPL', 'MSFT', 'NVDA', 'META', 'AMZN']);
-    expect(sym(sortRows(rows, { by: 'change', dir: 'asc' }, of))).toEqual(['NVDA', 'MSFT', 'AAPL', 'AMD', 'META', 'AMZN']);
+    // META and AMZN have no value: last, in the tab's order, either way.
+    expect(sym(sortRows(rows, { by: 'pct', dir: 'desc' }, of))).toEqual(['AMD', 'AAPL', 'MSFT', 'NVDA', 'META', 'AMZN']);
+    expect(sym(sortRows(rows, { by: 'pct', dir: 'asc' }, of))).toEqual(['NVDA', 'MSFT', 'AAPL', 'AMD', 'META', 'AMZN']);
   });
 
   it('holds the drawn order: kept rows keep their places, new ones come last', () => {
     expect(heldKeys(['a', 'b', 'c'], ['c', 'b', 'a'])).toEqual(['a', 'b', 'c']);
     expect(heldKeys(['a', 'b', 'c'], ['d', 'c', 'a'])).toEqual(['a', 'c', 'd']);
     expect(heldKeys([], ['x', 'y'])).toEqual(['x', 'y']);
+  });
+});
+
+describe('columns', () => {
+  it('makes saved columns whole: known ones in order, missing ones after, widths in range', () => {
+    expect(sanitizeColumns(null)).toEqual(DEFAULT_COLUMNS);
+    expect(sanitizeColumns({ order: ['pct', 'nope', 'pct', 'last'], widths: { pct: 999, last: 10, chg: 'x' } })).toEqual({
+      order: ['pct', 'last', 'chg'],
+      widths: { last: COL_MIN_W, chg: COL_WIDTHS.chg, pct: COL_MAX_W },
+    });
+  });
+
+  it('puts Symbol first, taking the rest, and moves the other columns among themselves', () => {
+    expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,1fr) 64px 50px 54px');
+    expect(moveColumn(DEFAULT_COLUMNS, 'pct', 0).order).toEqual(['pct', 'last', 'chg']);
+    expect(moveColumn(DEFAULT_COLUMNS, 'last', 9).order).toEqual(['chg', 'pct', 'last']);
+    expect(clampColWidth(20)).toBe(COL_MIN_W);
+    expect(clampColWidth(70.4)).toBe(70);
   });
 });
 
