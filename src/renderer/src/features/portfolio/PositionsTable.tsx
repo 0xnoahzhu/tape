@@ -13,8 +13,8 @@
 // Under the rows a quiet line says why earnings dates are missing, while they are.
 //
 // The card is its own scroll container, so its header row stays on top and the Symbol column on
-// the left when many columns scroll sideways; while they overflow, its scrollbars are always shown
-// (global.css → .pos-scroll), the horizontal one at the card's bottom edge. A header dragged sideways
+// the left when many columns scroll sideways; its scrollbars are the app's classic ones (global.css),
+// always shown while the columns overflow, the horizontal one at the card's bottom edge. A header dragged sideways
 // moves its column (Symbol stays first; useHeaderDrag), and the strip on a header's right edge sizes
 // the column (ResizeHandle; a double-click gives it its default width back). Both follow the pointer
 // on the window from press to release (followPointer), not HTML drag and drop or an element's pointer
@@ -473,8 +473,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
 
   return (
     // The header sits over the rows' scroller, not in it, so the scrollbar runs beside the rows only.
-    // Both keep the same room for it (scrollGutter.ts; while the columns overflow, global.css styles
-    // both alike and sets --sbw), so the header's columns stay over the rows', and the header follows
+    // Both keep the same room for it (scrollGutter.ts, --sbw), so the header's columns stay over the rows', and the header follows
     // the rows' sideways scroll. Its own stacking context: the sticky Symbol column stays under the
     // page's popovers.
     <div
