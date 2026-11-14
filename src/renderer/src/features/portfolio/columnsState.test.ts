@@ -10,23 +10,22 @@ import {
   dropMark,
   dropSlot,
   edgeScroll,
+  fitWidths,
   gridTemplate,
+  resizeWithin,
   heldGroups,
   heldOrder,
-  liveWidths,
   moveColumn,
   moveColumnBy,
   moveColumnToSlot,
   nextSort,
   removeColumn,
-  resetColumnWidth,
   sanitizeColumns,
   sanitizePrefs,
   sanitizeWidths,
   sameGroups,
   sameOrder,
   setColumnWidth,
-  sizeColumn,
   slotTarget,
   sortBy,
   startsReorder,
@@ -192,8 +191,6 @@ describe('column widths', () => {
     expect(one).toEqual({ value: 150 });
     expect(setColumnWidth(one, 'value', 150.2)).toBe(one);
     expect(setColumnWidth(one, 'quantity', 1)).toEqual({ value: 150, quantity: COLUMNS.quantity.width });
-    expect(resetColumnWidth(one, 'value')).toEqual({});
-    expect(resetColumnWidth(one, 'quantity')).toBe(one);
     expect(one).toEqual({ value: 150 });
   });
 
@@ -207,34 +204,47 @@ describe('column widths', () => {
     expect(tracksWidth(defs, { quantity: 140, bid: 99 })).toBe(200 + 140 + 84);
   });
 
-  it('keeps the columns left of a sized one at their drawn widths, so its edge follows the pointer', () => {
-    // The default columns in a card with spare width: each column drawn wider than its minimum.
-    const defs = DEFAULT_COLUMNS.map((id) => COLUMNS[id]);
-    const left = { symbol: 361.6, quantity: 152.8, averageCost: 164.8, price: 164.8 };
-    const live = liveWidths({}, 'value', 266.8, left);
-    // Every track up to Value is fixed, so Value's right edge does not move with the spare width;
-    // the columns right of it share what it took.
-    expect(gridTemplate(defs, live)).toBe('361.6px 152.8px 164.8px 164.8px 266.8px minmax(112px,1fr) minmax(104px,1fr)');
-    expect(tracksWidth(defs, live)).toBeCloseTo(361.6 + 152.8 + 164.8 + 164.8 + 266.8 + 112 + 104);
-    // A width of the column itself in `left` or in the stored widths gives way to the live one.
-    expect(liveWidths({ value: 120 }, 'value', 266.8, { ...left, value: 176.8 }).value).toBe(266.8);
-
-    // Released: the columns that shared the spare width keep their drawn widths, in whole px.
-    expect(sizeColumn({}, 'value', 266.8, left)).toEqual({ symbol: 362, quantity: 153, averageCost: 165, price: 165, value: 267 });
+  it('starts unsized columns at their catalog width plus a share of the room, Symbol two shares', () => {
+    const defs = DEFAULT_COLUMNS.slice(0, 3).map((id) => COLUMNS[id]); // symbol 200, quantity 72, averageCost 84
+    // 456 room: 100 spare, 4 shares of 25.
+    expect(fitWidths(defs, {}, 456)).toEqual({ symbol: 250, quantity: 97, averageCost: 109 });
+    // A stored width stays; the others share what is left.
+    expect(fitWidths(defs, { quantity: 100 }, 456)).toEqual({ symbol: 248, quantity: 100, averageCost: 108 });
+    // Not measured yet: as they are.
+    const none = {};
+    expect(fitWidths(defs, none, 0)).toBe(none);
   });
 
-  it('fixes no column left of a sized one that is at its minimum, over the maximum or already sized', () => {
-    const widths = { averageCost: 120 };
-    // Scrolling sideways: every unsized track at its catalog width keeps sharing.
-    expect(sizeColumn(widths, 'value', 150, { symbol: 200, quantity: 72.2, averageCost: 120, price: 84 })).toEqual({ averageCost: 120, value: 150 });
-    // A very wide card: Symbol's share over the maximum stays a share.
-    expect(sizeColumn({}, 'quantity', 100, { symbol: 900 })).toEqual({ quantity: 100 });
-    // A stored width is not replaced by a drawn one; unknown ids are ignored.
-    expect(sizeColumn(widths, 'value', 150, { averageCost: 180, nope: 300 } as never)).toEqual({ averageCost: 120, value: 150 });
-    // Nothing changes: the same object back.
-    const same = { quantity: 100 };
-    expect(sizeColumn(same, 'quantity', 100.2, { symbol: 200 })).toBe(same);
-    expect(sizeColumn(same, 'quantity', 100)).toBe(same);
+  it('narrows the rightmost column first, Symbol last; widens only the rightmost', () => {
+    const defs = DEFAULT_COLUMNS.slice(0, 3).map((id) => COLUMNS[id]);
+    const ws = { symbol: 250, quantity: 97, averageCost: 109 }; // 456
+    expect(fitWidths(defs, ws, 456)).toBe(ws);
+    // 30 narrower: averageCost gives 25 down to 84, then quantity 5.
+    expect(fitWidths(defs, ws, 426)).toEqual({ symbol: 250, quantity: 92, averageCost: 84 });
+    // Down to the catalog widths everywhere but Symbol: Symbol gives the rest.
+    expect(fitWidths(defs, ws, 380)).toEqual({ symbol: 224, quantity: 72, averageCost: 84 });
+    // Under the catalog widths: they stay (the table scrolls sideways).
+    expect(fitWidths(defs, ws, 300)).toEqual({ symbol: 200, quantity: 72, averageCost: 84 });
+    // Wider again: only the rightmost.
+    expect(fitWidths(defs, fitWidths(defs, ws, 380), 456)).toEqual({ symbol: 224, quantity: 72, averageCost: 160 });
+    // Hidden columns keep their widths.
+    expect(fitWidths(defs, { ...ws, value: 300 }, 426).value).toBe(300);
+  });
+
+  it('sizes a column against the rightmost one; the table grows only when that is at its minimum', () => {
+    const defs = DEFAULT_COLUMNS.slice(0, 3).map((id) => COLUMNS[id]);
+    const ws = { symbol: 250, quantity: 97, averageCost: 109 }; // 456 room
+    // Quantity 20 wider: averageCost 20 narrower.
+    expect(resizeWithin(defs, ws, 'quantity', 117, 456)).toEqual({ symbol: 250, quantity: 117, averageCost: 89 });
+    // 60 wider: averageCost down to 84 (25), the table 35 wider than the card.
+    expect(resizeWithin(defs, ws, 'quantity', 157, 456)).toEqual({ symbol: 250, quantity: 157, averageCost: 84 });
+    // Narrower: the rightmost takes it.
+    expect(resizeWithin(defs, ws, 'symbol', 230, 456)).toEqual({ symbol: 230, quantity: 97, averageCost: 129 });
+    // The rightmost itself: never narrower than fills the card; wider when asked.
+    expect(resizeWithin(defs, ws, 'averageCost', 90, 456)).toBe(ws);
+    expect(resizeWithin(defs, ws, 'averageCost', 140, 456)).toEqual({ symbol: 250, quantity: 97, averageCost: 140 });
+    // Back to its catalog width (a double-click): the rightmost fills.
+    expect(resizeWithin(defs, ws, 'quantity', COLUMNS.quantity.width, 456)).toEqual({ symbol: 250, quantity: 72, averageCost: 134 });
   });
 
   it('sizes a column by the distance its edge was dragged, clamped', () => {

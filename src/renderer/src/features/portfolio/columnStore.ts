@@ -16,9 +16,7 @@ import {
   moveColumnToSlot,
   nextSort,
   removeColumn,
-  resetColumnWidth,
   sanitizePrefs,
-  sizeColumn,
   toggleColumn,
   type ColumnPrefs,
   type ColumnWidths,
@@ -61,7 +59,7 @@ interface PositionColumnsStore {
   /** The user's columns in order; null = the default set (nothing stored). */
   columns: ColumnId[] | null;
   sort: SortState | null;
-  /** Widths the user dragged columns to (px); a column without one shares the spare width. */
+  /** The columns' widths (px), fitted to the card as it is resized (the rightmost first) and as dragged; a column without one yet gets a share of the spare room. */
   widths: ColumnWidths;
   groupBy: GroupBy;
   /** Collapsed groups by key (groups.ts → groupKey, so each grouping keeps its own); not stored. */
@@ -78,13 +76,8 @@ interface PositionColumnsStore {
   moveToSlot(id: ColumnId, slot: number): void;
   /** A header click: ascending, descending, no sort. */
   cycleSort(id: ColumnId): void;
-  /**
-   * A column's width (clamped to its minimum and MAX_COLUMN_WIDTH); `left`, the widths the columns
-   * left of it were drawn at, fixes those that shared the spare width (columnsState.ts → sizeColumn).
-   */
-  setWidth(id: ColumnId, w: number, left?: ColumnWidths): void;
-  /** Back to the column's default width. */
-  resetWidth(id: ColumnId): void;
+  /** The columns' widths, as fitted to the card or sized (columnsState.ts → fitWidths, resizeWithin). */
+  setWidths(widths: ColumnWidths): void;
   setGroupBy(by: GroupBy): void;
   /** Collapses an expanded group, or expands a collapsed one. */
   toggleGroup(key: string): void;
@@ -116,12 +109,7 @@ export const usePositionColumns = create<PositionColumnsStore>()((set, get) => {
     if (next === base) return;
     commit({ ...p, columns: [...next], sort: p.sort && next.includes(p.sort.id) ? p.sort : null });
   };
-  /** Applies a change to the widths. */
-  const size = (edit: (widths: ColumnWidths) => ColumnWidths) => {
-    const p = prefs();
-    const next = edit(p.widths);
-    if (next !== p.widths) commit({ ...p, widths: next });
-  };
+
   return {
     ...loadPrefs(),
     collapsed: {},
@@ -136,8 +124,10 @@ export const usePositionColumns = create<PositionColumnsStore>()((set, get) => {
       if (!(p.columns ?? DEFAULT_COLUMNS).includes(id)) return;
       commit({ ...p, sort: nextSort(p.sort, id) });
     },
-    setWidth: (id, w, left) => size((ws) => sizeColumn(ws, id, w, left)),
-    resetWidth: (id) => size((ws) => resetColumnWidth(ws, id)),
+    setWidths: (widths) => {
+      const p = prefs();
+      if (widths !== p.widths) commit({ ...p, widths });
+    },
     setGroupBy: (groupBy) => {
       if (groupBy !== get().groupBy) commit({ ...prefs(), groupBy });
     },

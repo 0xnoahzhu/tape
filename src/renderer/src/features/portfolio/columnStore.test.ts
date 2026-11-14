@@ -95,31 +95,15 @@ describe('remembered columns and sort', () => {
     vi.stubGlobal('localStorage', storage);
     let store = await freshStore();
     expect(store.getState().widths).toEqual({});
-    store.getState().setWidth('value', 151.4);
-    store.getState().setWidth('quantity', 1);
+    store.getState().setWidths({ value: 151, quantity: 72 });
     expect(JSON.parse(storage.data.get(KEY)!)).toEqual({ sort: null, widths: { value: 151, quantity: 72 } });
 
     // A new app start reads them back (localStorage lives in the Electron profile).
     store = await freshStore();
     expect(store.getState()).toMatchObject({ columns: null, sort: null, widths: { value: 151, quantity: 72 } });
 
-    // A double-click on the edge: the default width again.
-    store.getState().resetWidth('value');
-    store.getState().resetWidth('quantity');
-    expect(store.getState().widths).toEqual({});
-    expect(storage.data.has(KEY)).toBe(false);
-  });
-
-  it('stores the widths the columns left of a sized one were drawn at, and forgets them on reset', async () => {
-    const storage = memoryStorage();
-    vi.stubGlobal('localStorage', storage);
-    let store = await freshStore();
-    // Symbol and Position took a share of the spare width; Avg cost is at its minimum.
-    store.getState().setWidth('price', 140.4, { symbol: 340.2, quantity: 110, averageCost: 84 });
-    expect(JSON.parse(storage.data.get(KEY)!).widths).toEqual({ symbol: 340, quantity: 110, price: 140 });
-    store = await freshStore();
-    expect(store.getState().widths).toEqual({ symbol: 340, quantity: 110, price: 140 });
-    store.getState().reset();
+    // No widths: nothing to store.
+    store.getState().setWidths({});
     expect(store.getState().widths).toEqual({});
     expect(storage.data.has(KEY)).toBe(false);
   });
@@ -129,7 +113,7 @@ describe('remembered columns and sort', () => {
     vi.stubGlobal('localStorage', storage);
     const store = await freshStore();
     store.getState().toggle('bid');
-    store.getState().setWidth('bid', 130);
+    store.getState().setWidths({ bid: 130 });
     store.getState().toggle('bid');
     expect(store.getState().columns).not.toContain('bid');
     expect(JSON.parse(storage.data.get(KEY)!).widths).toEqual({ bid: 130 });
@@ -174,7 +158,7 @@ describe('remembered columns and sort', () => {
     // Other changes keep it.
     store.getState().cycleSort('value');
     store.getState().toggle('bid');
-    store.getState().setWidth('bid', 120);
+    store.getState().setWidths({ bid: 120 });
     expect(JSON.parse(storage.data.get(KEY)!).groupBy).toBe('sector');
     store.getState().setGroupBy('none');
     store = await freshStore();

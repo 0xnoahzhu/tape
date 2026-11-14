@@ -16,8 +16,9 @@ export interface SortState {
 }
 
 /**
- * Widths in px the user gave columns by dragging a header's right edge. A column not in it has no
- * width of its own: it shares the spare width with the others (the default look).
+ * The columns' widths in px: fitted to the card as it is resized (fitWidths: the rightmost column
+ * gives and takes first) and set by dragging a header's right edge (resizeWithin). A column not in it
+ * yet is drawn sharing the spare width until the table is fitted.
  */
 export type ColumnWidths = Readonly<Partial<Record<ColumnId, number>>>;
 
@@ -112,31 +113,65 @@ export function setColumnWidth(widths: ColumnWidths, id: ColumnId, w: number): C
   return widths[id] === next ? widths : { ...widths, [id]: next };
 }
 
-/**
- * The widths drawn while a column is sized by its right edge: the column at `w`, and the columns
- * left of it at the widths they were drawn at when the edge was pressed (`left`), so the spare width
- * the column takes or gives back goes to the columns right of it and its edge stays under the pointer.
- */
-export function liveWidths(widths: ColumnWidths, id: ColumnId, w: number, left: ColumnWidths): ColumnWidths {
-  return { ...widths, ...left, [id]: w };
+/** The shown columns' widths as drawn from `widths`, a column without one at its catalog width. */
+const shownWidths = (defs: readonly ColumnDef[], widths: ColumnWidths): number[] => defs.map((d) => widths[d.id] ?? d.width);
+
+/** `widths` with the shown columns at `ws` (in whole px); `widths` itself when none changed. Hidden columns keep theirs. */
+function withShown(defs: readonly ColumnDef[], widths: ColumnWidths, ws: readonly number[]): ColumnWidths {
+  if (defs.every((d, i) => widths[d.id] === ws[i])) return widths;
+  const next: Partial<Record<ColumnId, number>> = { ...widths };
+  defs.forEach((d, i) => (next[d.id] = ws[i]));
+  return next;
+}
+
+/** The rightmost column takes any room the tracks leave in `room` (the card's width for the tracks). */
+function fill(defs: readonly ColumnDef[], ws: number[], room: number): void {
+  const total = ws.reduce((a, b) => a + b, 0);
+  if (total < room && ws.length) ws[ws.length - 1] += room - total;
 }
 
 /**
- * A column sized by dragging its right edge to `w` (clamped), with `left` the widths the columns left
- * of it were drawn at (liveWidths). Those that took a share of the spare width (drawn wider than their
- * catalog width, at most MAX_COLUMN_WIDTH, without a width of their own) keep that width too, so the
- * column stays where it was let go instead of the columns left of it sharing out what it took or gave
- * back. Columns at their catalog width (a table that scrolls sideways) keep sharing. Unchanged widths
- * come back as they are.
+ * The shown columns fitted to a card whose tracks have `room` px (its width less the side padding
+ * and the gaps); the widths are the columns' state, kept as they are fitted. Columns without a width
+ * yet (a first table, a column just shown) start at their catalog width plus a share of the spare
+ * room (Symbol two shares, the others one, as the table always shared it). Then, short of room, the
+ * rightmost column narrows first, down to its catalog width, then the next one left, Symbol last;
+ * when all are at their catalog widths the table scrolls sideways. With room to spare, only the
+ * rightmost column widens. `widths` itself when nothing changes (or the card is not measured yet).
  */
-export function sizeColumn(widths: ColumnWidths, id: ColumnId, w: number, left: ColumnWidths = {}): ColumnWidths {
-  let next = widths;
-  for (const [key, lw] of Object.entries(left)) {
-    if (key === id || !isColumnId(key) || next[key] !== undefined || typeof lw !== 'number') continue;
-    const drawn = Math.round(lw);
-    if (drawn > COLUMNS[key].width && drawn <= MAX_COLUMN_WIDTH) next = setColumnWidth(next, key, drawn);
+export function fitWidths(defs: readonly ColumnDef[], widths: ColumnWidths, room: number): ColumnWidths {
+  if (!(room > 0) || !defs.length) return widths;
+  const ws = shownWidths(defs, widths);
+  const missing: number[] = defs.map((d, i) => (widths[d.id] === undefined ? (i === 0 ? 2 : 1) : 0));
+  const shares = missing.reduce((a, b) => a + b, 0);
+  const spare = room - ws.reduce((a, b) => a + b, 0);
+  if (shares && spare > 0) missing.forEach((n, i) => (ws[i] += Math.floor((spare * n) / shares)));
+  let short = ws.reduce((a, b) => a + b, 0) - room;
+  for (let i = ws.length - 1; i >= 0 && short > 0; i--) {
+    const take = Math.min(short, Math.max(0, ws[i] - defs[i].width));
+    ws[i] -= take;
+    short -= take;
   }
-  return setColumnWidth(next, id, w);
+  fill(defs, ws, room);
+  return withShown(defs, widths, ws);
+}
+
+/**
+ * A column (`id`) sized to `w` (clamped) in a card whose tracks have `room` px: the rightmost column
+ * takes or gives the difference, down to its catalog width; when it cannot give more, the table
+ * grows wider and scrolls sideways. The table is never narrower than the card: the rightmost column
+ * takes any room left (also when it is the one sized).
+ */
+export function resizeWithin(defs: readonly ColumnDef[], widths: ColumnWidths, id: ColumnId, w: number, room: number): ColumnWidths {
+  const at = defs.findIndex((d) => d.id === id);
+  if (at < 0) return widths;
+  const ws = shownWidths(defs, widths);
+  const last = ws.length - 1;
+  const next = clampWidth(id, w);
+  if (at !== last) ws[last] = Math.max(defs[last].width, ws[last] - (next - ws[at]));
+  ws[at] = next;
+  fill(defs, ws, room);
+  return withShown(defs, widths, ws);
 }
 
 /**
@@ -150,18 +185,10 @@ export function dragWidth(id: ColumnId, w0: number, x0: number, x: number): numb
   return w0 <= MAX_COLUMN_WIDTH || w <= MAX_COLUMN_WIDTH ? clampWidth(id, w) : null;
 }
 
-/** Gives a column back its default width (it shares the spare width again). */
-export function resetColumnWidth(widths: ColumnWidths, id: ColumnId): ColumnWidths {
-  if (widths[id] === undefined) return widths;
-  const next: Partial<Record<ColumnId, number>> = { ...widths };
-  delete next[id];
-  return next;
-}
-
 /**
- * The table's grid tracks. A column the user sized is that wide; the others share the spare width
- * (Symbol twice as much as the others) and none gets narrower than its catalog width. Without
- * widths this is the table as it always was.
+ * The table's grid tracks. A column with a width is that wide; one without (before the table is
+ * fitted) shares the spare width (Symbol twice as much as the others), none narrower than its catalog
+ * width.
  */
 export function gridTemplate(defs: readonly ColumnDef[], widths: ColumnWidths): string {
   return defs.map((d, i) => (widths[d.id] !== undefined ? `${widths[d.id]}px` : `minmax(${d.width}px,${i ? 1 : 2}fr)`)).join(' ');

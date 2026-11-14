@@ -15,7 +15,10 @@
 // the left when many columns scroll sideways; its scrollbars are the app's classic ones (global.css),
 // always shown while the columns overflow, the horizontal one at the card's bottom edge. A header dragged sideways
 // moves its column (Symbol stays first; useHeaderDrag), and the strip on a header's right edge sizes
-// the column (ResizeHandle; a double-click gives it its default width back). Both follow the pointer
+// the column against the rightmost one, which takes or gives the difference (ResizeHandle,
+// columnsState.ts → resizeWithin; a double-click gives it its catalog width back). As the card is
+// resized, the rightmost column gives way first and only it widens (columnsState.ts → fitWidths);
+// with every column at its catalog width the table scrolls sideways. Both follow the pointer
 // on the window from press to release (followPointer), not HTML drag and drop or an element's pointer
 // capture. The editor shares the order, and both are remembered (columnStore.ts). A sort orders the
 // groups (by their label on Symbol, else by their best row, never a sum) and the rows within each
@@ -50,14 +53,15 @@ import { lessGutter, stableGutter } from '../../ui/scrollGutter';
 import { Dropdown, MenuChoice, MenuHeading } from '../../ui/select';
 import { chainTarget, positionTarget, underlyingOf, type PositionRow } from './calc';
 import { cellColor, cellText, formatValue, optionLineText, type CellWords } from './cells';
-import { COLUMNS, applies, isColumnId, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
+import { COLUMNS, applies, rowId, type CellCtx, type ColumnDef, type ColumnId } from './columns';
 import {
   dragWidth,
   dropMark,
   edgeScroll,
   gridTemplate,
   heldGroups,
-  liveWidths,
+  fitWidths,
+  resizeWithin,
   sameGroups,
   startsReorder,
   tracksWidth,
@@ -92,13 +96,13 @@ const EDGE_SPEED = 16;
 const GHOST_PAD = 8;
 
 /**
- * The column being sized and its width while the pointer is down (stored when it is released), with
- * the widths the columns left of it were drawn at when it was pressed (columnsState.ts → liveWidths).
+ * The column being sized and its width while the pointer is down; `commit`: the release (or a
+ * double-click's default width), which stores it (columnsState.ts → resizeWithin).
  */
 interface LiveWidth {
   id: ColumnId;
   w: number;
-  left: ColumnWidths;
+  commit?: boolean;
 }
 
 /** Where a dragged header would land: the slot (columnsState.ts → dropSlot) and that boundary's x in the table. */
@@ -401,8 +405,32 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
   const order = useDrawnGroups(wanted, `${sort?.id ?? ''}:${sort?.dir ?? ''}:${lang}:${groupBy}`, hold || !!menu);
   const chips = useMemo(() => chipTargets(groups, groupBy, events), [groups, groupBy, events]);
 
+  // The room the tracks have in the card: its outer width less the side padding and the gaps (whole px).
+  const room = boxW > 0 ? Math.floor(boxW - 2 * PAD - GAP * (defs.length - 1)) : 0;
+  const fitted = useRef({ defs, room });
+  fitted.current = { defs, room };
+  // As the card is resized or columns are shown or hidden, the widths follow (columnsState.ts →
+  // fitWidths): narrower takes from the rightmost column first, wider gives only to it. Not while a
+  // column is sized, and not when only the widths change, so a sized column keeps its width.
+  useLayoutEffect(() => {
+    const s = usePositionColumns.getState();
+    if (live || room <= 0) return;
+    const next = fitWidths(defs, s.widths, room);
+    if (next !== s.widths) s.setWidths(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room, defs]);
+  /** A column sized by its edge: drawn as the pointer goes, stored on release (columnsState.ts → resizeWithin). */
+  const onLive = useCallback((l: LiveWidth | null) => {
+    if (!l?.commit) {
+      setLive(l);
+      return;
+    }
+    const s = usePositionColumns.getState();
+    s.setWidths(resizeWithin(fitted.current.defs, s.widths, l.id, l.w, fitted.current.room));
+    setLive(null);
+  }, []);
   // The tracks go to the rows through the table's --pos-cols, so sizing a column redraws no row.
-  const sized = useMemo(() => (live ? liveWidths(widths, live.id, live.w, live.left) : widths), [widths, live]);
+  const sized = useMemo(() => (live ? resizeWithin(defs, widths, live.id, live.w, room) : widths), [widths, live, defs, room]);
   const template = gridTemplate(defs, sized);
   const minOf = (ws: ColumnWidths) => tracksWidth(defs, ws) + GAP * (defs.length - 1) + 2 * PAD;
   // While a column is sized the table stays at least as wide as at the press: narrower, a card
@@ -482,7 +510,7 @@ export function PositionsTable({ rows, events, earnings: corporate, note, now }:
     >
       <div ref={headBoxRef} className="pos-scroll" data-pos="head" data-overflow-x={overflowX || undefined} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
         <div ref={headTableRef} role="table" aria-label={m.tabPos} style={{ minWidth: tableWidth, position: 'relative' }}>
-          <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={setLive} />
+          <HeaderRow rowRef={headerRef} defs={defs} sort={sort} scrolled={scrolled} dragging={dragging?.id ?? null} onPress={onPress} onLive={onLive} />
           {dropLine}
           {dragging && (
             // The dragged header, under the pointer along the header row (useHeaderDrag places it).
@@ -704,14 +732,8 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
     } catch {
       // Not held: the window follows the pointer all the same.
     }
-    // The tracks' widths as drawn (the sticky Symbol cell reaches over the row's left padding).
+    // The track's width as drawn (the sticky Symbol cell reaches over the row's left padding).
     const track = (el: Element) => el.getBoundingClientRect().width - (el === row.firstElementChild ? PAD : 0);
-    const left: Partial<Record<ColumnId, number>> = {};
-    for (const el of row.children) {
-      if (el === cell) break;
-      const id = (el as HTMLElement).dataset.posCol;
-      if (isColumnId(id)) left[id] = track(el);
-    }
     const x0 = e.clientX;
     const w0 = track(cell);
     let moved = false;
@@ -726,7 +748,7 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
         if (!moved && Math.abs(ev.clientX - x0) < SLOP) return;
         moved = true;
         const w = dragWidth(def.id, w0, x0, ev.clientX);
-        onLive(w == null ? null : { id: def.id, w, left });
+        onLive(w == null ? null : { id: def.id, w });
       },
       (ev) => {
         moves.current = [moves.current[1], moved];
@@ -734,7 +756,7 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
         // Escape and a cancel (the stored width is drawn again).
         const w = ev && moved ? dragWidth(def.id, w0, x0, ev.clientX) : null;
         if (w != null) {
-          usePositionColumns.getState().setWidth(def.id, w, left);
+          onLive({ id: def.id, w, commit: true });
           swallowClick();
         }
         done();
@@ -759,7 +781,8 @@ function ResizeHandle({ def, onLive }: { def: ColumnDef; onLive: (live: LiveWidt
       onPointerDown={down}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={() => {
-        if (!moves.current.some(Boolean)) usePositionColumns.getState().resetWidth(def.id);
+        // Back to its catalog width, the rightmost column taking or giving the difference.
+        if (!moves.current.some(Boolean)) onLive({ id: def.id, w: def.width, commit: true });
       }}
       style={{ position: 'absolute', top: 0, bottom: 0, right: -(GAP + GRIP) / 2, width: GRIP, zIndex: 1, cursor: 'col-resize', touchAction: 'none' }}
     />
