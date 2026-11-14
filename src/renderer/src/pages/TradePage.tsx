@@ -3,7 +3,7 @@
 // symbol's positions / open orders under it (SymbolActivityPanel: 150px by default; a splitter
 // resizes it and it collapses to a bar like the watchlist, one height and one collapse state for
 // both views). On Chart the order ticket takes the right column (340px), with Level 2 as its Book.
-// The watchlist (272px) and the docked ticket are as wide as the user drags them (a splitter on the
+// The watchlist (296px) and the docked ticket are as wide as the user drags them (a splitter on the
 // watchlist's right edge and on the ticket's left one; a double-click gives the default width back),
 // remembered per device, and always leave the view in the middle CENTER_MIN.
 // With the ticket floating (features/panels) the right column goes and the chart and the
@@ -44,8 +44,9 @@ const DESK = { ...ACTIVITY, minAbove: 320 };
 const COLLAPSE_SLACK = 36;
 
 /** Side panes' widths: default, limits (the ticket is laid out for 340px: no narrower) and where they are kept. */
-// The watchlist's least width fits its four columns at their usual figures (watchlist/model.ts → COL_FIT_W).
-const WATCH = { key: 'tape.trade.watchlistWidth', fallback: 272, min: 260, max: 520 };
+// The watchlist's least width fits its four columns at their usual figures (watchlist/model.ts → COL_FIT_W),
+// and its default width at their default widths.
+const WATCH = { key: 'tape.trade.watchlistWidth', fallback: 296, min: 260, max: 520 };
 const TICKET = { key: 'tape.trade.ticketWidth', fallback: 340, min: 340, max: 600 };
 /** The view in the middle (chart, options desk) keeps at least this width. */
 const CENTER_MIN = 480;

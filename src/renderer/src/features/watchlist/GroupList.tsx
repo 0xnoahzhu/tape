@@ -88,12 +88,12 @@ export function GroupList({
   const sort = useWatchlistView((s) => s.sort);
   const base = useMemo(() => tabRows(list, tab), [list, tab]);
   const columns = useWatchlistView((s) => s.columns);
-  // The row's width as drawn decides the columns' widths (model.ts → fitColumns: the rightmost gives way first).
+  // The row's width as drawn decides the columns' widths (model.ts → fitColumns: the right gives way first).
   const headRef = useRef<HTMLDivElement>(null);
   const room = useRowRoom(headRef);
   const template = useMemo(() => {
     const fit = fitColumns(columns, room, COL_GAP);
-    return fit ? [fit.symbol, ...fit.widths].map((w) => `${w}px`).join(' ') : columnsTemplate(columns);
+    return fit ? fit.map((w) => `${w}px`).join(' ') : columnsTemplate(columns);
   }, [columns, room]);
   // The sorted column's value of each row, read only while sorting by a number (so quotes do not re-render the list otherwise).
   const by = sort && sort.by !== 'symbol' ? sort.by : null;
@@ -255,7 +255,7 @@ export function GroupList({
     <div role="tabpanel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* Over the rows' scroller, not in it, with the same room for its scrollbar (scrollGutter.ts), so the columns line up. */}
       <div ref={headRef} style={{ flexShrink: 0, overflow: 'hidden', ...stableGutter, padding: `0 max(3px, ${lessGutter(8)}) 0 8px`, boxShadow: 'inset 0 -1px 0 var(--ln2)' }}>
-        <WatchHeader template={template} gap={COL_GAP} pad={ROW_PAD} />
+        <WatchHeader template={template} gap={COL_GAP} pad={ROW_PAD} room={room} />
       </div>
       {/* Adding rows makes the list scroll; the rows keep their width (scrollGutter.ts). */}
       <div

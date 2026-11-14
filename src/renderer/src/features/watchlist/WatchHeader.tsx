@@ -3,23 +3,30 @@
 //
 // A click on a column's name sorts by it (model.ts → nextWatchSort). The columns after Symbol are
 // dragged sideways to move them among themselves (a press that moves more than DRAG_SLOP px drags,
-// a shorter one sorts; Escape undoes it); Symbol stays first. The strip on a column's left edge
-// sizes it: Symbol takes what the others leave, so that edge follows the pointer. A double-click on
-// the strip gives the column its default width back. Both follow the pointer on the window from
-// press to release (followPointer), as the Positions table's header does.
+// a shorter one sorts; Escape undoes it); Symbol stays first. The strip on a column's right edge
+// sizes it, Symbol's too (the columns after it move along; the rightmost column, which takes any
+// room left, has none). A double-click on the strip gives the column its default width back. Both
+// follow the pointer on the window from press to release (followPointer), as the Positions table's
+// header does. In a narrow panel the columns give way from the right (model.ts → fitColumns).
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { followPointer, swallowClick } from '../../ui/pointerDrag';
 import { useWatchlistMessages } from './messages';
-import { clampColWidth, COL_WIDTHS, dropIndex, moveColumn, nextWatchSort, SYMBOL_MIN_W, type WatchCol, type WatchSortBy } from './model';
+import { clampColWidth, COL_WIDTHS, dropIndex, mostWidth, moveColumn, nextWatchSort, SYMBOL_MIN_W, SYMBOL_W, type WatchCol, type WatchColumns, type WatchSortBy } from './model';
 import { useWatchlistView } from './viewState';
 
 /** A press moves this far (px) before it drags; less is a click. */
 const DRAG_SLOP = 4;
-/** Width of the sizing strip on a column's left edge (px); it straddles the gap. */
+/** Width of the sizing strip on a column's right edge (px); it straddles the gap. */
 const GRIP = 8;
 
-export function WatchHeader({ template, gap, pad }: { template: string; gap: number; pad: string }) {
+/** A column's set width, Symbol's or another's, and the columns with it changed. */
+const widthOf = (cols: WatchColumns, col: WatchCol | 'symbol') => (col === 'symbol' ? cols.symbol : cols.widths[col]);
+const withWidth = (cols: WatchColumns, col: WatchCol | 'symbol', w: number): WatchColumns =>
+  col === 'symbol' ? { ...cols, symbol: w } : { ...cols, widths: { ...cols.widths, [col]: w } };
+
+/** `room`: the width the row's columns have (GroupList → useRowRoom). */
+export function WatchHeader({ template, gap, pad, room }: { template: string; gap: number; pad: string; room: number }) {
   const m = useWatchlistMessages();
   const sort = useWatchlistView((s) => s.sort);
   const setSort = useWatchlistView((s) => s.setSort);
@@ -98,21 +105,15 @@ export function WatchHeader({ template, gap, pad }: { template: string; gap: num
     };
   };
 
-  /** A press on a column's left edge sizes it: wider as the edge goes left, Symbol giving way down to its least width. */
-  const pressSize = (e: PointerEvent<HTMLElement>, col: WatchCol) => {
-    const row = rowRef.current;
-    if (e.button !== 0 || !row || stop.current) return;
+  /** A press on a column's right edge sizes it: wider as the edge goes right, up to what the row leaves it (model.ts → mostWidth). */
+  const pressSize = (e: PointerEvent<HTMLElement>, col: WatchCol | 'symbol') => {
+    if (e.button !== 0 || stop.current) return;
     e.stopPropagation();
     e.preventDefault();
     const x0 = e.clientX;
-    const cols = live.current;
-    const w0 = cols.widths[col];
-    // The most it can take: the row's content less Symbol's least width, the gaps and the other columns.
-    const cs = getComputedStyle(row);
-    const content = row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    const others = cols.order.filter((c) => c !== col).reduce((sum, c) => sum + cols.widths[c], 0);
-    const most = content - SYMBOL_MIN_W - gap * cols.order.length - others;
-    const widthAt = (x: number) => Math.min(clampColWidth(w0 + (x0 - x)), Math.max(w0, Math.floor(most)));
+    const w0 = widthOf(live.current, col);
+    const most = Math.max(w0, mostWidth(live.current, col, room, gap));
+    const widthAt = (x: number) => Math.min(clampColWidth(w0 + (x - x0), col === 'symbol' ? SYMBOL_MIN_W : undefined), most);
     setSizing(true);
     const done = () => {
       stop.current = null;
@@ -120,10 +121,10 @@ export function WatchHeader({ template, gap, pad }: { template: string; gap: num
     };
     const unfollow = followPointer(
       e.pointerId,
-      (ev) => setColumns({ ...live.current, widths: { ...live.current.widths, [col]: widthAt(ev.clientX) } }, false),
+      (ev) => setColumns(withWidth(live.current, col, widthAt(ev.clientX)), false),
       (ev) => {
         // Undone (Escape): the width it had.
-        setColumns({ ...live.current, widths: { ...live.current.widths, [col]: ev ? widthAt(ev.clientX) : w0 } }, true);
+        setColumns(withWidth(live.current, col, ev ? widthAt(ev.clientX) : w0), true);
         swallowClick();
         done();
       },
@@ -161,20 +162,28 @@ export function WatchHeader({ template, gap, pad }: { template: string; gap: num
     );
   };
 
-  const grip: CSSProperties = { position: 'absolute', top: 0, bottom: 0, left: -(gap / 2) - GRIP / 2, width: GRIP, cursor: 'col-resize', zIndex: 1, touchAction: 'none' };
+  const grip: CSSProperties = { position: 'absolute', top: 0, bottom: 0, right: -(gap / 2) - GRIP / 2, width: GRIP, cursor: 'col-resize', zIndex: 1, touchAction: 'none' };
+  const sizer = (col: WatchCol | 'symbol') => (
+    <div
+      aria-hidden
+      data-wl-size={col}
+      title={m.resizeColumn}
+      onPointerDown={(e) => pressSize(e, col)}
+      onDoubleClick={() => setColumns(withWidth(live.current, col, col === 'symbol' ? SYMBOL_W : COL_WIDTHS[col]), true)}
+      style={grip}
+    />
+  );
+  const last = columns.order[columns.order.length - 1];
   return (
     <div ref={rowRef} style={{ position: 'relative', height: 28, display: 'grid', gridTemplateColumns: template, gap, alignItems: 'stretch', padding: pad, fontSize: 11, color: 'var(--dm)' }}>
-      {label('symbol', m.colSymbol, m.sortSymbol, false)}
+      <div style={{ position: 'relative', minWidth: 0 }}>
+        {label('symbol', m.colSymbol, m.sortSymbol, false)}
+        {sizer('symbol')}
+      </div>
       {columns.order.map((col) => (
         <div key={col} data-wl-col={col} style={{ position: 'relative', minWidth: 0, opacity: dragged === col ? 0.45 : 1 }}>
-          <div
-            aria-hidden
-            title={m.resizeColumn}
-            onPointerDown={(e) => pressSize(e, col)}
-            onDoubleClick={() => setColumns({ ...live.current, widths: { ...live.current.widths, [col]: COL_WIDTHS[col] } }, true)}
-            style={grip}
-          />
           {label(col, names[col][0], `${names[col][1]}\n${m.moveColumn}`, true, { onPointerDown: (e) => pressMove(e, col) })}
+          {col !== last && sizer(col)}
         </div>
       ))}
       {line != null && <div aria-hidden style={{ position: 'absolute', top: 5, bottom: 5, left: line - 1, width: 2, background: 'var(--ac)', pointerEvents: 'none' }} />}

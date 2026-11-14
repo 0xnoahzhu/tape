@@ -13,6 +13,8 @@ import {
   dropIndex,
   fitTabs,
   fitColumns,
+  mostWidth,
+  SYMBOL_MIN_W,
   COL_MAX_W,
   COL_MIN_W,
   COL_WIDTHS,
@@ -248,33 +250,42 @@ describe('sorting the rows', () => {
 describe('columns', () => {
   it('makes saved columns whole: known ones in order, missing ones after, widths in range', () => {
     expect(sanitizeColumns(null)).toEqual(DEFAULT_COLUMNS);
-    expect(sanitizeColumns({ order: ['pct', 'nope', 'pct', 'last'], widths: { pct: 999, last: 10, chg: 'x' } })).toEqual({
+    expect(sanitizeColumns({ order: ['pct', 'nope', 'pct', 'last'], widths: { pct: 999, last: 10, chg: 'x' }, symbol: 20 })).toEqual({
       order: ['pct', 'last', 'chg'],
       widths: { last: COL_MIN_W, chg: COL_WIDTHS.chg, pct: COL_MAX_W },
+      symbol: SYMBOL_MIN_W,
     });
   });
 
-  it('puts Symbol first, taking the rest, and moves the other columns among themselves', () => {
-    expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,1fr) minmax(52px,64px) minmax(44px,50px) minmax(52px,54px)');
-    // A column set narrower than its usual figures gives way no further than that.
-    expect(columnsTemplate({ ...DEFAULT_COLUMNS, widths: { ...DEFAULT_COLUMNS.widths, last: 40 } })).toContain('minmax(40px,40px)');
+  it('moves the columns after Symbol among themselves', () => {
     expect(moveColumn(DEFAULT_COLUMNS, 'pct', 0).order).toEqual(['pct', 'last', 'chg']);
     expect(moveColumn(DEFAULT_COLUMNS, 'last', 9).order).toEqual(['chg', 'pct', 'last']);
     expect(clampColWidth(20)).toBe(COL_MIN_W);
+    expect(clampColWidth(70.4)).toBe(70);
+    expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,64px) minmax(52px,64px) minmax(44px,50px) minmax(52px,1fr)');
   });
 
-  it('narrows the rightmost column first, Symbol taking what is left', () => {
-    // Set widths 64 / 50 / 54 (fit 52 / 44 / 52), gaps 6: all at their set widths needs 44 + 168 + 18 = 230.
-    expect(fitColumns(DEFAULT_COLUMNS, 300, 6)).toEqual({ symbol: 114, widths: [64, 50, 54] });
-    expect(fitColumns(DEFAULT_COLUMNS, 230, 6)).toEqual({ symbol: 44, widths: [64, 50, 54] });
-    // 2 px short: from the rightmost (pct) first.
-    expect(fitColumns(DEFAULT_COLUMNS, 228, 6)).toEqual({ symbol: 44, widths: [64, 50, 52] });
-    // pct at its fit width (52), then chg gives way.
-    expect(fitColumns(DEFAULT_COLUMNS, 224, 6)).toEqual({ symbol: 44, widths: [64, 46, 52] });
-    // Everything at its fit width.
-    expect(fitColumns(DEFAULT_COLUMNS, 210, 6)).toEqual({ symbol: 44, widths: [52, 44, 52] });
+  it('gives room left to right up to the set widths, the rest to the rightmost column', () => {
+    // Set widths 64 | 64 / 50 / 54, least 44 | 52 / 44 / 52, gaps 6: all as set needs 232 + 18 = 250.
+    expect(fitColumns(DEFAULT_COLUMNS, 300, 6)).toEqual([64, 64, 50, 104]);
+    expect(fitColumns(DEFAULT_COLUMNS, 250, 6)).toEqual([64, 64, 50, 54]);
+  });
+
+  it('narrows from the right: the last column first, Symbol last', () => {
+    expect(fitColumns(DEFAULT_COLUMNS, 248, 6)).toEqual([64, 64, 50, 52]);
+    expect(fitColumns(DEFAULT_COLUMNS, 242, 6)).toEqual([64, 64, 44, 52]);
+    expect(fitColumns(DEFAULT_COLUMNS, 230, 6)).toEqual([64, 52, 44, 52]);
+    expect(fitColumns(DEFAULT_COLUMNS, 220, 6)).toEqual([54, 52, 44, 52]);
+    // The order counts, not the column: Chg % first here, so Chg is the one at the right edge.
+    expect(fitColumns(moveColumn(DEFAULT_COLUMNS, 'chg', 2), 242, 6)).toEqual([64, 64, 52, 44]);
     expect(fitColumns(DEFAULT_COLUMNS, 0, 6)).toBeNull();
-    expect(clampColWidth(70.4)).toBe(70);
+  });
+
+  it('caps a column at what the row leaves it beside the others at their least', () => {
+    // 250 - 18 gaps - (44 + 44 + 52) for the others.
+    expect(mostWidth(DEFAULT_COLUMNS, 'last', 250, 6)).toBe(92);
+    expect(mostWidth(DEFAULT_COLUMNS, 'symbol', 250, 6)).toBe(84);
+    expect(mostWidth(DEFAULT_COLUMNS, 'last', 999, 6)).toBe(COL_MAX_W);
   });
 });
 

@@ -138,26 +138,28 @@ export const WATCH_COLS = ['last', 'chg', 'pct'] as const;
 export type WatchCol = (typeof WATCH_COLS)[number];
 export type WatchSortBy = 'symbol' | WatchCol;
 
-/** Default widths (px) of the columns after Symbol, and the range they are sized in; Symbol takes the rest, at least SYMBOL_MIN_W. */
+/** Default widths (px) of the columns after Symbol and of Symbol, and the range they are sized in. */
 export const COL_WIDTHS: Readonly<Record<WatchCol, number>> = { last: 64, chg: 50, pct: 54 };
+export const SYMBOL_W = 64;
 export const COL_MIN_W = 36;
+export const COL_MAX_W = 180;
+export const SYMBOL_MIN_W = 44;
 /**
  * How far each column gives way in a narrow panel: its usual figures whole ("582.75", "+5.35",
  * "+12.34%" in the rows' fonts). The watchlist's least width (pages/TradePage.tsx) fits them all.
  */
 export const COL_FIT_W: Readonly<Record<WatchCol, number>> = { last: 52, chg: 44, pct: 52 };
-export const COL_MAX_W = 180;
-export const SYMBOL_MIN_W = 44;
 
-/** The columns' order after Symbol and their widths, as the user arranged them. */
+/** The columns' order after Symbol and the widths of all of them, as the user set them. */
 export interface WatchColumns {
   order: WatchCol[];
   widths: Record<WatchCol, number>;
+  symbol: number;
 }
 
-export const DEFAULT_COLUMNS: WatchColumns = { order: [...WATCH_COLS], widths: { ...COL_WIDTHS } };
+export const DEFAULT_COLUMNS: WatchColumns = { order: [...WATCH_COLS], widths: { ...COL_WIDTHS }, symbol: SYMBOL_W };
 
-export const clampColWidth = (w: number): number => Math.round(Math.min(COL_MAX_W, Math.max(COL_MIN_W, Number.isFinite(w) ? w : COL_MIN_W)));
+export const clampColWidth = (w: number, min = COL_MIN_W): number => Math.round(Math.min(COL_MAX_W, Math.max(min, Number.isFinite(w) ? w : min)));
 
 /** Saved columns made whole: known columns in their saved order, any missing one after them, widths in range (else the default). */
 export function sanitizeColumns(raw: unknown): WatchColumns {
@@ -166,37 +168,53 @@ export function sanitizeColumns(raw: unknown): WatchColumns {
   const widths = { ...COL_WIDTHS };
   const w = o.widths && typeof o.widths === 'object' ? (o.widths as Record<string, unknown>) : {};
   for (const c of WATCH_COLS) if (typeof w[c] === 'number') widths[c] = clampColWidth(w[c] as number);
-  return { order: [...saved, ...WATCH_COLS.filter((c) => !saved.includes(c))], widths };
+  const symbol = typeof o.symbol === 'number' ? clampColWidth(o.symbol, SYMBOL_MIN_W) : SYMBOL_W;
+  return { order: [...saved, ...WATCH_COLS.filter((c) => !saved.includes(c))], widths, symbol };
 }
 
-/**
- * The grid columns of a row and the header: each column after Symbol as wide as set, Symbol taking
- * what they leave. In a narrow panel the columns give way (down to COL_FIT_W, or the width set when
- * that is less; Symbol to SYMBOL_MIN_W) rather than run past its edge: the list never scrolls
- * sideways.
- */
+/** The columns' widths from left to right (Symbol first) as set, and the least each gives way to. */
+function setAndLeast(cols: WatchColumns): { sets: number[]; mins: number[] } {
+  const sets = [cols.symbol, ...cols.order.map((c) => cols.widths[c])];
+  const mins = [Math.min(SYMBOL_MIN_W, cols.symbol), ...cols.order.map((c) => Math.min(COL_FIT_W[c], cols.widths[c]))];
+  return { sets, mins };
+}
+
+/** The grid columns before the row is measured: every column as set, the last one taking any room left. */
 export function columnsTemplate(cols: WatchColumns): string {
-  return [`minmax(${SYMBOL_MIN_W}px,1fr)`, ...cols.order.map((c) => `minmax(${Math.min(COL_FIT_W[c], cols.widths[c])}px,${cols.widths[c]}px)`)].join(' ');
+  const { sets, mins } = setAndLeast(cols);
+  return sets.map((w, i) => (i === sets.length - 1 ? `minmax(${mins[i]}px,1fr)` : `minmax(${mins[i]}px,${w}px)`)).join(' ');
 }
 
 /**
- * The columns' widths in a row `room` px wide (gaps included, `gap` px each): Symbol at least
- * SYMBOL_MIN_W and every other column at least its fit width (COL_FIT_W, or its set width when less);
- * what is left goes to the columns after Symbol from left to right, each up to its set width, and
- * the rest to Symbol. So a narrowing panel takes from the rightmost column first, and a widening
- * one gives to it last. Null before the row is measured.
+ * The columns' widths (Symbol first) in a row `room` px wide (gaps of `gap` px between them): each
+ * at least the least it gives way to (SYMBOL_MIN_W, COL_FIT_W, or its set width when less); what is
+ * left goes from left to right, each column up to its set width, and any room after that to the
+ * rightmost column. So a narrowing panel takes from the right first (the last column's extra room,
+ * then its own width, then the next column left's, Symbol's last), and a widening one gives back
+ * from the left. Null before the row is measured.
  */
-export function fitColumns(cols: WatchColumns, room: number, gap: number): { symbol: number; widths: number[] } | null {
+export function fitColumns(cols: WatchColumns, room: number, gap: number): number[] | null {
   if (!(room > 0)) return null;
-  const sets = cols.order.map((c) => cols.widths[c]);
-  const mins = cols.order.map((c, i) => Math.min(COL_FIT_W[c], sets[i]));
-  let left = room - gap * cols.order.length - SYMBOL_MIN_W - mins.reduce((a, b) => a + b, 0);
+  const { sets, mins } = setAndLeast(cols);
+  let left = room - gap * (sets.length - 1) - mins.reduce((a, b) => a + b, 0);
   const widths = mins.map((min, i) => {
     const add = Math.max(0, Math.min(left, sets[i] - min));
     left -= add;
     return min + add;
   });
-  return { symbol: SYMBOL_MIN_W + Math.max(0, left), widths };
+  widths[widths.length - 1] += Math.max(0, left);
+  return widths;
+}
+
+/**
+ * The most a column (`col`, or Symbol) can be set to in a row `room` px wide: the room less the
+ * gaps and the least the other columns give way to (at most COL_MAX_W).
+ */
+export function mostWidth(cols: WatchColumns, col: WatchCol | 'symbol', room: number, gap: number): number {
+  const { mins } = setAndLeast(cols);
+  const at = col === 'symbol' ? 0 : cols.order.indexOf(col) + 1;
+  const others = mins.reduce((a, b, i) => (i === at ? a : a + b), 0);
+  return Math.min(COL_MAX_W, Math.floor(room - gap * (mins.length - 1) - others));
 }
 
 /** Moves column `col` to `index` among the other columns after Symbol. */
