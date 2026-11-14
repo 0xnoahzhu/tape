@@ -81,7 +81,7 @@ const columnsZh: Record<ColumnKey, string> = {
 
 export const useM = createMessages({
   en: {
-    tabs: { chain: 'Chain', vol: 'Volatility' },
+    tabs: { chain: 'Chain', vol: 'Volatility', pos: 'Positioning' },
     presets: { key: 'Key', quotes: 'Quotes', greeks: 'Greeks', value: 'Value & prob.' } as Record<ColumnPreset, string>,
     allStrikes: 'All',
     columns: columnsEn,
@@ -246,7 +246,7 @@ export const useM = createMessages({
     retry: 'Retry',
   },
   zh: {
-    tabs: { chain: '期权链', vol: '波动率' },
+    tabs: { chain: '期权链', vol: '波动率', pos: '持仓分布' },
     presets: { key: '常用', quotes: '报价', greeks: '希腊值', value: '价值与概率' } as Record<ColumnPreset, string>,
     allStrikes: '全部',
     columns: columnsZh,

@@ -31,6 +31,8 @@ import type {
   NewsProviders,
   NotificationKind,
   OptionChainParams,
+  PositioningProgress,
+  PositioningSnapshot,
   OrderPreview,
   OrderRef,
   OrderRequest,
@@ -64,6 +66,8 @@ export type TapeEvent =
    */
   | { type: 'quotes'; quotes: Record<string, Quote>; full?: string[] }
   | { type: 'depth'; book: DepthBook }
+  /** An open-interest scan's progress (Options › Positioning); the last one has `running: false`. */
+  | { type: 'positioningScan'; progress: PositioningProgress }
   /** The market data check started or finished (Settings › Market data). */
   | { type: 'marketDataCheck'; state: MarketDataCheckState }
   /**
@@ -161,6 +165,16 @@ export interface TapeApi {
   /** Level 2 book for one instrument at a time; null stops it. Updates arrive as `depth` events. */
   setDepthSubscription(contract: ContractRef | null): Promise<void>;
   getOptionChainParams(underlying: ContractRef): Promise<OptionChainParams[]>;
+  /**
+   * Scans these options of `underlying` (open interest, volume, IV and greeks), a batch of market
+   * data lines at a time, and merges them into the trading day's stored snapshot, which it returns.
+   * A new scan ends the one running; progress arrives as `positioningScan` events.
+   */
+  scanPositioning(underlying: ContractRef, options: ContractRef[]): Promise<PositioningSnapshot>;
+  /** Ends the running scan (its snapshot keeps what it read). */
+  cancelPositioningScan(): Promise<void>;
+  /** The stored snapshots of `underlying`, at most the last `days` trading days, oldest first. */
+  getPositioning(underlying: ContractRef, days: number): Promise<PositioningSnapshot[]>;
   /**
    * Upcoming earnings of these underlyings (stocks only) from Wall Street Horizon, else estimated
    * from IB's market scanner (`source: 'scanner'`, events marked `estimated`). The scanner's
@@ -331,6 +345,9 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   getContractInfo: 'allow',
   setDepthSubscription: 'allow',
   getOptionChainParams: 'allow',
+  scanPositioning: 'allow',
+  cancelPositioningScan: 'allow',
+  getPositioning: 'allow',
   // The Positions tab's event chips keep their data feed while locked, like quotes and history.
   getEarnings: 'allow',
   // A user action from Settings that sends requests to IB (the views behind the lock never call it).

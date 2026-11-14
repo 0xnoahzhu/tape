@@ -16,6 +16,7 @@ import type { PanelId } from '../features/panels/model';
 import type { MarketDataQuality, OrderRisk } from '../features/ticket/orderRisk';
 import type {
   AccountSummary,
+  PositioningProgress,
   AlertStatus,
   AlgoStrategy,
   ApiLogEntry,
@@ -293,6 +294,8 @@ interface DataState {
   depth: DepthBook | null;
   /** The last market data check (main keeps and persists it) and whether one runs now. */
   marketDataCheck: MarketDataCheckState;
+  /** The last open-interest scan's progress (Options › Positioning); null before any. */
+  positioningScan: PositioningProgress | null;
   apiLog: ApiLogEntry[];
   notifications: AppNotification[];
   watchlists: Watchlist[];
@@ -534,6 +537,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   quotes: {},
   depth: null,
   marketDataCheck: { result: null, running: false },
+  positioningScan: null,
   apiLog: [],
   notifications: [],
   watchlists: [],

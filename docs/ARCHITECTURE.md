@@ -51,6 +51,7 @@ through the shared `MainContext` (never inside their factory).
 | `market/history.ts` | Historical bars per interval (see *Historical bars*) |
 | `market/depth.ts` | Level 2 book |
 | `market/options.ts` | Option chain parameters (`reqSecDefOptParams`) |
+| `market/positioning.ts` | Open-interest scans for the options desk's Positioning tab: each option's open interest, volume and model on a probe line (`quotes.ts → probe`, 40 at a time), merged into one snapshot per underlying and trading day in the kv namespace `positioning` (kept by clearMarketData: IB has no history of it; the 180-day kv retention applies). The exposures (GEX / DEX / vanna / charm, zero gamma, walls, max pain) are computed in the renderer (`features/options/positioning.ts`) under the usual dealer assumption, which the tab can flip for calls |
 | `market/corporateEvents.ts` | Upcoming earnings of the holdings: Wall Street Horizon, else IB's market scanner (see *Corporate events*) |
 | `market/earningsScanner.ts` | The scanner fallback: each stock's next earnings date and time searched with `SCAN_nextEarningsDateTime_ASC` (see *Corporate events*) |
 | `market/marketCheck.ts` | The active market data check (see *Market data check*) |

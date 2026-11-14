@@ -173,6 +173,9 @@ function apply(e: TapeEvent): void {
     case 'marketDataCheck':
       set({ marketDataCheck: e.state });
       break;
+    case 'positioningScan':
+      set({ positioningScan: e.progress });
+      break;
     case 'vault':
       set({ vault: e.vault });
       break;

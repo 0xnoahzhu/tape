@@ -7,7 +7,7 @@ describe('trade page views', () => {
     expect(TRADE_VIEWS).toEqual(['chart', 'opt']);
   });
 
-  it('the options desk has Chain and Volatility (its positions are in the activity panel)', () => {
-    expect(DESK_TABS).toEqual(['chain', 'vol']);
+  it('the options desk has Chain, Volatility and Positioning (its positions are in the activity panel)', () => {
+    expect(DESK_TABS).toEqual(['chain', 'vol', 'pos']);
   });
 });

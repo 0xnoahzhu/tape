@@ -1074,7 +1074,7 @@ export function createQuoteService(ctx: MainContext): QuoteService {
 
   const onTick = (reqId: number, tick: TickEvent) => {
     if (probes.has(reqId)) {
-      if (tick.kind !== 'option' && tick.value !== undefined) toProbe(reqId, { kind: 'tick', field: tick.field, value: tick.value });
+      toProbe(reqId, { kind: 'tick', tick });
       return;
     }
     const side = sides.get(reqId);

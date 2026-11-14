@@ -6,6 +6,8 @@
 
 import type { BrowserWindow } from 'electron';
 import type { IBApi } from './ib/tws';
+import type { PositioningService } from './market/positioning';
+import type { TickEvent } from './market/tickMap';
 import type { NewNotification, TapeEvent } from '@shared/ipc';
 import type { SoundCategory } from '@shared/notificationSounds';
 import type {
@@ -192,7 +194,8 @@ export interface FallbackFinding {
 /** What a probe line reports (QuoteService.probe). */
 export type ProbeEvent =
   | { kind: 'type'; type: MarketDataType }
-  | { kind: 'tick'; field: number; value: number | string }
+  /** Every tick the line sends, the option model computations included (tickMap.ts → applyTick reads it). */
+  | { kind: 'tick'; tick: TickEvent }
   | { kind: 'error'; code: number; message: string };
 
 export interface QuoteService {
@@ -424,6 +427,8 @@ export interface MainContext {
   history: HistoryService;
   depth: DepthService;
   options: OptionsService;
+  /** Open-interest scans and their stored daily snapshots (see market/positioning.ts). */
+  positioning: PositioningService;
   corporateEvents: CorporateEventsService;
   marketCheck: MarketCheckService;
   news: NewsService;

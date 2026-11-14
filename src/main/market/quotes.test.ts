@@ -637,7 +637,7 @@ describe('probe lines and main-process owners', () => {
     fake.error(id, 10167, 'Displaying delayed market data.');
     expect(seen).toEqual([
       { kind: 'type', type: 1 },
-      { kind: 'tick', field: TICK.BID, value: 670.1 },
+      { kind: 'tick', tick: { kind: 'price', field: TICK.BID, value: 670.1 } },
       { kind: 'error', code: 10167, message: 'Displaying delayed market data.' },
     ]);
     // Not a quote of any owner.

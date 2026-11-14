@@ -1,5 +1,5 @@
 // The full options desk (Trade › Options): header, tabs and the active tab (the chain with the
-// strategy builder, or volatility). With the builder floating (features/panels) the chain takes the
+// strategy builder, volatility, or positioning). With the builder floating (features/panels) the chain takes the
 // full width. The underlying's positions are in the Trade page's activity panel under the desk.
 
 import { useState } from 'react';
@@ -11,6 +11,7 @@ import { DeskTabs } from './DeskTabs';
 import { useDesk } from './deskStore';
 import { useM } from './messages';
 import { useDeskModel, type DeskModel } from './model';
+import { PositioningTab } from './PositioningTab';
 import { StrategyPanel } from './StrategyPanel';
 import { VolatilityTab } from './VolatilityTab';
 
@@ -32,6 +33,8 @@ export function DeskFull() {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {tab === 'vol' ? (
           <VolatilityTab model={model} />
+        ) : tab === 'pos' ? (
+          <PositioningTab model={model} />
         ) : (
           <div
             style={{

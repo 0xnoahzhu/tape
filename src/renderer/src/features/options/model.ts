@@ -18,6 +18,8 @@ import { wingStrikes } from './vol';
 export const MAX_CHAIN_CONTRACTS = 60;
 /** Strike rows that fit the line budget; larger windows subscribe only the rows in view. */
 export const MAX_CHAIN_ROWS = MAX_CHAIN_CONTRACTS / 2;
+/** Strike rows the chain keeps quoted while the Positioning tab shows. */
+export const POS_ROWS = 2;
 /** Expirations sampled for the term structure. */
 export const TERM_EXPIRIES = 8;
 
@@ -129,10 +131,18 @@ export function useDeskModel(visible: { from: number; to: number } | null): Desk
   }, [exp, symbol, win.from, win.to]);
 
   // Subscribe the window (or, when it exceeds the line budget, the rows in view; on the Vol tab, which
-  // has no chain to scroll, the rows around ATM), capped at the budget.
+  // has no chain to scroll, the rows around ATM; on the Positioning tab the ATM rows only), capped at the budget.
   const atmFrom = Math.max(0, Math.min(rowContracts.length - MAX_CHAIN_ROWS, centerIdx - win.from - MAX_CHAIN_ROWS / 2));
+  // The Positioning tab keeps only the rows next to ATM (the header's ATM IV): its scan needs the lines.
+  const posFrom = Math.max(0, centerIdx - win.from - POS_ROWS / 2);
   const subRange =
-    rowContracts.length <= MAX_CHAIN_ROWS ? { from: 0, to: rowContracts.length } : tab === 'vol' ? { from: atmFrom, to: atmFrom + MAX_CHAIN_ROWS } : (visible ?? { from: 0, to: rowContracts.length });
+    tab === 'pos'
+      ? { from: posFrom, to: posFrom + POS_ROWS }
+      : rowContracts.length <= MAX_CHAIN_ROWS
+        ? { from: 0, to: rowContracts.length }
+        : tab === 'vol'
+          ? { from: atmFrom, to: atmFrom + MAX_CHAIN_ROWS }
+          : (visible ?? { from: 0, to: rowContracts.length });
   const subFrom = Math.max(0, subRange.from);
   const subTo = Math.min(rowContracts.length, subRange.to, subFrom + MAX_CHAIN_ROWS);
   const chainSubs = useMemo(() => rowContracts.slice(subFrom, subTo).flatMap((r) => [r.call, r.put]), [rowContracts, subFrom, subTo]);

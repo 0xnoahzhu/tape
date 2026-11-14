@@ -487,6 +487,50 @@ export interface OptionChainParams {
   strikes: number[];
 }
 
+/**
+ * One option of an open-interest scan (main/market/positioning.ts): what IB sent on its line.
+ * Fields IB did not send stay out.
+ */
+export interface PositioningRow {
+  /** YYYYMMDD. */
+  expiry: string;
+  strike: number;
+  right: 'C' | 'P';
+  multiplier: number;
+  /** Open interest (contracts; as of the previous session's close, as IB reports it). */
+  oi?: number;
+  /** The session's volume (contracts). */
+  volume?: number;
+  /** IB's implied volatility (fraction). */
+  iv?: number;
+  delta?: number;
+  gamma?: number;
+}
+
+/**
+ * The scanned options of one underlying on one trading day. A day's scans merge into it (a later
+ * scan of a contract replaces its row); `spot` and `updatedAt` are the last scan's.
+ */
+export interface PositioningSnapshot {
+  /** contractKey of the underlying. */
+  underlying: string;
+  /** The New York trading day (YYYYMMDD, shared/session.ts → tradingDay). */
+  day: string;
+  updatedAt: number;
+  /** The underlying's price IB's option models used (their median), when they sent one. */
+  spot?: number;
+  rows: PositioningRow[];
+}
+
+/** A running or finished open-interest scan (the `positioningScan` event). */
+export interface PositioningProgress {
+  underlying: string;
+  done: number;
+  total: number;
+  running: boolean;
+  error?: string;
+}
+
 /** What the local database (tape.db) holds, for Settings › Market data. */
 export interface CacheStats {
   /** Size on disk: the database file plus its write-ahead log. */

@@ -17,6 +17,7 @@ import { createQuoteService } from './market/quotes';
 import { createHistoryService } from './market/history';
 import { createDepthService } from './market/depth';
 import { createOptionsService } from './market/options';
+import { createPositioningService } from './market/positioning';
 import { createCorporateEventsService } from './market/corporateEvents';
 import { createMarketCheckService } from './market/marketCheck';
 import { createAlertService } from './market/alerts';
@@ -115,6 +116,7 @@ ctx.quotes = createQuoteService(ctx);
 ctx.history = createHistoryService(ctx);
 ctx.depth = createDepthService(ctx);
 ctx.options = createOptionsService(ctx);
+ctx.positioning = createPositioningService(ctx);
 ctx.corporateEvents = createCorporateEventsService(ctx);
 ctx.marketCheck = createMarketCheckService(ctx);
 ctx.news = createNewsService(ctx);
@@ -235,6 +237,9 @@ const handlers: TapeHandlers = {
   getContractInfo: (c) => ctx.contracts.getInfo(c),
   setDepthSubscription: (c) => ctx.depth.set(c),
   getOptionChainParams: (c) => ctx.options.getChainParams(c),
+  scanPositioning: (u, options) => ctx.positioning.scan(u, options),
+  cancelPositioningScan: async () => ctx.positioning.cancel(),
+  getPositioning: (u, days) => ctx.positioning.get(u, days),
   getEarnings: (underlyings) => ctx.corporateEvents.getEarnings(underlyings),
   checkMarketData: (opts) => ctx.marketCheck.run({ depth: !!opts?.depth, trigger: opts?.auto ? 'auto' : 'user' }),
   getCacheStats: () => ctx.db.stats(),

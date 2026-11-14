@@ -5,11 +5,12 @@ import { create } from 'zustand';
 import { contractKey } from '@shared/contract';
 import type { ContractRef } from '@shared/types';
 import type { ColumnPreset } from './chain';
+import type { ExpiryScope, PosMetric, StrikeSpan } from './positioning';
 import { addLeg, type Leg, type NewLeg, type StrategyKey } from './strategies';
 
-export type DeskTab = 'chain' | 'vol';
+export type DeskTab = 'chain' | 'vol' | 'pos';
 /** The desk's tabs, in order. The underlying's positions are in the Trade page's activity panel under the desk. */
-export const DESK_TABS: readonly DeskTab[] = ['chain', 'vol'];
+export const DESK_TABS: readonly DeskTab[] = ['chain', 'vol', 'pos'];
 /** Strikes on each side of ATM (design ranges). */
 export type StrikeRange = 5 | 12 | 25 | 'all';
 
@@ -42,10 +43,16 @@ interface DeskState {
    * null follows the legs' prices. Any change to the legs drops it.
    */
   netPrice: number | null;
+  /** Positioning tab: the expiries (the selected one, or those within so many days), the strike window, */
+  posScope: ExpiryScope;
+  posSpan: StrikeSpan;
+  /** the dealers' assumed side of the calls (+1 long, -1 short) and the by-strike chart's measure. */
+  posCallSign: 1 | -1;
+  posMetric: PosMetric;
 
   /** Resets per-underlying state (legs, expiry) when the instrument changes. */
   setUnderlying(underlying: ContractRef | null): void;
-  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed' | 'netPrice'>>): void;
+  patch(p: Partial<Pick<DeskState, 'tab' | 'preset' | 'range' | 'expiry' | 'expOpen' | 'tmplOpen' | 'cond' | 'condOp' | 'condPx' | 'ordType' | 'tif' | 'nonGuaranteed' | 'netPrice' | 'posScope' | 'posSpan' | 'posCallSign' | 'posMetric'>>): void;
   addLeg(leg: NewLeg): void;
   setLegs(legs: NewLeg[], tmpl: StrategyKey | null): void;
   updateLeg(id: number, f: (l: Leg) => Leg): void;
@@ -72,6 +79,10 @@ export const useDesk = create<DeskState>()((set) => ({
   tif: 'DAY',
   nonGuaranteed: false,
   netPrice: null,
+  posScope: 30,
+  posSpan: 0.2,
+  posCallSign: 1,
+  posMetric: 'gex',
 
   setUnderlying: (underlying) =>
     set((s) => {
