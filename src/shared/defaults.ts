@@ -44,8 +44,8 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
 /**
  * The watchlist is one level of tabs: the groups of the TABS_LIST_ID list (the panel shows them as
  * tabs, with "All" before them). The TICKER_LIST_ID list holds the indices of the top bar's ticker;
- * indices cannot be traded, so they have their own place rather than a tab. Both lists always
- * exist (storeSchema.ts restores them); any other saved list is folded into the tabs.
+ * indices cannot be traded, so they have their own place rather than a tab. These two are the
+ * only lists, and both always exist (storeSchema.ts → sanitizeWatchlists).
  */
 export const TABS_LIST_ID = 'main';
 export const TICKER_LIST_ID = 'idx';
@@ -56,7 +56,6 @@ export function defaultWatchlists(): Watchlist[] {
   return [
     {
       id: TABS_LIST_ID,
-      builtin: true,
       name: { en: 'Watchlist', zh: '自选' },
       groups: [
         {
@@ -70,7 +69,6 @@ export function defaultWatchlists(): Watchlist[] {
     },
     {
       id: TICKER_LIST_ID,
-      builtin: true,
       name: { en: 'Indices', zh: '指数' },
       groups: [
         {

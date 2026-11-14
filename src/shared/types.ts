@@ -1050,8 +1050,6 @@ export interface WatchGroup {
 export interface Watchlist {
   id: string;
   name: LocalizedName;
-  /** Built-in lists cannot be renamed or deleted. */
-  builtin?: boolean;
   groups: WatchGroup[];
 }
 

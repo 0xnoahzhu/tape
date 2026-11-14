@@ -6,7 +6,7 @@
 // and entries that cannot be repaired are skipped.
 
 import { ALERT_FREQUENCIES, ALERT_SESSIONS, ALERT_TIMEFRAMES, clipNote, DEFAULT_ALERT_SESSIONS, MAX_INDICATOR_PERIOD } from '@shared/alerts';
-import { defaultUpColor, NOTIFICATION_KINDS, TABS_LIST_ID } from '@shared/defaults';
+import { defaultUpColor, NOTIFICATION_KINDS } from '@shared/defaults';
 import { DND_MAX_MS } from '@shared/dnd';
 import { KNOWN_SOUNDS } from '@shared/notificationSounds';
 import { CHART_ZONE_SETTINGS, TIME_FORMATS } from '@shared/timeFormat';
@@ -304,60 +304,20 @@ function sanitizeWatchlist(raw: unknown): Watchlist | null {
   return { id: raw.id, name, groups };
 }
 
-/** Every spelling of a name, lower-cased (a localized name in both languages). */
-const nameKeys = (name: LocalizedName): string[] => (typeof name === 'string' ? [name] : [name.en, name.zh]).map((n) => n.trim().toLowerCase());
-
-/** `name` with ` · suffix` after it, per language. */
-const withSuffix = (name: LocalizedName, suffix: LocalizedName): LocalizedName => {
-  if (typeof name === 'string' && typeof suffix === 'string') return `${name} · ${suffix}`;
-  const en = (n: LocalizedName) => (typeof n === 'string' ? n : n.en);
-  const zh = (n: LocalizedName) => (typeof n === 'string' ? n : n.zh);
-  return { en: `${en(name)} · ${en(suffix)}`, zh: `${zh(name)} · ${zh(suffix)}` };
-};
-
 /**
- * Folds the lists other than the built-in ones into the tabs list (TABS_LIST_ID): every group of
- * theirs becomes a tab after its own, a list without groups an empty tab with its name. A group
- * whose name a tab already has gets its list's name after it ("US · Mine"), and an id already used
- * a new one, so nothing saved is lost. Unchanged without a tabs list or other lists.
- */
-function foldIntoTabs(lists: Watchlist[]): Watchlist[] {
-  const tabs = lists.find((l) => l.id === TABS_LIST_ID);
-  const others = lists.filter((l) => !l.builtin);
-  if (!tabs || !others.length) return lists;
-  const groups = [...tabs.groups];
-  const taken = (name: LocalizedName) => nameKeys(name).some((k) => groups.some((g) => nameKeys(g.name).includes(k)));
-  for (const list of others) {
-    const own: WatchGroup[] = list.groups.length ? list.groups : [{ id: `g-${list.id}`, name: list.name, items: [] }];
-    for (const g of own) {
-      let name = list.groups.length && taken(g.name) ? withSuffix(g.name, list.name) : g.name;
-      for (let n = 2; taken(name); n++) name = withSuffix(g.name, `${typeof list.name === 'string' ? list.name : list.name.en} ${n}`);
-      let id = g.id;
-      for (let n = 2; groups.some((x) => x.id === id); n++) id = `${list.id}-${g.id}${n > 2 ? `-${n}` : ''}`;
-      groups.push({ ...g, id, name });
-    }
-  }
-  return lists.filter((l) => l.builtin).map((l) => (l === tabs ? { ...tabs, groups } : l));
-}
-
-/**
- * Validates watchlists and keeps the built-in lists intact: they cannot be deleted or renamed,
- * so missing ones are restored from `defaults` and their name and flag come from there too. Any
- * other list (Tape 0.31 and older had lists above the groups) is folded into the tabs
- * (foldIntoTabs). Returns null when `raw` is not an array.
+ * Validates watchlists: the stored lists are exactly the ones of `defaults` (shared/defaults.ts:
+ * the tabs and the ticker's indices), in their order, each with its saved groups, or its default
+ * groups when it was not saved. Their names come from `defaults`; any other list is dropped.
+ * Returns null when `raw` is not an array.
  */
 export function sanitizeWatchlists(raw: unknown, defaults: Watchlist[]): Watchlist[] | null {
   const lists = sanitizeList(raw, sanitizeWatchlist);
   if (!lists) return null;
-  const builtins = new Map(defaults.filter((l) => l.builtin).map((l) => [l.id, l]));
-  const out = uniqueById(lists).map((l) => {
-    const b = builtins.get(l.id);
-    return b ? { ...l, name: b.name, builtin: true } : l;
+  const saved = new Map(uniqueById(lists).map((l) => [l.id, l]));
+  return defaults.map((d) => {
+    const s = saved.get(d.id);
+    return s ? { ...d, groups: s.groups } : d;
   });
-  defaults.forEach((b, i) => {
-    if (b.builtin && !out.some((l) => l.id === b.id)) out.splice(Math.min(i, out.length), 0, b);
-  });
-  return foldIntoTabs(out);
 }
 
 // ---------------------------------------------------------------------------

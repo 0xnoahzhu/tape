@@ -136,10 +136,9 @@ describe('createStore', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     store.setWatchlists('garbage' as never);
     expect(store.getWatchlists()).toEqual(defaultWatchlists());
-    store.setWatchlists([{ id: 'mine', name: 'Mine', groups: [] }]);
-    // A list besides the built-in ones becomes a tab.
+    store.setWatchlists([{ id: 'main', name: 'Mine', groups: [{ id: 'g-mine', name: 'Mine', items: [] }] }]);
     expect(store.getWatchlists().map((l) => l.id)).toEqual(['main', 'idx']);
-    expect(store.getWatchlists()[0].groups.map((g) => g.id)).toContain('g-mine');
+    expect(store.getWatchlists()[0].groups.map((g) => g.id)).toEqual(['g-mine']);
     store.setPriceAlerts([{ id: 'x' } as never]);
     expect(store.getPriceAlerts()).toEqual([]);
     warn.mockRestore();
@@ -223,13 +222,13 @@ describe('createStore: the data folder', () => {
     expect(() => store.setWatchlists([])).toThrow('Connect to IB first: watchlists and price alerts are kept per account');
 
     store.setAccount('DU1');
-    store.setWatchlists([{ id: 'paper', name: 'Paper', groups: [] }]);
+    store.setWatchlists([{ id: 'main', name: 'Paper', groups: [{ id: 'g-paper', name: 'Paper', items: [] }] }]);
     store.setNotifications([{ id: 'n1', t: 1, kind: 'sys', title: { en: 'a', zh: 'a' }, body: { en: 'b', zh: 'b' }, read: false }]);
     store.setAccount('U2');
     // The live account sees none of the paper account's data.
     expect(store.getWatchlists()).toEqual(defaultWatchlists());
     expect(store.getNotifications()).toEqual([]);
-    store.setWatchlists([{ id: 'live', name: 'Live', groups: [] }]);
+    store.setWatchlists([{ id: 'main', name: 'Live', groups: [{ id: 'g-live', name: 'Live', items: [] }] }]);
     store.flush();
     expect(files(vault, 'DU1')).toEqual(['notifications.json', 'watchlists.json']);
     expect(readIn(vault, 'DU1', 'watchlists.json').flatMap((l: { groups: { id: string }[] }) => l.groups.map((g) => g.id))).toContain('g-paper');
@@ -255,7 +254,7 @@ describe('createStore: the data folder', () => {
   it('refuses a folder with other files, and moves only into an empty one', () => {
     const vault = withVault();
     const store = createStore();
-    store.setWatchlists([{ id: 'mine', name: 'Mine', groups: [] }]);
+    store.setWatchlists([{ id: 'main', name: 'Mine', groups: [{ id: 'g-mine', name: 'Mine', items: [] }] }]);
     const other = join(env.dir, 'other');
     mkdirSync(other);
     writeFileSync(join(other, 'notes.txt'), 'x');
@@ -286,7 +285,7 @@ describe('createStore: the data folder', () => {
     const store = createStore();
     const changes: string[] = [];
     store.onVaultChanged((v) => changes.push(v.status));
-    store.setWatchlists([{ id: 'mine', name: 'Mine', groups: [] }]);
+    store.setWatchlists([{ id: 'main', name: 'Mine', groups: [{ id: 'g-mine', name: 'Mine', items: [] }] }]);
     store.flush();
     rmSync(vault, { recursive: true, force: true });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
