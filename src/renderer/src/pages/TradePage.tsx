@@ -44,7 +44,8 @@ const DESK = { ...ACTIVITY, minAbove: 320 };
 const COLLAPSE_SLACK = 36;
 
 /** Side panes' widths: default, limits (the ticket is laid out for 340px: no narrower) and where they are kept. */
-const WATCH = { key: 'tape.trade.watchlistWidth', fallback: 272, min: 220, max: 520 };
+// The watchlist's least width fits its four columns at their usual figures (watchlist/model.ts → COL_FIT_W).
+const WATCH = { key: 'tape.trade.watchlistWidth', fallback: 272, min: 260, max: 520 };
 const TICKET = { key: 'tape.trade.ticketWidth', fallback: 340, min: 340, max: 600 };
 /** The view in the middle (chart, options desk) keeps at least this width. */
 const CENTER_MIN = 480;

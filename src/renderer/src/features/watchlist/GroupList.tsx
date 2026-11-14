@@ -258,7 +258,9 @@ export function GroupList({
         style={{
           position: 'relative',
           flex: 1,
-          overflow: 'auto',
+          // Up and down only: the columns give way in a narrow panel (model.ts → columnsTemplate).
+          overflowX: 'hidden',
+          overflowY: 'auto',
           ...stableGutter,
           display: 'flex',
           flexDirection: 'column',

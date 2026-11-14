@@ -254,7 +254,9 @@ describe('columns', () => {
   });
 
   it('puts Symbol first, taking the rest, and moves the other columns among themselves', () => {
-    expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,1fr) 64px 50px 54px');
+    expect(columnsTemplate(DEFAULT_COLUMNS)).toBe('minmax(44px,1fr) minmax(52px,64px) minmax(44px,50px) minmax(52px,54px)');
+    // A column set narrower than its usual figures gives way no further than that.
+    expect(columnsTemplate({ ...DEFAULT_COLUMNS, widths: { ...DEFAULT_COLUMNS.widths, last: 40 } })).toContain('minmax(40px,40px)');
     expect(moveColumn(DEFAULT_COLUMNS, 'pct', 0).order).toEqual(['pct', 'last', 'chg']);
     expect(moveColumn(DEFAULT_COLUMNS, 'last', 9).order).toEqual(['chg', 'pct', 'last']);
     expect(clampColWidth(20)).toBe(COL_MIN_W);

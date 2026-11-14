@@ -141,6 +141,11 @@ export type WatchSortBy = 'symbol' | WatchCol;
 /** Default widths (px) of the columns after Symbol, and the range they are sized in; Symbol takes the rest, at least SYMBOL_MIN_W. */
 export const COL_WIDTHS: Readonly<Record<WatchCol, number>> = { last: 64, chg: 50, pct: 54 };
 export const COL_MIN_W = 36;
+/**
+ * How far each column gives way in a narrow panel: its usual figures whole ("582.75", "+5.35",
+ * "+12.34%" in the rows' fonts). The watchlist's least width (pages/TradePage.tsx) fits them all.
+ */
+export const COL_FIT_W: Readonly<Record<WatchCol, number>> = { last: 52, chg: 44, pct: 52 };
 export const COL_MAX_W = 180;
 export const SYMBOL_MIN_W = 44;
 
@@ -164,9 +169,14 @@ export function sanitizeColumns(raw: unknown): WatchColumns {
   return { order: [...saved, ...WATCH_COLS.filter((c) => !saved.includes(c))], widths };
 }
 
-/** The grid columns of a row and the header: Symbol takes what the others leave. */
+/**
+ * The grid columns of a row and the header: each column after Symbol as wide as set, Symbol taking
+ * what they leave. In a narrow panel the columns give way (down to COL_FIT_W, or the width set when
+ * that is less; Symbol to SYMBOL_MIN_W) rather than run past its edge: the list never scrolls
+ * sideways.
+ */
 export function columnsTemplate(cols: WatchColumns): string {
-  return [`minmax(${SYMBOL_MIN_W}px,1fr)`, ...cols.order.map((c) => `${cols.widths[c]}px`)].join(' ');
+  return [`minmax(${SYMBOL_MIN_W}px,1fr)`, ...cols.order.map((c) => `minmax(${Math.min(COL_FIT_W[c], cols.widths[c])}px,${cols.widths[c]}px)`)].join(' ');
 }
 
 /** Moves column `col` to `index` among the other columns after Symbol. */
