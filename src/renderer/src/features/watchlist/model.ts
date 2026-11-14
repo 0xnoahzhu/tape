@@ -179,6 +179,26 @@ export function columnsTemplate(cols: WatchColumns): string {
   return [`minmax(${SYMBOL_MIN_W}px,1fr)`, ...cols.order.map((c) => `minmax(${Math.min(COL_FIT_W[c], cols.widths[c])}px,${cols.widths[c]}px)`)].join(' ');
 }
 
+/**
+ * The columns' widths in a row `room` px wide (gaps included, `gap` px each): Symbol at least
+ * SYMBOL_MIN_W and every other column at least its fit width (COL_FIT_W, or its set width when less);
+ * what is left goes to the columns after Symbol from left to right, each up to its set width, and
+ * the rest to Symbol. So a narrowing panel takes from the rightmost column first, and a widening
+ * one gives to it last. Null before the row is measured.
+ */
+export function fitColumns(cols: WatchColumns, room: number, gap: number): { symbol: number; widths: number[] } | null {
+  if (!(room > 0)) return null;
+  const sets = cols.order.map((c) => cols.widths[c]);
+  const mins = cols.order.map((c, i) => Math.min(COL_FIT_W[c], sets[i]));
+  let left = room - gap * cols.order.length - SYMBOL_MIN_W - mins.reduce((a, b) => a + b, 0);
+  const widths = mins.map((min, i) => {
+    const add = Math.max(0, Math.min(left, sets[i] - min));
+    left -= add;
+    return min + add;
+  });
+  return { symbol: SYMBOL_MIN_W + Math.max(0, left), widths };
+}
+
 /** Moves column `col` to `index` among the other columns after Symbol. */
 export function moveColumn(cols: WatchColumns, col: WatchCol, index: number): WatchColumns {
   const rest = cols.order.filter((c) => c !== col);
