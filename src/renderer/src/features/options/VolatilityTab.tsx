@@ -14,13 +14,12 @@ import { DASH, f2, sg } from '@shared/format';
 import { nyClock } from '@shared/session';
 import type { EarningsEvent, QuoteDividends } from '@shared/types';
 import { useClock } from '../../i18n';
-import { stableGutter } from '../../ui/scrollGutter';
 import { pickTimeStep, timeStepSpacing, timeTickGap, timeTicks, type LabelClock } from '../chart/chartMath';
 import { useSize } from '../chart/useSize';
 import { fixed, nearestIndex, type OptionData } from './chain';
 import { useDailyCloses, useIvHistory, useNextEarnings } from './data';
 import { useM } from './messages';
-import { Card, EmptyChart, Key, Plot, Readout, VB_H, VB_W, Y_GUTTER, axisText, guideStroke, halo, legendStyle, line, share, withSpan } from './plot';
+import { Card, EmptyChart, TabGrid, Key, Plot, Readout, VB_H, VB_W, Y_GUTTER, axisText, guideStroke, halo, legendStyle, line, share, withSpan } from './plot';
 import type { ChainRow, DeskModel, TermPoint } from './model';
 import { chartScale, fitLabels, niceTicks, polyPoints, type XLabel } from './svg';
 import {
@@ -99,20 +98,7 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
   const markers = [...(div?.nextDate ? [{ date: div.nextDate, label: m.exDiv }] : []), ...(earnings ? [{ date: earnings.date, label: m.earnings }] : [])];
 
   return (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'auto',
-        ...stableGutter,
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
-        gridAutoRows: 'min-content',
-        gap: 'var(--gap)',
-        padding: 'var(--pad) max(0px, var(--pad) - var(--sbw, 0px)) var(--pad) var(--pad)',
-        background: 'var(--gbg)',
-      }}
-    >
+    <TabGrid>
       <div style={{ gridColumn: '1 / 3', display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 'var(--gap)' }}>
         {cards.map((x) => (
           <div key={x.l} title={x.title} style={{ background: 'var(--p)', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
@@ -128,7 +114,7 @@ export function VolatilityTab({ model }: { model: DeskModel }) {
       <Term model={model} term={term} markers={markers} />
       <TermTable model={model} term={term} vols={vols} eventAt={eventAt} earnings={earnings} div={div} />
       <IvHistory iv={iv} hvHist={hvHist} hv={hv} />
-    </div>
+    </TabGrid>
   );
 }
 

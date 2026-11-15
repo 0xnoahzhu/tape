@@ -2,6 +2,7 @@
 // in a 600 × 200 viewBox stretched to its box, and the pointer's readout.
 
 import { Fragment, useRef, type CSSProperties, type ReactNode } from 'react';
+import { stableGutter } from '../../ui/scrollGutter';
 import { useSize } from '../chart/useSize';
 import { fitLabels, niceTicks, stackLabels, type ChartScale, type XLabel } from './svg';
 
@@ -169,3 +170,26 @@ export function Readout({ x, width, dots, rows }: { x: number; width: number; do
   );
 }
 
+
+/**
+ * A tab's scrolling two-column grid of cards. The gap color shows only between the cards (and under
+ * the last row); the room below them, when they are shorter than the tab, is the panel's color.
+ */
+export function TabGrid({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', ...stableGutter, background: 'var(--p)', padding: 'var(--pad) max(0px, var(--pad) - var(--sbw, 0px)) var(--pad) var(--pad)' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
+          gridAutoRows: 'min-content',
+          gap: 'var(--gap)',
+          paddingBottom: 'var(--gap)',
+          background: 'var(--gbg)',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}

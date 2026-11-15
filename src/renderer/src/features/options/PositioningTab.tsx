@@ -14,11 +14,10 @@ import { DASH, f2, sg } from '@shared/format';
 import { tradingDay } from '@shared/session';
 import { useClock } from '../../i18n';
 import { Segmented } from '../../ui/primitives';
-import { stableGutter } from '../../ui/scrollGutter';
 import { nearestIndex } from './chain';
 import { useDesk } from './deskStore';
 import type { DeskModel } from './model';
-import { Card, EmptyChart, Key, Plot, Readout, VB_H, VB_W, axisText, guideStroke, halo, legendStyle, line, share } from './plot';
+import { Card, EmptyChart, TabGrid, Key, Plot, Readout, VB_H, VB_W, axisText, guideStroke, halo, legendStyle, line, share } from './plot';
 import {
   EXPIRY_SCOPES,
   POS_METRICS,
@@ -150,24 +149,7 @@ export function PositioningTab({ model }: { model: DeskModel }) {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'auto',
-        ...stableGutter,
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
-        gridAutoRows: 'min-content',
-        gap: 'var(--gap)',
-        padding: 'var(--pad) max(0px, var(--pad) - var(--sbw, 0px)) var(--pad) var(--pad)',
-        background: 'var(--gbg)',
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <TabGrid>{children}</TabGrid>;
 }
 
 function Field({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
