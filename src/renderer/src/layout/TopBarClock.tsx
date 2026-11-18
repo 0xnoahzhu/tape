@@ -61,11 +61,12 @@ function ClockText() {
       style={{
         flexShrink: 0,
         whiteSpace: 'nowrap',
-        font: '12px/1 var(--num)',
+        font: '14px/1 var(--num)',
         fontVariantNumeric: 'tabular-nums',
         color: 'var(--mu)',
         cursor: 'pointer',
-        padding: '0 4px',
+        // Clear of the index ticker on the left and the account badge on the right (the group's gap is 8).
+        margin: '0 12px 0 16px',
       }}
     >
       {topBarClockText(now, zone, clock, format, lang)}
