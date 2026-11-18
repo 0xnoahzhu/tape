@@ -555,6 +555,8 @@ describe('generic ticks of a line', () => {
   });
 
   it('starts every new line without the old line’s generic values', async () => {
+    // Before the summary's ex-date (20261109): a kept summary past it is not used (keptDividendsUsable).
+    vi.setSystemTime(new Date('2026-10-29T14:00:00Z'));
     const { fake, svc, events } = await setup();
     fake.ready();
     svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
@@ -591,6 +593,8 @@ describe('generic ticks of a line', () => {
   });
 
   it('clears the live-only values when a line turns from live to delayed, keeping the mark and the once-a-line ranges', async () => {
+    // Before the summary's ex-date (20261109): a kept summary past it is not used (keptDividendsUsable).
+    vi.setSystemTime(new Date('2026-10-29T14:00:00Z'));
     const { fake, svc } = await setup();
     fake.ready();
     svc.setRendererSubscriptions('portfolio', [{ contract: stock('AAPL'), profile: 'basic' }]);
