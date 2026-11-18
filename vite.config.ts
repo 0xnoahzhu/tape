@@ -18,6 +18,6 @@ export default defineConfig({
     // TAPE_OUT absolute or relative to the repository, as for main and preload (vite.electron.config.ts).
     outDir: resolve(repo, process.env.TAPE_OUT ?? 'out', 'renderer'),
     emptyOutDir: true,
-    target: 'chrome140',
+    target: 'chrome156',
   },
 });

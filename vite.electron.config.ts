@@ -54,7 +54,7 @@ function nodeConfig(name: 'main' | 'preload', format: 'es' | 'cjs', { mode, watc
     build: {
       outDir: outDir(name),
       emptyOutDir: true,
-      target: 'node22',
+      target: 'node24',
       minify: false,
       sourcemap: mode === 'development' ? 'inline' : false,
       ssr: true,
