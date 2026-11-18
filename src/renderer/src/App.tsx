@@ -19,7 +19,6 @@ import { requestLock } from './features/lock/actions';
 import { LockScreen } from './features/lock/LockScreen';
 import { VaultSetup } from './features/vault/VaultSetup';
 import { PinDialogHost } from './features/lock/PinDialog';
-import { ClockLayer } from './features/clock/ClockWidget';
 import { FloatingPanels } from './features/panels/FloatingPanels';
 
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -160,10 +159,6 @@ export function App() {
         {/* The order ticket and the strategy builder when popped out, over the content area. */}
         <ErrorBoundary name="Floating panels" style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <FloatingPanels />
-        </ErrorBoundary>
-        {/* The clock widget, over the page and the floating panels (after the page: it wins z-index ties). */}
-        <ErrorBoundary name="Clock" style={{ position: 'absolute', right: 8, top: 8, zIndex: 3 }}>
-          <ClockLayer />
         </ErrorBoundary>
       </div>
       <ErrorBoundary name="Notifications" style={{ position: 'absolute', top: 60, right: 14, zIndex: 16 }}>

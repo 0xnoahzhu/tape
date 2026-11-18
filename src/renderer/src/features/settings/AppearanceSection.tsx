@@ -1,8 +1,8 @@
-// Settings › General: language, time format, the time zone (chart and clock widget), theme, up/down
+// Settings › General: language, time format, the time zone (chart and top bar clock), theme, up/down
 // color convention, color-blind mode (red–green set further apart, or blue and orange, for up / down:
-// tokens.css, data-cb), and the clock widget (features/clock/ClockWidget.tsx).
+// tokens.css, data-cb), and the top bar clock (layout/TopBarClock.tsx).
 
-import { CHART_ZONE_SETTINGS, CLOCK_DATES, clockReadingText, localZone, type ChartZone, type ClockDate, type TimeFormat } from '@shared/timeFormat';
+import { CHART_ZONE_SETTINGS, CLOCK_DATES, localZone, topBarClockText, type ChartZone, type ClockDate, type TimeFormat } from '@shared/timeFormat';
 import type { ColorBlind, Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
 import { Select } from '../../ui/select';
@@ -127,7 +127,7 @@ function ChartZoneRow() {
   );
 }
 
-/** The clock widget: shown or not, its date, seconds and zone label (each date option previews now), and whether it is locked. */
+/** The top bar clock: shown or not, its date, seconds and zone label (each date option previews now). */
 function ClockRows() {
   const m = useSettingsMessages();
   const a = useStore((s) => s.settings.appearance);
@@ -150,7 +150,7 @@ function ClockRows() {
       <div data-setting="clock-date" style={{ minHeight: 60, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(hidden) }}>
         <LabelBlock label={m.clockDate} />
         <Select<ClockDate>
-          options={CLOCK_DATES.map((key) => ({ key, label: clockReadingText(now, zone, { ...c, date: key }, a.timeFormat, a.language), hint: m.clockDates[key] }))}
+          options={CLOCK_DATES.map((key) => ({ key, label: topBarClockText(now, zone, { ...c, date: key }, a.timeFormat, a.language), hint: m.clockDates[key] }))}
           value={c.date}
           onChange={(date) => date !== c.date && save({ date })}
           width={340}
@@ -159,16 +159,6 @@ function ClockRows() {
       </div>
       <OptionRow<'show' | 'hide'> label={m.clockSeconds} options={showHide} value={c.seconds ? 'show' : 'hide'} onChange={(k) => save({ seconds: k === 'show' })} disabled={hidden} />
       <OptionRow<'show' | 'hide'> label={m.clockZoneLabel} options={showHide} value={c.zoneLabel ? 'show' : 'hide'} onChange={(k) => save({ zoneLabel: k === 'show' })} disabled={hidden} />
-      <OptionRow<'locked' | 'movable'>
-        label={m.clockPosition}
-        options={[
-          { key: 'locked', label: m.clockLocked },
-          { key: 'movable', label: m.clockMovable },
-        ]}
-        value={c.locked ? 'locked' : 'movable'}
-        onChange={(k) => save({ locked: k === 'locked' })}
-        disabled={hidden}
-      />
     </>
   );
 }

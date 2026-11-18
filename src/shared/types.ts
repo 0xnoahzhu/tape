@@ -2,7 +2,7 @@
 // Everything here must stay serializable (structured clone) because it crosses IPC.
 
 import type { AddOnProfile } from './quoteProfiles';
-import type { ChartZone, ClockSettings, TimeFormat } from './timeFormat';
+import type { ChartZone, TimeFormat, TopBarClockSettings } from './timeFormat';
 
 export type SecType = 'STK' | 'OPT' | 'IND' | 'FUT' | 'FOP' | 'CASH' | 'BAG' | 'CFD' | 'BOND' | 'WAR' | 'CRYPTO';
 export type OptionRight = 'C' | 'P';
@@ -1378,10 +1378,10 @@ export interface Settings {
     language: Lang;
     /** Clock times: '12h' "09:41 AM" (the default) or '24h' "09:41" (shared/timeFormat.ts). */
     timeFormat: TimeFormat;
-    /** The time zone of the chart's time axis and crosshair, and of the clock widget (shared/timeFormat.ts → ChartZone). */
+    /** The time zone of the chart's time axis and crosshair, and of the top bar's clock (shared/timeFormat.ts → ChartZone). */
     chartZone: ChartZone;
-    /** The clock widget (features/clock/ClockWidget.tsx); its 12 / 24-hour format is `timeFormat`. */
-    clock: ClockSettings;
+    /** The top bar's clock (layout/TopBarClock.tsx); its 12 / 24-hour format is `timeFormat`. */
+    clock: TopBarClockSettings;
     upColor: UpColor;
     colorBlind: ColorBlind;
     showAccountId: boolean;

@@ -41,17 +41,6 @@ export function LockIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-/** Open padlock, the LockIcon's pair: something that is not locked (the clock widget, movable). */
-export function UnlockIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg viewBox="0 0 18 18" width={size} height={size} style={{ display: 'block' }} aria-hidden>
-      {/* The closed lock's body and shackle, the shackle swung open to the right on its right leg. */}
-      <rect x="2.25" y="8" width="10.5" height="7" stroke="currentColor" strokeWidth="1.5" fill="none" />
-      <path d="M10.5 8V5.75a3 3 0 0 1 6 0V7" stroke="currentColor" strokeWidth="1.5" fill="none" />
-    </svg>
-  );
-}
-
 /** Fingerprint of the lock screen's Touch ID / Windows Hello button. */
 export function FingerprintIcon({ size = 18 }: { size?: number }) {
   return (
