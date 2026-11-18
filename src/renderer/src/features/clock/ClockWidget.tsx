@@ -5,8 +5,10 @@
 // button shows only on hover (and while dragged). Where it was left is kept per device by the nearest
 // corner (model.ts), so it stays there when the window is resized.
 //
-// Its layer (App mounts it over the content area, under the top bar) passes clicks through; z-index 2
-// puts it above the page and the floating panels (1), below menus (4+), dialogs, toasts and the lock screen.
+// Its layer (App mounts it over the content area, under the top bar, after the page) passes clicks
+// through. z-index 3 puts it above the floating panels (1) and the page's own raised parts: the
+// Portfolio header (3, a tie the later layer wins) and the table toolbar (2); below menus (4+),
+// dialogs, toasts and the lock screen.
 
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import { clockReading, localZone, zoneShortName } from '@shared/timeFormat';
@@ -76,7 +78,7 @@ export function ClockLayer() {
   const ref = useRef<HTMLDivElement>(null);
   const area = useSize(ref);
   return (
-    <div ref={ref} style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', overflow: 'hidden' }}>
+    <div ref={ref} style={{ position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none', overflow: 'hidden' }}>
       {show && area && <ClockWidget area={area} />}
     </div>
   );

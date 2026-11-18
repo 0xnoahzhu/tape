@@ -161,8 +161,8 @@ export function App() {
         <ErrorBoundary name="Floating panels" style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 1 }}>
           <FloatingPanels />
         </ErrorBoundary>
-        {/* The clock widget, over the page and the floating panels. */}
-        <ErrorBoundary name="Clock" style={{ position: 'absolute', right: 8, top: 8, zIndex: 2 }}>
+        {/* The clock widget, over the page and the floating panels (after the page: it wins z-index ties). */}
+        <ErrorBoundary name="Clock" style={{ position: 'absolute', right: 8, top: 8, zIndex: 3 }}>
           <ClockLayer />
         </ErrorBoundary>
       </div>
