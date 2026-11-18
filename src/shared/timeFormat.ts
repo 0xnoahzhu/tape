@@ -44,20 +44,22 @@ export const CHART_ZONE_SETTINGS: readonly ChartZone[] = ['exchange', 'local', .
 export const DEFAULT_CHART_ZONE: ChartZone = 'exchange';
 
 // ---------------------------------------------------------------------------
-// The top bar's clock (Settings › General › Top bar clock)
+// The clock widget (Settings › General › Clock widget)
 
 /** The date before the clock's time: none, "Nov 18" / "11月18日", "2026-11-18", "Wed Nov 18" / "周三 11月18日". */
 export type ClockDate = 'none' | 'md' | 'ymd' | 'wmd';
 export const CLOCK_DATES: readonly ClockDate[] = ['none', 'md', 'ymd', 'wmd'];
 
-export interface TopBarClockSettings {
+export interface ClockSettings {
   show: boolean;
   date: ClockDate;
   seconds: boolean;
-  /** The zone's short name after the time ("ET", "HKT"). */
+  /** The zone's short name with the time ("ET", "HKT"). */
   zoneLabel: boolean;
+  /** Fixed where it is; unlocked, it is dragged to another place. */
+  locked: boolean;
 }
-export const DEFAULT_CLOCK: TopBarClockSettings = { show: true, date: 'none', seconds: true, zoneLabel: true };
+export const DEFAULT_CLOCK: ClockSettings = { show: true, date: 'none', seconds: true, zoneLabel: true, locked: false };
 
 /** This computer's time zone (IANA), New York when the runtime does not say. */
 export function localZone(): string {
@@ -313,7 +315,7 @@ export function resolveTimeTokens(text: string, clock: Clock): string {
 }
 
 // ---------------------------------------------------------------------------
-// The top bar's clock
+// The clock widget
 
 /** Zones whose short name does not change with daylight saving (or that have none). */
 const ZONE_NAMES: Record<string, string> = {
@@ -379,10 +381,26 @@ export function clockDateText(r: { y: number; mo: number; d: number }, style: Cl
   return `${WEEKDAYS[lang][new Date(Date.UTC(r.y, r.mo - 1, r.d)).getUTCDay()]} ${md}`;
 }
 
-/** The top bar clock's reading of `t` in `zone`: "Wed Nov 18 09:41:07 AM ET", "2026-11-18 上午 09:41 HKT", "09:41". */
-export function topBarClockText(t: number, zone: string, c: Omit<TopBarClockSettings, 'show'>, format: TimeFormat, lang: Lang): string {
+export interface ClockReading {
+  /** "09:41:07 AM", "上午 09:41", "21:41". */
+  time: string;
+  /** The date and zone the settings ask for: "Wed Nov 18 · ET", "2026-11-18", "HKT"; '' for neither. */
+  detail: string;
+}
+
+type ReadingSettings = Pick<ClockSettings, 'date' | 'seconds' | 'zoneLabel'>;
+
+/** The clock widget's reading of `t` in `zone`: the time, and under it the date and zone. */
+export function clockReading(t: number, zone: string, c: ReadingSettings, format: TimeFormat, lang: Lang): ClockReading {
   const r = wallClockAt(t, zone);
-  return [clockDateText(r, c.date, lang), clockText(r, format, lang, c.seconds), c.zoneLabel ? zoneShortName(zone, t) : '']
-    .filter(Boolean)
-    .join(' ');
+  return {
+    time: clockText(r, format, lang, c.seconds),
+    detail: [clockDateText(r, c.date, lang), c.zoneLabel ? zoneShortName(zone, t) : ''].filter(Boolean).join(' · '),
+  };
+}
+
+/** The reading on one line (Settings' previews): "09:41:07 AM · Wed Nov 18 · ET". */
+export function clockReadingText(t: number, zone: string, c: ReadingSettings, format: TimeFormat, lang: Lang): string {
+  const { time, detail } = clockReading(t, zone, c, format, lang);
+  return detail ? `${time} · ${detail}` : time;
 }

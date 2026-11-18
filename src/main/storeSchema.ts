@@ -126,7 +126,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     language: oneOf(['en', 'zh']),
     timeFormat: oneOf(TIME_FORMATS),
     chartZone: oneOf(CHART_ZONE_SETTINGS),
-    clock: { show: bool, date: oneOf(CLOCK_DATES), seconds: bool, zoneLabel: bool },
+    clock: { show: bool, date: oneOf(CLOCK_DATES), seconds: bool, zoneLabel: bool, locked: bool },
     upColor: oneOf(['cn', 'us']),
     colorBlind: oneOf(['off', 'redGreen', 'blueOrange']),
     showAccountId: bool,

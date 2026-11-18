@@ -220,10 +220,10 @@ describe('loadSettings', () => {
     expect(loadSettings({ appearance: { theme: 'dark' } }, defaults).appearance.chartZone).toBe('exchange');
     for (const ok of ['local', 'Asia/Shanghai', 'UTC']) expect(loadSettings({ appearance: { chartZone: ok } }, defaults).appearance.chartZone).toBe(ok);
     for (const bad of ['Mars/Olympus', 'asia/shanghai', 8, null, '']) expect(loadSettings({ appearance: { chartZone: bad } }, defaults).appearance.chartZone).toBe('exchange');
-    // The top bar clock: on, no date, seconds and the zone label by default; bad values fall back one by one.
-    expect(defaults.appearance.clock).toEqual({ show: true, date: 'none', seconds: true, zoneLabel: true });
+    // The clock widget: on and movable, no date, seconds and the zone label by default; bad values fall back one by one.
+    expect(defaults.appearance.clock).toEqual({ show: true, date: 'none', seconds: true, zoneLabel: true, locked: false });
     expect(loadSettings({ appearance: { theme: 'dark' } }, defaults).appearance.clock).toEqual(defaults.appearance.clock);
-    expect(loadSettings({ appearance: { clock: { show: false, date: 'wmd', seconds: 'yes', zoneLabel: false } } }, defaults).appearance.clock).toEqual({ show: false, date: 'wmd', seconds: true, zoneLabel: false });
+    expect(loadSettings({ appearance: { clock: { show: false, date: 'wmd', seconds: 'yes', zoneLabel: false } } }, defaults).appearance.clock).toEqual({ show: false, date: 'wmd', seconds: true, zoneLabel: false, locked: false });
     expect(loadSettings({ appearance: { clock: { date: 'dmy' } } }, defaults).appearance.clock.date).toBe('none');
   });
 

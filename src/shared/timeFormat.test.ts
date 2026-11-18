@@ -3,6 +3,8 @@ import {
   CLOCK_24H,
   clockParts,
   clockDateText,
+  clockReading,
+  clockReadingText,
   clockText,
   createClock,
   DEFAULT_TIME_FORMAT,
@@ -12,7 +14,6 @@ import {
   readWallTime,
   resolveTimeTokens,
   timeColumn,
-  topBarClockText,
   zoneShortName,
   TOKEN_CLOCK,
 } from './timeFormat';
@@ -238,7 +239,7 @@ describe('time tokens', () => {
   });
 });
 
-describe('top bar clock', () => {
+describe('clock widget', () => {
   // Wed 2026-11-18 14:41:07 UTC; Wed 2026-07-15 14:41:07 UTC.
   const nov = Date.UTC(2026, 10, 18, 14, 41, 7);
   const jul = Date.UTC(2026, 6, 15, 14, 41, 7);
@@ -268,12 +269,15 @@ describe('top bar clock', () => {
     expect(clockDateText(r, 'wmd', 'zh')).toBe('周三 11月18日');
   });
 
-  it('reads now in the zone, with the parts the settings ask for', () => {
-    expect(topBarClockText(nov, 'America/New_York', all, '12h', 'en')).toBe('09:41:07 AM ET');
-    expect(topBarClockText(nov, 'America/New_York', { ...all, date: 'wmd' }, '12h', 'zh')).toBe('周三 11月18日 上午 09:41:07 ET');
-    expect(topBarClockText(nov, 'Asia/Hong_Kong', { date: 'ymd', seconds: false, zoneLabel: true }, '24h', 'en')).toBe('2026-11-18 22:41 HKT');
-    expect(topBarClockText(nov, 'Asia/Tokyo', { date: 'md', seconds: false, zoneLabel: false }, '24h', 'en')).toBe('Nov 18 23:41');
+  it('reads now in the zone: the time, and under it the date and zone the settings ask for', () => {
+    expect(clockReading(nov, 'America/New_York', all, '12h', 'en')).toEqual({ time: '09:41:07 AM', detail: 'ET' });
+    expect(clockReading(nov, 'America/New_York', { ...all, date: 'wmd' }, '12h', 'zh')).toEqual({ time: '上午 09:41:07', detail: '周三 11月18日 · ET' });
+    expect(clockReading(nov, 'Asia/Hong_Kong', { date: 'ymd', seconds: false, zoneLabel: true }, '24h', 'en')).toEqual({ time: '22:41', detail: '2026-11-18 · HKT' });
+    expect(clockReading(nov, 'Asia/Tokyo', { date: 'none', seconds: false, zoneLabel: false }, '24h', 'en')).toEqual({ time: '23:41', detail: '' });
     // The date is the zone's: already Thursday in Tokyo at 15:00 UTC.
-    expect(topBarClockText(Date.UTC(2026, 10, 18, 15, 30), 'Asia/Tokyo', { ...all, date: 'wmd', seconds: false }, '24h', 'en')).toBe('Thu Nov 19 00:30 JST');
+    expect(clockReading(Date.UTC(2026, 10, 18, 15, 30), 'Asia/Tokyo', { ...all, date: 'wmd', seconds: false }, '24h', 'en').detail).toBe('Thu Nov 19 · JST');
+    // On one line (Settings' previews), the time first.
+    expect(clockReadingText(nov, 'America/New_York', { ...all, date: 'md' }, '12h', 'en')).toBe('09:41:07 AM · Nov 18 · ET');
+    expect(clockReadingText(nov, 'America/New_York', { ...all, zoneLabel: false }, '24h', 'en')).toBe('09:41:07');
   });
 });
