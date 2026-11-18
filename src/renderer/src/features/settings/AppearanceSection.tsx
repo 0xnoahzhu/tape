@@ -1,6 +1,7 @@
 // Settings › General: language, time format, the time zone (chart and top bar clock), theme, up/down
 // color convention, color-blind mode (red–green set further apart, or blue and orange, for up / down:
-// tokens.css, data-cb), and the top bar clock (layout/TopBarClock.tsx).
+// tokens.css, data-cb), the top bar clock (layout/TopBarClock.tsx), and whether the top bar's index
+// ticker leaves out indices without data (features/watchlist/IndexTicker.tsx).
 
 import { CHART_ZONE_SETTINGS, CLOCK_DATES, localZone, topBarClockText, type ChartZone, type ClockDate, type TimeFormat } from '@shared/timeFormat';
 import type { ColorBlind, Lang, ThemeSetting, UpColor } from '@shared/types';
@@ -97,6 +98,19 @@ export function AppearanceSection() {
         onChange={(colorBlind) => saveSettings({ appearance: { colorBlind } })}
       />
       <ClockRows />
+      <div style={{ marginTop: 20 }}>
+        <SubHeader title={m.tickerTitle} />
+      </div>
+      <OptionRow<'show' | 'hide'>
+        label={m.tickerNoData}
+        desc={m.tickerNoDataD}
+        options={[
+          { key: 'show', label: m.show },
+          { key: 'hide', label: m.hide },
+        ]}
+        value={a.tickerHideNoData ? 'hide' : 'show'}
+        onChange={(k) => saveSettings({ appearance: { tickerHideNoData: k === 'hide' } })}
+      />
     </>
   );
 }

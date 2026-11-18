@@ -1382,6 +1382,8 @@ export interface Settings {
     chartZone: ChartZone;
     /** The top bar's clock (layout/TopBarClock.tsx); its 12 / 24-hour format is `timeFormat`. */
     clock: TopBarClockSettings;
+    /** The top bar's index ticker leaves out indices IB sends no price for (features/watchlist/IndexTicker.tsx). */
+    tickerHideNoData: boolean;
     upColor: UpColor;
     colorBlind: ColorBlind;
     showAccountId: boolean;

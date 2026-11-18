@@ -127,6 +127,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     timeFormat: oneOf(TIME_FORMATS),
     chartZone: oneOf(CHART_ZONE_SETTINGS),
     clock: { show: bool, date: oneOf(CLOCK_DATES), seconds: bool, zoneLabel: bool },
+    tickerHideNoData: bool,
     upColor: oneOf(['cn', 'us']),
     colorBlind: oneOf(['off', 'redGreen', 'blueOrange']),
     showAccountId: bool,

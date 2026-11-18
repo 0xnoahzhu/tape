@@ -28,7 +28,7 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
       autoReconnect: true,
     },
     trading: { defaultQty: 100, outsideRthDefault: false },
-    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, chartZone: DEFAULT_CHART_ZONE, clock: { ...DEFAULT_CLOCK }, upColor: defaultUpColor(language), colorBlind: 'off', showAccountId: true },
+    appearance: { theme: 'system', language, timeFormat: DEFAULT_TIME_FORMAT, chartZone: DEFAULT_CHART_ZONE, clock: { ...DEFAULT_CLOCK }, tickerHideNoData: false, upColor: defaultUpColor(language), colorBlind: 'off', showAccountId: true },
     features: { depth: false, depthSetByUser: false },
     notifications: {
       system: { fill: true, order: true, price: true, opt: true, conn: true, sys: true },

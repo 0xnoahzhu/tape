@@ -6,7 +6,12 @@
 // The ticker takes the top bar's free space. When its indices do not fit, they run from right to
 // left, twice in a row so they go round without a seam (global.css → .ticker-track), and stop while
 // the pointer is over them. With reduced motion asked for, they stay put and the wheel scrolls them.
+//
+// With Settings › General › Indices without data set to Hide (appearance.tickerHideNoData), an index
+// is left out while it has no price (IB sends none: not subscribed, not connected); it is still
+// subscribed, so it comes in once its data does.
 
+import { useShallow } from 'zustand/react/shallow';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { contractKey, contractLabel } from '@shared/contract';
 import { pct, px, signColor } from '@shared/format';
@@ -33,9 +38,14 @@ const reducedMotion = () => {
 export function IndexTicker() {
   const m = useWatchlistMessages();
   const list = useStore((s) => tickerListOf(s.watchlists));
-  const items = useMemo(() => tickerItems(list), [list]);
-  const contracts = useMemo(() => items.map((i) => i.contract), [items]);
+  const all = useMemo(() => tickerItems(list), [list]);
+  const contracts = useMemo(() => all.map((i) => i.contract), [all]);
+  // Every index stays subscribed, so a hidden one shows up once its price comes.
   useQuoteSubscriptions('ticker', contracts, 'basic');
+  const hideNoData = useStore((s) => s.settings.appearance.tickerHideNoData);
+  // Whether each index has a price; a new array only when one of them changes.
+  const priced = useStore(useShallow((s) => (hideNoData ? all.map((i) => lastPrice(s.quotes[contractKey(i.contract)]) != null) : null)));
+  const items = useMemo(() => (priced ? all.filter((_, n) => priced[n]) : all), [all, priced]);
   const boxRef = useRef<HTMLDivElement>(null);
   const copyRef = useRef<HTMLDivElement>(null);
   // The width of one copy of the indices, and whether it is more than the ticker has.
