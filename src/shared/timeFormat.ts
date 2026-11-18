@@ -43,6 +43,22 @@ export type ChartZone = 'exchange' | 'local' | (typeof CHART_ZONES)[number];
 export const CHART_ZONE_SETTINGS: readonly ChartZone[] = ['exchange', 'local', ...CHART_ZONES];
 export const DEFAULT_CHART_ZONE: ChartZone = 'exchange';
 
+// ---------------------------------------------------------------------------
+// The top bar's clock (Settings › General › Top bar clock)
+
+/** The date before the clock's time: none, "Nov 18" / "11月18日", "2026-11-18", "Wed Nov 18" / "周三 11月18日". */
+export type ClockDate = 'none' | 'md' | 'ymd' | 'wmd';
+export const CLOCK_DATES: readonly ClockDate[] = ['none', 'md', 'ymd', 'wmd'];
+
+export interface TopBarClockSettings {
+  show: boolean;
+  date: ClockDate;
+  seconds: boolean;
+  /** The zone's short name after the time ("ET", "HKT"). */
+  zoneLabel: boolean;
+}
+export const DEFAULT_CLOCK: TopBarClockSettings = { show: true, date: 'none', seconds: true, zoneLabel: true };
+
 /** This computer's time zone (IANA), New York when the runtime does not say. */
 export function localZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || NEW_YORK_ZONE;
@@ -294,4 +310,79 @@ export function resolveTimeTokens(text: string, clock: Clock): string {
       ...(flags.includes('e') ? { timeZone: NEW_YORK_ZONE, zone: 'ET' } : {}),
     }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// The top bar's clock
+
+/** Zones whose short name does not change with daylight saving (or that have none). */
+const ZONE_NAMES: Record<string, string> = {
+  'America/New_York': 'ET',
+  'America/Toronto': 'ET',
+  'America/Chicago': 'CT',
+  'America/Denver': 'MT',
+  'America/Los_Angeles': 'PT',
+  'Asia/Hong_Kong': 'HKT',
+  'Asia/Shanghai': 'BJT',
+  'Asia/Tokyo': 'JST',
+  'Asia/Seoul': 'KST',
+  'Asia/Singapore': 'SGT',
+  'Asia/Kolkata': 'IST',
+  UTC: 'UTC',
+  'Etc/UTC': 'UTC',
+};
+/** Zones named by their offset now: [standard, summer] with the standard offset (minutes). */
+const SEASONAL_NAMES: Record<string, [number, string, string]> = {
+  'Europe/London': [0, 'GMT', 'BST'],
+  'Europe/Berlin': [60, 'CET', 'CEST'],
+  'Europe/Paris': [60, 'CET', 'CEST'],
+  'Europe/Amsterdam': [60, 'CET', 'CEST'],
+  'Europe/Zurich': [60, 'CET', 'CEST'],
+  'Australia/Sydney': [600, 'AEST', 'AEDT'],
+};
+
+/** A zone's UTC offset (minutes) at instant `t`. */
+export function zoneOffsetMinutes(zone: string, t: number): number {
+  const r = wallClockAt(t, zone);
+  return Math.round((Date.UTC(r.y, r.mo - 1, r.d, r.h, r.m, r.s) - Math.floor(t / 1000) * 1000) / 60_000);
+}
+
+/** A zone's UTC offset as text: "UTC−5", "UTC+8", "UTC+5:30", "UTC". */
+function offsetText(min: number): string {
+  if (min === 0) return 'UTC';
+  const a = Math.abs(min);
+  return `UTC${min < 0 ? '−' : '+'}${Math.floor(a / 60)}${a % 60 ? `:${two(a % 60)}` : ''}`;
+}
+
+/** The short name written after a time in `zone` at `t`: "ET", "HKT", "BST", else its offset ("UTC+3"). */
+export function zoneShortName(zone: string, t: number): string {
+  const fixed = ZONE_NAMES[zone];
+  if (fixed) return fixed;
+  const off = zoneOffsetMinutes(zone, t);
+  const seasonal = SEASONAL_NAMES[zone];
+  if (seasonal) return off === seasonal[0] ? seasonal[1] : seasonal[2];
+  return offsetText(off);
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS: Record<Lang, string[]> = {
+  en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  zh: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+};
+
+/** The clock's date: "Nov 18" / "11月18日", "2026-11-18", "Wed Nov 18" / "周三 11月18日"; '' for none. */
+export function clockDateText(r: { y: number; mo: number; d: number }, style: ClockDate, lang: Lang): string {
+  if (style === 'none') return '';
+  if (style === 'ymd') return `${r.y}-${two(r.mo)}-${two(r.d)}`;
+  const md = lang === 'zh' ? `${r.mo}月${r.d}日` : `${MONTHS[r.mo - 1]} ${r.d}`;
+  if (style === 'md') return md;
+  return `${WEEKDAYS[lang][new Date(Date.UTC(r.y, r.mo - 1, r.d)).getUTCDay()]} ${md}`;
+}
+
+/** The top bar clock's reading of `t` in `zone`: "Wed Nov 18 09:41:07 AM ET", "2026-11-18 上午 09:41 HKT", "09:41". */
+export function topBarClockText(t: number, zone: string, c: Omit<TopBarClockSettings, 'show'>, format: TimeFormat, lang: Lang): string {
+  const r = wallClockAt(t, zone);
+  return [clockDateText(r, c.date, lang), clockText(r, format, lang, c.seconds), c.zoneLabel ? zoneShortName(zone, t) : '']
+    .filter(Boolean)
+    .join(' ');
 }

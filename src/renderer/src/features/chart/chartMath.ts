@@ -1017,7 +1017,7 @@ export function chartTimeZone(timeZoneId: string | undefined): string {
 }
 
 /**
- * The zone the chart's times are shown in, per Settings › General › Chart time zone: the
+ * The zone the chart's times are shown in, per Settings › General › Time zone: the
  * instrument's exchange's (chartTimeZone), this computer's (`local`), or the zone chosen.
  */
 export function shownTimeZone(setting: ChartZone, timeZoneId: string | undefined, local: string): string {

@@ -1,7 +1,7 @@
 // Strings of the Settings page (English from the design's EN map, Chinese from its script).
 
 import { compact, f0 } from '@shared/format';
-import type { ChartZone, Clock } from '@shared/timeFormat';
+import type { ChartZone, Clock, ClockDate } from '@shared/timeFormat';
 import { createMessages } from '../../i18n';
 import type { BiometricKind, LockBiometrics, MarketCheckStatus } from '@shared/types';
 import type { ExchangePair, Hint, MarketRow, RowNote, RowTip, ShortcutId } from './logic';
@@ -306,8 +306,8 @@ const en = {
   timeFormat: 'Time format',
   hour12: '12-hour',
   hour24: '24-hour',
-  chartZone: 'Chart time zone',
-  chartZoneD: 'The times on the chart’s time axis and crosshair. Daily and longer bars keep their trading date.',
+  chartZone: 'Time zone',
+  chartZoneD: 'Used on the chart (time axis and crosshair) and by the top bar clock. Daily and longer bars keep their trading date.',
   chartZones: {
     exchange: 'Exchange',
     local: 'This computer',
@@ -324,6 +324,13 @@ const en = {
     UTC: 'UTC',
   } satisfies Record<ChartZone, string>,
   chartZoneExchangeD: 'Each instrument’s exchange (New York for US ones)',
+  clockTitle: 'Top bar clock',
+  clockDesc: 'In the time zone and time format above. With Exchange, it follows the instrument on the chart.',
+  clockShow: 'Clock',
+  clockDate: 'Date',
+  clockDates: { none: 'None', md: 'Month and day', ymd: 'Year, month and day', wmd: 'Weekday, month and day' } satisfies Record<ClockDate, string>,
+  clockSeconds: 'Seconds',
+  clockZoneLabel: 'Time zone label',
   theme: 'Theme',
   system: 'System',
   dark: 'Dark',
@@ -705,8 +712,8 @@ const zh: typeof en = {
   timeFormat: '时间格式',
   hour12: '12 小时制',
   hour24: '24 小时制',
-  chartZone: '图表时区',
-  chartZoneD: '图表横坐标和十字光标上的时间。日线及更长周期按交易日显示，不随时区变化。',
+  chartZone: '时区',
+  chartZoneD: '用于图表（横坐标和十字光标）和顶栏时钟。日线及更长周期按交易日显示，不随时区变化。',
   chartZones: {
     exchange: '交易所',
     local: '本机',
@@ -723,6 +730,13 @@ const zh: typeof en = {
     UTC: 'UTC',
   },
   chartZoneExchangeD: '各标的所在交易所的时区（美股为纽约）',
+  clockTitle: '顶栏时钟',
+  clockDesc: '使用上方的时区和时间格式。选择“交易所”时，跟随图表上的标的。',
+  clockShow: '时钟',
+  clockDate: '日期',
+  clockDates: { none: '不显示', md: '月日', ymd: '年月日', wmd: '星期和月日' },
+  clockSeconds: '秒',
+  clockZoneLabel: '时区标签',
   theme: '主题',
   system: '跟随系统',
   dark: 'Dark',

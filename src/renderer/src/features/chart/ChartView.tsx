@@ -441,7 +441,7 @@ export function ChartView() {
     [key, entry?.bars, liveLast, timeframe, session, liveData, sessionOpen, tick],
   );
   const [hoverBar, setHoverBar] = useState<Bar | null>(null);
-  // The time axis and crosshair read in Settings › General › Chart time zone.
+  // The time axis and crosshair read in Settings › General › Time zone.
   const chartZone = useStore((s) => s.settings.appearance.chartZone);
   // The measure tool on: the next drag on the chart draws it; it turns off once one is drawn (or on Esc).
   const [measuring, setMeasuring] = useState<MeasureKind | null>(null);

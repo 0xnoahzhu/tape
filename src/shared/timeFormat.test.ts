@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLOCK_24H,
   clockParts,
+  clockDateText,
   clockText,
   createClock,
   DEFAULT_TIME_FORMAT,
@@ -11,6 +12,8 @@ import {
   readWallTime,
   resolveTimeTokens,
   timeColumn,
+  topBarClockText,
+  zoneShortName,
   TOKEN_CLOCK,
 } from './timeFormat';
 
@@ -232,5 +235,45 @@ describe('time tokens', () => {
     expect(TOKEN_CLOCK.wall('16:00')).toBe('16:00');
     expect(resolveTimeTokens('Limit 226.95 · DAY', h12en)).toBe('Limit 226.95 · DAY');
     expect(resolveTimeTokens('⟦t:abc:e⟧', h12en)).toBe('⟦t:abc:e⟧');
+  });
+});
+
+describe('top bar clock', () => {
+  // Wed 2026-11-18 14:41:07 UTC; Wed 2026-07-15 14:41:07 UTC.
+  const nov = Date.UTC(2026, 10, 18, 14, 41, 7);
+  const jul = Date.UTC(2026, 6, 15, 14, 41, 7);
+  const all = { date: 'none', seconds: true, zoneLabel: true } as const;
+
+  it('names zones briefly, by season where the name changes, else by offset', () => {
+    expect(zoneShortName('America/New_York', nov)).toBe('ET');
+    expect(zoneShortName('America/New_York', jul)).toBe('ET');
+    expect(zoneShortName('Asia/Hong_Kong', nov)).toBe('HKT');
+    expect(zoneShortName('Europe/London', nov)).toBe('GMT');
+    expect(zoneShortName('Europe/London', jul)).toBe('BST');
+    expect(zoneShortName('Europe/Berlin', jul)).toBe('CEST');
+    expect(zoneShortName('Australia/Sydney', nov)).toBe('AEDT');
+    expect(zoneShortName('UTC', nov)).toBe('UTC');
+    expect(zoneShortName('Europe/Moscow', nov)).toBe('UTC+3');
+    expect(zoneShortName('Asia/Kathmandu', nov)).toBe('UTC+5:45');
+    expect(zoneShortName('America/Sao_Paulo', nov)).toBe('UTC−3');
+  });
+
+  it('writes the date in each style and language', () => {
+    const r = { y: 2026, mo: 11, d: 18 };
+    expect(clockDateText(r, 'none', 'en')).toBe('');
+    expect(clockDateText(r, 'md', 'en')).toBe('Nov 18');
+    expect(clockDateText(r, 'md', 'zh')).toBe('11月18日');
+    expect(clockDateText(r, 'ymd', 'zh')).toBe('2026-11-18');
+    expect(clockDateText(r, 'wmd', 'en')).toBe('Wed Nov 18');
+    expect(clockDateText(r, 'wmd', 'zh')).toBe('周三 11月18日');
+  });
+
+  it('reads now in the zone, with the parts the settings ask for', () => {
+    expect(topBarClockText(nov, 'America/New_York', all, '12h', 'en')).toBe('09:41:07 AM ET');
+    expect(topBarClockText(nov, 'America/New_York', { ...all, date: 'wmd' }, '12h', 'zh')).toBe('周三 11月18日 上午 09:41:07 ET');
+    expect(topBarClockText(nov, 'Asia/Hong_Kong', { date: 'ymd', seconds: false, zoneLabel: true }, '24h', 'en')).toBe('2026-11-18 22:41 HKT');
+    expect(topBarClockText(nov, 'Asia/Tokyo', { date: 'md', seconds: false, zoneLabel: false }, '24h', 'en')).toBe('Nov 18 23:41');
+    // The date is the zone's: already Thursday in Tokyo at 15:00 UTC.
+    expect(topBarClockText(Date.UTC(2026, 10, 18, 15, 30), 'Asia/Tokyo', { ...all, date: 'wmd', seconds: false }, '24h', 'en')).toBe('Thu Nov 19 00:30 JST');
   });
 });

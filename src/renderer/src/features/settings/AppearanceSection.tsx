@@ -1,13 +1,15 @@
-// Settings › General: language, time format, the chart's time zone, theme, up/down color convention
-// and color-blind mode (red–green set further apart, or blue and orange, for up / down: tokens.css, data-cb).
+// Settings › General: language, time format, the time zone (chart and top bar clock), theme, up/down
+// color convention, color-blind mode (red–green set further apart, or blue and orange, for up / down:
+// tokens.css, data-cb), and the top bar clock (layout/TopBarClock.tsx).
 
-import { CHART_ZONE_SETTINGS, localZone, type ChartZone, type TimeFormat } from '@shared/timeFormat';
+import { CHART_ZONE_SETTINGS, CLOCK_DATES, localZone, topBarClockText, type ChartZone, type ClockDate, type TimeFormat } from '@shared/timeFormat';
 import type { ColorBlind, Lang, ThemeSetting, UpColor } from '@shared/types';
 import { useStore } from '../../state/store';
 import { Select } from '../../ui/select';
 import { zoneOffsetText } from './logic';
 import { useSettingsMessages } from './messages';
-import { LabelBlock, OptionRow, SectionHeader, saveSettings } from './parts';
+import { shownTimeZone } from '../chart/chartMath';
+import { disabledRow, LabelBlock, OptionRow, SectionHeader, saveSettings, SubHeader } from './parts';
 
 export function AppearanceSection() {
   const m = useSettingsMessages();
@@ -94,6 +96,7 @@ export function AppearanceSection() {
         value={a.colorBlind}
         onChange={(colorBlind) => saveSettings({ appearance: { colorBlind } })}
       />
+      <ClockRows />
     </>
   );
 }
@@ -121,6 +124,42 @@ function ChartZoneRow() {
         style={{ width: 240, flexShrink: 0 }}
       />
     </div>
+  );
+}
+
+/** The top bar clock: shown or not, its date, seconds and zone label (each date option previews now). */
+function ClockRows() {
+  const m = useSettingsMessages();
+  const a = useStore((s) => s.settings.appearance);
+  const c = a.clock;
+  const hidden = !c.show;
+  const now = Date.now();
+  // The preview reads in New York when the zone follows the chart's instrument, as the clock does without one.
+  const zone = shownTimeZone(a.chartZone, undefined, localZone());
+  const showHide = [
+    { key: 'show' as const, label: m.show },
+    { key: 'hide' as const, label: m.hide },
+  ];
+  const save = (clock: Partial<typeof c>) => saveSettings({ appearance: { clock } });
+  return (
+    <>
+      <div style={{ marginTop: 20 }}>
+        <SubHeader title={m.clockTitle} desc={m.clockDesc} />
+      </div>
+      <OptionRow<'show' | 'hide'> label={m.clockShow} options={showHide} value={c.show ? 'show' : 'hide'} onChange={(k) => save({ show: k === 'show' })} />
+      <div data-setting="clock-date" style={{ minHeight: 60, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: 'inset 0 -1px 0 var(--ln2)', ...disabledRow(hidden) }}>
+        <LabelBlock label={m.clockDate} />
+        <Select<ClockDate>
+          options={CLOCK_DATES.map((key) => ({ key, label: topBarClockText(now, zone, { ...c, date: key }, a.timeFormat, a.language), hint: m.clockDates[key] }))}
+          value={c.date}
+          onChange={(date) => date !== c.date && save({ date })}
+          width={340}
+          style={{ width: 240, flexShrink: 0 }}
+        />
+      </div>
+      <OptionRow<'show' | 'hide'> label={m.clockSeconds} options={showHide} value={c.seconds ? 'show' : 'hide'} onChange={(k) => save({ seconds: k === 'show' })} disabled={hidden} />
+      <OptionRow<'show' | 'hide'> label={m.clockZoneLabel} options={showHide} value={c.zoneLabel ? 'show' : 'hide'} onChange={(k) => save({ zoneLabel: k === 'show' })} disabled={hidden} />
+    </>
   );
 }
 

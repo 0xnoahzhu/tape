@@ -1,7 +1,7 @@
 // The 56px application header, which doubles as the window title bar.
 // macOS: native traffic lights at the left edge, then a divider (no logo; the Dock shows it).
 // Windows / Linux: a small logo at the left; native caption buttons overlay the right edge.
-// Before the bell, the account badge: LIVE (red) or PAPER and the account Tape trades, or OFFLINE.
+// Before the bell, the clock (TopBarClock.tsx), then the account badge: LIVE (red) or PAPER and the account Tape trades, or OFFLINE.
 // While IB refuses requests in Read-Only API mode, a red chip there says so (and where to turn it off);
 // another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer). Left of
 // the bell, a DND tag while do-not-disturb is on (features/settings/DndIndicator.tsx). The bell's dot
@@ -22,6 +22,7 @@ import { useLockMessages } from '../features/lock/messages';
 import { useAlertMessages } from '../features/alerts/messages';
 import { unwatchedCount } from '../features/alerts/model';
 import { DndIndicator } from '../features/settings/DndIndicator';
+import { TopBarClock } from './TopBarClock';
 
 /**
  * IB answered a request of this connection with its Read-Only refusal (ConnectionState.readOnlyApi):
@@ -152,6 +153,7 @@ export function TopBar() {
       <IndexTicker />
       {/* At the right edge, also when there is no ticker (no indices on it). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
+        <TopBarClock />
         <HealthChip />
         <ReadOnlyChip />
         <AccountBadge />
