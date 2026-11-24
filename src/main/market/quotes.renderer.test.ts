@@ -79,6 +79,7 @@ async function setup(opts: { alerts?: string[]; positions?: Position[] } = {}) {
     afterReset: false,
     marketDataCheck: { running: false } as unknown as AppSnapshot['marketDataCheck'],
     vault: { path: '/vault', status: 'ok', account: null },
+    update: { status: 'off' },
   });
   const tape = {
     onEvent: (l: (e: TapeEvent) => void) => {

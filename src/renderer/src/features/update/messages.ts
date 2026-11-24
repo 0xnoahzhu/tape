@@ -1,0 +1,61 @@
+// Strings of Tape's own updates: Settings › About, the Settings button's dot and the restart dialog.
+
+import { createMessages } from '../../i18n';
+
+const en = {
+  version: 'Version',
+  updates: 'Updates',
+  updatesDesc: 'Tape checks GitHub for a new version at launch and every 4 hours. A downloaded version installs when you quit Tape, or right away when you restart from here.',
+  auto: 'Automatic updates',
+  autoDesc: 'Download a new version in the background. Off: a dot on Settings says one is available.',
+  off: 'This build does not update itself.',
+  upToDate: 'Tape is up to date.',
+  notChecked: 'Not checked yet.',
+  checkedAt: (time: string) => `Last checked ${time}.`,
+  checking: 'Checking for updates…',
+  downloading: (version: string, percent: number) => `Downloading Tape ${version}… ${percent}%`,
+  available: (version: string) => `Tape ${version} is available.`,
+  ready: (version: string) => `Tape ${version} is ready to install.`,
+  failed: (message: string) => `The update check failed: ${message}`,
+  checkNow: 'Check Now',
+  download: 'Download',
+  restart: 'Restart to Update',
+  releaseNotes: 'Release notes',
+  dotTip: (version: string) => `Tape ${version} is available`,
+  confirmTitle: 'Restart to update Tape?',
+  current: 'Current version',
+  next: 'New version',
+  confirmNote: 'Tape quits, installs the new version and opens again. Orders already at IB stay there.',
+  confirmConnected: 'The connection to TWS / IB Gateway closes until Tape is back.',
+  confirmLabel: 'Restart and Update',
+};
+
+const zh: typeof en = {
+  version: '版本',
+  updates: '更新',
+  updatesDesc: 'Tape 在启动时以及每 4 小时检查一次 GitHub 上的新版本。已下载的版本会在退出 Tape 时安装，也可以在这里立即重启安装。',
+  auto: '自动更新',
+  autoDesc: '在后台下载新版本。关闭时，有新版本会在设置按钮上显示小圆点。',
+  off: '此版本不会自动更新。',
+  upToDate: 'Tape 已是最新版本。',
+  notChecked: '尚未检查。',
+  checkedAt: (time: string) => `上次检查：${time}。`,
+  checking: '正在检查更新…',
+  downloading: (version: string, percent: number) => `正在下载 Tape ${version}… ${percent}%`,
+  available: (version: string) => `Tape ${version} 可供下载。`,
+  ready: (version: string) => `Tape ${version} 已可安装。`,
+  failed: (message: string) => `检查更新失败：${message}`,
+  checkNow: '立即检查',
+  download: '下载',
+  restart: '重启以更新',
+  releaseNotes: '更新说明',
+  dotTip: (version: string) => `Tape ${version} 可用`,
+  confirmTitle: '重启以更新 Tape？',
+  current: '当前版本',
+  next: '新版本',
+  confirmNote: 'Tape 将退出、安装新版本并重新打开。已提交到 IB 的订单不受影响。',
+  confirmConnected: '与 TWS / IB Gateway 的连接会断开，直到 Tape 重新打开。',
+  confirmLabel: '重启并更新',
+};
+
+export const useUpdateMessages = createMessages({ en, zh });

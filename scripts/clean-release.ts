@@ -1,5 +1,6 @@
 // Leaves only the installers in release/: macOS .dmg and Windows setup .exe. electron-builder
-// also writes unpacked apps (mac-arm64/, win-unpacked/), block maps and debug files.
+// also writes unpacked apps (mac-arm64/, win-unpacked/), the update files (macOS zips,
+// latest*.yml, block maps: only releases on GitHub need them) and debug files.
 
 import { readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';

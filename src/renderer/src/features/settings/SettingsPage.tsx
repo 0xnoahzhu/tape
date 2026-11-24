@@ -5,18 +5,20 @@ import { useEffect, useRef } from 'react';
 import { useStore, type SettingsTab } from '../../state/store';
 import { ErrorBoundary } from '../../ui/ErrorBoundary';
 import { lessGutter, stableGutter } from '../../ui/scrollGutter';
+import { AboutSection } from './AboutSection';
 import { ApiLogSection } from './ApiLogSection';
 import { AppearanceSection } from './AppearanceSection';
 import { ConnectionSection } from './ConnectionSection';
 import { MarketDataSection } from './MarketDataSection';
+import { updatePending } from '../update/actions';
 import { useSettingsMessages } from './messages';
 import { NotificationsSection } from './NotificationsSection';
 import { PrivacySection } from './PrivacySection';
 import { ShortcutsSection } from './ShortcutsSection';
 import { TradeSection } from './TradeSection';
 
-/** Nav order (design setNav, with Trade after Market data). Settings opens on General. */
-export const TABS: readonly SettingsTab[] = ['view', 'conn', 'data', 'trade', 'notif', 'sec', 'keys', 'log'];
+/** Nav order (design setNav, with Trade after Market data, and About last). Settings opens on General. */
+export const TABS: readonly SettingsTab[] = ['view', 'conn', 'data', 'trade', 'notif', 'sec', 'keys', 'log', 'about'];
 
 const SECTIONS: Record<SettingsTab, () => React.JSX.Element> = {
   view: AppearanceSection,
@@ -27,6 +29,7 @@ const SECTIONS: Record<SettingsTab, () => React.JSX.Element> = {
   sec: PrivacySection,
   keys: ShortcutsSection,
   log: ApiLogSection,
+  about: AboutSection,
 };
 
 export function SettingsPage() {
@@ -34,6 +37,7 @@ export function SettingsPage() {
   const tab = useStore((s) => s.settingsTab);
   const openSettings = useStore((s) => s.openSettings);
   const scroller = useRef<HTMLDivElement>(null);
+  const hasUpdate = useStore((s) => updatePending(s.update) != null);
   const Section = SECTIONS[tab] ?? AppearanceSection;
 
   useEffect(() => {
@@ -55,6 +59,7 @@ export function SettingsPage() {
       <div style={{ background: 'var(--p)', padding: '20px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
         {TABS.map((k) => {
           const active = k === tab;
+          const dot = k === 'about' && hasUpdate;
           return (
             <div
               key={k}
@@ -68,9 +73,12 @@ export function SettingsPage() {
                 cursor: 'pointer',
                 background: active ? 'var(--sel)' : 'transparent',
                 color: active ? 'var(--tx)' : 'var(--dm)',
+                gap: 8,
               }}
             >
               {m.nav[k]}
+              {/* A new version of Tape is available or downloaded (the Settings button has the same dot). */}
+              {dot && <div data-testid="about-dot" style={{ width: 6, height: 6, background: 'var(--ac)', flexShrink: 0 }} />}
             </div>
           );
         })}

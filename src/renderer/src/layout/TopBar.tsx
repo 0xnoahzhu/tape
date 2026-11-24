@@ -5,7 +5,8 @@
 // While IB refuses requests in Read-Only API mode, a red chip there says so (and where to turn it off);
 // another while TWS / IB Gateway cannot carry orders (it lost IB, 1100, or does not answer). Left of
 // the bell, a DND tag while do-not-disturb is on (features/settings/DndIndicator.tsx). The bell's dot
-// is red while an alert that is on is not being watched (features/alerts/model.ts → isUnwatched).
+// is red while an alert that is on is not being watched (features/alerts/model.ts → isUnwatched). The
+// Settings button has a dot while a new version of Tape is available or downloaded (features/update).
 
 import type { CSSProperties } from 'react';
 import { useCommon } from '../i18n/common';
@@ -22,6 +23,8 @@ import { useLockMessages } from '../features/lock/messages';
 import { useAlertMessages } from '../features/alerts/messages';
 import { unwatchedCount } from '../features/alerts/model';
 import { DndIndicator } from '../features/settings/DndIndicator';
+import { updatePending } from '../features/update/actions';
+import { useUpdateMessages } from '../features/update/messages';
 import { TopBarClock } from './TopBarClock';
 
 /**
@@ -108,6 +111,8 @@ export function TopBar() {
   const unread = useStore((s) => s.notifications.some((n) => !n.read));
   const unwatched = useStore((s) => unwatchedCount(s.priceAlerts, s.alertStatuses));
   const mac = useStore((s) => s.platform === 'darwin');
+  const um = useUpdateMessages();
+  const newVersion = useStore((s) => updatePending(s.update));
 
   return (
     <div
@@ -172,8 +177,14 @@ export function TopBar() {
         <IconButton size={34} title={lm.lockTitle(modKey(mac, 'L'))} onClick={() => requestLock()}>
           <LockIcon />
         </IconButton>
-        <IconButton size={34} title={m.settingsTitle(modKey(mac, ','))} active={page === 'set'} onClick={() => openSettings()}>
+        <IconButton
+          size={34}
+          title={newVersion ? `${m.settingsTitle(modKey(mac, ','))} · ${um.dotTip(newVersion)}` : m.settingsTitle(modKey(mac, ','))}
+          active={page === 'set'}
+          onClick={() => openSettings()}
+        >
           <SlidersIcon />
+          {newVersion && <Dot top={8} right={8} />}
         </IconButton>
       </div>
       {/* Windows / Linux: a divider, then room for the three 46px native caption buttons. */}

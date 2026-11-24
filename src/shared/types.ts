@@ -1415,6 +1415,10 @@ export interface Settings {
     writeFile: boolean;
     keepDays: number;
   };
+  /** Tape's own updates (main/updater.ts): it always checks; `auto` also downloads a new version by itself. */
+  updates: {
+    auto: boolean;
+  };
   /** Lock screen preferences. The PIN itself is not a setting (main keeps its hash in lock.json). */
   lock: {
     autoLock: AutoLock;
@@ -1458,7 +1462,27 @@ export interface AppSnapshot {
   marketDataCheck: MarketDataCheckState;
   /** The data folder and the account whose data it serves now (updates: `vault` events). */
   vault: VaultState;
+  /** Tape's own updates (updates: `update` events). */
+  update: UpdateState;
 }
+
+/**
+ * Tape updating itself from the project's GitHub Releases (main/updater.ts). It checks by itself; a
+ * new version downloads in the background with Settings › About › Automatic updates on, or when the
+ * user asks, and installs when Tape quits, or at once with a restart the user confirms. `off`: this
+ * build does not update itself (development, a build without update info, Linux).
+ */
+export type UpdateState =
+  | { status: 'off' }
+  /** Up to date as of `checkedAt`; null before the first check. */
+  | { status: 'idle'; checkedAt: number | null }
+  | { status: 'checking' }
+  /** A new version, not downloaded (automatic updates are off): downloadUpdate fetches it. */
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  /** Downloaded: installs at the next quit, or now with installUpdate. */
+  | { status: 'ready'; version: string }
+  | { status: 'error'; message: string; checkedAt: number | null };
 
 /**
  * The data folder (main/vault.ts): watchlists, price alerts and notifications, one folder per IB

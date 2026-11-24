@@ -18,6 +18,7 @@ export const API_SETTINGS_URL = 'https://www.interactivebrokers.com/docs/tws-api
 const m = createMessages({
   en: {
     about: 'About Tape',
+    checkUpdates: 'Check for Updates…',
     settings: 'Settings…',
     lock: 'Lock Tape',
     services: 'Services',
@@ -58,6 +59,7 @@ const m = createMessages({
   },
   zh: {
     about: '关于 Tape',
+    checkUpdates: '检查更新…',
     settings: '设置…',
     lock: '锁定 Tape',
     services: '服务',
@@ -103,6 +105,8 @@ export interface MenuActions {
   openExternal(url: string): void;
   /** Locks Tape (main asks the renderer for a PIN first when none is set). */
   lock(): void;
+  /** Checks for an update now and shows Settings › About. */
+  checkForUpdates(): void;
 }
 
 export interface MenuOptions {
@@ -111,12 +115,14 @@ export interface MenuOptions {
   isDev: boolean;
   /** Tape is locked: custom items other than Lock are disabled. */
   locked?: boolean;
+  /** This build updates itself: the menu has Check for Updates. */
+  updates?: boolean;
   actions: MenuActions;
 }
 
 const separator: MenuItemConstructorOptions = { type: 'separator' };
 
-export function buildMenuTemplate({ platform, lang, isDev, locked = false, actions }: MenuOptions): MenuItemConstructorOptions[] {
+export function buildMenuTemplate({ platform, lang, isDev, locked = false, updates = false, actions }: MenuOptions): MenuItemConstructorOptions[] {
   const t = m(lang);
   const mac = platform === 'darwin';
 
@@ -142,10 +148,15 @@ export function buildMenuTemplate({ platform, lang, isDev, locked = false, actio
     },
   };
 
+  const updateItems: MenuItemConstructorOptions[] = updates
+    ? [{ id: 'check-updates', label: t.checkUpdates, enabled: !locked, click: () => actions.checkForUpdates() }]
+    : [];
+
   const appMenu: MenuItemConstructorOptions = {
     label: 'Tape',
     submenu: [
       { label: t.about, role: 'about' },
+      ...updateItems,
       separator,
       command(t.settings, 'CmdOrCtrl+,', 'open-settings'),
       lockItem,
@@ -218,7 +229,7 @@ export function buildMenuTemplate({ platform, lang, isDev, locked = false, actio
     submenu: [
       link(t.marketData, MARKET_DATA_URL),
       link(t.apiHelp, API_SETTINGS_URL),
-      ...(mac ? [] : [separator, { label: t.about, role: 'about' } as const]),
+      ...(mac ? [] : [separator, ...updateItems, { label: t.about, role: 'about' } as const]),
     ],
   };
 

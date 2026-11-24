@@ -437,6 +437,17 @@ pnpm install
 pnpm dev        # Vite dev server + Electron, restarts on main / preload changes
 ```
 
+## Updates
+
+Packaged macOS builds update themselves from this repository's [GitHub Releases](https://github.com/0xnoahzhu/tape/releases)
+(`src/main/updater.ts`, with `electron-updater`). Tape checks 30 s after launch and every 4 hours. With
+*Settings › About › Automatic updates* on (the default) a new version downloads in the background; with it
+off Tape only checks, and a dot on the top bar's Settings button (and on *About*) says a new version is
+available, which *About › Download* fetches. A downloaded version installs when Tape quits, or right away with
+*Restart to Update*, which asks first (and warns, while connected, that the connection to TWS / IB Gateway
+closes until Tape is back). Nothing installs while Tape runs on its own. *Tape › Check for Updates…* checks at
+once. Development builds and builds without update info (`pnpm dist:dir`) never check (*About* says so).
+
 Tape connects on launch (Settings › Connection › auto-connect). To try the interface without market data
 permissions, run a development build with simulated quotes: `TAPE_DEMO=1 pnpm dev` (ignored by packaged
 builds).
@@ -462,6 +473,7 @@ builds).
 | `TAPE_NO_CONNECT=1` | Do not auto-connect on launch |
 | `TAPE_CLIENT_ID=<n>` | Override the API client id |
 | `TAPE_USER_DATA=<dir>` | Use a separate profile directory |
+| `TAPE_NO_UPDATE=1` | Packaged builds: never check for updates |
 | `TAPE_VAULT_DIR=<dir>` | Development builds only: the data folder of a profile that has none yet, instead of the first launch's choice (`scripts/capture.ts` sets it; ignored when packaged) |
 | `TAPE_OUT=<dir>` | Build into `<dir>` instead of `out` (absolute, or relative to the repository; `main`, `preload` and `renderer` all go there) |
 | `TAPE_CAPTURE_DIR`, `TAPE_CAPTURE_STEPS`, `TAPE_CAPTURE_QUIT` | Scripted screenshots, see `src/main/devCapture.ts` |
@@ -520,11 +532,11 @@ launch, and right away, after a confirmation, when the period is shortened).
 
 ```bash
 pnpm icons      # only after changing resources/icons/*.svg
-pnpm dist       # macOS .dmg + Windows x64 NSIS setup .exe (pnpm dist:mac / dist:win for one platform)
+pnpm dist       # macOS arm64 .dmg + Windows x64 NSIS setup .exe (pnpm dist:mac / dist:win for one platform)
 ```
 
 Configuration is in [`electron-builder.yml`](electron-builder.yml); output goes to `release/`, and
-`scripts/clean-release.ts` leaves only the `.dmg` and the `-setup.exe` there. A Linux AppImage can be built
+`scripts/clean-release.ts` leaves only the `.dmg` and the `-setup.exe` there. Local builds never publish. A Linux AppImage can be built
 with `electron-builder --linux` after `pnpm build`.
 
 - **Icons.** `resources/icons/icon-dark.svg` and `icon-light.svg` are the source artwork. `pnpm icons`
@@ -553,12 +565,38 @@ with `electron-builder --linux` after `pnpm build`.
 - **Electron fuses.** The packaged binary has `runAsNode`, `NODE_OPTIONS` and `--inspect` turned off and only
   loads the `app.asar` it was built with (embedded asar integrity), so it cannot be used as a plain Node
   runtime or started with modified app code. Check with `npx @electron/fuses read --app release/mac-arm64/Tape.app`.
-- **Signing.** electron-builder signs with a code signing identity from your keychain when it finds one;
-  otherwise the app keeps the ad-hoc signature made right after the fuses are flipped (an unsigned build with
-  flipped fuses is killed at launch on Apple Silicon). Hardened runtime and notarization are off for local
-  builds; to distribute, use a Developer ID certificate (`CSC_NAME` / `CSC_LINK`), enable `hardenedRuntime`
-  and configure notarization.
+- **Signing.** electron-builder signs with the *Developer ID Application* identity from your keychain (or
+  `CSC_LINK` / `CSC_KEY_PASSWORD`), with the hardened runtime; without one the app keeps the ad-hoc signature
+  made right after the fuses are flipped (an unsigned build with flipped fuses is killed at launch on Apple
+  Silicon). It is notarized only when `APPLE_API_KEY` (path of the `.p8`), `APPLE_API_KEY_ID` and
+  `APPLE_API_ISSUER` are set; local builds usually skip it ("skipped macOS notarization"), so Gatekeeper
+  rejects them on other Macs. The updater only installs a version signed by the same team.
   macOS only delivers system notifications from signed apps.
+
+## Releasing
+
+Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) on
+macOS: signed, notarized, Apple Silicon only. Each release has three files: `Tape-<version>-arm64.dmg`
+(first install), `Tape-<version>-arm64-mac.zip` and `latest-mac.yml` (what the updater reads and downloads;
+macOS can only update from a zip). Its notes are `docs/releases/v<version>.md` when that file exists, else
+GitHub's generated notes.
+
+```bash
+# 1. set "version" in package.json (and write docs/releases/v<version>.md), commit
+# 2. tag and push: the workflow checks that the tag matches package.json
+git tag v1.0.0
+git push origin main v1.0.0
+```
+
+One-time setup, in the repository's *Settings › Secrets and variables › Actions*:
+
+| Secret | What |
+| --- | --- |
+| `MAC_CERT_P12_BASE64` | The Developer ID Application certificate with its private key: in Keychain Access, export it as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `MAC_CERT_PASSWORD` | The password chosen for that `.p12` |
+| `APPLE_API_KEY_P8` | An App Store Connect API key for notarization (App Store Connect › Users and Access › Integrations › Team Keys, role Developer): the contents of the `.p8` file |
+| `APPLE_API_KEY_ID` | That key's Key ID |
+| `APPLE_API_ISSUER` | The Issuer ID shown above the keys |
 
 ## Project structure
 
@@ -577,6 +615,7 @@ src/
     appearance.ts    theme and theme-matched icons
     finderIcon.ts    macOS: the bundle's Finder icon follows the theme
     menu.ts          localized application menu (menuTemplate.ts)
+    updater.ts       updates from GitHub Releases (updaterBackend.ts: electron-updater)
     lock/            lock screen: PIN hash and backoff, idle auto-lock, Touch ID / Windows Hello, Forgot-PIN reset
     ipcDispatch.ts   IPC envelope and the methods refused while locked
   preload/     contextBridge: exposes window.tape

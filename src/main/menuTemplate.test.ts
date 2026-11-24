@@ -10,8 +10,9 @@ function build(overrides: Partial<MenuOptions> = {}) {
   const command = vi.fn<(c: AppCommand) => void>();
   const openExternal = vi.fn<(url: string) => void>();
   const lock = vi.fn<() => void>();
-  const template = buildMenuTemplate({ platform: 'darwin', lang: 'en', isDev: false, actions: { command, openExternal, lock }, ...overrides });
-  return { template, command, openExternal, lock };
+  const checkForUpdates = vi.fn<() => void>();
+  const template = buildMenuTemplate({ platform: 'darwin', lang: 'en', isDev: false, actions: { command, openExternal, lock, checkForUpdates }, ...overrides });
+  return { template, command, openExternal, lock, checkForUpdates };
 }
 
 const flatten = (items: Item[]): Item[] => items.flatMap((i) => [i, ...(Array.isArray(i.submenu) ? flatten(i.submenu as Item[]) : [])]);
@@ -86,6 +87,19 @@ describe('buildMenuTemplate', () => {
     }
     const unlocked = flatten(build().template).filter((i) => i.type !== 'separator');
     expect(unlocked.filter((i) => i.enabled === false)).toEqual([]);
+  });
+
+  it('has Check for Updates only in builds that update themselves: after About on macOS, in Help elsewhere', () => {
+    expect(find(build().template, (i) => i.id === 'check-updates')).toBeUndefined();
+    const mac = build({ updates: true });
+    const app = mac.template[0].submenu as Item[];
+    expect(app[1]).toMatchObject({ id: 'check-updates', label: 'Check for Updates…', enabled: true });
+    click(app[1]);
+    expect(mac.checkForUpdates).toHaveBeenCalledTimes(1);
+    const win = build({ platform: 'win32', updates: true });
+    const help = win.template[win.template.length - 1].submenu as Item[];
+    expect(help.map((i) => i.id ?? i.role ?? i.type).slice(-2)).toEqual(['check-updates', 'about']);
+    expect(find(build({ updates: true, locked: true }).template, (i) => i.id === 'check-updates')?.enabled).toBe(false);
   });
 
   it('shows developer items only in development', () => {

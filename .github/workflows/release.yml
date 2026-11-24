@@ -1,0 +1,90 @@
+# Builds, signs, notarizes and publishes a macOS release when a version tag is pushed:
+#
+#   set "version" in package.json, commit, then
+#   git tag v1.0.0 && git push origin main v1.0.0
+#
+# The release gets three files: the DMG (first install), the zip and latest-mac.yml (what installed
+# copies of Tape download and read to update themselves, src/main/updater.ts). Its notes are
+# docs/releases/<tag>.md when that file exists, else GitHub's generated notes. It stays a draft
+# until every file is uploaded, so the updater never sees a release half done.
+#
+# Repository secrets (Settings › Secrets and variables › Actions), see README › Releasing:
+#   MAC_CERT_P12_BASE64   Developer ID Application certificate + private key, .p12, base64
+#   MAC_CERT_PASSWORD     the .p12's password
+#   APPLE_API_KEY_P8      App Store Connect API key (.p8 file contents), for notarization
+#   APPLE_API_KEY_ID      its Key ID
+#   APPLE_API_ISSUER      its Issuer ID
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the build number is the commit count (vite.electron.config.ts)
+
+      - name: Tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($expected)"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+      - name: App Store Connect API key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Package, sign and notarize
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ runner.temp }}/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: pnpm exec electron-builder --config electron-builder.yml --mac --publish never
+
+      - name: Check the signature and notarization
+        run: |
+          app=release/mac-arm64/Tape.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          files=("release/Tape-$version-arm64.dmg" "release/Tape-$version-arm64-mac.zip" "release/latest-mac.yml")
+          ls -l "${files[@]}"
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then notes_args=(--notes-file "$notes"); else notes_args=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Tape $version" "${notes_args[@]}" "${files[@]}"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

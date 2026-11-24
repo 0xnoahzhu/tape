@@ -141,6 +141,7 @@ const SETTINGS_SPEC: Spec<Settings> = {
     dndUntil,
   },
   apiLog: { writeFile: bool, keepDays: nearest(KEEP_DAYS) },
+  updates: { auto: bool },
   lock: {
     autoLock: oneOf(['15', '30', '60', 'custom', 'never']),
     customMinutes: int(1, 1440),

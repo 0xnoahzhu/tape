@@ -44,6 +44,7 @@ import type {
   Settings,
   SymbolMatch,
   UnlockResult,
+  UpdateState,
   VaultState,
   VerifyResult,
   Watchlist,
@@ -79,6 +80,8 @@ export type TapeEvent =
   | { type: 'watchlists'; watchlists: Watchlist[] }
   | { type: 'priceAlerts'; alerts: PriceAlert[] }
   | { type: 'vault'; vault: VaultState }
+  /** Tape's own update: checking, downloading, ready to install (main/updater.ts). */
+  | { type: 'update'; update: UpdateState }
   /**
    * Whether main is watching each alert, in list order: sent when what the list shows changes (a
    * state, its reason or message), at most every 200 ms. The values in it are as of then; views that
@@ -107,7 +110,9 @@ export type AppCommand =
   | 'focus-search'
   | 'cancel-last-order'
   /** Sent by the menu's Lock item when no PIN exists yet: the renderer asks for one first. */
-  | 'set-pin-and-lock';
+  | 'set-pin-and-lock'
+  /** The menu's Check for Updates (main has started the check): show Settings › About. */
+  | 'show-updates';
 
 export interface NewNotification {
   kind: NotificationKind;
@@ -297,6 +302,20 @@ export interface TapeApi {
   // Misc -------------------------------------------------------------------
   openExternal(url: string): Promise<void>;
 
+  // Updates ----------------------------------------------------------------
+  /**
+   * Checks GitHub Releases for a new version now (`update` events); a new one downloads at once
+   * when automatic updates are on, else it is `available`.
+   */
+  checkForUpdates(): Promise<UpdateState>;
+  /** Downloads the `available` version (automatic updates off). */
+  downloadUpdate(): Promise<void>;
+  /**
+   * Quits, installs the downloaded version and starts it (the renderer confirms first: the
+   * connection to TWS / IB Gateway closes). Refused unless an update is ready.
+   */
+  installUpdate(): Promise<void>;
+
   // Lock screen ------------------------------------------------------------
   getLockState(): Promise<LockState>;
   /** Locks now. Refused when no PIN is set. */
@@ -384,6 +403,9 @@ export const LOCK_POLICY: Readonly<Record<TapeInvokeMethod, 'allow' | 'deny'>> =
   recheckVaultFolder: 'deny',
   revealVaultFolder: 'deny',
   openExternal: 'deny',
+  checkForUpdates: 'deny',
+  downloadUpdate: 'deny',
+  installUpdate: 'deny',
   getLockState: 'allow',
   lock: 'allow',
   unlockWithPin: 'allow',

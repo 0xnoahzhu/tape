@@ -52,6 +52,7 @@ import type {
 
 import type { Database } from './db/types';
 import type { LockService } from './lock/service';
+import type { Updater } from './updater';
 
 export type Unsubscribe = () => void;
 /**
@@ -438,4 +439,6 @@ export interface MainContext {
   appearance: Appearance;
   /** The lock screen: lock state, PIN and biometrics (see lock/service.ts). */
   lock: LockService;
+  /** Tape's own updates from GitHub Releases (see updater.ts). */
+  updater: Updater;
 }

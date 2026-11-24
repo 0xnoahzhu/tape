@@ -21,6 +21,7 @@ const en = {
     sec: 'Privacy & Security',
     keys: 'Shortcuts',
     log: 'Logs',
+    about: 'About',
   },
 
   // Connection
@@ -464,6 +465,7 @@ const zh: typeof en = {
     sec: '隐私与安全',
     keys: '快捷键',
     log: '日志',
+    about: '关于',
   },
 
   connDesc: '通过 TWS 或 IB Gateway 的 API 端口连接。需在 TWS 中启用 “Enable ActiveX and Socket Clients”。',

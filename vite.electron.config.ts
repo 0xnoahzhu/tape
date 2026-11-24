@@ -50,6 +50,10 @@ function nodeConfig(name: 'main' | 'preload', format: 'es' | 'cjs', { mode, watc
     mode,
     logLevel: 'warn',
     resolve: { alias: { '@shared': shared } },
+    // An SSR build leaves packages in node_modules to be loaded at run time; Tape bundles them
+    // (electron-updater) so the packaged app needs no node_modules. `external` keeps Electron,
+    // Node's built-ins and declared runtime dependencies out.
+    ssr: { noExternal: true },
     define: { 'process.env.NODE_ENV': JSON.stringify(mode), 'process.env.TAPE_BUILD': JSON.stringify(buildNumber() ?? '') },
     build: {
       outDir: outDir(name),

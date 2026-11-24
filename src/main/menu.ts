@@ -23,6 +23,7 @@ export function installMenu(ctx: MainContext): void {
       lang,
       isDev: ctx.isDev,
       locked,
+      updates: ctx.updater.getState().status !== 'off',
       actions: {
         command: (command) => showAndEmit(ctx, { type: 'command', command }),
         openExternal: (url) => void shell.openExternal(url),
@@ -30,6 +31,10 @@ export function installMenu(ctx: MainContext): void {
         lock: () => {
           if (ctx.lock.hasPin()) ctx.lock.lock();
           else showAndEmit(ctx, { type: 'command', command: 'set-pin-and-lock' });
+        },
+        checkForUpdates: () => {
+          void ctx.updater.check();
+          showAndEmit(ctx, { type: 'command', command: 'show-updates' });
         },
       },
     });

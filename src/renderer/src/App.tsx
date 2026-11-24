@@ -83,6 +83,9 @@ function runCommand(command: AppCommand, dark: boolean): void {
     case 'set-pin-and-lock':
       requestLock();
       break;
+    case 'show-updates':
+      s.openSettings('about');
+      break;
   }
 }
 

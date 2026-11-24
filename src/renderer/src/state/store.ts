@@ -41,6 +41,7 @@ import type {
   TimeInForce,
   TradingSession,
   TriggerMethod,
+  UpdateState,
   VaultState,
   Watchlist,
   WorkingOrder,
@@ -51,7 +52,7 @@ export type Page = 'acct' | 'trade' | 'set';
 /** The Trade page's views (pages/tradeViews.ts); Level 2 is the order ticket's Book. */
 export type TradeView = 'chart' | 'opt';
 /** 'view' is General (language, theme, colors); 'sec' is Privacy & Security. */
-export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log';
+export type SettingsTab = 'view' | 'conn' | 'data' | 'trade' | 'notif' | 'sec' | 'keys' | 'log' | 'about';
 export type BellTab = 'alerts' | 'notifs';
 
 /** Kinds of order condition the ticket offers (IB's six). */
@@ -304,6 +305,8 @@ interface DataState {
   alertStatuses: AlertStatus[];
   /** The data folder and the account whose watchlists, alerts and notifications are shown. */
   vault: VaultState;
+  /** Tape's own update (main/updater.ts). */
+  update: UpdateState;
   /** Mirror of main's lock state (main is the only authority). */
   lock: LockState;
 }
@@ -544,6 +547,7 @@ export const useStore = create<StoreState>()((set, get) => ({
   priceAlerts: [],
   alertStatuses: [],
   vault: { path: null, status: 'unset', account: null },
+  update: { status: 'off' },
   lock: { hasPin: false, locked: false, biometrics: { kind: null, available: false }, failures: 0, retryAt: null },
 
   // ui

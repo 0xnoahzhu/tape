@@ -37,6 +37,7 @@ export function defaultSettings(language: Lang = 'en', platform = 'darwin'): Set
       dndUntil: null,
     },
     apiLog: { writeFile: true, keepDays: 7 },
+    updates: { auto: true },
     lock: { autoLock: '60', customMinutes: 90, unlockWith: 'biometric', sound: true },
   };
 }

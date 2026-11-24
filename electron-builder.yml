@@ -9,7 +9,7 @@ directories:
   buildResources: build
 
 # The app has no runtime npm dependencies: everything (including the TWS API client in
-# src/main/ib/tws) is bundled into out/.
+# src/main/ib/tws and electron-updater) is bundled into out/.
 files:
   - out/**/*
   - package.json
@@ -30,8 +30,8 @@ asar: true
 # or open a debugger port (--inspect), and it only runs the app.asar whose hash it was built with.
 # Flipping fuses rewrites Electron Framework, which breaks the signature it ships with; without a
 # signing identity electron-builder leaves it that way and Apple Silicon kills the app at launch
-# (Code Signature Invalid). resetAdHocDarwinSignature ad-hoc signs the app right after the flip; a
-# real identity, when found, signs over it.
+# (Code Signature Invalid). resetAdHocDarwinSignature ad-hoc signs the app right after the flip; the
+# Developer ID identity, when found, signs over it.
 electronFuses:
   runAsNode: false
   enableNodeOptionsEnvironmentVariable: false
@@ -40,18 +40,34 @@ electronFuses:
   onlyLoadAppFromAsar: true
   resetAdHocDarwinSignature: true
 
-# Only installers are kept: a DMG for macOS and an NSIS setup for Windows (scripts/clean-release.ts
-# removes the intermediate unpacked apps afterwards). No update metadata or block maps.
-publish: null
+# Where the packaged app looks for updates (written into it as app-update.yml; src/main/updater.ts):
+# the latest published release of the GitHub repository. electron-builder itself never uploads
+# (every build runs with --publish never): .github/workflows/release.yml uploads only the DMG, the
+# zip and latest-mac.yml. Local `pnpm dist*` builds leave only the installers in release/
+# (scripts/clean-release.ts).
+publish:
+  provider: github
+  owner: 0xnoahzhu
+  repo: tape
 
 mac:
   category: public.app-category.finance
   icon: build/icon.icns
+  # Apple Silicon only. The DMG is for a first install; the zip is what the updater downloads
+  # (Squirrel.Mac installs only from a zip), with latest-mac.yml naming it.
   target:
-    - dmg
+    - target: dmg
+      arch: arm64
+    - target: zip
+      arch: arm64
   darkModeSupport: true
-  # Local builds: no notarization. Set CSC_NAME / CSC_LINK and enable hardenedRuntime to distribute.
-  hardenedRuntime: false
+  # Signed with the "Developer ID Application" identity: from the keychain locally, from CSC_LINK /
+  # CSC_KEY_PASSWORD in CI. The updater only installs a version signed by the same team.
+  # Hardened runtime with electron-builder's default entitlements (JIT and unsigned executable
+  # memory for V8). Notarized only when the App Store Connect API key is in the environment
+  # (APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER); otherwise the build is signed, not notarized.
+  hardenedRuntime: true
+  notarize: true
   extendInfo:
     NSUserNotificationAlertStyle: alert
 

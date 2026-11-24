@@ -35,6 +35,8 @@ import { createLockFile, LOCK_FILE } from './lock/lockFile';
 import { readResetMarker, removeResetMarker, startReset, wipeTapeData, type WipeResult } from './lock/reset';
 import { createLockService } from './lock/service';
 import { createSettingsGuard } from './lock/settingsGuard';
+import { createUpdater } from './updater';
+import { createUpdaterBackend } from './updaterBackend';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const isDev = !app.isPackaged && !!process.env.VITE_DEV_SERVER_URL;
@@ -132,6 +134,11 @@ ctx.lock = createLockService({
   getWindow: () => ctx.getMainWindow(),
   idleSeconds: () => powerMonitor.getSystemIdleTime(),
 });
+ctx.updater = createUpdater({
+  backend: createUpdaterBackend(),
+  auto: () => ctx.store.getSettings().updates.auto,
+  emit: (update) => ctx.emit({ type: 'update', update }),
+});
 
 const apiLogViewers = createLogViewers(ctx.apiLog);
 // Settings changes that weaken the lock need the PIN (lock/settingsGuard.ts).
@@ -139,6 +146,7 @@ const settingsGuard = createSettingsGuard({ store: ctx.store, lock: ctx.lock });
 
 // Appearance subscribes first (in its factory), so the theme is applied before this broadcast.
 ctx.store.onSettingsChanged((settings) => ctx.emit({ type: 'settings', settings, dark: ctx.appearance.isDark() }));
+ctx.store.onSettingsChanged(() => ctx.updater.autoChanged());
 // Another account or data folder: its lists replace the shown ones (the alerts service sends its own).
 // The folder in use going away is an alarm: the renderer covers the app until it is back.
 let vaultStatus = ctx.store.getVault().status;
@@ -214,6 +222,7 @@ function snapshot(): AppSnapshot {
     afterReset: takeAfterReset(),
     marketDataCheck: ctx.marketCheck.getState(),
     vault: ctx.store.getVault(),
+    update: ctx.updater.getState(),
   };
 }
 
@@ -307,6 +316,9 @@ const handlers: TapeHandlers = {
   openExternal: async (url) => {
     if (/^https:\/\//.test(url)) await shell.openExternal(url);
   },
+  checkForUpdates: () => ctx.updater.check(),
+  downloadUpdate: async () => ctx.updater.download(),
+  installUpdate: async () => ctx.updater.install(),
   getLockState: () => ctx.lock.refreshBiometrics(),
   lock: async () => {
     if (!ctx.lock.lock()) throw new Error('Set a PIN first');
@@ -445,6 +457,7 @@ app.whenReady().then(async () => {
     refreshBiometrics();
   });
   refreshBiometrics();
+  ctx.updater.start();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else ctx.showMainWindow();
